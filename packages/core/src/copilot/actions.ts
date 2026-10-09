@@ -748,6 +748,7 @@ export async function proposeTx(
     to: l.to.slice(0, 200),
   }));
   const link = def.link(p.input);
+  await supersedeTx(tx, t, p.merchant.userId, p.kind, p.input);
   const [row] = await tx<{ id: string }[]>`
     insert into copilot_actions (tenant_id, user_id, turn_id, kind, input, title, lines, link, basis, money, min_role)
     values (${t}, ${p.merchant.userId}, ${p.turnId}, ${p.kind}, ${tx.json(p.input as never)}, ${title},
@@ -755,6 +756,58 @@ export async function proposeTx(
             ${def.money(p.input)}, ${role})
     returning id`;
   return { id: row!.id, title, lines };
+}
+
+/** What a proposal changes: two open cards for the same thing would compete for one tap. */
+function targetOf(kind: ActionKind, input: unknown): string {
+  const i = (input ?? {}) as Record<string, unknown>;
+  // what it changes, so a sold-out card and a price card for one product both stand
+  const fields = (id: string) =>
+    Object.keys(i)
+      .filter((k) => k !== id)
+      .sort()
+      .join(',');
+  switch (kind) {
+    case 'store.pause':
+    case 'store.resume':
+      return 'store.status';
+    case 'store.operations':
+      return `operations:${fields('')}`;
+    case 'store.special_day':
+      return `day:${String(i.date)}`;
+    case 'product.update':
+      return `product:${String(i.productId)}:${fields('productId')}`;
+    case 'products.price':
+      return `prices:${[...((i.productIds as string[] | undefined) ?? [])].sort().join(',')}`;
+    case 'coupon.create':
+      return `code:${String(i.code).toUpperCase()}`;
+    case 'coupon.update':
+      return `coupon:${String(i.couponId)}:${fields('couponId')}`;
+    default:
+      return kind;
+  }
+}
+
+const SUPERSEDED = 'Trocado por um cartão mais novo.';
+
+/** A newer proposal for the same thing retires the person's older open card. */
+async function supersedeTx(
+  tx: Sql,
+  tenantId: string,
+  userId: string,
+  kind: ActionKind,
+  input: unknown,
+) {
+  const target = targetOf(kind, input);
+  const open = await tx<{ id: string; kind: ActionKind; input: unknown }[]>`
+    select id, kind, input from copilot_actions
+    where tenant_id = ${tenantId} and user_id = ${userId} and status = 'proposed'
+      and expires_at > now()`;
+  const stale = open.filter((a) => targetOf(a.kind, a.input) === target).map((a) => a.id);
+  if (stale.length)
+    await tx`
+      update copilot_actions set status = 'expired', error = ${SUPERSEDED}, decided_at = now()
+      where id = any(${stale}) and status = 'proposed'`;
 }
 
 /** Key order and Dates out of the way: what jsonb gives back compares equal to what went in. */

@@ -4,7 +4,7 @@ import type { Line } from '../copilot/actions.ts';
 // "SIM" grammar, cards as text, and the fixed answers. Pure, so the tests read them directly.
 
 export type Reply =
-  { decision: 'confirm' | 'decline'; n: number | null } | { command: 'store' } | null;
+  { decision: 'confirm' | 'decline'; n: number | null } | { command: 'store' | 'reset' } | null;
 
 const fold = (s: string) =>
   s
@@ -23,6 +23,8 @@ export function parseReply(body: string): Reply {
   if (body.length > 40) return null;
   const t = fold(body);
   if (t === '#loja') return { command: 'store' };
+  // "Nova conversa", as the admin's button
+  if (/^#(nova|novo|nova conversa|reset|limpar|recomecar)$/.test(t)) return { command: 'reset' };
   const yes = /^(sim|s|pode|ok)(?: (\d{1,2}))?$/.exec(t);
   if (yes) return { decision: 'confirm', n: yes[2] ? Number(yes[2]) : null };
   const no = /^nao(?: (\d{1,2}))?$/.exec(t);
@@ -114,6 +116,8 @@ export const DUA = {
   mediaOnly: 'Por aqui eu leio texto e áudio. Escreve o que precisa?',
   mediaKinds: 'Por aqui eu leio texto, áudio e foto. Escreve o que precisa?',
   photoUnseen: 'Não consegui ver essa foto. Pode mandar de novo ou escrever?',
+  reset:
+    'Pronto, conversa nova: esqueci o que falamos. O que já foi aplicado continua aplicado. Pode mandar.',
   mediaCap: 'Hoje já foram muitos áudios e fotos. Por hoje, me escreve o que precisa?',
 } as const;
 

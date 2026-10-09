@@ -49,6 +49,11 @@ Paths are under `packages/core/` unless they start with `apps/`, `packages/` or 
 - **Photos** (added 2026-10-09): the gateway downloads them as it does voice notes (5 MB, 6 media
   per sender a minute), and Duá gets the same reading the admin's photos get
   ([ADR 0034](../adr/0034-dua-copilot.md), "Added 2026-10-09").
+- **Before the cutover too** (2026-10-09): Core's own socket fetches a merchant's voice note or photo
+  (the gateway's downloader and caps; never a lead's), so Duá hears and sees on either transport.
+  "Só consigo ler mensagens escritas" now only answers when no transcription route exists.
+- **`#nova`** (also `#novo`, `#nova conversa`, `#limpar`, `#recomeçar`) starts the conversation over,
+  exactly as the admin's "Nova conversa": what Duá remembers goes, what was applied stays.
 
 ## 1. Why
 

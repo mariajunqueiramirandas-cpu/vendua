@@ -175,7 +175,7 @@ const stopVendedor = startVendedorWorker(jobsSql, {
 });
 // ingestInbound caps a body at 8000 chars: a longer WhatsApp message is cut, not dropped
 const waBody = (text: string) => (text.length > 8000 ? text.slice(0, 8000) : text);
-onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
+onInboundMessage(async (jid, text, providerId, pushName, altJid, media) => {
   // a merchant phone is Duá's (docs/features/dua-no-whatsapp.md), everyone else the CRM's
   const m = {
     jid,
@@ -183,6 +183,7 @@ onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
     providerId,
     ...(pushName ? { pushName } : {}),
     ...(altJid ? { altJid } : {}),
+    ...(media ? { media } : {}),
   };
   if (await socketMessageToInbox(jobsSql, m)) return;
   await ingestInbound(jobsSql, {

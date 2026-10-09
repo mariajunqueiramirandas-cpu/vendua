@@ -103,9 +103,10 @@ function IntroPanel({ view, draft }: { view: AiVoiceView; draft: Draft }) {
     <Panel title="como funciona">
       <div className="flex flex-col gap-3">
         <p className="max-w-prose text-[13px] leading-relaxed">
-          Quando um cliente manda áudio no WhatsApp da loja, o Duá transcreve antes de responder. As
-          rotas abaixo são tentadas em ordem: se uma falha, o Duá passa para a seguinte. As mudanças
-          valem em até um minuto depois de salvar.
+          O Duá transcreve todo áudio antes de responder: o dos clientes no WhatsApp e no chat do
+          site da loja, e o do dono ou gerente no painel e no WhatsApp da Venduá. As rotas abaixo
+          são tentadas em ordem: se uma falha, o Duá passa para a seguinte. As mudanças valem em até
+          um minuto depois de salvar.
         </p>
         <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
           O servidor da Venduá transcreve na nossa própria máquina: o áudio não vai para nenhuma
@@ -115,13 +116,13 @@ function IntroPanel({ view, draft }: { view: AiVoiceView; draft: Draft }) {
         {draft.rows.length === 0 && !view.sidecar.configured && (
           <Notice tone="bad">
             Nenhuma rota e o servidor de voz desligado: os áudios ficam sem transcrição, e o Duá
-            pede para o cliente escrever.
+            pede para escreverem.
           </Notice>
         )}
         {first && first.provider !== 'sidecar' && (
           <Notice>
-            A primeira rota é {LABEL[first.provider]}: os áudios dos clientes saem da Venduá e vão
-            para essa empresa.
+            A primeira rota é {LABEL[first.provider]}: os áudios saem da Venduá e vão para essa
+            empresa.
           </Notice>
         )}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t pt-3 text-[13px]">

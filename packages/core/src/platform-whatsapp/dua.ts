@@ -2,6 +2,7 @@ import type { ModelGateway } from '@vendua/agent-runtime';
 import type { Merchant, Role } from '../admin/context.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import { decideTx } from '../copilot/actions.ts';
+import { resetConversationTx } from '../copilot/view.ts';
 import {
   copilotInboundTx,
   hearVoice,
@@ -21,7 +22,6 @@ import { phoneVariants } from '../store-whatsapp/text.ts';
 import type { MediaProviders } from '../vendedor/media.ts';
 import { AUDIO_NOT_FETCHED, DUA, parseChoice, parseReply } from './dua-text.ts';
 import { enqueuePlatformWaTx } from './outbox.ts';
-import { platformTransport } from './transport.ts';
 
 // Duá by WhatsApp (docs/features/dua-no-whatsapp.md §5, ADR 0034 amended 2026-10-07): a message
 // from a merchant phone to Venduá's number reaches that person's Copilot conversation. Who is
@@ -246,6 +246,22 @@ export async function routeToDua(d: DuaDeps, row: InboxRow): Promise<DuaOutcome>
     const decided = await decideByReply(d, row, target, reply);
     if (decided) return decided;
   }
+  if (reply && 'command' in reply && reply.command === 'reset') {
+    // the store's tx forgets, the platform's answers: both commit together
+    await withTenant(d.sql, target.tenant_id, async (tx) => {
+      await resetConversationTx(tx, target.tenant_id, target.user_id);
+      await inControlScope(tx, async () => {
+        await enqueuePlatformWaTx(tx, {
+          to: replyTo(row),
+          body: DUA.reset,
+          purpose: 'dua',
+          dedupeKey: `dua-in:${row.id}:reset`,
+        });
+        await markDoneTx(tx, row.id);
+      });
+    });
+    return { route: 'done' };
+  }
 
   const heard = await hear(d, row, target, body);
   if ('route' in heard) return heard;
@@ -293,10 +309,11 @@ async function chooseStore(
     const only = eligible[0]!;
     if (sender.tenant_id !== only.tenant_id || sender.user_id !== only.user_id)
       await controlTx(d.sql, (tx) => remember(tx, only));
-    if (reply && 'command' in reply) return answer(d, row, 'store', DUA.onlyStore(only.name));
+    if (reply && 'command' in reply && reply.command === 'store')
+      return answer(d, row, 'store', DUA.onlyStore(only.name));
     return only;
   }
-  if (reply && 'command' in reply) return askStore();
+  if (reply && 'command' in reply && reply.command === 'store') return askStore();
   const kept = eligible.find(
     (e) => e.tenant_id === sender.tenant_id && e.user_id === sender.user_id,
   );
@@ -471,21 +488,14 @@ async function hear(
   const audioTag = body.startsWith('[áudio');
   const imageTag = body.startsWith('[imagem');
   if (!row.media_id) {
-    // Core's socket never downloads; the gateway marks a note it couldn't fetch, and keeps none
-    // of one past the caps
-    if (audioTag && (!d.media || platformTransport() === 'socket'))
-      return answer(d, row, 'voice', DUA.textOnly);
+    // the gateway and Core's socket both mark a note they couldn't fetch, and keep none past
+    // the caps
+    if (audioTag && !d.media) return answer(d, row, 'voice', DUA.textOnly);
     if (body.startsWith(AUDIO_NOT_FETCHED)) return answer(d, row, 'voice', DUA.voiceUnheard);
     if (audioTag) return answer(d, row, 'voice', DUA.voiceTooLong);
-    if (imageTag && d.gateway && platformTransport() !== 'socket')
-      return answer(d, row, 'media', DUA.photoUnseen);
+    if (imageTag && d.gateway) return answer(d, row, 'media', DUA.photoUnseen);
     if (!body || /^\[(imagem|vídeo|documento|figurinha)/.test(body))
-      return answer(
-        d,
-        row,
-        'media',
-        d.gateway && platformTransport() !== 'socket' ? DUA.mediaKinds : DUA.mediaOnly,
-      );
+      return answer(d, row, 'media', d.gateway ? DUA.mediaKinds : DUA.mediaOnly);
     return {
       kind: 'text',
       input: body.slice(0, MAX_BODY),

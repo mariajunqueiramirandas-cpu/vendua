@@ -16,6 +16,7 @@ import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
 import { copilotView } from '../src/copilot/view.ts';
 import { copilotTransport } from '../src/copilot/view.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
+import { addDays, localDateOf } from '../src/platform/tz.ts';
 import { routeToDua, type InboxRow } from '../src/platform-whatsapp/dua.ts';
 import {
   AUDIO_NOT_FETCHED,
@@ -42,6 +43,10 @@ describe('Duá by WhatsApp: words Core writes', () => {
     expect(parseReply('não')).toEqual({ decision: 'decline', n: null });
     expect(parseReply('nao 1')).toEqual({ decision: 'decline', n: 1 });
     expect(parseReply('#loja')).toEqual({ command: 'store' });
+    expect(parseReply('#nova')).toEqual({ command: 'reset' });
+    expect(parseReply('#Nova conversa')).toEqual({ command: 'reset' });
+    expect(parseReply('#recomeçar')).toEqual({ command: 'reset' });
+    expect(parseReply('nova conversa')).toBeNull();
     expect(parseReply('sim, mas muda o horário')).toBeNull();
     expect(parseReply('simples')).toBeNull();
     expect(parseReply('n')).toBeNull();
@@ -388,14 +393,17 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
 
   test('past 20 cards, the rest go to the panel unnumbered', async () => {
     const s = await store();
-    await inbound(s.phone, 'esgota o pudim');
-    const propose = call('propose_product_change', {
-      product: 'p1',
-      availability: 'sold_out_today',
-    });
+    await inbound(s.phone, 'fecha a loja nos próximos 21 dias');
+    // 21 different days: the same card asked twice would only replace the first
+    const first = localDateOf(new Date(), 'America/Sao_Paulo');
     const rt = runtime([
-      tools(call('menu')),
-      tools(...Array.from({ length: 21 }, () => propose)),
+      tools(
+        ...Array.from({ length: 21 }, (_, i) => {
+          const d = addDays(first, i + 1);
+          const date = `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
+          return call('propose_special_day', { date, closed: true });
+        }),
+      ),
       reply('Preparei.'),
     ]);
     await settle(rt, s.tenantId);
@@ -462,6 +470,23 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(await mailbox(a.tenantId)).toHaveLength(1);
   });
 
+  test('#nova starts the conversation over, as the admin’s “Nova conversa”', async () => {
+    const s = await store();
+    heard = null;
+    await inbound(s.phone, 'quanto vendi hoje?');
+    expect(await mailbox(s.tenantId)).toHaveLength(1);
+    await inbound(s.phone, '#nova');
+    expect(await lastSent(s.phone)).toBe(DUA.reset);
+    expect(await sql`select 1 from copilot_messages where tenant_id = ${s.tenantId}`).toHaveLength(
+      0,
+    );
+    // Duá's side goes too (the actor and its mailbox), and the command itself is no message for him
+    expect(await mailbox(s.tenantId)).toHaveLength(0);
+    expect(
+      await sql`select 1 from agent_actors where tenant_id = ${s.tenantId} and agent_id = 'copilot'`,
+    ).toHaveLength(0);
+  });
+
   test('a voice note is transcribed with the store’s names; an unsure one is marked for Duá', async () => {
     const s = await store();
     const media = async () =>
@@ -485,8 +510,8 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(box[0]!.payload.kind).toBe('voice');
     const v = await view(s);
     expect(v.items.filter((i) => i.type === 'message' && i.voice)).toHaveLength(2);
-    // over the cap the gateway keeps no media: the tag alone asks for a shorter one, a note it
-    // couldn't fetch asks again, and Core's own socket (no downloads) asks for text
+    // over the cap neither transport keeps media: the tag alone asks for a shorter one, and a note
+    // it couldn't fetch asks again
     const prev = process.env.WA_PLATFORM_TRANSPORT;
     process.env.WA_PLATFORM_TRANSPORT = 'gateway';
     try {
@@ -496,7 +521,7 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       expect(await lastSent(s.phone)).toBe(DUA.voiceUnheard);
       process.env.WA_PLATFORM_TRANSPORT = 'socket';
       await inbound(s.phone, '[áudio]');
-      expect(await lastSent(s.phone)).toBe(DUA.textOnly);
+      expect(await lastSent(s.phone)).toBe(DUA.voiceTooLong);
     } finally {
       if (prev === undefined) delete process.env.WA_PLATFORM_TRANSPORT;
       else process.env.WA_PLATFORM_TRANSPORT = prev;
@@ -536,7 +561,7 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     expect(await mailbox(s.tenantId)).toHaveLength(1);
     // a video is still not something Duá reads
     await inbound(s.phone, '[vídeo]');
-    expect(await lastSent(s.phone)).toBe(DUA.mediaOnly);
+    expect(await lastSent(s.phone)).toBe(DUA.mediaKinds);
   });
 
   test('past 30 messages in 10 minutes: one “calma”, and the rest wait', async () => {
@@ -606,6 +631,68 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
         providerId: `z-${nonce}`,
       }),
     ).toBe(false);
+  });
+
+  test('Core’s socket fetches a merchant’s voice note and photo, never a lead’s', async () => {
+    const s = await store();
+    const jid = `55${s.phone}@s.whatsapp.net`;
+    const fetched: string[] = [];
+    const media = (type: 'audio' | 'image', bytes: number[] | Error) => ({
+      type,
+      mime: type === 'audio' ? 'audio/ogg; codecs=opus' : 'image/jpeg',
+      seconds: type === 'audio' ? 3 : null,
+      size: 10,
+      download: async () => {
+        fetched.push(type);
+        if (bytes instanceof Error) throw bytes;
+        return new Uint8Array(bytes);
+      },
+    });
+    const row = (id: string) =>
+      sql<{ body: string; mime: string | null; n: number | null }[]>`
+        select i.body, m.mime, octet_length(m.bytes)::int as n from platform_wa_inbox i
+        left join platform_wa_media m on m.id = i.media_id where i.provider_id = ${id}`.then(
+        (r) => r[0]!,
+      );
+    await socketMessageToInbox(appSql, {
+      jid,
+      text: '[áudio]',
+      providerId: `a-${nonce}`,
+      media: media('audio', [1, 2, 3]),
+    });
+    expect(await row(`a-${nonce}`)).toMatchObject({ body: '[áudio]', n: 3 });
+    await socketMessageToInbox(appSql, {
+      jid,
+      text: '[imagem] acabou',
+      providerId: `i-${nonce}`,
+      media: media('image', [9, 9]),
+    });
+    expect(await row(`i-${nonce}`)).toMatchObject({ mime: 'image/jpeg', n: 2 });
+    // a note WhatsApp wouldn't hand over asks to be sent again
+    await socketMessageToInbox(appSql, {
+      jid,
+      text: '[áudio]',
+      providerId: `f-${nonce}`,
+      media: media('audio', new Error('cdn down')),
+    });
+    expect(await row(`f-${nonce}`)).toMatchObject({ body: AUDIO_NOT_FETCHED, n: null });
+    // a replay isn't fetched again
+    const before = fetched.length;
+    await socketMessageToInbox(appSql, {
+      jid,
+      text: '[áudio]',
+      providerId: `a-${nonce}`,
+      media: media('audio', [1]),
+    });
+    expect(fetched).toHaveLength(before);
+    // a lead's media stays on WhatsApp
+    await socketMessageToInbox(appSql, {
+      jid: `55${phone()}@s.whatsapp.net`,
+      text: '[áudio]',
+      providerId: `l-${nonce}`,
+      media: media('audio', [1]),
+    });
+    expect(fetched).toHaveLength(before);
   });
 
   test('a reply goes to the WhatsApp the owner writes from, whichever spelling the store holds', async () => {
