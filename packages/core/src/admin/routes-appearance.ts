@@ -1,7 +1,7 @@
 import { HttpError, bodyJson } from '../platform/http.ts';
-import { controlTx } from '../modules/control.ts';
 import { DEFAULT_BUNDLE } from '../modules/fleet/deps.ts';
-import { reconcileTx, setBundleTx, siteModeTx } from '../modules/fleet/deploy.ts';
+import { lockOpsTx, reconcileTx, setBundleTx, siteModeTx } from '../modules/fleet/deploy.ts';
+import { inControlScope } from '../platform/db.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import {
   assertPage,
@@ -48,8 +48,8 @@ export function mountAppearance(d: AdminDeps) {
         where tenant_id = ${t.id} and bundle = ${bundle} order by page, version desc
       `;
       const tokens = await currentTokensTx(tx, t.id, bundle);
-      // releases are platform data: read apart, under vendua.control
-      const site = await controlTx(d.sql, (ctl) => siteModeTx(ctl, t.id, t.slug));
+      // releases are platform data: read with the control scope open for that one read
+      const site = await inControlScope(tx, () => siteModeTx(tx, t.id, t.slug));
       const pending = await tx<{ id: number; created_at: string }[]>`
         select id, created_at from outbox
         where tenant_id = ${t.id} and topic = 'storefront.rebuild_requested' and published_at is null
@@ -100,21 +100,29 @@ export function mountAppearance(d: AdminDeps) {
         throw new HttpError(422, 'BAD_REQUEST', "mode must be 'custom' or 'template'", {
           field: 'mode',
         });
-      // releases and deployments are the Control Plane's: this transaction touches only this
-      // store's rows, and must commit them with the idempotency claim
-      await tx`select set_config('vendua.control', '1', true)`;
-      const site = await siteModeTx(tx, t.id, t.slug);
-      if (!site)
-        throw new HttpError(409, 'NO_CUSTOM_SITE', 'this store has no site sob medida to switch');
-      if (site.mode === mode) return { status: 200, body: { site, deployment: null } };
-      await setBundleTx(tx, t.id, mode === 'custom' ? t.slug : DEFAULT_BUNDLE);
-      const dep = await reconcileTx(tx, d.fleet, t.id, {
-        actor: 'lojista',
-        reason:
-          mode === 'custom'
-            ? 'o lojista voltou para o site sob medida'
-            : 'o lojista trocou para o modelo padrão',
+      // releases and deployments are the Control Plane's: the scope is open only for those
+      // statements, and they commit with this store's rows and the idempotency claim
+      const out = await inControlScope(tx, async () => {
+        // the ops row lock first: two switches at once take turns, and the second is a no-op
+        const ops = await lockOpsTx(tx, t.id);
+        const site = await siteModeTx(tx, t.id, t.slug);
+        if (!site)
+          throw new HttpError(409, 'NO_CUSTOM_SITE', 'this store has no site sob medida to switch');
+        if (site.mode === mode) return null;
+        // a pin is staff holding a release (a rollback pins): the owner can't switch past it
+        if (ops.release_policy === 'pinned')
+          throw new HttpError(409, 'STORE_PINNED', "the team pinned this store's version");
+        await setBundleTx(tx, t.id, mode === 'custom' ? t.slug : DEFAULT_BUNDLE);
+        return reconcileTx(tx, d.fleet, t.id, {
+          actor: 'lojista',
+          reason:
+            mode === 'custom'
+              ? 'o lojista voltou para o site sob medida'
+              : 'o lojista trocou para o modelo padrão',
+        }).then((dep) => ({ dep }));
       });
+      if (!out) return { status: 200, body: { site: { mode }, deployment: null } };
+      const { dep } = out;
       await audit(tx, t.id, m, {
         action: 'appearance.site',
         entity: 'site',

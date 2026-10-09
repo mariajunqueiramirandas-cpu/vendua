@@ -440,9 +440,14 @@ export async function rollbackTemplateMigration(
       const ops = await opsTx(tx, t.id);
       if (opts.ring && ops.ring !== opts.ring) return;
       const runs = await tx<{ page: string; to_version: number; from_version: number }[]>`
-        select distinct on (page) page, to_version, from_version from template_migration_runs
-        where tenant_id = ${t.id} and migration_id = ${migrationId} and status = 'applied'
-        order by page, created_at desc
+        select distinct on (r.page) r.page, r.to_version, r.from_version
+        from template_migration_runs r
+          join storefront_templates st on st.tenant_id = r.tenant_id and st.page = r.page
+            and st.version = r.to_version
+        where r.tenant_id = ${t.id} and r.migration_id = ${migrationId} and r.status = 'applied'
+          -- the run on the design on screen: a rerun after a bundle switch is the other side's
+          and st.bundle = ${bundleSql(tx, t.id)}
+        order by r.page, r.created_at desc
       `;
       for (const r of runs) {
         // locked before the check, as a migration does, so an edit can't land between the two

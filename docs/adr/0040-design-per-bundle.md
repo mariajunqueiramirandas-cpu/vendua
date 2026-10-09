@@ -31,8 +31,10 @@ edits made on each side are kept.
   Aparência's `PUT /appearance/site`) moves the store, locks it there (a publish of its own
   bundle no longer adopts it back), and reconciles to that bundle's newest passed release. The
   design follows because the reads follow the bundle. The owner's switch records
-  `site.mode_changed` for the team and runs in the request's own transaction under
-  `vendua.control`, since releases and deployments are Control Plane tables.
+  `site.mode_changed` for the team. Its fleet statements run in the request's own transaction
+  with the control scope open only around them (`inControlScope`), since releases and
+  deployments are Control Plane tables. A store staff pinned (a rollback pins) can't be switched
+  by its owner (409 `STORE_PINNED`); staff's own bundle change still clears the pin.
 - **Backfill (0114):** a row belongs to the bundle of the store's newest deployment started
   before it was written; a row older than every deployment, to the first one's bundle (else the
   bundle it runs); a 'site sob medida' row, to the store's own bundle. A writer that names no

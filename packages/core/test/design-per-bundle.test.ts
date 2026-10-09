@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { DEFAULT_TOKENS, type PageTemplate } from '@vendua/templates';
+import { DEFAULT_TOKENS, type ComponentType, type PageTemplate } from '@vendua/templates';
 import { createApp } from '../src/app.ts';
 import type { MerchantNotify } from '../src/admin/context.ts';
 import { fleetDeps } from '../src/modules/fleet/deps.ts';
@@ -122,7 +122,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('design per bundle (db)', () => 
         artifactUri: `file:///srv/artifacts/storefronts/${slug}/${release}`,
       }),
     });
-  const home = (type: string): PageTemplate => ({
+  const home = (type: ComponentType): PageTemplate => ({
     version: 1,
     page: 'home',
     sections: [{ id: 'top', type, settings: {} }],
@@ -272,6 +272,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('design per bundle (db)', () => 
       before.length,
     );
     expect((await owner('PUT', '/appearance/site', { mode: 'other' })).status).toBe(422);
+    // staff hold the store's release: the owner can't switch past the pin
+    await sql`update storefront_ops set release_policy = 'pinned' where tenant_id = ${tenantId}`;
+    const pinned = await owner('PUT', '/appearance/site', { mode: 'custom' });
+    expect(pinned.status).toBe(409);
+    expect(pinned.body.error.code).toBe('STORE_PINNED');
+    expect((await ops()).bundle).toBe('_template');
+    await sql`update storefront_ops set release_policy = 'auto' where tenant_id = ${tenantId}`;
 
     const other = await signIn(plainId);
     expect((await other('GET', '/appearance')).body.site).toBeNull();
