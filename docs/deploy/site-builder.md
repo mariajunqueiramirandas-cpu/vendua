@@ -33,7 +33,8 @@ configurada" and nothing breaks.
      database.
 2. **Routine** at claude.ai/code/routines → New routine:
    - Name: `Venduá — site sob medida`
-   - Model: the strongest Claude model on the plan
+   - Model: Haiku 5.5 (`claude-haiku-5-5`). The skill has the session build the UI with Haiku 5.5
+     subagents and never use a bigger model.
    - Repository: this repo. Environment: `storefront-gen`. Connectors: remove all.
    - Prompt (word for word):
 

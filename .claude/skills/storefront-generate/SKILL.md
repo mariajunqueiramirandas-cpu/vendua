@@ -75,23 +75,66 @@ git add storefronts/<slug> bun.lock && git commit -m "Scaffold <slug> from _temp
 ```
 
 Commit the untouched scaffold first: it's green, so the diff you're judged on is your
-transformation. Then:
+transformation.
 
-1. **Design direction.** Load the `frontend-design` skill. Turn the spec into one clear idea for
-   this store: palette from `spec.brand.palette` (or derived from the logo when it's empty),
-   type pairing from `spec.brand.typography` (only fonts already in `package.json`, or system
-   stacks), motion level from `spec.experience.motion`. Respect `spec.experience.avoid` to
-   the letter. It's a Brazilian food business on a phone first: appetite, warmth, legibility.
-2. **Tokens** → `tokens.json`, wired into `vendua.config.ts`.
-3. **Sections**: write the `store:*` sections the spec needs (`mustHave`, `differentials`),
-   each with a literal schema, its copy as settings, and its layout tuned at 375 px first.
-   Reuse `sdk:*` sections for everything commerce: catalog, product, cart.
-4. **Templates**: `home`, `catalog`, `product`, `layout` mixing `sdk:*` and your `store:*`
-   sections, with pt-BR copy in the owner's tone (`spec.copy.tone`). The store name is
-   `storeName`; never invent prices, hours, addresses, phone numbers or claims.
+### Haiku only
+
+This routine runs on Haiku 5.5, and every agent it spawns runs on Haiku too: `model: "haiku"`,
+with `subagent_type: "general-purpose"`, `effort: "high"` when it edits files and `"medium"`
+when it only runs a check or reads a log. Never `opus`, `sonnet` or `fable`, never a spawn
+without `model` (it would inherit the session's model), never `xhigh` or `max`, and no Workflow
+tool (it caps concurrency at 2 here). This overrides CLAUDE.md's "Subagents", which sends UI and
+`storefronts/*` work to Opus. When a Haiku agent gets something wrong, send it back to a fresh
+Haiku agent with its failure; never escalate to a bigger model.
+
+Haiku stops early and can report a change done without running its check, so:
+
+- Its brief settles every decision: the exact files, the markup and classes, the settings keys
+  and copy, the check to run. An agent loads CLAUDE.md but not this skill, so start each brief
+  with "read `<scratchpad>/site-brief.md` first".
+- Keep each task small: one section per agent.
+- Ask for the check's output, not a claim that it passed, and check each result yourself (one
+  targeted Read or `vendua check`) before building on it.
+- One owner per file. An agent edits only the files its brief names and reports anything else
+  it needs; you make that change.
+- Agents never run git, never start or stop servers, never run `vendua qa`. You commit, you
+  push, and you run the checks in step 4, one at a time.
+- Launch independent agents in one message, in the background, at most 5 at a time, and keep
+  working while they run.
+
+### Steps
+
+1. **Design direction (you).** Load the `frontend-design` skill. Turn the spec into one clear
+   idea for this store: palette from `spec.brand.palette` (or derived from the logo when it's
+   empty), type pairing from `spec.brand.typography` (only fonts already in `package.json`, or
+   system stacks), motion level from `spec.experience.motion`. Respect `spec.experience.avoid`
+   to the letter. It's a Brazilian food business on a phone first: appetite, warmth,
+   legibility. Write it into `<scratchpad>/site-brief.md` (your scratchpad, outside the repo;
+   never commit it): the idea, the tokens, type and motion, `avoid` word for word, the patterns
+   that would make it generic (name them), the section list (for each: name, purpose, class
+   prefix, settings keys with their pt-BR copy) and the rules of section 1 above, quoted.
+2. **Tokens (you)** → `tokens.json`, wired into `vendua.config.ts`.
+3. **Shared pieces (you)**, before any agent starts: `styles/global.css` (page chrome and the
+   classes sections share), `sections/_shared/**`, and in `main.tsx` one
+   `import './styles/<name>.css';` per section you planned, each file created empty.
+4. **Sections (Haiku agents).** Reuse `sdk:*` sections for everything commerce: catalog,
+   product, cart. For each `store:*` section the spec needs (`mustHave`, `differentials`), one
+   agent owns exactly `sections/<name>.tsx` and `styles/<name>.css`. Its brief: the brief
+   file; the files it owns; a literal schema with its copy as settings; layout tuned at 375 px
+   first, then 1440; classes under its prefix; the check `bunx vendua check <slug>` with its
+   output pasted in the report; a report under 200 words listing the section's type, settings
+   keys and defaults.
+5. **Templates (you)**, as the sections land: `home`, `catalog`, `product`, `layout` mixing
+   `sdk:*` and your `store:*` sections, with pt-BR copy in the owner's tone
+   (`spec.copy.tone`). The store name is `storeName`; never invent prices, hours, addresses,
+   phone numbers or claims.
 
 `kind: 'revision'`: the store exists on `main`. Read `note` (what the owner asked to change) and
-the updated `spec`; change only what the note asks, keep everything else as it is.
+the updated `spec`; change only what the note asks, keep everything else as it is. Before any
+agent starts, write `<scratchpad>/site-brief.md` as in step 1, from the store as it stands (its
+`tokens.json`, sections and templates) plus the note, with the sections the note touches and
+what changes in each. A change to one or more sections goes to a Haiku agent per section, as in
+step 4; tokens and templates stay yours.
 
 ## 4. Judge it yourself before pushing
 
@@ -101,10 +144,15 @@ bunx vendua-conformance k05 <slug> origin/<base>
 CHROMIUM=/opt/pw-browsers/chromium bunx vendua qa <slug>
 ```
 
-All three must pass. Then open the screenshots in `storefronts/<slug>/qa-report/screenshots/`
-(home, catalog and product at 390 and 1440) and look at them as the owner would: does it match
-the spec's idea? Nothing overflowing, nothing illegible, nothing generic? Fix and re-run until
-you'd ship it. `qa-report/` is git-ignored; never commit it.
+All three must pass. `.claude/settings.json` blocks reading `qa-report/`, so copy the
+screenshots out after each QA run:
+`rm -rf <scratchpad>/shots && cp -r storefronts/<slug>/qa-report/screenshots <scratchpad>/shots`.
+Open them there (home, catalog and product at 390 and 1440) and look at them as the owner
+would: does it match the spec's idea? Nothing overflowing, nothing illegible, nothing generic?
+Then hand `<scratchpad>/shots` and the brief file to one fresh Haiku agent to review (it edits
+nothing and reports each problem as screenshot — what is wrong — which file). Send each
+section's fixes back to its owner (SendMessage) or make them yourself, and re-run until you'd
+ship it. `qa-report/` is git-ignored; never commit it.
 
 ## 5. Open the PR
 
@@ -121,7 +169,8 @@ Then subscribe to the PR's activity so CI results wake you.
 ## 6. Fix loop
 
 Each red CI run on your PR: read the failing job's log, reproduce it locally with the same
-command, fix it inside `storefronts/<slug>/`, re-run the three checks, push. At most
+command, fix it inside `storefronts/<slug>/`, re-run the three checks, push. A failure in a
+section goes back to a Haiku agent as in section 3; a long log can go to one too. At most
 `maxFixPushes` (4) fix pushes. If the 4th still fails, stop: comment on the PR with what is
 failing and what you tried, and end. Core escalates it to staff. Never skip, disable or work
 around a check, never touch files outside the store, never force-push.
