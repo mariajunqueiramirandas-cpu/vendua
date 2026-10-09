@@ -703,7 +703,11 @@ function Composer({
       attempt.current = null;
       return true;
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 0)) attempt.current = null;
+      // a message Core may have taken (no answer, a 5xx, still in progress) retries with its key
+      const maybe =
+        e instanceof ApiError &&
+        (e.status === 0 || e.status >= 500 || e.code === 'IDEMPOTENCY_IN_PROGRESS');
+      if (!maybe) attempt.current = null;
       setNote(mediaError(e));
       return false;
     } finally {

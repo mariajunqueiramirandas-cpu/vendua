@@ -150,7 +150,7 @@ function audioFileName(mime: string): string {
     'audio/webm': 'webm',
     'audio/mp4': 'm4a',
     'audio/x-m4a': 'm4a',
-    'audio/aac': 'm4a',
+    'audio/aac': 'aac',
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
     'audio/x-wav': 'wav',
