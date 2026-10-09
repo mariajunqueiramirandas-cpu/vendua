@@ -6,9 +6,7 @@ import { fetchMedia } from "../../../scripts/lib/media-fetch.mjs";
 //        Direct v3 REST (NOT `hyperframes tts`, which in the published build is
 //        Kokoro-only and silently ignores a HeyGen key). Returns word_timestamps
 //        in the same call, so no separate transcribe pass.
-//   2. ElevenLabs         — $ELEVENLABS_API_KEY + `pip install elevenlabs`. No
-//        word timings → caller chains transcribeWav().
-//   3. Kokoro-82M (local) — always available, via the published `hyperframes tts`
+//   2. Kokoro-82M (local) — always available, via the published `hyperframes tts`
 //        CLI. No word timings → caller chains transcribeWav().
 //
 // "HeyGen available" is decided by CREDENTIAL presence (heygenCredential), never
@@ -19,7 +17,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { heygenAuthHeaders, heygenCredential, heygenJSON } from "./heygen.mjs";
-import { pythonInvocation } from "./python.mjs";
 import { synthesizeGemini } from "./gemini-tts.mjs";
 import { geminiConfigured } from "./gemini-auth.mjs";
 
@@ -27,20 +24,11 @@ import { geminiConfigured } from "./gemini-auth.mjs";
 export function heygenAvailable() {
   return heygenCredential() !== null;
 }
-export function elevenlabsAvailable() {
-  if (!process.env.ELEVENLABS_API_KEY) return false;
-  const { cmd, args } = pythonInvocation(["-c", "import elevenlabs"]);
-  const r = spawnSync(cmd, args, {
-    stdio: "ignore",
-  });
-  return r.status === 0;
-}
-
 // First available provider wins; an explicit choice is honored (and validated).
 export function pickProvider(userProvider) {
   if (userProvider) {
-    if (!["heygen", "elevenlabs", "kokoro", "gemini"].includes(userProvider))
-      throw new Error(`invalid provider "${userProvider}" (heygen | elevenlabs | kokoro | gemini)`);
+    if (!["heygen", "kokoro", "gemini"].includes(userProvider))
+      throw new Error(`invalid provider "${userProvider}" (heygen | kokoro | gemini)`);
     if (userProvider === "gemini" && !geminiConfigured())
       throw new Error(
         "provider=gemini needs GEMINI_API_KEY or GOOGLE_API_KEY, or service-account credentials (GOOGLE_APPLICATION_CREDENTIALS or GCS_CREDS)",
@@ -49,21 +37,18 @@ export function pickProvider(userProvider) {
       throw new Error(
         "provider=heygen but no HeyGen credentials (set $HEYGEN_API_KEY or run `npx hyperframes auth login`)",
       );
-    if (userProvider === "elevenlabs" && !process.env.ELEVENLABS_API_KEY)
-      throw new Error("provider=elevenlabs but $ELEVENLABS_API_KEY is not set");
     return userProvider;
   }
-  return heygenAvailable() ? "heygen" : elevenlabsAvailable() ? "elevenlabs" : "kokoro";
+  return heygenAvailable() ? "heygen" : "kokoro";
 }
 
 // ── voice resolution ──────────────────────────────────────────────────────────
 // HeyGen /v3/voices/speech only accepts STARFISH voice_ids; auto-pick the first
-// English public starfish voice when none is pinned. ElevenLabs/Kokoro have
-// their own defaults.
+// English public starfish voice when none is pinned. Gemini/Kokoro have their
+// own defaults.
 export async function resolveVoiceId({ provider, userVoice, lang = "en" }) {
   if (userVoice) return userVoice;
   if (provider === "gemini") return "Kore";
-  if (provider === "elevenlabs") return "21m00Tcm4TlvDq8ikWAM"; // Rachel
   if (provider === "kokoro") {
     if (lang === "en") return "am_michael";
     throw new Error("Kokoro non-English needs an explicit --voice (see references/tts.md)");
@@ -231,22 +216,9 @@ function transcodeToWav(bytes, destWav) {
   return ff.status === 0 && existsSync(destWav);
 }
 
-const ELEVENLABS_PY = `
-import os, sys
-from elevenlabs.client import ElevenLabs
-from elevenlabs import save
-client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
-text = open(sys.argv[1]).read()
-audio = client.text_to_speech.convert(
-    text=text, voice_id=sys.argv[2],
-    model_id="eleven_multilingual_v2", output_format="mp3_44100_128",
-)
-save(audio, sys.argv[3])
-`;
-
 // ── synthesize one line ───────────────────────────────────────────────────────
 // Writes wav at wavAbs. Returns { ok, words, error } — words is the raw
-// [{text,start,end}] array for HeyGen (native), or null for ElevenLabs/Kokoro
+// [{text,start,end}] array for HeyGen (native), or null for Kokoro
 // (caller must transcribeWav). Never throws; failures return { ok:false, error }
 // where `error` states WHY (so the caller can surface it, not a bare "TTS failed").
 export async function synthesizeOne({
@@ -263,29 +235,6 @@ export async function synthesizeOne({
   if (provider === "heygen") return synthesizeHeygen({ text, voiceId, lang, speed, wavAbs });
   if (provider === "gemini")
     return synthesizeGemini({ text, voiceId, model, style, speed, wavAbs });
-  if (provider === "elevenlabs") {
-    // The Python helper writes straight to wavAbs; unlike heygen (transcodeToWav)
-    // and kokoro (the `hyperframes tts` CLI), it does NOT create the parent dir,
-    // so on a fresh project (no assets/voice/ yet) the save fails and the line is
-    // silently dropped as "TTS failed - omitted". Create it first, like the other
-    // providers do. Guarded so a mkdir failure (EACCES/EROFS) returns
-    // { ok:false } like the rest of this branch rather than throwing (the
-    // function's contract is "never throws; failures return { ok:false }").
-    try {
-      mkdirSync(dirname(wavAbs), { recursive: true });
-    } catch {
-      return { ok: false, words: null };
-    }
-    const { cmd, args } = pythonInvocation([
-      "-c",
-      ELEVENLABS_PY,
-      writeTmpText(text),
-      voiceId,
-      wavAbs,
-    ]);
-    const r = await spawnP(cmd, args, {});
-    return synthResult(r, wavAbs, "elevenlabs (python)");
-  }
   // kokoro — via the published CLI; --output is relative to the project dir.
   const wavRel = relTo(hyperframesDir, wavAbs);
   const args = ["hyperframes", "tts", writeTmpText(text), "--voice", voiceId, "--output", wavRel];
@@ -355,7 +304,7 @@ export async function synthesizeHeygen({ text, voiceId, lang, speed, wavAbs }, d
   }
 }
 
-// ElevenLabs/Kokoro have no word timings — run Whisper over the wav. Returns the
+// Kokoro has no word timings — run Whisper over the wav. Returns the
 // flat [{id,text,start,end}] word array, or null. Each call uses a throwaway
 // --dir so parallel scenes don't collide on transcript.json.
 export async function transcribeWav({ wavRel, lang = "en", hyperframesDir }) {

@@ -14,7 +14,7 @@ import { log } from '../platform/log.ts';
 const mediaLog = log.child({ mod: 'vendedor-media' });
 
 export interface MediaRoute {
-  provider: 'openai' | 'elevenlabs' | 'sidecar';
+  provider: 'openai' | 'sidecar';
   model: string;
   zdr: boolean;
   voice?: string;
@@ -65,8 +65,8 @@ const MAX_HEADER_BYTES = 16_384;
 const MAX_ROUTES = 5;
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,80}$/;
 const PROVIDERS_FOR = {
-  transcribe: ['sidecar', 'openai', 'elevenlabs'],
-  speak: ['openai', 'elevenlabs'],
+  transcribe: ['sidecar', 'openai'],
+  speak: ['openai'],
 } as const;
 
 /** write-time check for `agent_runtime.media_routes` (validateSetting); paths are `transcribe.0.model` */
@@ -94,8 +94,6 @@ export function validateMediaRoutes(
       if (typeof r.zdr !== 'boolean') throw bad(`${at}.zdr`, 'must be true or false');
       if (r.voice !== undefined && (typeof r.voice !== 'string' || !MODEL_ID.test(r.voice)))
         throw bad(`${at}.voice`, 'must be a voice id');
-      if (kind === 'speak' && r.provider === 'elevenlabs' && r.voice === undefined)
-        throw bad(`${at}.voice`, 'is required for ElevenLabs');
     });
   }
 }
@@ -193,8 +191,7 @@ export function mediaProviders(
       return configured.some(
         (r) =>
           (r.provider === 'sidecar' && !!(env.STT_URL && env.STT_SECRET)) ||
-          (r.provider === 'openai' && !!env.OPENAI_API_KEY) ||
-          (r.provider === 'elevenlabs' && !!env.ELEVENLABS_API_KEY),
+          (r.provider === 'openai' && !!env.OPENAI_API_KEY),
       );
     },
     async transcribe(audio, mime, hints) {
@@ -243,32 +240,6 @@ export function mediaProviders(
                 language: j.language ?? null,
               };
           }
-          if (r.provider === 'elevenlabs' && env.ELEVENLABS_API_KEY) {
-            const form = new FormData();
-            form.set(
-              'file',
-              new Blob([audio], { type: mime.split(';')[0] ?? mime }),
-              audioFileName(mime),
-            );
-            form.set('model_id', r.model);
-            form.set('language_code', 'por');
-            // zero-retention mode (enterprise accounts): nothing is logged or kept on their side
-            const j = (await fetchJson(
-              `https://api.elevenlabs.io/v1/speech-to-text${r.zdr ? '?enable_logging=false' : ''}`,
-              {
-                method: 'POST',
-                headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
-                body: form,
-              },
-            )) as { text?: string; language_code?: string; language_probability?: number };
-            if (typeof j.text === 'string')
-              return {
-                text: j.text.trim().slice(0, 4000),
-                confidence:
-                  typeof j.language_probability === 'number' ? j.language_probability : null,
-                language: j.language_code ?? null,
-              };
-          }
         } catch (err) {
           mediaLog.warn({ err: String(err), provider: r.provider }, 'transcription route failed');
         }
@@ -278,27 +249,6 @@ export function mediaProviders(
     async speak(text) {
       for (const r of await routes('speak')) {
         try {
-          if (r.provider === 'elevenlabs' && env.ELEVENLABS_API_KEY && r.voice) {
-            const res = await fetch(
-              `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(r.voice)}?output_format=opus_48000_64${r.zdr ? '&enable_logging=false' : ''}`,
-              {
-                method: 'POST',
-                headers: {
-                  'xi-api-key': env.ELEVENLABS_API_KEY,
-                  'content-type': 'application/json',
-                },
-                body: JSON.stringify({ text, model_id: r.model }),
-                signal: AbortSignal.timeout(TIMEOUT_MS),
-              },
-            );
-            if (!res.ok) throw new Error(`elevenlabs ${res.status}`);
-            const bytes = new Uint8Array(await res.arrayBuffer());
-            return {
-              bytes,
-              mime: 'audio/ogg; codecs=opus',
-              seconds: Math.max(1, Math.round(text.length / 15)),
-            };
-          }
           if (r.provider === 'openai' && env.OPENAI_API_KEY) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
               method: 'POST',

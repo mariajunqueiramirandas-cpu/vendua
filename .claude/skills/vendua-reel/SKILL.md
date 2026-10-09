@@ -1,6 +1,6 @@
 ---
 name: vendua-reel
-description: Make a Venduá marketing video (Instagram Reel/Story, promo, feature or trial ad) with HyperFrames and ElevenLabs. Use whenever a Venduá video is requested or an existing one under videos/ is changed, and before generating any voice, music or sound effect for it — it sets the house defaults (frenético pace, Bruna da Costa + Talis, "Vendu-á" pronunciation, 128 BPM grid) and routes all ElevenLabs work through the API key instead of the MCP connector.
+description: Make a Venduá marketing video (Instagram Reel/Story, promo, feature or trial ad) with HyperFrames. Use whenever a Venduá video is requested or an existing one under videos/ is changed, and before generating any voice, music or sound effect for it — it sets the house defaults (frenético pace, "Vendu-á" pronunciation, 128 BPM grid) and asks the author to choose the voice, music and SFX source before any audio is made.
 ---
 
 # Venduá Reels
@@ -19,14 +19,13 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
 
 - 1080×1920, pt-BR, 25–30 s, **frenético**: cuts on a 128 BPM eighth-note grid, 0.2 s slams,
   punch-ins and shakes, no hold over ~0.5 s except the end card (~1.2 s, the CTA must read).
-- Narrator **Bruna da Costa** (`AKXBn24T1f9tvTDnWzWT`), customer voices **Talis**
-  (`E9a8LlXPNWtyvvSoZzrb`), model `eleven_v3` with tags such as `[energetic, fast]`.
+- Narrator and customer voices: **not chosen**. Ask the author which voices to use before generating.
 - **The voice sets the pace**: generate the lines first, then size each frame to its line (voice +
   short lead/tail, rounded up to whole eighths). Never speed a take up or cut it to fit a planned
   frame; if it is too slow, generate a faster take or trim words.
 - The brand is said **ven-du-Á**: spell it `Vendu-á` in every TTS prompt (`Ven-du-á` on
-  `eleven_v4` at a sentence start or before a plan name, where `Vendu-á` turns into "Van-duá") and
-  have the author hear one line with it before generating the rest.
+  a TTS model that says "Vendu-á" as "Van-duá" at a sentence start or before a plan name, where
+  `Ven-du-á` is safer) and have the author hear one line with it before generating the rest.
 - Sound effects are the premium set: soft, tonal UI sounds mixed low under the voice, one per
   moment, an accent (never an impact) on the logo. Prompts and processing are in
   `videos/README.md` → Premium SFX; `scripts/build-audio.py sfx` rebuilds them from the takes.
@@ -34,17 +33,13 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
   Venduá delivers. Say where the order lands (the shop's phone), not how it travels.
 - Real captures only; prices, plans and dates on screen are the author's decision.
 
-## ElevenLabs = the API key
+## Audio source: ask first
 
-- Requires `ELEVENLABS_API_KEY` in the environment (the cloud environment's secret). If it is
-  missing, tell the person to add it in the environment settings under that name, and do not ask
-  them to paste it into the chat. Never write it into a file in the repo.
-- Generate with `python videos/tools/elevenlabs.py` (`tts`, `sfx`, `music`, `whoami`). Batch 3–4
-  calls at a time, run them in one shell (a trailing `&` loses `cd` and `export`), and save raw
-  takes in the project's gitignored `audio/takes/`.
-- Do not use the ElevenLabs MCP connector for Venduá videos: its account is the free tier and gets
-  flagged from cloud sessions. The vendored `audio.mjs` ElevenLabs path is limited to
-  `eleven_multilingual_v2` (no audio tags), so it is a fallback only.
+- Before any voice, music or SFX is generated, ask the author which provider and voices to use, and
+  record the answer in the project's `BRIEF.md`. Never reuse a provider key, a voice ID or a tool
+  from an older commit.
+- Save raw takes in the project's gitignored `audio/takes/`. Batch 3–4 calls at a time, run them in
+  one shell (a trailing `&` loses `cd` and `export`).
 
 ## Order of work
 

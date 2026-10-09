@@ -51,12 +51,12 @@ test("passes Gemini model and delivery style through the workflow adapter", () =
 });
 
 test("uses HF_TTS_PROVIDER when --provider is omitted", () => {
-  assert.equal(runAudio({ env: { HF_TTS_PROVIDER: "elevenlabs" } }).provider, "elevenlabs");
+  assert.equal(runAudio({ env: { HF_TTS_PROVIDER: "kokoro" } }).provider, "kokoro");
 });
 
 test("--provider takes precedence over HF_TTS_PROVIDER", () => {
   assert.equal(
-    runAudio({ args: ["--provider", "kokoro"], env: { HF_TTS_PROVIDER: "elevenlabs" } }).provider,
+    runAudio({ args: ["--provider", "kokoro"], env: { HF_TTS_PROVIDER: "heygen" } }).provider,
     "kokoro",
   );
 });

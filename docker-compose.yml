@@ -115,8 +115,6 @@ services:
       # Svix signing secret for the inbound email webhook; unset = inbound events rejected.
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
       TINYFISH_API_KEY: ${TINYFISH_API_KEY:-}
-      # the Vendedor's voice notes when its media routes name elevenlabs (transcribe/speak)
-      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       # Agent Runtime v3 model routes when control_settings has none (same JSON, zdr routes only)
       AGENT_MODEL_ROUTES: ${AGENT_MODEL_ROUTES:-}
       # Delivery by road distance (ADR 0024); unset = straight line × 1.3.

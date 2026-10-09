@@ -1576,7 +1576,7 @@ export interface AiModelsView {
   }[];
 }
 /** control_settings `agent_runtime.media_routes`: voice notes in (transcribe) and voice replies (speak) */
-export type MediaProviderId = 'sidecar' | 'openai' | 'elevenlabs';
+export type MediaProviderId = 'sidecar' | 'openai';
 export interface MediaRouteSetting {
   provider: MediaProviderId;
   model: string;

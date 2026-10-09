@@ -75,8 +75,7 @@ the only producer of `site_tasks`),
   under `videos/*/` included). `bun.lock` is ~120 KB: inspect it with `git diff`
   or a grep, never a whole-file Read.
 - Marketing videos live in `videos/` (HyperFrames): read `videos/README.md` and load the
-  `vendua-reel` skill first. ElevenLabs goes through `videos/tools/elevenlabs.py` with the
-  `ELEVENLABS_API_KEY` environment secret, not the ElevenLabs MCP connector.
+  `vendua-reel` skill first. Voice, music and SFX need a source chosen with the author first.
 - `site/` is the marketing site: read `site/README.md` first. Its images are real admin
   screens captured by `site/scripts/assets.ts`, never hand-drawn UI, and the build fails on
   token drift from the admin or on banned copy.

@@ -9,45 +9,32 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 
 ## Defaults (decided on vendua-audio-47s; ask only to change them)
 
-| Decision       | Default                                                                                                                                              |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Format         | 1080×1920, 30 fps, Reels + Stories, pt-BR                                                                                                            |
-| Pace           | **Frenético**: 25–30 s, cuts on a 128 BPM grid, 0.2 s slams, punch-ins, shakes. The calm 36 s v1 was rejected as "muito lento".                      |
-| Narrator       | ElevenLabs **Bruna da Costa** `AKXBn24T1f9tvTDnWzWT` (Creator plan), `eleven_v3`, `[energetic, fast]`                                                |
-| Customer voice | ElevenLabs **Talis** `E9a8LlXPNWtyvvSoZzrb`, band-limited to sound like a phone voice note                                                           |
-| Brand name     | "Venduá" is stressed on the final **á**. Prompts spell it `Vendu-á`. Bruna says it right on every take; other voices vary per take, so check by ear. |
-| Music          | ElevenLabs Music, instrumental, 128 BPM, "full energy from the first second, no intro, no fade", 30 s                                                |
-| SFX            | ElevenLabs Sound Effects, **premium**: soft and tonal, under the voice (recipe below). The hard v2 set (impacts, whips) was rejected as harsh.       |
-| Visuals        | Real captures only (admin screens from `site/`, storefront shots from the dev stack); no AI images, no photos of people                              |
-| Copy           | Prices, plans and dates on screen need the author's decision (repo `CLAUDE.md`)                                                                      |
-| Safe area      | Readable content in y 250–1280, x 72–940; captions in y 1300–1520; nothing in the Reels UI zones                                                     |
+| Decision       | Default                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Format         | 1080×1920, 30 fps, Reels + Stories, pt-BR                                                                                       |
+| Pace           | **Frenético**: 25–30 s, cuts on a 128 BPM grid, 0.2 s slams, punch-ins, shakes. The calm 36 s v1 was rejected as "muito lento". |
+| Narrator       | **Not chosen.** Ask the author which voice narrates; no audio provider is set up for videos                                     |
+| Customer voice | **Not chosen.** Ask the author; a phone-voice-note band-limit is the treatment wanted                                           |
+| Brand name     | "Venduá" is stressed on the final **á**. Prompts spell it `Vendu-á`. Check every take by ear: voices vary per take.             |
+| Music          | **Not chosen.** Instrumental, 128 BPM, "full energy from the first second, no intro, no fade", 30 s when generated              |
+| SFX            | **Not chosen.** Soft and tonal, under the voice (recipe below). The hard v2 set (impacts, whips) was rejected as harsh.         |
+| Visuals        | Real captures only (admin screens from `site/`, storefront shots from the dev stack); no AI images, no photos of people         |
+| Copy           | Prices, plans and dates on screen need the author's decision (repo `CLAUDE.md`)                                                 |
+| Safe area      | Readable content in y 250–1280, x 72–940; captions in y 1300–1520; nothing in the Reels UI zones                                |
 
-## ElevenLabs: use the API key, not the connector
+## Audio sources: none chosen yet
 
-- The key is the environment secret **`ELEVENLABS_API_KEY`** (cloud environment settings → Edit →
-  API credentials or environment variables). Never paste it into chat, never write it to a file in
-  the repo; scripts read it from the environment.
-- `videos/tools/elevenlabs.py` calls the API directly (stdlib only, uses the session proxy's CA):
-  `whoami`, `tts <voice> "<text>" out.mp3 [--model eleven_v3]`, `sfx "<prompt>" out.mp3
-[--seconds N]`, `music "<prompt>" out.mp3 [--seconds 30]` (`force_instrumental` on).
-- Why not the ElevenLabs MCP connector: it is tied to whichever account authorised it (here the
-  free tier, so no Bruna), and from a cloud session that account got flagged ("Unusual activity…
-  proxy or VPN… Free Tier access has been disabled") mid-job. Its music nodes also default to
-  `Instrumental: False`.
-- The vendored HyperFrames TTS path (`media-use` → `audio.mjs`, `HF_TTS_PROVIDER=elevenlabs`) works
-  with the same env var but hardcodes `eleven_multilingual_v2`: no `[audio tags]`, and no music or
-  SFX. Use `videos/tools/elevenlabs.py` for anything expressive.
-- Limits: 3–4 generations in flight; a 429 means nothing started (safe to resend). Signed result
-  URLs from the connector expire after 2 h, so download as soon as a take lands.
+The narrator, the music and the SFX each need a source chosen with the author before any audio is
+generated. Never reuse a provider key, a voice ID or a tool from an older commit.
 
 ## The fast path
 
 1. **Brief** (`BRIEF.md`): concept, destination, exact CTA copy, the trial/price wording from the
    site. Settle the pace (default frenético) and the voices before writing a storyboard.
-2. **Pronunciation and voice test first**: one line containing "Venduá" with the chosen narrator
-   (`elevenlabs.py tts …`), heard by the author, before generating the whole script.
-3. **Voices set the pace**: generate every line with `eleven_v3` tags (`[energetic, fast]` is
-   what makes it frenético), then run `scripts/build-audio.py voices` (pauses cut to ≤0.14 s, no
+2. **Pronunciation and voice test first**: one line containing "Venduá" with the chosen narrator,
+   heard by the author, before generating the whole script.
+3. **Voices set the pace**: generate every line with the chosen narrator's delivery controls
+   (fast, energetic delivery is what makes it frenético), then run `scripts/build-audio.py voices` (pauses cut to ≤0.14 s, no
    speed-ups). The voice is the clock: each frame is as long as its line plus a short lead and
    tail, and nothing is decided about frame lengths before the takes exist. A line that feels slow
    gets a faster take or fewer words, not a rubberband stretch or a frame that cuts it short.
@@ -81,9 +68,9 @@ the HyperFrames `product-launch-video` workflow through the house defaults below
 ## Premium SFX (the house sound)
 
 The author's ask, after the v2 cut: "cleaner and more premium" instead of hard effects. What
-worked: soft, tonal UI sounds from ElevenLabs Sound Effects, two takes each (`elevenlabs.py sfx
-"<prompt>" out.mp3 --seconds N`), the better one picked by ear and by `measure.py levels` (one
-tap take came back at −62 dBFS, nearly silent).
+worked: soft, tonal UI sounds from a sound-effects generator, two takes each (prompt below, about
+`--seconds N`), the better one picked by ear and by `measure.py levels` (one tap take came back at
+−62 dBFS, nearly silent). The source is still to be chosen (see above).
 
 | Sound  | s   | Prompt                                                                                                                                                               |
 | ------ | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,8 +132,6 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   The frenético cut reused every layout, asset and script, and only retimed audio and motion. **Ask
   about pace with a 5-second reference, before the storyboard**: it is the most expensive decision
   to change late.
-- The ElevenLabs connector blocked twice: tier (Bruna needs Creator) and an account flag from the
-  cloud proxy. Both vanish with the API key in the environment.
 - Pronunciation of the brand name is the one thing a script can't verify: Whisper hears stress
   only indirectly. Test it first, by ear.
 - Swapping the narrator after the frames were built cost a cue table per frame and four frame
@@ -162,7 +147,7 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   the order; "E o pedido cai prontinho no seu celular!" says where it lands (the shop's phone,
   ready to accept) and matches the push on screen. Prefer where-it-lands over how-it-travels verbs
   ("chega", "vai", "sai") for anything a viewer could take as logistics.
-- A one-line rewrite cost one Bruna batch (4 takes, 2 wordings), a re-Whisper, one more eighth on
+- A one-line rewrite cost one narrator batch (4 takes, 2 wordings), a re-Whisper, one more eighth on
   frame 5 and a retime of that frame's cues; nothing else moved, because the later frames are
   frame-relative.
 - Final cut (v3): 27.42 s, six frames (7.03 / 5.86 / 3.05 / 2.58 / 2.34 / 6.56 s), 23 SFX,
@@ -170,11 +155,9 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 
 ## Findings from vendua-lancamento (the ~64 s launch Reel)
 
-- `eleven_v4` takes the same `[energetic, fast]` tags as v3 and doesn't speak them. Pass
-  `--model eleven_v4` to `elevenlabs.py tts`.
-- With `eleven_v4`, `Vendu-á` is only safe after an article ("Chegou o Vendu-á!"). At a sentence
-  start or before "Bandeira" it came out "Van-duá" in every take, and the author rejected it. Spell
-  it `Ven-du-á` there. Whisper hears the right one as "Vendo A" and the wrong one as "Vandoa" /
+- With the v4 narrator model, `Vendu-á` is only safe after an article ("Chegou o Vendu-á!"). At a
+  sentence start or before "Bandeira" it came out "Van-duá" in every take, and the author rejected
+  it. Spell it `Ven-du-á` there. Whisper hears the right one as "Vendo A" and the wrong one as "Vandoa" /
   "Vanduá", so screen takes on that before asking for an ear.
 - Cutting the tail off a take (`CUT` in `build-audio.py`): measure the gap on the processed
   `audio/vo/` file at 0.02 s windows and cut inside it. Whisper's word times are ~0.2 s early, and

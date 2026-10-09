@@ -128,10 +128,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('media transcribe via sidecar (d
       routes: { transcribe: [SIDECAR] },
       saved: true,
       sidecar: { configured: true, reachable: true, model: 'parakeet-tdt-0.6b-v3' },
-      providers: [
-        { id: 'openai', configured: true, secretName: 'OPENAI_API_KEY' },
-        { id: 'elevenlabs', configured: false, secretName: 'ELEVENLABS_API_KEY' },
-      ],
+      providers: [{ id: 'openai', configured: true, secretName: 'OPENAI_API_KEY' }],
     });
     // configured but down: a closed port answers nothing
     const down = await view({ STT_URL: 'http://127.0.0.1:9', STT_SECRET: 's' });
@@ -160,7 +157,7 @@ describe('media routes, as the CRM saves them', () => {
     expect(
       field({
         transcribe: [SIDECAR, { provider: 'openai', model: 'gpt-4o-transcribe', zdr: false }],
-        speak: [{ provider: 'elevenlabs', model: 'eleven_flash_v2_5', zdr: true, voice: 'abc123' }],
+        speak: [{ provider: 'openai', model: 'gpt-4o-mini-tts', zdr: true, voice: 'alloy' }],
       }),
     ).toBeNull();
   });
@@ -177,8 +174,5 @@ describe('media routes, as the CRM saves them', () => {
     expect(field({ transcribe: [SIDECAR, { ...SIDECAR, model: '' }] })).toBe('transcribe.1.model');
     expect(field({ transcribe: [{ ...SIDECAR, model: 'a b' }] })).toBe('transcribe.0.model');
     expect(field({ transcribe: [{ ...SIDECAR, zdr: 'yes' }] })).toBe('transcribe.0.zdr');
-    expect(field({ speak: [{ provider: 'elevenlabs', model: 'm', zdr: true }] })).toBe(
-      'speak.0.voice',
-    );
   });
 });
