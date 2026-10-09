@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { foldText } from '@vendua/kernel';
 
-// Stand-in art for a product without a photo: a forest line drawing on a warm tint with one
-// lime highlight, picked from the product's own words — never a grey box.
+// Stand-in art for a product without a photo: a plum line drawing on a blush tint with one
+// gold highlight, picked from the product's own words — never a grey box.
 
 export type Dish = 'flan' | 'pop' | 'cup' | 'burger' | 'pizza' | 'bowl' | 'box' | 'cloche';
 

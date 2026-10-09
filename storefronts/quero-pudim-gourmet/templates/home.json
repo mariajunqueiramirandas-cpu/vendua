@@ -2,12 +2,44 @@
   "version": 1,
   "page": "home",
   "sections": [
-    { "id": "hero", "type": "store:menu-hero" },
+    {
+      "id": "hero",
+      "type": "store:hero",
+      "settings": {
+        "kicker": "Doces gourmet",
+        "title": "Quero Pudim Gourmet",
+        "text": "Pudins gourmet de qualidade artesanal, para celebrar, presentear ou guardar um momento só seu.",
+        "ctaLabel": "Ver o cardápio",
+        "ctaHref": "#cardapio"
+      }
+    },
     {
       "id": "featured",
       "type": "store:menu-rail",
-      "settings": { "title": "Destaques", "limit": 8 }
+      "settings": { "title": "Da nossa vitrine", "limit": 8 }
     },
-    { "id": "menu", "type": "store:menu" }
+    {
+      "id": "story",
+      "type": "store:story",
+      "settings": {
+        "kicker": "História da marca",
+        "title": "Um clássico, tratado com cuidado",
+        "body": "O pudim é um doce de memória: lembra mesa posta, almoço de domingo e aquela fatia que todo mundo quer repetir. A Quero Pudim Gourmet existe para dar a esse clássico a atenção que ele merece.\n\nAcreditamos que um doce simples pede escolhas atentas: bons ingredientes, preparo sem pressa e um acabamento caprichado, do ponto da calda à hora de embalar.\n\nÉ esse cuidado artesanal, em cada detalhe, que queremos que você sinta já na primeira colherada.",
+        "quote": "Um doce simples, feito para ser saboreado devagar."
+      }
+    },
+    {
+      "id": "instagram",
+      "type": "store:instagram",
+      "settings": {
+        "title": "Acompanhe a Quero Pudim Gourmet de perto",
+        "text": "Novidades, lançamentos e os detalhes de cada doce estão no nosso perfil.",
+        "handle": "@queropudim_gourmet",
+        "href": "https://www.instagram.com/queropudim_gourmet",
+        "ctaLabel": "Siga no Instagram",
+        "newTabLabel": "abre em nova aba"
+      }
+    },
+    { "id": "menu", "type": "store:menu", "settings": { "title": "Cardápio" } }
   ]
 }
