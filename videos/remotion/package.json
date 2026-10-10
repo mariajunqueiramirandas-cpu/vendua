@@ -2,11 +2,12 @@
   "name": "vendua-videos",
   "private": true,
   "type": "module",
-  "description": "Venduá marketing videos in Remotion; music and SFX scored in code with Tone.js",
+  "description": "Vendu\u00e1 marketing videos in Remotion; music and SFX scored in code with Tone.js",
   "scripts": {
     "studio": "remotion studio",
     "audio": "node scripts/render-audio.mjs",
     "still": "remotion still",
+    "draft": "remotion render --scale=0.5 --crf=26",
     "render": "remotion render",
     "check": "tsc --noEmit"
   },

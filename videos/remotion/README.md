@@ -31,12 +31,27 @@ cd videos/remotion && npm ci
 npm run audio -- hype30            # public/hype30/score.wav (~90 s); --stems also writes music/sfx stems to out/
 npm run studio                     # live preview at localhost:3000
 node scripts/stills.mjs Hype30 0 3.8 15 28.5   # contact sheet in out/stills/
-npm run render -- Hype30 out/hype30.mp4         # ~5 min for 30 s on 4 CPUs, software GL
+npm run draft -- Hype30 out/draft.mp4           # half size, ~2 min: for checking motion and sync
+npm run render -- Hype30 out/hype30.mp4         # full 1080×1920, ~7 min for 30 s on 4 CPUs, software GL
 npm run check                      # tsc
 ```
 
 Render the audio before the studio or a render: the WAV is generated, not committed. Renders go in
 `out/` (gitignored): send them to the author, don't commit MP4s.
+
+## Render time
+
+The full render of Hype30 is about 7 minutes of compute in a 4-CPU cloud container. Nearly all
+of it goes to drawing the shaders in software. A cloud session's container slows to a crawl while
+the session is idle, so stay in the turn until the render finishes: wait on it in the foreground
+or with a monitor. If you end the turn and wait for a notification, 7 minutes became 34 on Hype30.
+To go faster:
+
+- Iterate in `npm run studio` (live, no render) and with `stills.mjs`. Render once at the end.
+- Use `npm run draft` while checking motion and sync.
+- On a machine with a GPU, `REMOTION_GL=angle npm run render …` takes a minute or two.
+- Remotion Lambda splits the frames across AWS workers. It needs an AWS account and is not set up
+  here.
 
 ## How a video is built
 

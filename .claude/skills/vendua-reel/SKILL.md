@@ -46,6 +46,7 @@ the findings from the HyperFrames videos, which still apply to pace, copy and so
 
 Timeline (grid, spans, cues, copy from `site/src/lib/content.ts`) → `score.ts` → `npm run audio --
 <id> --stems` and balance each effect within ~3 dB of the music → World + scenes, one at a time,
-each checked with `node scripts/stills.mjs <Comp> <seconds…>` → full render to `out/` → send it to
-the author. Renders aren't committed. You write the scenes yourself (UI work is Opus-grade per the
+each checked with `node scripts/stills.mjs <Comp> <seconds…>` → `npm run draft` if the motion needs a
+look → full render to `out/` (about 7 min; stay in the turn while it runs, because an idle cloud
+container crawls) → send it to the author (re-encode under 30 MB to send). Renders aren't committed. You write the scenes yourself (UI work is Opus-grade per the
 repo `CLAUDE.md`).
