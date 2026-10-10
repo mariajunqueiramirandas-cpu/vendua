@@ -65,7 +65,9 @@ generated. Never reuse a provider key, a voice ID or a tool from an older commit
    look at the snapshots it takes 0.1 s either side of every cut, plus frame midpoints.
 10. **Draft for the author**: `npx hyperframes render --quality draft`, Whisper the draft to
     confirm every line sits in its frame, send it with a contact sheet. Only after "render it":
-    `--quality high`, then loudness (below), then commit `renders/<name>.mp4`.
+    `--quality high`, then loudness (below), then send `renders/<name>.mp4` to the author. Renders
+    are not committed (`videos/*/renders/` is gitignored); the music bed is rebuilt from
+    `synth.py` and `master.sh`, so it is not committed either.
 
 ## Premium SFX (the house sound)
 
