@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: 'Space Grotesk';
+          src: url('assets/fonts/space-grotesk-latin-wght-normal.woff2') format('woff2');
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: 'Figtree';
+          src: url('assets/fonts/figtree-latin-wght-normal.woff2') format('woff2');
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+          color: #f7f4ea;
+        }
+        .f7-glow {
+          position: absolute;
+          left: -15%;
+          top: -15%;
+          width: 130%;
+          height: 130%;
+          background: radial-gradient(1100px 820px at 50% 52%, #123c32 0%, #0a100d 70%);
+          transform-origin: 50% 52%;
+        }
+        .f7-lime {
+          position: absolute;
+          inset: 0;
+          background: #d9f875;
+          opacity: 0;
+        }
+        .f7-cam,
+        .f7-grp {
+          position: absolute;
+          inset: 0;
+        }
+        .f7-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+        }
+
+        /* ── g1: the question, low in a field of night ── */
+        .f7-ghost {
+          position: absolute;
+          right: 10px;
+          top: 150px;
+          font:
+            700 760px/0.8 'Space Grotesk',
+            system-ui,
+            sans-serif;
+          letter-spacing: -0.06em;
+          color: transparent;
+          -webkit-text-stroke: 2px rgb(217 248 117 / 0.1);
+          white-space: nowrap;
+        }
+        .f7-q {
+          position: absolute;
+          left: 64px;
+          top: 960px;
+          width: 952px;
+          transform-origin: 0% 100%;
+        }
+        .f7-hl {
+          display: block;
+          font-family: 'Space Grotesk', system-ui, sans-serif;
+          font-weight: 700;
+          line-height: 0.9;
+          letter-spacing: -0.045em;
+          white-space: nowrap;
+        }
+        .f7-in {
+          display: inline-block;
+          transform-origin: 0% 60%;
+        }
+        .f7-q1 {
+          font-size: 128px;
+        }
+        .f7-q2 {
+          font-size: 200px;
+          margin-top: 6px;
+        }
+        .f7-sp {
+          position: absolute;
+          left: 68px;
+          top: 1296px;
+          font:
+            600 54px/1.1 'Figtree',
+            system-ui,
+            sans-serif;
+          color: #b9c6bf;
+          white-space: nowrap;
+        }
+        .f7-ch {
+          opacity: 0;
+        }
+
+        /* ── g2: the claim stack ── */
+        .f7-claim {
+          position: absolute;
+          left: 64px;
+          top: 720px;
+          width: 952px;
+        }
+        .f7-c1 {
+          font-size: 104px;
+          margin-bottom: 40px;
+        }
+        .f7-c2,
+        .f7-c3 {
+          font-size: 148px;
+        }
+        .f7-c3 {
+          margin-top: 10px;
+        }
+        .f7-word {
+          position: relative;
+          display: inline-block;
+        }
+        .f7-mk {
+          position: absolute;
+          left: -0.1em;
+          right: -0.1em;
+          top: 0.02em;
+          bottom: -0.2em;
+          padding-left: 0.1em;
+          background: #d9f875;
+          color: #123c32;
+          border-radius: 0.12em;
+          clip-path: inset(0 100% 0 0 round 0.12em);
+        }
+        .f7-mk > span {
+          position: relative;
+          top: -0.02em;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="07-preco" data-width="1080" data-height="1920">
+        <div class="f7-glow" id="f7-glow"></div>
+        <div class="f7-lime" id="f7-lime"></div>
+        <div class="f7-cam" id="f7-cam">
+          <div class="f7-grp" id="f7-g1">
+            <div class="f7-ghost" id="f7-ghost">R$</div>
+            <div class="f7-q" id="f7-q">
+              <div class="f7-hl f7-q1"><span class="f7-in" id="f7-q1">E quanto custa</span></div>
+              <div class="f7-hl f7-q2"><span class="f7-in" id="f7-q2">tudo isso?</span></div>
+            </div>
+            <div class="f7-sp" id="f7-sp">(spoiler: cabe no bolso)</div>
+          </div>
+          <div class="f7-grp" id="f7-g2">
+            <div class="f7-claim" id="f7-claim">
+              <div class="f7-hl f7-c1">
+                <span class="f7-in f7-ink" id="f7-c1">Mensalidade fixa.</span>
+              </div>
+              <div class="f7-hl f7-c2"><span class="f7-in f7-ink" id="f7-c2">Sem comissão</span></div>
+              <div class="f7-hl f7-c3">
+                <span class="f7-in" id="f7-c3"
+                  ><span class="f7-word f7-ink"
+                    >por pedido.<span class="f7-mk" id="f7-mk"><span>por pedido.</span></span></span
+                  ></span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+        <svg class="f7-grain" viewBox="0 0 1080 1920" preserveAspectRatio="none" aria-hidden="true">
+          <filter id="f7-noise">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.9"
+              numOctaves="2"
+              stitchTiles="stitch"
+            />
+          </filter>
+          <rect width="1080" height="1920" filter="url(#f7-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const DUR = 3.75;
+          const BEAT = 0.46875;
+          const S16 = 0.1171875;
+          const T_Q2 = BEAT; // 37.96875
+          const T_SP = 3 * BEAT; // 38.90625
+          const T_SW = 4 * BEAT; // 39.375 — bar 21, riser starts
+          const T_C2 = 5 * BEAT; // 39.84375
+          const T_C3 = 6 * BEAT; // 40.3125
+          const T_ST = 7 * BEAT; // 40.78125 — strobe
+          const CREAM = '#f7f4ea';
+          const FOREST = '#123c32';
+          const LIME = '#d9f875';
+
+          // spoiler line → one span per character for the type-on
+          const sp = document.getElementById('f7-sp');
+          const txt = sp.textContent;
+          sp.textContent = '';
+          const chars = [];
+          for (let i = 0; i < txt.length; i++) {
+            const s = document.createElement('span');
+            s.className = 'f7-ch';
+            s.textContent = txt[i];
+            sp.appendChild(s);
+            chars.push(s);
+          }
+
+          const tl = gsap.timeline({ paused: true });
+
+          // ── base state ──
+          gsap.set('#f7-g1', { autoAlpha: 1 });
+          gsap.set('#f7-g2', { autoAlpha: 0 });
+          gsap.set('#f7-lime', { opacity: 0 });
+          gsap.set('#f7-cam', { scale: 1, filter: 'blur(0px)', autoAlpha: 1, transformOrigin: '50% 50%' });
+          gsap.set('#f7-q2', { opacity: 0 });
+          gsap.set('.f7-ink', { color: CREAM });
+          gsap.set('#f7-mk', { clipPath: 'inset(0% 100% 0% 0% round 0.12em)', backgroundColor: LIME, color: FOREST });
+          gsap.set(['#f7-c1', '#f7-c2', '#f7-c3'], { opacity: 0 });
+
+          const slam = (sel, at, from) =>
+            tl.fromTo(
+              sel,
+              from || { opacity: 0, scale: 1.18, filter: 'blur(14px)' },
+              { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.16, ease: 'power4.out' },
+              at,
+            );
+
+          // ════ g1 — the question (0 → 1.875) ════
+          // frame 0 is already mid-slam
+          slam('#f7-q1', 0, { opacity: 0.55, scale: 1.09, filter: 'blur(7px)' });
+          slam('#f7-q2', T_Q2 - 0.06);
+          // braam: the block kicks once the second line lands, then settles
+          tl.fromTo('#f7-q', { scale: 1 }, { scale: 1.03, duration: 0.07, ease: 'power4.out' }, T_Q2 + 0.08);
+          tl.to('#f7-q', { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.55)' }, T_Q2 + 0.15);
+          // slow 4 % push on the whole question across the bar
+          tl.fromTo('#f7-g1', { scale: 1, transformOrigin: '30% 62%' }, { scale: 1.04, duration: T_SW, ease: 'none' }, 0);
+          // the forest glow breathes low (the filtered breakdown), swells a touch on each slam
+          tl.fromTo('#f7-glow', { scale: 0.86, opacity: 0.55, y: 0 }, { scale: 0.92, opacity: 0.85, y: 0, duration: 0.3, ease: 'power3.out' }, 0);
+          tl.to('#f7-glow', { scale: 0.98, opacity: 1, duration: 0.3, ease: 'power3.out' }, T_Q2);
+          tl.to('#f7-glow', { scale: 0.9, opacity: 0.7, duration: T_SW - T_Q2 - 0.3, ease: 'sine.inOut' }, T_Q2 + 0.3);
+          // ghost "R$" in the empty top: drifts up, barely there
+          tl.fromTo('#f7-ghost', { y: 40, x: 0 }, { y: -50, x: -24, duration: T_SW, ease: 'none' }, 0);
+          // the aside types itself on, quick and quiet
+          chars.forEach((c, i) => tl.set(c, { opacity: 1 }, T_SP - 0.04 + i * 0.0115));
+
+          // ════ 0 ms swap → g2, the claim stack (1.875 → 3.75) ════
+          tl.set('#f7-g1', { autoAlpha: 0 }, T_SW);
+          tl.set('#f7-g2', { autoAlpha: 1 }, T_SW);
+          slam('#f7-c1', T_SW - 0.06);
+          slam('#f7-c2', T_C2 - 0.06);
+          slam('#f7-c3', T_C3 - 0.06);
+          tl.to('#f7-mk', { clipPath: 'inset(0% 0% 0% 0% round 0.12em)', duration: 0.18, ease: 'power3.out' }, T_C3 + 0.05);
+          // the riser: an accelerating push into the marker, the glow climbs and opens up
+          tl.fromTo('#f7-g2', { scale: 1, transformOrigin: '50% 62%' }, { scale: 1.03, duration: T_ST - T_SW, ease: 'power2.in' }, T_SW);
+          tl.fromTo('#f7-glow', { scale: 0.9, opacity: 0.7, y: 140 }, { scale: 1.12, opacity: 1, y: -60, duration: T_ST - T_SW, ease: 'power2.in', immediateRender: false }, T_SW);
+
+          // ════ crash zoom + one lime flip, held into the drop ════
+          tl.set('#f7-cam', { transformOrigin: '42% 60%' }, T_ST);
+          tl.to('#f7-cam', { scale: 2.1, filter: 'blur(9px)', duration: DUR - T_ST, ease: 'power3.in' }, T_ST);
+          const toLime = (at) => {
+            tl.set('#f7-lime', { opacity: 1 }, at);
+            tl.set('.f7-ink', { color: FOREST }, at);
+            tl.set('#f7-mk', { backgroundColor: FOREST, color: LIME }, at);
+          };
+          // one flip, held: a full-stage strobe at sixteenths is a photosensitivity risk in an ad
+          toLime(T_ST);
+
+          tl.set({}, {}, DUR);
+          window.__timelines['07-preco'] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

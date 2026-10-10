@@ -1,11 +1,13 @@
 # Venduá videos
 
-Marketing videos (Instagram Reels first) built with HyperFrames: one folder per video under
-`videos/`, shared tools in `videos/tools/`. The first one, `vendua-audio-47s/`, is the reference
-project: copy its design spec, caption skin and scripts instead of starting from the presets.
+Marketing videos (Instagram Reels and Stories first). **New videos are built in
+[`remotion/`](remotion/README.md)** with Remotion for the picture and Tone.js for the music and
+SFX, scored in code against one shared timeline (the author's call, 2026-10-10). Start there and
+load the `vendua-reel` skill.
 
-Read this, then load the `vendua-reel` skill (`.claude/skills/vendua-reel/SKILL.md`), which routes
-the HyperFrames `product-launch-video` workflow through the house defaults below.
+Everything below was learned on the HyperFrames videos (`vendua-hype-60s/`, `tools/`). The tooling
+steps are HyperFrames-specific. The defaults, the copy rules, the safe area and the premium-SFX
+findings apply to every video.
 
 ## Defaults (decided on vendua-audio-47s; ask only to change them)
 
@@ -170,3 +172,25 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   total match on every screen.
 - In-frame screen swaps between two text-heavy screenshots must be near-cuts (opacity over ≤0.06 s,
   with the slide on `y`): a 0.2 s dissolve reads as two chats printed on top of each other.
+
+## Findings from vendua-hype-60s (the 60 s Stories ad, music and SFX synthesized in code)
+
+- The runtime hides an inactive frame by setting `visibility: hidden` on its clip wrapper. A child
+  set to `visibility: visible` (CSS or `tl.set`) overrides that and shows during other frames.
+  Show elements with `visibility: inherit`. Snapshots of single frames never catch it; the
+  assembled video does (`content_overlap` naming another frame's ids in `hyperframes check`).
+- No provider needed for audio: `vendua-hype-60s/scripts/synth.py` (numpy/scipy) writes the 128 BPM
+  track and every SFX on the storyboard's anchors, and `scripts/master.sh` masters it to −14 LUFS.
+- `STORYBOARD.md` frontmatter `canvas` must be strict JSON (`{"w": 1080, "h": 1920, "fps": 30}`):
+  otherwise `assemble-index.mjs` quietly falls back to 1920×1080.
+- Contrast ✗ on slot-reel digits mid-spin and on exit-whip blur are motion samples, not bugs.
+- Frames authored one by one end on hard cuts. Seams live in `vendua-hype-60s/scripts/seams.js`: tweens on
+  the `#el-<id>` wrappers in the main timeline, and a hold that keeps the outgoing frame mounted
+  past its cut while it leaves. The frames must stack strictly descending (earlier above later):
+  one shared z-index for every held frame put the incoming frame on top and hid the transition.
+- Read cue times off the frames' real GSAP timelines (`tl.getChildren()` in Playwright), not the
+  storyboard: the storyboard anchors drifted from what the frames actually do.
+- No full-stage colour strobes (frame 7 flipped lime/night at 8.5 Hz): hold one flip instead.
+- Don't open the Studio (`hyperframes preview`) on a finished project: it stamps `data-hf-id` into
+  every frame file and reformats them. To inspect state at a time, drive `window.__player.renderSeek`
+  in Playwright against a throwaway preview and `git checkout` the frames afterwards.

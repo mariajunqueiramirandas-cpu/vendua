@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "Space Grotesk";
+          src: url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: "Figtree";
+          src: url("assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+          font-family: "Figtree", system-ui, sans-serif;
+          color: #f7f4ea;
+        }
+        .f4-layer {
+          position: absolute;
+          inset: 0;
+        }
+        #f4-bg {
+          background: radial-gradient(1200px 900px at 50% 38%, #123c32 0%, #0a100d 70%);
+        }
+        #f4-bg2 {
+          background: radial-gradient(900px 900px at 50% 50%, #1b5243 0%, #123c32 35%, rgb(10 16 13 / 0) 75%);
+          opacity: 0;
+        }
+        #f4-strobe {
+          background: #123c32;
+          opacity: 0;
+        }
+        #f4-cam {
+          transform-origin: 50% 50%;
+        }
+        #f4-shake {
+          transform-origin: 50% 50%;
+        }
+        .f4-grp {
+          position: absolute;
+          inset: 0;
+        }
+        #f4-g2,
+        #f4-g4,
+        #f4-h3 {
+          visibility: hidden;
+          opacity: 0;
+        }
+
+        /* headlines */
+        .f4-hl {
+          position: absolute;
+          left: 64px;
+          top: 262px;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          letter-spacing: -0.045em;
+          line-height: 0.9;
+          color: #f7f4ea;
+          white-space: nowrap;
+        }
+        .f4-line {
+          position: relative;
+          display: block;
+          height: 0.9em;
+        }
+        .f4-w {
+          position: absolute;
+          left: 0;
+          top: 0;
+          display: block;
+          transform-origin: 0% 60%;
+          opacity: 0;
+        }
+
+        /* the phone (frame.md, prefixed) */
+        .f4-phone {
+          width: var(--pw);
+          aspect-ratio: 600/1290;
+          position: absolute;
+        }
+        .f4-phone-body {
+          position: absolute;
+          inset: 0;
+          padding: calc(var(--pw) * 0.032);
+          border-radius: calc(var(--pw) * 0.16);
+          background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+          box-shadow:
+            inset 0 0 0 2px rgb(255 255 255 / 0.16),
+            0 0 0 1px rgb(255 255 255 / 0.06),
+            0 40px 90px rgb(0 0 0 / 0.55);
+        }
+        .f4-phone-screen {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          border-radius: calc(var(--pw) * 0.13);
+          background: #f7f4ea;
+        }
+        .f4-phone-island {
+          position: absolute;
+          z-index: 5;
+          top: calc(var(--pw) * 0.026);
+          left: 50%;
+          width: 30%;
+          height: calc(var(--pw) * 0.074);
+          transform: translateX(-50%);
+          border-radius: 999px;
+          background: #050807;
+        }
+
+        /* S1 — lock screen */
+        #f4-p1wrap {
+          position: absolute;
+          left: 220px;
+          top: 620px;
+          width: 640px;
+          height: 1376px;
+          perspective: 2400px;
+        }
+        #f4-p1 {
+          left: 0;
+          top: 0;
+          transform-origin: 50% 40%;
+        }
+        .f4-lock {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 114px 33px 0;
+          color: #f7f4ea;
+          background:
+            radial-gradient(120% 70% at 30% 8%, #2d7a60 0%, transparent 60%),
+            radial-gradient(90% 50% at 90% 100%, rgb(217 248 117 / 0.18) 0%, transparent 70%),
+            linear-gradient(165deg, #1d4a3d 0%, #123c32 45%, #0a100d 100%);
+        }
+        .f4-date {
+          font: 600 28px/1.2 "Figtree", sans-serif;
+          opacity: 0.85;
+        }
+        .f4-time {
+          font: 300 156px/1 "Figtree", sans-serif;
+          letter-spacing: -0.03em;
+          margin: 4px 0 54px;
+        }
+        .f4-push {
+          width: 100%;
+          display: grid;
+          grid-template-columns: 62px 1fr auto;
+          grid-template-areas:
+            "icon app when"
+            "icon title title"
+            "icon body body"
+            "act act act";
+          column-gap: 16px;
+          align-items: center;
+          padding: 22px 24px;
+          border-radius: 38px;
+          background: rgb(247 244 234 / 0.96);
+          color: #123c32;
+          font: 500 27px/1.3 "Figtree", sans-serif;
+          box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
+          transform-origin: 50% 0%;
+          opacity: 0;
+        }
+        .f4-push-icon {
+          grid-area: icon;
+          align-self: start;
+          width: 62px;
+          height: 62px;
+          border-radius: 22%;
+          background: #123c32;
+          display: grid;
+          place-items: center;
+        }
+        .f4-push-icon svg {
+          width: 44px;
+          height: 44px;
+        }
+        .f4-push-app {
+          grid-area: app;
+          font-size: 21px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          opacity: 0.7;
+        }
+        .f4-push-when {
+          grid-area: when;
+          font-size: 21px;
+          opacity: 0.7;
+        }
+        .f4-push-title {
+          grid-area: title;
+          font-weight: 700;
+          font-size: 31px;
+        }
+        .f4-push-body {
+          grid-area: body;
+          color: #4f6a5e;
+        }
+        .f4-push-actwrap {
+          grid-area: act;
+          height: 0;
+          overflow: hidden;
+        }
+        .f4-push-act {
+          margin-top: 18px;
+          height: 62px;
+          border-radius: 20px;
+          background: #123c32;
+          color: #f7f4ea;
+          font: 600 28px/62px "Figtree", sans-serif;
+          text-align: center;
+        }
+
+        /* S2/S3 — real screens */
+        #f4-p2 {
+          left: 270px;
+          top: 545px;
+          transform-origin: 50% 72%;
+        }
+        .f4-shot {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+        }
+        .f4-shot > img {
+          width: 100%;
+          display: block;
+        }
+        #f4-shotB {
+          opacity: 0;
+        }
+        #f4-accept {
+          position: absolute;
+          left: 4.27%;
+          top: 82.82%;
+          width: 91.47%;
+          height: 6.83%;
+          border-radius: 19px;
+          background: #d9f875;
+          display: grid;
+          place-items: center;
+          opacity: 0;
+        }
+        #f4-accept svg {
+          width: 58px;
+          height: 58px;
+        }
+        #f4-tab {
+          position: absolute;
+          left: 5.33%;
+          top: 18.23%;
+          width: 21.6%;
+          height: 6.9%;
+          border-radius: 15px;
+          background: #d9f875;
+          mix-blend-mode: multiply;
+          opacity: 0;
+        }
+        #f4-ring {
+          position: absolute;
+          left: 225px;
+          top: 911px;
+          width: 120px;
+          height: 120px;
+          border-radius: 50%;
+          border: 6px solid #d9f875;
+          opacity: 0;
+        }
+        #f4-finger {
+          position: absolute;
+          left: 240px;
+          top: 927px;
+          width: 90px;
+          height: 90px;
+          border-radius: 50%;
+          background: radial-gradient(circle at 42% 38%, #fffdf8 0%, #f7f4ea 55%, #e4dfcf 100%);
+          box-shadow:
+            0 0 0 5px rgb(247 244 234 / 0.35),
+            0 18px 40px rgb(0 0 0 / 0.4);
+          opacity: 0;
+        }
+
+        /* S3 ticker */
+        #f4-h3 .f4-w {
+          font-size: 230px;
+        }
+        .f4-saiu {
+          color: #123c32;
+        }
+        .f4-mark {
+          position: absolute;
+          left: -0.1em;
+          right: -0.08em;
+          top: 0.02em;
+          bottom: -0.1em;
+          border-radius: 0.12em;
+          background: #d9f875;
+          transform-origin: 0% 50%;
+          transform: scaleX(0);
+        }
+        .f4-saiu-t {
+          position: relative;
+          display: inline-block;
+          z-index: 0;
+          isolation: isolate;
+        }
+        #f4-sub {
+          position: absolute;
+          left: 64px;
+          top: 498px;
+          font: 600 52px/1.1 "Figtree", sans-serif;
+          color: #b9c6bf;
+          white-space: nowrap;
+          visibility: hidden;
+          opacity: 0;
+        }
+
+        /* S4 build */
+        #f4-g4 {
+          display: grid;
+          place-items: center;
+        }
+        #f4-disc {
+          grid-area: 1/1;
+          width: 200px;
+          height: 200px;
+          border-radius: 50%;
+          background: #d9f875;
+          transform: scale(0);
+        }
+        .f4-big {
+          grid-area: 1/1;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          letter-spacing: -0.045em;
+          line-height: 0.86;
+          text-align: center;
+          white-space: nowrap;
+          color: #f7f4ea;
+          opacity: 0;
+        }
+        #f4-lime {
+          background: #d9f875;
+          opacity: 0;
+        }
+        .f4-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="04-pedido" data-width="1080" data-height="1920">
+        <div id="f4-bg" class="f4-layer"></div>
+        <div id="f4-bg2" class="f4-layer"></div>
+        <div id="f4-strobe" class="f4-layer"></div>
+
+        <div id="f4-cam" class="f4-layer">
+          <div id="f4-shake" class="f4-layer">
+            <!-- S1 · lock screen push -->
+            <div id="f4-g1" class="f4-grp">
+              <div id="f4-p1wrap">
+                <div id="f4-p1" class="f4-phone" style="--pw: 640px">
+                  <div class="f4-phone-body">
+                    <div class="f4-phone-screen">
+                      <span class="f4-phone-island"></span>
+                      <div class="f4-lock">
+                        <div class="f4-date">terça-feira, 29 de setembro</div>
+                        <div class="f4-time">18:52</div>
+                        <div id="f4-push" class="f4-push">
+                          <div class="f4-push-icon">
+                            <svg viewBox="0 0 128 128">
+                              <path
+                                d="M32 48 L61 88 L98 34"
+                                fill="none"
+                                stroke="#d9f875"
+                                stroke-width="17"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              />
+                            </svg>
+                          </div>
+                          <div class="f4-push-app">Minha loja</div>
+                          <div class="f4-push-when">agora</div>
+                          <div class="f4-push-title">Pedido #29 chegou</div>
+                          <div class="f4-push-body">Luiz · R$ 219,00 · entrega</div>
+                          <div id="f4-actwrap" class="f4-push-actwrap">
+                            <div class="f4-push-act">aceitar</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="f4-h1" class="f4-hl" style="font-size: 146px">
+                <span class="f4-line">
+                  <span id="f4-h1a" class="f4-w">Pedido novo?</span>
+                  <span id="f4-h1b" class="f4-w">Cai direto</span>
+                </span>
+                <span class="f4-line"><span id="f4-h1c" class="f4-w">no seu celular.</span></span>
+              </div>
+            </div>
+
+            <!-- S2 + S3 · real order screens -->
+            <div id="f4-g2" class="f4-grp">
+              <div id="f4-p2" class="f4-phone" style="--pw: 540px">
+                <div class="f4-phone-body">
+                  <div class="f4-phone-screen">
+                    <span class="f4-phone-island"></span>
+                    <div id="f4-shotA" class="f4-shot">
+                      <img src="assets/screens/pedido-creme-750.webp" alt="" />
+                      <div id="f4-accept">
+                        <svg viewBox="0 0 128 128">
+                          <path
+                            d="M32 48 L61 88 L98 34"
+                            fill="none"
+                            stroke="#123c32"
+                            stroke-width="17"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div id="f4-shotB" class="f4-shot">
+                      <img src="assets/screens/pedidos-creme-750.webp" alt="" />
+                      <div id="f4-tab"></div>
+                    </div>
+                  </div>
+                </div>
+                <div id="f4-ring"></div>
+                <div id="f4-finger"></div>
+              </div>
+              <div id="f4-h2" class="f4-hl" style="font-size: 140px">
+                <span class="f4-line"><span id="f4-h2a" class="f4-w">Aceita</span></span>
+                <span class="f4-line"><span id="f4-h2b" class="f4-w">com um toque.</span></span>
+              </div>
+              <div id="f4-h3" class="f4-hl" style="font-size: 230px">
+                <span class="f4-line">
+                  <span id="f4-t0" class="f4-w">Novo.</span>
+                  <span id="f4-t1" class="f4-w">Preparo.</span>
+                  <span id="f4-t2" class="f4-w">Pronto.</span>
+                  <span id="f4-t3" class="f4-w f4-saiu"
+                    ><span class="f4-saiu-t"><span id="f4-mark" class="f4-mark"></span><span style="position: relative">Saiu!</span></span></span
+                  >
+                </span>
+              </div>
+              <div id="f4-sub">Tudo na tela, sem caderninho.</div>
+            </div>
+
+            <!-- S4 · the build -->
+            <div id="f4-g4" class="f4-grp">
+              <div id="f4-disc"></div>
+              <div id="f4-b0" class="f4-big" style="font-size: 300px">E se</div>
+              <div id="f4-b1" class="f4-big" style="font-size: 280px">alguém</div>
+              <div id="f4-b2" class="f4-big" style="font-size: 212px">vendesse</div>
+              <div id="f4-b3" class="f4-big" style="font-size: 330px">por<br />você?</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="f4-lime" class="f4-layer"></div>
+        <svg class="f4-grain" xmlns="http://www.w3.org/2000/svg">
+          <filter id="f4-noise">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#f4-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const tl = gsap.timeline({ paused: true });
+          const B = 0.46875; // beat
+          const S = B / 4; // sixteenth
+
+          // slam: 1.18→1, blur 14→0, 0.16 s power4.out, landing on `at`
+          function slam(sel, at, from) {
+            tl.fromTo(
+              sel,
+              { opacity: 0, scale: from || 1.18, filter: "blur(14px)" },
+              { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.16, ease: "power4.out" },
+              at - 0.06,
+            );
+          }
+          // shake: deterministic offsets, 0 ms steps
+          const SH = [
+            [1, -0.6],
+            [-0.85, 0.8],
+            [0.7, -0.9],
+            [-0.75, 0.5],
+            [0.55, -0.6],
+            [-0.6, 0.35],
+            [0.4, -0.4],
+            [-0.3, 0.25],
+            [0.2, -0.15],
+            [-0.1, 0.08],
+          ];
+          function shake(at, A, R, step) {
+            const st = step || 0.025;
+            SH.forEach(function (p, i) {
+              const k = 1 - i / SH.length;
+              tl.set("#f4-shake", { x: p[0] * A, y: p[1] * A, rotation: (i % 2 ? -1 : 1) * R * k }, at + i * st);
+            });
+            tl.set("#f4-shake", { x: 0, y: 0, rotation: 0 }, at + SH.length * st);
+          }
+          function punch(at, amt) {
+            tl.to("#f4-cam", { scale: amt, duration: 0.09, ease: "power3.out" }, at);
+            tl.to("#f4-cam", { scale: 1, duration: 0.6, ease: "power2.inOut" }, at + 0.09);
+          }
+
+          // group visibility (0 ms cuts)
+
+          // ── S1 · 0.0–1.875 · lock-screen push ─────────────────────────
+          tl.fromTo("#f4-cam", { scale: 1.05 }, { scale: 1, duration: 0.4, ease: "power3.out" }, 0);
+          tl.fromTo(
+            "#f4-p1",
+            { rotationY: -9, rotationX: 5, scale: 1 },
+            { rotationY: 5, rotationX: 2, scale: 1.035, duration: 1.7, ease: "sine.inOut" },
+            0,
+          );
+          tl.fromTo(
+            "#f4-h1a",
+            { opacity: 0.6, scale: 1.08, filter: "blur(5px)" },
+            { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.12, ease: "power4.out" },
+            0,
+          );
+          // push drops in from above (overlay-pop)
+          tl.fromTo(
+            "#f4-push",
+            { opacity: 0, y: -170, scale: 0.86, filter: "blur(8px)" },
+            { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.34, ease: "back.out(1.7)" },
+            0.02,
+          );
+          // line swap on beat 2
+          tl.set("#f4-h1a", { opacity: 0 }, B - 0.06);
+          slam("#f4-h1b", B);
+          // beat 3: second line + push expands to show "aceitar"
+          slam("#f4-h1c", 2 * B);
+          tl.to("#f4-actwrap", { height: 80, duration: 0.24, ease: "power3.out" }, 2 * B - 0.04);
+          tl.fromTo("#f4-push", { scale: 1.06 }, { scale: 1, duration: 0.3, ease: "power3.out", immediateRender: false }, 2 * B);
+          punch(2 * B, 1.045);
+          // exit whip → S2
+          tl.to(
+            "#f4-p1wrap",
+            { x: -1150, skewX: 12, filter: "blur(12px)", duration: 0.22, ease: "expo.in" },
+            1.875 - 0.22,
+          );
+          tl.to("#f4-h1", { x: -760, filter: "blur(10px)", opacity: 0, duration: 0.2, ease: "expo.in" }, 1.875 - 0.2);
+          tl.set("#f4-g1", { autoAlpha: 0 }, 1.875);
+
+          // ── S2 · 1.875–3.75 · real order screen + tap ─────────────────
+          const T2 = 1.875;
+          tl.set("#f4-g2", { autoAlpha: 1 }, T2 - 0.06);
+          tl.fromTo(
+            "#f4-p2",
+            { x: 1150, skewX: -12, filter: "blur(12px)", scale: 1 },
+            { x: 0, skewX: 0, filter: "blur(0px)", duration: 0.3, ease: "expo.out" },
+            T2 - 0.06,
+          );
+          tl.to("#f4-p2", { scale: 1.02, duration: 1.6, ease: "sine.inOut" }, T2 + 0.25);
+          slam("#f4-h2a", T2);
+          slam("#f4-h2b", T2 + B);
+          // fingertip glides in and taps "aceitar · 30 min"
+          const TAP = T2 + 2 * B; // 2.8125
+          tl.fromTo(
+            "#f4-finger",
+            { opacity: 0, x: 110, y: 130, scale: 1.25 },
+            { opacity: 1, x: 0, y: 0, scale: 1, duration: 0.4, ease: "power3.out" },
+            TAP - 0.5,
+          );
+          tl.to("#f4-finger", { scale: 0.8, duration: 0.07, ease: "power2.in" }, TAP - 0.07);
+          tl.set("#f4-accept", { opacity: 1 }, TAP);
+          tl.fromTo(
+            "#f4-accept svg",
+            { scale: 0, rotation: -20 },
+            { scale: 1, rotation: 0, duration: 0.3, ease: "back.out(3)" },
+            TAP,
+          );
+          tl.fromTo(
+            "#f4-ring",
+            { opacity: 1, scale: 0.4 },
+            { opacity: 0, scale: 2.6, duration: 0.45, ease: "power2.out" },
+            TAP,
+          );
+          tl.to("#f4-finger", { scale: 1, duration: 0.16, ease: "power2.out" }, TAP + 0.03);
+          tl.to("#f4-finger", { autoAlpha: 0, duration: 0.15, ease: "power1.out" }, TAP + 0.2);
+          punch(TAP, 1.03);
+
+          // ── S3 · 3.75–5.625 · order-state ticker ──────────────────────
+          const T3 = 3.75;
+          tl.set("#f4-h2", { autoAlpha: 0 }, T3 - 0.06);
+          tl.set("#f4-h3", { autoAlpha: 1 }, T3 - 0.06);
+          // screen whips up to the orders list; phone settles a little lower
+          tl.to("#f4-shotA", { yPercent: -70, filter: "blur(10px)", duration: 0.14, ease: "expo.in" }, T3 - 0.14);
+          tl.set("#f4-shotA", { opacity: 0 }, T3);
+          tl.set("#f4-shotB", { opacity: 1 }, T3);
+          tl.fromTo(
+            "#f4-shotB",
+            { yPercent: 60, filter: "blur(10px)" },
+            { yPercent: 0, filter: "blur(0px)", duration: 0.26, ease: "expo.out" },
+            T3,
+          );
+          tl.to("#f4-p2", { y: 50, duration: 0.3, ease: "expo.out" }, T3);
+          tl.to("#f4-shotB", { y: -36, duration: 1.6, ease: "none" }, T3 + 0.26);
+          const words = ["#f4-t0", "#f4-t1", "#f4-t2", "#f4-t3"];
+          const tabX = [0, 104.35, 209.26, 313.6]; // xPercent steps of 22.54% shot width / 21.6% tab width
+          words.forEach(function (w, i) {
+            const at = T3 + i * B;
+            if (i > 0) tl.set(words[i - 1], { opacity: 0 }, at - 0.06);
+            tl.fromTo(
+              w,
+              { opacity: 0, scale: 1.14, filter: "blur(10px)" },
+              { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.13, ease: "power4.out" },
+              at - 0.06,
+            );
+            if (i === 0) {
+              tl.fromTo("#f4-tab", { opacity: 0, scaleX: 0.4 }, { opacity: 1, scaleX: 1, duration: 0.18, ease: "power3.out" }, at);
+            } else {
+              tl.to("#f4-tab", { xPercent: tabX[i], duration: 0.2, ease: "power3.inOut" }, at - 0.1);
+              tl.fromTo("#f4-p2", { scale: 1.035 }, { scale: 1, duration: 0.3, ease: "power3.out" }, at);
+            }
+          });
+          tl.to("#f4-mark", { scaleX: 1, duration: 0.18, ease: "power3.out" }, T3 + 3 * B - 0.02);
+          tl.fromTo(
+            "#f4-sub",
+            { autoAlpha: 0, x: -60, filter: "blur(8px)" },
+            { autoAlpha: 1, x: 0, filter: "blur(0px)", duration: 0.22, ease: "expo.out" },
+            T3 + B / 2,
+          );
+          // phone flies away, ticker whips up
+          const T4 = 5.625;
+          tl.to(
+            "#f4-p2",
+            { y: 1600, rotation: 9, filter: "blur(14px)", duration: 0.22, ease: "power2.in" },
+            T4 - 0.19,
+          );
+          tl.to("#f4-h3, #f4-sub", { y: -520, filter: "blur(12px)", opacity: 0, duration: 0.17, ease: "expo.in" }, T4 - 0.17);
+          tl.set("#f4-g2", { autoAlpha: 0 }, T4 + 0.04);
+
+          // ── S4 · 5.625–7.5 · the build ────────────────────────────────
+          tl.set("#f4-g4", { autoAlpha: 1 }, T4 - 0.06);
+          tl.to("#f4-bg2", { opacity: 1, duration: 1.75, ease: "power1.in" }, T4);
+          const big = ["#f4-b0", "#f4-b1", "#f4-b2", "#f4-b3"];
+          const from = [1.3, 1.45, 1.6, 1.8];
+          const amp = [6, 11, 17, 26];
+          const rot = [0.35, 0.6, 0.9, 1.4];
+          big.forEach(function (w, i) {
+            const at = T4 + i * B;
+            if (i > 0) {
+              // outgoing word flies past the camera
+              tl.fromTo(
+                big[i - 1],
+                { opacity: 0.45, scale: 1, filter: "blur(0px)" },
+                { opacity: 0, scale: 2.4, filter: "blur(16px)", duration: 0.16, ease: "power2.in", immediateRender: false },
+                at - 0.05,
+              );
+            }
+            tl.fromTo(
+              w,
+              { opacity: 0, scale: from[i], filter: "blur(18px)" },
+              { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.13, ease: "power4.out" },
+              at - 0.05,
+            );
+            shake(at + 0.06, amp[i], rot[i], i === 3 ? 0.022 : 0.025);
+            if (i > 0 && i < 3) tl.to("#f4-cam", { scale: 1 + i * 0.03, duration: 0.12, ease: "power3.out" }, at);
+          });
+          // accelerating strobe: eighths, then sixteenths
+          const strobes = [
+            [T4 + 2 * B, 0.35],
+            [T4 + 2 * B + 2 * S, 0.45],
+            [T4 + 3 * B, 0.6],
+            [T4 + 3 * B + S, 0.7],
+            [T4 + 3 * B + 2 * S, 0.8],
+          ];
+          strobes.forEach(function (s) {
+            tl.fromTo("#f4-strobe", { opacity: s[1] }, { opacity: 0, duration: 0.1, ease: "power2.out", immediateRender: false }, s[0]);
+          });
+          tl.fromTo("#f4-lime", { opacity: 0 }, { opacity: 0.3, duration: 0.05, ease: "none", immediateRender: false }, T4 + 3 * B + 2 * S);
+          tl.to("#f4-lime", { opacity: 0, duration: 0.06, ease: "power2.out" }, T4 + 3 * B + 2 * S + 0.05);
+          // crash zoom + lime bloom → full lime on the last sixteenth
+          const LIME = 22.38281 - 15.0; // 7.38281
+          tl.to("#f4-cam", { scale: 1.4, duration: 7.5 - (T4 + 3 * B), ease: "power2.in" }, T4 + 3 * B);
+          tl.fromTo("#f4-disc", { scale: 3 }, { scale: 14, duration: LIME - 7.22, ease: "power1.in", immediateRender: false }, 7.22);
+          tl.set("#f4-b3", { color: "#123c32" }, 7.27);
+          tl.set("#f4-lime", { opacity: 1 }, LIME);
+          tl.set("#f4-g4", { autoAlpha: 0 }, LIME);
+
+          tl.set({}, {}, 7.5);
+          tl.seek(0);
+          window.__timelines["04-pedido"] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

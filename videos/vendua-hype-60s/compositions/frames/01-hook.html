@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>01-hook</title>
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "Space Grotesk";
+          src: url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: "Figtree";
+          src: url("assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 900;
+        }
+        #stage[data-composition-id="01-hook"] {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+        }
+        .f1-bg {
+          position: absolute;
+          left: -10%;
+          top: -10%;
+          width: 120%;
+          height: 120%;
+          background: radial-gradient(1200px 900px at 50% 40%, #123c32 0%, #0a100d 70%);
+        }
+        .f1-cam,
+        .f1-punch,
+        .f1-shake {
+          position: absolute;
+          inset: 0;
+          transform-origin: 50% 45%;
+        }
+        .f1-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+          z-index: 20;
+        }
+
+        /* ---------- headline ---------- */
+        .f1-head {
+          position: absolute;
+          left: 64px;
+          top: 420px;
+          width: 940px;
+          height: 440px;
+          transform-origin: 0% 50%;
+        }
+        .f1-copy {
+          position: absolute;
+          left: 0;
+          top: 0;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          font-size: 232px;
+          line-height: 0.9;
+          letter-spacing: -0.045em;
+          color: #f7f4ea;
+          white-space: nowrap;
+          transform-origin: 0% 50%;
+        }
+        .f1-line {
+          display: block;
+        }
+        .f1-ghost {
+          opacity: 0;
+        }
+        .f1-ghost-l {
+          color: #d9f875;
+        }
+        .f1-ghost-r {
+          color: #4f6a5e;
+        }
+        .f1-word {
+          position: relative;
+          display: inline-block;
+        }
+        .f1-mark {
+          position: absolute;
+          left: -0.1em;
+          top: 0.07em;
+          right: -0.1em;
+          bottom: -0.06em;
+          padding-left: 0.1em;
+          background: #d9f875;
+          color: #123c32;
+          border-radius: 0.12em;
+          clip-path: inset(0 100% 0 0 round 0.12em);
+        }
+
+        /* ---------- lock-screen notification stack ---------- */
+        .f1-stack {
+          position: absolute;
+          left: 70px;
+          top: 1000px;
+          width: 940px;
+          height: 420px;
+        }
+        .f1-push {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 940px;
+          height: 190px;
+          box-sizing: border-box;
+          padding: 30px 38px 0 32px;
+          border-radius: 36px;
+          background: #fffdf8;
+          box-shadow:
+            0 0 0 1px rgb(18 60 50 / 0.12),
+            0 30px 70px rgb(0 0 0 / 0.45);
+          display: flex;
+          gap: 26px;
+          font-family: "Figtree", system-ui, sans-serif;
+          color: #123c32;
+          transform-origin: 50% 0%;
+          opacity: 0;
+        }
+        .f1-tile {
+          flex: none;
+          width: 100px;
+          height: 100px;
+          margin-top: 4px;
+          border-radius: 22px;
+          background: #123c32;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .f1-tile svg {
+          width: 70px;
+          height: 70px;
+        }
+        .f1-txt {
+          flex: 1;
+          min-width: 0;
+        }
+        .f1-meta {
+          display: flex;
+          justify-content: space-between;
+          font-size: 30px;
+          font-weight: 600;
+          line-height: 1.1;
+          color: #4f6a5e;
+        }
+        .f1-title {
+          margin-top: 6px;
+          font-size: 44px;
+          font-weight: 800;
+          line-height: 1.12;
+          letter-spacing: -0.01em;
+        }
+        .f1-body {
+          margin-top: 2px;
+          font-size: 38px;
+          font-weight: 500;
+          line-height: 1.15;
+          color: #123c32;
+          white-space: nowrap;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="01-hook" data-width="1080" data-height="1920" data-duration="3.75">
+        <div class="f1-bg" id="f1-bg"></div>
+        <div class="f1-cam" id="f1-cam">
+          <div class="f1-punch" id="f1-punch">
+            <div class="f1-shake" id="f1-shake">
+              <div class="f1-head" id="f1-head">
+                <!-- g1: Você / cozinha. -->
+                <div id="f1-g1">
+                  <div class="f1-copy f1-ghost f1-ghost-r" id="f1-gr">
+                    <span class="f1-line">Você</span><span class="f1-line">cozinha.</span>
+                  </div>
+                  <div class="f1-copy f1-ghost f1-ghost-l" id="f1-gl">
+                    <span class="f1-line">Você</span><span class="f1-line">cozinha.</span>
+                  </div>
+                  <div class="f1-copy" id="f1-h1">
+                    <span class="f1-line">Você</span><span class="f1-line">cozinha.</span>
+                  </div>
+                </div>
+                <!-- g2: A gente / vende. -->
+                <div id="f1-g2" style="visibility: hidden">
+                  <div class="f1-copy" id="f1-h2">
+                    <span class="f1-line">A gente</span
+                    ><span class="f1-line"
+                      ><span class="f1-word">vende.<span class="f1-mark" id="f1-mark">vende.</span></span></span
+                    >
+                  </div>
+                </div>
+              </div>
+
+              <div class="f1-stack" id="f1-stack">
+                <div class="f1-push" id="f1-pa">
+                  <div class="f1-tile">
+                    <svg viewBox="0 0 128 128">
+                      <path
+                        d="M32 48 L61 88 L98 34"
+                        fill="none"
+                        stroke="#d9f875"
+                        stroke-width="17"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </div>
+                  <div class="f1-txt">
+                    <div class="f1-meta"><span>Minha loja</span><span>agora</span></div>
+                    <div class="f1-title">Pedido #28 chegou</div>
+                    <div class="f1-body">Mariana · R$ 85,00 · entrega</div>
+                  </div>
+                </div>
+                <div class="f1-push" id="f1-pb">
+                  <div class="f1-tile">
+                    <svg viewBox="0 0 128 128">
+                      <path
+                        d="M32 48 L61 88 L98 34"
+                        fill="none"
+                        stroke="#d9f875"
+                        stroke-width="17"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </div>
+                  <div class="f1-txt">
+                    <div class="f1-meta"><span>Minha loja</span><span>agora</span></div>
+                    <div class="f1-title">Pedido #29 chegou</div>
+                    <div class="f1-body">Luiz · R$ 219,00 · entrega</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <svg class="f1-grain" xmlns="http://www.w3.org/2000/svg">
+          <filter id="f1-noise">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#f1-noise)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const ID = "01-hook";
+          const DUR = 3.75;
+          const BEAT = 0.46875;
+          const BAR = 1.875;
+          const tl = gsap.timeline({ paused: true });
+
+          // ---- base state (seek-safe) ----
+          tl.set("#f1-cam", { y: 0, skewY: 0, filter: "blur(0px)", opacity: 1 }, 0);
+          tl.set("#f1-punch", { scale: 1 }, 0);
+          tl.set("#f1-shake", { x: 0, y: 0, rotation: 0 }, 0);
+          tl.set("#f1-g1", { visibility: "inherit" }, 0);
+          tl.set("#f1-g2", { visibility: "hidden" }, 0);
+          tl.set("#f1-mark", { clipPath: "inset(0% 100% 0% 0% round 0.12em)" }, 0);
+          tl.set(["#f1-pa", "#f1-pb"], { opacity: 0, y: -140, scale: 0.9, filter: "blur(10px)" }, 0);
+          tl.set("#f1-pa", { backgroundColor: "#fffdf8" }, 0);
+          tl.set("#f1-pa > *", { opacity: 1 }, 0);
+
+          // ---- 0.0: slam "Você / cozinha." — already mid-slam on frame 0 ----
+          tl.fromTo(
+            "#f1-head",
+            { scale: 1.1, filter: "blur(1.5px)" },
+            { scale: 1, filter: "blur(0px)", duration: 0.14, ease: "power4.out" },
+            0,
+          );
+          // chromatic split: 2 frames
+          tl.set("#f1-gl", { opacity: 1, x: -11, y: 2 }, 0);
+          tl.set("#f1-gr", { opacity: 1, x: 11, y: -2 }, 0);
+          tl.set("#f1-gl", { x: -5, y: 1 }, 1 / 30);
+          tl.set("#f1-gr", { x: 5, y: -1 }, 1 / 30);
+          tl.set(["#f1-gl", "#f1-gr"], { opacity: 0, x: 0, y: 0 }, 2 / 30);
+          // the forest glow breathes for the whole frame
+          tl.fromTo("#f1-bg", { scale: 1, y: 0 }, { scale: 1.08, y: -40, duration: DUR, ease: "none" }, 0);
+
+          // shake ±8 px / ±0.6° for 0.25 s (fixed table)
+          const SH = [
+            [8, -5, 0.6],
+            [-7, 6, -0.5],
+            [6, -6, 0.45],
+            [-6, 4, -0.4],
+            [5, -3, 0.3],
+            [-4, 3, -0.25],
+            [3, -2, 0.15],
+            [-2, 1, -0.1],
+          ];
+          SH.forEach((s, i) => {
+            tl.set("#f1-shake", { x: s[0], y: s[1], rotation: s[2] }, i * (0.25 / SH.length));
+          });
+          tl.set("#f1-shake", { x: 0, y: 0, rotation: 0 }, 0.25);
+
+          // breathing drift on the headline across bar 0
+          tl.fromTo("#f1-h1", { scale: 1 }, { scale: 1.035, duration: BAR - 0.14, ease: "none" }, 0.14);
+
+          // ---- 0.9375: push A drops in (overlay-pop) ----
+          const pop = (sel, at) => {
+            tl.to(sel, { opacity: 1, duration: 0.04, ease: "power2.out" }, at - 0.12);
+            tl.to(sel, { y: 0, scale: 1, duration: 0.28, ease: "back.out(1.6)" }, at - 0.12);
+            tl.to(sel, { filter: "blur(0px)", duration: 0.12, ease: "power2.out" }, at - 0.12);
+          };
+          pop("#f1-pa", BEAT * 2);
+          // tiny camera nod as the push lands
+          tl.fromTo("#f1-punch", { scale: 1 }, { scale: 1.025, duration: 0.08, ease: "power2.out" }, BEAT * 2 - 0.02);
+          tl.to("#f1-punch", { scale: 1, duration: 0.5, ease: "power2.out" }, BEAT * 2 + 0.06);
+          // push A floats very slightly while it waits
+          tl.to("#f1-pa", { y: 10, duration: BAR - 0.3, ease: "sine.inOut" }, BEAT * 2 + 0.22);
+
+          // ---- 1.875: hard word swap → "A gente / vende." + punch-in ----
+          tl.set("#f1-g1", { visibility: "hidden" }, BAR);
+          tl.set("#f1-g2", { visibility: "inherit" }, BAR);
+          tl.fromTo(
+            "#f1-h2",
+            { scale: 1.1, filter: "blur(6px)" },
+            { scale: 1, filter: "blur(0px)", duration: 0.13, ease: "power4.out" },
+            BAR,
+          );
+          tl.fromTo("#f1-punch", { scale: 1 }, { scale: 1.06, duration: 0.1, ease: "power3.out" }, BAR);
+          tl.to("#f1-punch", { scale: 1, duration: BAR - 0.4, ease: "power2.inOut" }, BAR + 0.1);
+          tl.to("#f1-h2", { scale: 1.03, duration: 1.2, ease: "none" }, BAR + 0.13);
+
+          // ---- 2.34375: lime marker wipes in under "vende." ----
+          tl.to(
+            "#f1-mark",
+            { clipPath: "inset(0% 0% 0% 0% round 0.12em)", duration: 0.18, ease: "power3.out" },
+            BAR + BEAT - 0.06,
+          );
+
+          // ---- 2.8125: push B drops on top; A slides down + back to 0.94 ----
+          const B = BAR + BEAT * 2;
+          tl.to("#f1-pa", { y: 34, scale: 0.94, duration: 0.24, ease: "power3.out" }, B - 0.09);
+          tl.to("#f1-pa", { backgroundColor: "#d9d6cb", duration: 0.2, ease: "power2.out" }, B - 0.09);
+          tl.to("#f1-pa > *", { opacity: 0, duration: 0.12, ease: "power2.out" }, B - 0.09);
+          tl.set("#f1-pb", { zIndex: 2 }, 0);
+          pop("#f1-pb", B);
+          tl.fromTo("#f1-stack", { y: 0 }, { y: -8, duration: 0.5, ease: "sine.out" }, B + 0.15);
+
+          // ---- 3.28125 → 3.75: whole camera whips up into blur ----
+          const W = BAR + BEAT * 3;
+          tl.to(
+            "#f1-cam",
+            { y: -1500, skewY: -6, filter: "blur(28px)", duration: DUR - W, ease: "expo.in" },
+            W,
+          );
+
+          tl.set({}, {}, DUR);
+          window.__timelines[ID] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

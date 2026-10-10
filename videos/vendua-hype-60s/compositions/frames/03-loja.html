@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>03-loja</title>
+  </head>
+  <body>
+    <template>
+      <style>
+        @font-face {
+          font-family: "Space Grotesk";
+          src: url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 700;
+        }
+        @font-face {
+          font-family: "Figtree";
+          src: url("assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+          font-weight: 300 900;
+        }
+        #stage {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #0a100d;
+        }
+        .f3-bg {
+          position: absolute;
+          left: -10%;
+          top: -10%;
+          width: 120%;
+          height: 120%;
+          background: radial-gradient(1200px 900px at 50% 38%, #123c32 0%, #0a100d 70%);
+        }
+        .f3-cam {
+          position: absolute;
+          inset: 0;
+          transform-origin: 50% 45%;
+        }
+        .f3-grain {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0.07;
+          mix-blend-mode: overlay;
+          pointer-events: none;
+          z-index: 30;
+        }
+
+        /* ---------- headlines ---------- */
+        .f3-head {
+          position: absolute;
+          left: 64px;
+          top: 270px;
+          width: 952px;
+          height: 350px;
+          display: none;
+        }
+        .f3-line {
+          display: block;
+          width: max-content;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          letter-spacing: -0.045em;
+          line-height: 0.9;
+          color: #f7f4ea;
+          white-space: nowrap;
+          transform-origin: 0% 60%;
+          visibility: hidden;
+        }
+        .f3-lime {
+          color: #d9f875;
+        }
+        .f3-mark {
+          position: relative;
+          display: inline-block;
+          z-index: 0;
+          isolation: isolate;
+        }
+        .f3-mark-bg {
+          position: absolute;
+          left: -0.1em;
+          right: -0.06em;
+          top: 0.04em;
+          bottom: -0.1em;
+          background: #d9f875;
+          border-radius: 0.12em;
+          transform-origin: 0% 50%;
+          transform: scaleX(0);
+          z-index: -1;
+        }
+        .f3-sub {
+          position: absolute;
+          left: 0;
+          font-family: "Figtree", system-ui, sans-serif;
+          font-weight: 600;
+          font-size: 56px;
+          line-height: 1.1;
+          color: #b9c6bf;
+          white-space: nowrap;
+          visibility: hidden;
+        }
+        .f3-tick {
+          position: absolute;
+          left: 0;
+          top: 0;
+          font-size: 222px;
+          transform-origin: 0% 70%;
+        }
+
+        /* ---------- phone ---------- */
+        .f3-persp {
+          position: absolute;
+          inset: 0;
+          perspective: 2400px;
+          perspective-origin: 50% 60%;
+        }
+        .f3-move {
+          position: absolute;
+          left: 240px;
+          top: 700px;
+          width: 600px;
+          height: 1290px;
+          transform-style: preserve-3d;
+          transform-origin: 50% 0%;
+        }
+        .f3-tilt,
+        .f3-flip {
+          position: absolute;
+          inset: 0;
+          transform-style: preserve-3d;
+        }
+        .phone {
+          width: var(--pw);
+          aspect-ratio: 600/1290;
+          position: absolute;
+        }
+        .phone-body {
+          position: absolute;
+          inset: 0;
+          padding: calc(var(--pw) * 0.032);
+          border-radius: calc(var(--pw) * 0.16);
+          background: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+          box-shadow:
+            inset 0 0 0 2px rgb(255 255 255 / 0.16),
+            0 0 0 1px rgb(255 255 255 / 0.06),
+            0 40px 90px rgb(0 0 0 / 0.55);
+        }
+        .phone-screen {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          border-radius: calc(var(--pw) * 0.13);
+          background: #f7f4ea;
+        }
+        .phone-screen > img {
+          width: 100%;
+          display: block;
+        }
+        .phone-island {
+          position: absolute;
+          z-index: 5;
+          top: calc(var(--pw) * 0.026);
+          left: 50%;
+          width: 30%;
+          height: calc(var(--pw) * 0.074);
+          transform: translateX(-50%);
+          border-radius: 999px;
+          background: #050807;
+        }
+        .phone-screen > .f3-scr {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          visibility: hidden;
+        }
+        .phone-screen > .f3-scr-boas {
+          visibility: inherit;
+        }
+
+        /* ---------- drawn storefront (shopper view of Bolos da Nena) ---------- */
+        .f3-store {
+          position: absolute;
+          inset: 0;
+          background: #f7f4ea;
+          font-family: "Figtree", system-ui, sans-serif;
+          color: #123c32;
+          display: none;
+          overflow: hidden;
+        }
+        .f3-bar {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          height: 128px;
+          z-index: 3;
+          background: #f7f4ea;
+          border-bottom: 1px solid rgb(18 60 50 / 0.12);
+        }
+        .f3-url {
+          position: absolute;
+          left: 22px;
+          right: 22px;
+          top: 68px;
+          height: 46px;
+          border-radius: 999px;
+          background: #ebe5d5;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 21px;
+          font-weight: 600;
+          color: #4f6a5e;
+          white-space: nowrap;
+        }
+        .f3-url span {
+          display: none;
+        }
+        .f3-url i {
+          display: inline-block;
+          width: 2px;
+          height: 24px;
+          margin-left: 2px;
+          background: #123c32;
+        }
+        .f3-page {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 128px;
+        }
+        .f3-shead {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 16px 22px 14px;
+        }
+        .f3-logo {
+          flex: none;
+          display: grid;
+          place-items: center;
+          width: 46px;
+          height: 46px;
+          border-radius: 50%;
+          background: #123c32;
+          color: #fffdf8;
+          font-weight: 800;
+          font-size: 22px;
+        }
+        .f3-sname {
+          flex: 1;
+          font-weight: 700;
+          font-size: 23px;
+        }
+        .f3-bag {
+          padding: 6px 16px;
+          border-radius: 999px;
+          background: #ebe5d5;
+          font-size: 18px;
+          font-weight: 600;
+        }
+        .f3-cover {
+          position: relative;
+          margin: 2px 18px 0;
+          height: 186px;
+          border-radius: 22px;
+          overflow: hidden;
+        }
+        .f3-cover-fill {
+          position: absolute;
+          inset: 0;
+          background: #123c32;
+          transform-origin: 0% 50%;
+        }
+        .f3-cover-in {
+          position: absolute;
+          inset: 0;
+          padding: 26px 26px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: 10px;
+          color: #fffdf8;
+        }
+        .f3-ctitle {
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          font-size: 42px;
+          line-height: 1;
+          letter-spacing: -0.02em;
+        }
+        .f3-ctag {
+          font-size: 21px;
+          font-weight: 500;
+          color: rgb(255 253 248 / 0.84);
+        }
+        .f3-open {
+          align-self: flex-start;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 16px 6px 12px;
+          border-radius: 999px;
+          background: #d9f875;
+          color: #123c32;
+          font-size: 18px;
+          font-weight: 700;
+        }
+        .f3-open b {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #1f7a4d;
+        }
+        .f3-cats {
+          display: flex;
+          gap: 10px;
+          padding: 18px 18px 0;
+          white-space: nowrap;
+        }
+        .f3-cat {
+          flex: none;
+          padding: 7px 16px;
+          border: 1px solid rgb(18 60 50 / 0.22);
+          border-radius: 999px;
+          font-size: 18px;
+          font-weight: 500;
+        }
+        .f3-cat.f3-on {
+          border-color: transparent;
+          background: #dfe5dc;
+          font-weight: 700;
+        }
+        .f3-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px;
+          padding: 18px 18px 0;
+        }
+        .f3-card {
+          position: relative;
+          border-radius: 20px;
+          background: #fffdf8;
+          box-shadow:
+            0 0 0 1px rgb(18 60 50 / 0.08),
+            0 10px 24px rgb(18 60 50 / 0.08);
+          overflow: hidden;
+          visibility: hidden;
+        }
+        .f3-tile {
+          height: 160px;
+          background: #efe9da;
+          display: grid;
+          place-items: center;
+        }
+        .f3-tile svg {
+          width: 150px;
+          height: 100px;
+        }
+        .f3-cbody {
+          position: relative;
+          padding: 12px 14px 16px;
+        }
+        .f3-pname {
+          font-size: 20px;
+          font-weight: 700;
+          line-height: 1.22;
+          height: 2.44em;
+        }
+        .f3-price {
+          margin-top: 8px;
+          font-size: 20px;
+          font-weight: 600;
+          color: #4f6a5e;
+        }
+        .f3-add {
+          position: absolute;
+          right: 12px;
+          bottom: 12px;
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #123c32;
+        }
+        .f3-add::before,
+        .f3-add::after {
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 18px;
+          height: 3px;
+          margin: -1.5px 0 0 -9px;
+          border-radius: 2px;
+          background: #fffdf8;
+        }
+        .f3-add::after {
+          transform: rotate(90deg);
+        }
+
+        #f3-card3 {
+          grid-column: 1 / -1;
+          display: flex;
+        }
+        #f3-card3 .f3-tile {
+          flex: none;
+          width: 250px;
+          height: 150px;
+        }
+        #f3-card3 .f3-cbody {
+          flex: 1;
+          padding: 20px 18px;
+        }
+        #f3-card3 .f3-pname {
+          height: auto;
+          font-size: 22px;
+        }
+
+        /* ---------- sales plate (scene 4) ---------- */
+        .f3-plate {
+          position: absolute;
+          left: 116px;
+          top: 1060px;
+          width: 848px;
+          height: 262px;
+          padding: 34px 44px 0;
+          border-radius: 36px;
+          background: #d9f875;
+          color: #123c32;
+          box-shadow: 0 30px 70px rgb(0 0 0 / 0.45);
+          visibility: hidden;
+          transform-origin: 50% 50%;
+        }
+        .f3-plabel {
+          font-family: "Figtree", system-ui, sans-serif;
+          font-weight: 600;
+          font-size: 40px;
+          line-height: 1;
+          color: #123c32;
+          opacity: 0.85;
+        }
+        .f3-pnum {
+          position: absolute;
+          left: 40px;
+          top: 92px;
+          font-family: "Space Grotesk", system-ui, sans-serif;
+          font-weight: 700;
+          font-size: 150px;
+          line-height: 1;
+          letter-spacing: -0.045em;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+        .f3-pfinal {
+          visibility: hidden;
+        }
+
+        /* ---------- lime wipe ---------- */
+        .f3-wipe {
+          position: absolute;
+          top: -40px;
+          left: 0;
+          width: 1800px;
+          height: 2000px;
+          background: #d9f875;
+          transform: translateX(-2400px) skewX(-12deg);
+          z-index: 20;
+        }
+      </style>
+
+      <div id="stage" data-composition-id="03-loja" data-width="1080" data-height="1920">
+        <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+          <defs>
+            <symbol id="f3-cake" viewBox="0 0 150 100">
+              <g
+                fill="none"
+                stroke="#7f9483"
+                stroke-width="3.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M66 22 q4.5 -7 9 0 q4.5 -7 9 0" />
+                <ellipse cx="75" cy="38" rx="31" ry="6" stroke="#b9d36c" />
+                <path d="M44 38 L47 78 M106 38 L103 78" />
+                <path d="M52 44 v9 M64 45 v12 M77 45 v8 M90 45 v11 M100 43 v7" />
+                <ellipse cx="75" cy="84" rx="56" ry="7" />
+                <path d="M30 80 q45 6 90 0" />
+              </g>
+            </symbol>
+          </defs>
+        </svg>
+
+        <div class="f3-bg"></div>
+
+        <div id="f3-cam" class="f3-cam">
+          <!-- phone -->
+          <div class="f3-persp">
+            <div id="f3-move" class="f3-move">
+              <div id="f3-tilt" class="f3-tilt">
+                <div id="f3-flip" class="f3-flip">
+                  <div id="f3-phone" class="phone" style="--pw: 600px">
+                    <div class="phone-body">
+                      <div class="phone-screen">
+                        <span class="phone-island"></span>
+                        <img
+                          id="f3-scr-boas"
+                          class="f3-scr f3-scr-boas"
+                          src="assets/screens/boasVindas-creme-750.webp"
+                          alt=""
+                        />
+                        <div id="f3-store" class="f3-store">
+                          <div class="f3-bar">
+                            <div class="f3-url" id="f3-url">
+                              <span>b</span><span>o</span><span>l</span><span>o</span
+                              ><span>s</span><span>d</span><span>a</span><span>n</span
+                              ><span>e</span><span>n</span><span>a</span><span>.</span
+                              ><span>v</span><span>e</span><span>n</span><span>d</span
+                              ><span>u</span><span>a</span><span>.</span><span>c</span
+                              ><span>o</span><span>m</span><span>.</span><span>b</span
+                              ><span>r</span><i id="f3-caret"></i>
+                            </div>
+                          </div>
+                          <div class="f3-page" id="f3-page">
+                            <div class="f3-shead" id="f3-shead">
+                              <span class="f3-logo">B</span>
+                              <span class="f3-sname">Bolos da Nena</span>
+                              <span class="f3-bag">sacola</span>
+                            </div>
+                            <div class="f3-cover">
+                              <div class="f3-cover-fill" id="f3-cover-fill"></div>
+                              <div class="f3-cover-in" id="f3-cover-in">
+                                <div class="f3-ctitle">Bolos da Nena</div>
+                                <div class="f3-ctag">Bolo de vó, feito hoje.</div>
+                                <div class="f3-open"><b></b>Aberta</div>
+                              </div>
+                            </div>
+                            <div class="f3-cats" id="f3-cats">
+                              <span class="f3-cat f3-on">Bolos inteiros</span>
+                              <span class="f3-cat">Fatias do dia</span>
+                              <span class="f3-cat">Encomendas</span>
+                            </div>
+                            <div class="f3-grid">
+                              <div class="f3-card" id="f3-card1">
+                                <div class="f3-tile"><svg><use href="#f3-cake" /></svg></div>
+                                <div class="f3-cbody">
+                                  <div class="f3-pname">Bolo de cenoura com brigadeiro</div>
+                                  <div class="f3-price">R$ 45,00</div>
+                                  <span class="f3-add"></span>
+                                </div>
+                              </div>
+                              <div class="f3-card" id="f3-card2">
+                                <div class="f3-tile"><svg><use href="#f3-cake" /></svg></div>
+                                <div class="f3-cbody">
+                                  <div class="f3-pname">Bolo de chocolate molhadinho</div>
+                                  <div class="f3-price">R$ 48,00</div>
+                                  <span class="f3-add"></span>
+                                </div>
+                              </div>
+                              <div class="f3-card" id="f3-card3">
+                                <div class="f3-tile"><svg><use href="#f3-cake" /></svg></div>
+                                <div class="f3-cbody">
+                                  <div class="f3-pname">Bolo de fubá com goiabada</div>
+                                  <div class="f3-price">R$ 38,00</div>
+                                  <span class="f3-add"></span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <img
+                          id="f3-scr-card"
+                          class="f3-scr"
+                          src="assets/screens/cardapio-creme-750.webp"
+                          alt=""
+                        />
+                        <img
+                          id="f3-scr-ini"
+                          class="f3-scr"
+                          src="assets/screens/inicio-creme-750.webp"
+                          alt=""
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- S4 sales plate -->
+          <div id="f3-plate" class="f3-plate">
+            <div class="f3-plabel">vendas de hoje</div>
+            <div class="f3-pnum" id="f3-proll">R$ 0,00</div>
+            <div class="f3-pnum f3-pfinal" id="f3-pfinal">R$ 718,00</div>
+          </div>
+
+          <!-- S1 headline -->
+          <div id="f3-h1" class="f3-head" style="display: block">
+            <span id="f3-h1a" class="f3-line" style="font-size: 128px"
+              ><span class="f3-lime">8</span> perguntinhas.</span
+            >
+            <span id="f3-h1b" class="f3-line" style="font-size: 128px">e sua loja</span>
+            <span id="f3-h1c" class="f3-line" style="font-size: 128px">tá no ar.</span>
+          </div>
+
+          <!-- S2 headline -->
+          <div id="f3-h2" class="f3-head">
+            <span id="f3-h2a" class="f3-line" style="font-size: 136px">Sua loja online.</span>
+            <span id="f3-h2b" class="f3-line" style="font-size: 136px; margin-top: 18px"
+              >com a
+              <span class="f3-mark" id="f3-m2"
+                ><span class="f3-mark-bg" id="f3-m2bg"></span>sua cara</span
+              >.</span
+            >
+          </div>
+
+          <!-- S3 headline: word ticker -->
+          <div id="f3-h3" class="f3-head">
+            <span id="f3-t1" class="f3-line f3-tick">Cardápio.</span>
+            <span id="f3-t2" class="f3-line f3-tick">Horários.</span>
+            <span id="f3-t3" class="f3-line f3-tick">Cupons.</span>
+            <span id="f3-t4" class="f3-line f3-tick"
+              ><span class="f3-mark" id="f3-m3"
+                ><span class="f3-mark-bg" id="f3-m3bg"></span>Pix.</span
+              ></span
+            >
+            <span id="f3-h3sub" class="f3-sub" style="top: 252px">Tudo pronto pra vender.</span>
+          </div>
+
+          <!-- S4 headline -->
+          <div id="f3-h4" class="f3-head">
+            <span id="f3-h4a" class="f3-line" style="font-size: 140px">Tudo na palma</span>
+            <span id="f3-h4b" class="f3-line" style="font-size: 140px">da mão.</span>
+          </div>
+        </div>
+
+        <div id="f3-wipe" class="f3-wipe"></div>
+
+        <svg class="f3-grain" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <filter id="f3-grainf">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.9"
+              numOctaves="2"
+              stitchTiles="stitch"
+            />
+          </filter>
+          <rect width="100%" height="100%" filter="url(#f3-grainf)" />
+        </svg>
+      </div>
+
+      <script>
+        (function () {
+          window.__timelines = window.__timelines || {};
+          const D = 7.5;
+          const B = 0.46875; // beat
+          const E = B / 2; // eighth
+          const S2 = 1.875,
+            S3 = 3.75,
+            S4 = 5.625;
+          const q = (s) => document.getElementById(s.slice(1));
+          const tl = gsap.timeline({ paused: true });
+
+          // slam: scale 1.18→1, blur 14→0, opacity 0→1 in .16 s, landing on `at`
+          const slam = (sel, at, lead = 0.06) => {
+            tl.set(sel, { visibility: "inherit" }, at - lead);
+            tl.fromTo(
+              sel,
+              { opacity: 0, scale: 1.18, filter: "blur(14px)" },
+              {
+                opacity: 1,
+                scale: 1,
+                filter: "blur(0px)",
+                duration: 0.16,
+                ease: "power4.out",
+                immediateRender: false,
+              },
+              at - lead,
+            );
+          };
+          const markWipe = (bg, txt, at) => {
+            tl.fromTo(
+              bg,
+              { scaleX: 0 },
+              { scaleX: 1, duration: 0.18, ease: "power3.out", immediateRender: false },
+              at,
+            );
+            tl.set(txt, { color: "#123c32" }, at + 0.07);
+          };
+          const camPunch = (at, peak, back) => {
+            tl.to("#f3-cam", { scale: peak, duration: 0.18, ease: "power3.out" }, at - 0.02);
+            tl.to("#f3-cam", { scale: 1, duration: back, ease: "power2.inOut" }, at + 0.16);
+          };
+
+          // ---------- initial states ----------
+          tl.set("#f3-h1", { display: "block" }, 0);
+          tl.set("#f3-cam", { scale: 1, y: 0, filter: "blur(0px)", skewY: 0 }, 0);
+
+          // ---------- S1 · 0 – 1.875: phone whips up, "8 perguntinhas." ----------
+          tl.fromTo(
+            "#f3-move",
+            { y: 420, scale: 1 },
+            { y: 0, duration: 0.3, ease: "expo.out" },
+            0,
+          );
+          tl.fromTo(
+            "#f3-phone",
+            { filter: "blur(9px)", skewY: 5 },
+            { filter: "blur(0px)", skewY: 0, duration: 0.24, ease: "expo.out" },
+            0,
+          );
+          tl.fromTo(
+            "#f3-move",
+            { y: 0 },
+            { y: -26, duration: S2 - 0.3, ease: "sine.inOut", immediateRender: false },
+            0.3,
+          );
+          tl.fromTo(
+            "#f3-tilt",
+            { rotationY: -14, rotationX: 9 },
+            { rotationY: -4, rotationX: 4, duration: S2, ease: "power2.out" },
+            0,
+          );
+          // line 1 already mid-slam on the cut
+          tl.set("#f3-h1a", { visibility: "inherit" }, 0);
+          tl.fromTo(
+            "#f3-h1a",
+            { opacity: 0.8, scale: 1.08, filter: "blur(5px)" },
+            { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.12, ease: "power4.out" },
+            0,
+          );
+          slam("#f3-h1b", 2 * B);
+          slam("#f3-h1c", 2 * B + E);
+          camPunch(2 * B, 1.05, 0.8);
+          // breathing: the headline creeps
+          tl.fromTo(
+            "#f3-h1",
+            { x: 0 },
+            { x: -14, duration: S2, ease: "none", immediateRender: false },
+            0,
+          );
+
+          // ---------- wipe S1 → S2 ----------
+          tl.fromTo(
+            "#f3-wipe",
+            { x: -2400, skewX: -12 },
+            { x: 1500, skewX: -12, duration: 0.26, ease: "none", immediateRender: false },
+            S2 - 0.13,
+          );
+          tl.set("#f3-h1", { display: "none" }, S2);
+          tl.set("#f3-h2", { display: "block" }, S2);
+          tl.set("#f3-scr-boas", { visibility: "hidden" }, S2);
+          tl.set("#f3-store", { display: "block" }, S2);
+
+          // ---------- S2 · 1.875 – 3.75: drawn storefront ----------
+          slam("#f3-h2a", S2, 0.0);
+          slam("#f3-h2b", S2 + B);
+          markWipe("#f3-m2bg", "#f3-m2", S2 + B + 0.1);
+          tl.fromTo(
+            "#f3-h2",
+            { x: 0 },
+            { x: -14, duration: S3 - S2, ease: "none", immediateRender: false },
+            S2,
+          );
+
+          // url types on 1.875 → 2.34
+          const chars = gsap.utils.toArray(q("#f3-url").querySelectorAll("span"));
+          const step = (B - 0.03) / chars.length;
+          chars.forEach((c, i) => tl.set(c, { display: "inline" }, S2 + 0.02 + i * step));
+          // caret blinks a fixed number of times, then hides
+          for (let k = 0; k < 6; k++) {
+            tl.set("#f3-caret", { opacity: k % 2 ? 1 : 0 }, S2 + B + 0.05 + k * 0.16);
+          }
+
+          // store header + cover fill (directional fill left→right)
+          tl.fromTo(
+            "#f3-shead",
+            { opacity: 0, y: -16 },
+            { opacity: 1, y: 0, duration: 0.2, ease: "expo.out", immediateRender: false },
+            S2 + 0.04,
+          );
+          tl.set("#f3-shead", { opacity: 0 }, 0);
+          tl.set("#f3-cover-fill", { scaleX: 0 }, 0);
+          tl.to("#f3-cover-fill", { scaleX: 1, duration: 0.26, ease: "power3.out" }, S2 + 0.06);
+          tl.set("#f3-cover-in", { opacity: 0 }, 0);
+          tl.fromTo(
+            "#f3-cover-in",
+            { opacity: 0, x: -30, filter: "blur(8px)" },
+            {
+              opacity: 1,
+              x: 0,
+              filter: "blur(0px)",
+              duration: 0.22,
+              ease: "expo.out",
+              immediateRender: false,
+            },
+            S2 + 0.18,
+          );
+          tl.set("#f3-cats", { opacity: 0 }, 0);
+          tl.fromTo(
+            "#f3-cats",
+            { opacity: 0, x: 60 },
+            { opacity: 1, x: 0, duration: 0.24, ease: "expo.out", immediateRender: false },
+            S2 + 0.26,
+          );
+
+          // product cards drop in on beats
+          [1, 2, 3].forEach((n, i) => {
+            const at = S2 + B * (i + 1);
+            const id = "#f3-card" + n;
+            tl.set(id, { visibility: "inherit" }, at - 0.09);
+            tl.fromTo(
+              id,
+              { opacity: 0, y: -110, scale: 1.1, filter: "blur(10px)" },
+              {
+                opacity: 1,
+                y: 0,
+                scale: 1,
+                filter: "blur(0px)",
+                duration: 0.26,
+                ease: "expo.out",
+                immediateRender: false,
+              },
+              at - 0.09,
+            );
+            tl.fromTo(
+              id + " .f3-add",
+              { scale: 0 },
+              { scale: 1, duration: 0.22, ease: "back.out(3)", immediateRender: false },
+              at + 0.05,
+            );
+          });
+          // page scrolls so the third card lands in view
+          tl.fromTo(
+            "#f3-page",
+            { y: 0 },
+            { y: -80, duration: 0.34, ease: "power3.inOut", immediateRender: false },
+            S2 + 3 * B - 0.2,
+          );
+          // phone drift for the bar
+          tl.fromTo(
+            "#f3-tilt",
+            { rotationY: 9, rotationX: 5 },
+            {
+              rotationY: 2,
+              rotationX: 3,
+              duration: S3 - S2 - 0.13,
+              ease: "sine.inOut",
+              immediateRender: false,
+            },
+            S2,
+          );
+          tl.to("#f3-move", { y: -6, duration: S3 - S2, ease: "sine.inOut" }, S2);
+
+          // ---------- S2 → S3: card flip (rotateY) to the Cardápio screen ----------
+          tl.to("#f3-flip", { rotationY: 90, duration: 0.13, ease: "power2.in" }, S3 - 0.13);
+          tl.set("#f3-store", { display: "none" }, S3);
+          tl.set("#f3-scr-card", { visibility: "inherit" }, S3);
+          tl.fromTo(
+            "#f3-flip",
+            { rotationY: -90 },
+            { rotationY: 0, duration: 0.3, ease: "expo.out", immediateRender: false },
+            S3,
+          );
+          tl.set("#f3-h2", { display: "none" }, S3);
+          tl.set("#f3-h3", { display: "block" }, S3);
+
+          // ---------- S3 · 3.75 – 5.625: word ticker ----------
+          const ticks = ["#f3-t1", "#f3-t2", "#f3-t3", "#f3-t4"];
+          ticks.forEach((id, i) => {
+            const at = S3 + i * B;
+            tl.set(id, { visibility: "inherit" }, at);
+            if (i > 0) tl.set(ticks[i - 1], { visibility: "hidden" }, at);
+            tl.fromTo(
+              id,
+              { scale: 1.07, filter: "blur(8px)", opacity: 0.4 },
+              {
+                scale: 1,
+                filter: "blur(0px)",
+                opacity: 1,
+                duration: 0.14,
+                ease: "power4.out",
+                immediateRender: false,
+              },
+              at,
+            );
+          });
+          markWipe("#f3-m3bg", "#f3-m3", S3 + 3 * B + 0.03);
+          slam("#f3-h3sub", S3 + E);
+          tl.fromTo(
+            "#f3-scr-card",
+            { scale: 1, y: 0 },
+            {
+              scale: 1.06,
+              y: -30,
+              duration: S4 - S3,
+              ease: "sine.inOut",
+              immediateRender: false,
+              transformOrigin: "50% 30%",
+            },
+            S3,
+          );
+          tl.to(
+            "#f3-tilt",
+            { rotationY: -6, rotationX: 4, duration: S4 - S3, ease: "sine.inOut" },
+            S3 - 0.13,
+          );
+          camPunch(S3 + 3 * B, 1.04, 0.3);
+
+          // ---------- S3 → S4: crash zoom into Início ----------
+          tl.to("#f3-move", { scale: 1.3, y: -30, duration: 0.12, ease: "expo.in" }, S4 - 0.12);
+          tl.to("#f3-phone", { filter: "blur(10px)", duration: 0.12, ease: "expo.in" }, S4 - 0.12);
+          tl.set("#f3-scr-card", { visibility: "hidden" }, S4);
+          tl.set("#f3-scr-ini", { visibility: "inherit" }, S4);
+          tl.fromTo(
+            "#f3-move",
+            { scale: 1.3, y: -30 },
+            { scale: 1.1, y: 0, duration: 0.3, ease: "expo.out", immediateRender: false },
+            S4,
+          );
+          tl.fromTo(
+            "#f3-phone",
+            { filter: "blur(10px)" },
+            { filter: "blur(0px)", duration: 0.22, ease: "expo.out", immediateRender: false },
+            S4,
+          );
+          tl.fromTo(
+            "#f3-tilt",
+            { rotationY: 0, rotationX: 0 },
+            {
+              rotationY: 4,
+              rotationX: 3,
+              duration: D - S4,
+              ease: "sine.inOut",
+              immediateRender: false,
+            },
+            S4,
+          );
+          tl.set("#f3-h3", { display: "none" }, S4);
+          tl.set("#f3-h4", { display: "block" }, S4);
+
+          // ---------- S4 · 5.625 – 7.5: "Tudo na palma da mão." + sales count ----------
+          slam("#f3-h4a", S4, 0.0);
+          slam("#f3-h4b", S4 + B);
+          tl.fromTo(
+            "#f3-h4",
+            { x: 0 },
+            { x: -12, duration: D - S4, ease: "none", immediateRender: false },
+            S4,
+          );
+
+          tl.set("#f3-plate", { visibility: "inherit" }, S4 - 0.02);
+          tl.fromTo(
+            "#f3-plate",
+            { opacity: 0, x: 520, skewX: -10, filter: "blur(12px)" },
+            {
+              opacity: 1,
+              x: 0,
+              skewX: 0,
+              filter: "blur(0px)",
+              duration: 0.28,
+              ease: "expo.out",
+              immediateRender: false,
+            },
+            S4 - 0.02,
+          );
+          const LOCK = 14.0625 - 7.5;
+          const roll = q("#f3-proll");
+          const proxy = { c: 0 };
+          const fmt = (c) => {
+            const v = Math.round(c);
+            return "R$ " + Math.floor(v / 100) + "," + String(v % 100).padStart(2, "0");
+          };
+          tl.fromTo(
+            proxy,
+            { c: 0 },
+            {
+              c: 71800,
+              duration: LOCK - (S4 + 0.08),
+              ease: "power2.out",
+              immediateRender: false,
+              onUpdate: () => {
+                roll.textContent = fmt(proxy.c);
+              },
+            },
+            S4 + 0.08,
+          );
+          tl.set("#f3-proll", { visibility: "hidden" }, LOCK);
+          tl.set("#f3-pfinal", { visibility: "inherit" }, LOCK);
+          tl.fromTo(
+            "#f3-plate",
+            { scale: 1.08 },
+            { scale: 1, duration: 0.3, ease: "power3.out", immediateRender: false },
+            LOCK,
+          );
+          camPunch(14.53125 - 7.5, 1.035, 0.25);
+
+          // ---------- exit whip ----------
+          const X = 14.85 - 7.5;
+          tl.to(
+            "#f3-cam",
+            {
+              y: -1150,
+              skewY: -5,
+              filter: "blur(14px)",
+              duration: D - X,
+              ease: "expo.in",
+            },
+            X,
+          );
+
+          tl.set({}, {}, D);
+          window.__timelines["03-loja"] = tl;
+          tl.seek(0);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

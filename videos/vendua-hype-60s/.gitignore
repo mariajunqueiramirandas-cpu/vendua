@@ -1,0 +1,5 @@
+.preview/
+snapshots/
+audio/stems/
+node_modules/
+audio/*.wav
