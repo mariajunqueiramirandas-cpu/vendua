@@ -110,7 +110,10 @@ export function mapFiles(
     } else if (SHARED_ROOT_FILES.has(f)) {
       allStorefronts = true;
       rootChanged = true;
-    } else if (top === '.github' && (second === 'workflows' || second === 'actions')) {
+    } else if (
+      top === '.github' &&
+      (second === 'workflows' || second === 'actions' || second === 'scripts')
+    ) {
       ciChanged = true;
     }
     // docs/, tools/, .github/, other root files → no workspace affected

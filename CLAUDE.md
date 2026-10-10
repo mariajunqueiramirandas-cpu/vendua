@@ -93,33 +93,38 @@ report enters your context.
 
 **Pass `model` and `effort` on every spawn** (the Agent tool takes `effort` from Claude Code
 2.1.292; on an older install, pass `model` alone). Without `model` an agent runs on this session's
-model, `Explore` and `Plan` included. **Delegate to Haiku first:** it costs about a twentieth of
-Sonnet and a fortieth of Opus, so even a redo on Haiku is cheaper than a first try on Sonnet.
+model, `Explore` and `Plan` included.
 
-- `haiku`, `medium`: find where or how something is done; read a long log, doc or diff and pull
+**You write the code.** This session's model (Opus 5.5) is the default for nearly everything, and
+writing good code is the main job, so you do it yourself. Don't spawn Opus agents, and don't hand
+off code you should write. Delegate only when the project is massive: a repo-wide sweep, a rename
+across packages, tests for many modules, or work whose output would flood this conversation. Then
+the swarm is Haiku, below.
+
+- `haiku`, `xhigh`: find where or how something is done; read a long log, doc or diff and pull
   out what matters; run a suite, typecheck, build or e2e and report what failed.
-- `haiku`, `high`: bounded edits and research whose brief names the files, the pattern to copy and
+- `haiku`, `xhigh`: bounded edits and research whose brief names the files, the pattern to copy and
   the check that proves it done: tests that follow an existing pattern, mechanical changes across
   files, docs edits, web and docs research with sources, a first look at a failure.
 - `sonnet`, `high`: a task Haiku got wrong once (send its failure along), a failure that spans
   modules, reviewing an ordinary change.
-- `opus`, `high`, never Haiku or Sonnet, even when the task is also a test or a doc:
-  - UI and frontend: screens, components, layout, styling, responsive and dark mode, visual polish
-    in `apps/control`, `apps/admin`, `storefronts/*`, `packages/ui-defaults` or `site/`.
-  - Business-critical logic: money, checkout and orders, payments, tenancy and RLS, idempotency,
-    auth, agent dispatch, Kernel exports, migrations, and the invariant review.
-  - A new design or architecture, an open-ended problem with no precedent here, a long migration
-    or audit.
+- Opus-grade work stays with you, never an Opus agent: UI and frontend (screens, components,
+  layout, styling, responsive and dark mode, visual polish in `apps/control`, `apps/admin`,
+  `storefronts/*`, `packages/ui-defaults` or `site/`); business-critical logic (money, checkout and
+  orders, payments, tenancy and RLS, idempotency, auth, agent dispatch, Kernel exports,
+  migrations); a new design or architecture; a long migration or audit. A Haiku agent may take a
+  mechanical part of that (a test or a doc) from a brief that settles every decision; you review
+  it and own the code.
 
-Haiku 5.5 pairs well as a subagent but is far behind on agentic coding, and it can stop early or
-report a change done without running its check. So its brief settles every decision, it runs at
-`high` when it edits (still cheap; it stops early and skips checks less), and you check its result
-before building on it. Keep its tasks small: past 100K tokens of prompt its price rises fivefold.
+Haiku 5.5 pairs well as a swarm agent but is far behind on agentic coding, and it can stop early or
+report a change done without running its check. So its brief settles every decision, every Haiku
+agent runs at `xhigh` (edits and checks alike), and you check its result before building on it.
+Keep its tasks small: past 100K tokens of prompt its price rises fivefold.
 
-Opus work is done by Opus: yourself if this session runs on Opus 5.5 or Fable 5.1, otherwise an
-`opus` agent. No `xhigh` or `max` unless the user asks: turns get much longer, Haiku can end on an
-empty reply and Sonnet launches reviewer agents nobody asked for. `fable` (Fable 5.1, 2.5× Opus)
-only when the user asks for it.
+You are the default model, so there is no separate Opus step. No `max` unless the user asks, and
+`fable` (Fable 5.1, 2.5× Opus) only when the user asks for it. If a Haiku agent returns empty or
+stops early, rerun it once with a fuller brief; don't escalate it to Sonnet or Opus. Sonnet
+launches reviewer agents nobody asked for, so don't ask it to review more than you need.
 
 Delegate work whose reading or output would flood this conversation, and independent pieces that
 can run at once. Keep iterative work with the user, steps that each need the previous step's
@@ -127,24 +132,24 @@ details, and a few-edit change in this thread. Check these triggers mid-task too
 
 - About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → a
   run-and-report agent (below).
-- About to open a third file just to answer "where/how is X done" → `Explore` on `haiku`.
+- About to open a third file just to answer "where/how is X done" → `Explore` on `haiku` at `xhigh`.
 - A change touches anything "Invariants (bugs if broken)" covers → after editing, the invariant
   review (below).
-- Stuck on a failure after two attempts → one agent investigates it cold (`sonnet`, or `opus` in
-  business-critical code) while you continue.
+- Stuck on a failure after two attempts → keep investigating yourself; if the investigation is
+  independent of your current work, one `sonnet` agent at `high` can dig into it cold meanwhile.
 
 Reviewer agents run for the invariant review, the fresh-eyes UI review below, or when the user
 asks. Don't add one to every change.
 
 Large jobs (five or more independent pieces: a repo-wide sweep, a rename across packages, tests
 for each module) run with you as the lead: you settle the design and write one shared brief file,
-and workers routed by the list above (Haiku wherever it allows), 4–5 at a time, each take a
+and workers routed by the list above (Haiku at `xhigh` wherever it allows), 4–5 at a time, each take a
 disjoint file set. One at a time runs a build, e2e or the Core suite (one test DB, 4 CPUs). Run
 the checks, and the invariant review where it applies, once at the end.
 
 Splitting a task that spans areas (e.g. Core route + admin screen + kernel export): research in
-parallel, one agent per area, then decide the design yourself. The UI part goes to Opus with the
-API shape it will consume settled first. Edits are yours or go to agents with disjoint file sets
+parallel, one agent per area, then decide the design yourself. You write the UI part yourself, with
+the API shape it will consume settled first. Edits are yours or go to agents with disjoint file sets
 (never two on one file); run the checks once all are back.
 
 A subagent sees none of the conversation. Its brief needs the goal and why, exact paths, the
@@ -153,7 +158,7 @@ done and the answer format ("under 200 words, file:line refs"). Ask for the chec
 claim that it passed: Haiku and Sonnet sometimes report a change done without running anything.
 Don't redo its search; verify a surprising claim with one targeted Read. Two standing briefs:
 
-- **Run-and-report** (`general-purpose`, `haiku`, `medium`):
+- **Run-and-report** (`general-purpose`, `haiku`, `xhigh`):
 
   > "Run `<command>` in `<dir>`. Don't edit files. Send the output to a scratchpad file and grep
   > it. Report the command and the pass/fail counts. For each failure give file:line, the test
@@ -162,7 +167,7 @@ Don't redo its search; verify a surprising claim with one targeted Read. Two sta
 
   Diagnose the failures yourself, or route them by the list above.
 
-- **Invariant review** (`general-purpose`, `opus`, `high`):
+- **Invariant review** (`general-purpose`, `sonnet`, `high`; or you, for a small diff):
 
   > "Review `git diff <base>...HEAD` plus uncommitted changes against 'Invariants (bugs if
   > broken)' in CLAUDE.md. Don't edit files. Read line ranges only. Confirm each finding in the

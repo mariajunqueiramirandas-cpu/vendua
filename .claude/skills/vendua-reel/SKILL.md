@@ -45,7 +45,7 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
 
 Brief → voice + pronunciation test → all lines → Whisper words mapped onto the script →
 `build-audio.py voices`/`mix` (bed on its first beat, frame lengths from the voice lengths rounded up to whole eighths, SFX on words) →
-storyboard with numeric seams → one Opus agent per frame from a shared brief file (tell them to
+storyboard with numeric seams → one Haiku agent per frame at `xhigh` from a shared brief file (tell them to
 wrap their browser checks in `timeout 120`; a hung agent can be stopped and its frame finished by
 hand) → `videos/tools/build-reel.sh <project> --bpm 128 --snapshots <dir>` (assembly, checks and
 the cut check in one command; it must pass) → look at the cut snapshots → draft render to the

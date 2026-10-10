@@ -72,8 +72,9 @@ export function startFleetJobs(d: FleetDeps): () => void {
       running = false;
     }
   };
-  const first = setTimeout(tick, 5_000);
-  const every = setInterval(tick, TICK_MS);
+  const tickMs = d.tickMs ?? TICK_MS;
+  const first = setTimeout(tick, Math.min(5_000, tickMs));
+  const every = setInterval(tick, tickMs);
   return () => {
     clearTimeout(first);
     clearInterval(every);
