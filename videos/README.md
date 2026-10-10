@@ -1,11 +1,13 @@
 # Venduá videos
 
-Marketing videos (Instagram Reels first) built with HyperFrames: one folder per video under
-`videos/`, shared tools in `videos/tools/`. The first one, `vendua-audio-47s/`, is the reference
-project: copy its design spec, caption skin and scripts instead of starting from the presets.
+Marketing videos (Instagram Reels and Stories first). **New videos are built in
+[`remotion/`](remotion/README.md)** with Remotion for the picture and Tone.js for the music and
+SFX, scored in code against one shared timeline (the author's call, 2026-10-10). Start there and
+load the `vendua-reel` skill.
 
-Read this, then load the `vendua-reel` skill (`.claude/skills/vendua-reel/SKILL.md`), which routes
-the HyperFrames `product-launch-video` workflow through the house defaults below.
+Everything below was learned on the HyperFrames videos (`vendua-hype-60s/`, `tools/`). The tooling
+steps are HyperFrames-specific. The defaults, the copy rules, the safe area and the premium-SFX
+findings apply to every video.
 
 ## Defaults (decided on vendua-audio-47s; ask only to change them)
 

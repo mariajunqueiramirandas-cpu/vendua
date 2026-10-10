@@ -1,19 +1,21 @@
 ---
 name: vendua-reel
-description: Make a Venduá marketing video (Instagram Reel/Story, promo, feature or trial ad) with HyperFrames. Use whenever a Venduá video is requested or an existing one under videos/ is changed, and before generating any voice, music or sound effect for it — it sets the house defaults (frenético pace, "Vendu-á" pronunciation, 128 BPM grid) and asks the author to choose the voice, music and SFX source before any audio is made.
+description: Make a Venduá marketing video (Instagram Reel/Story, promo, feature or trial ad) with Remotion and a Tone.js score (videos/remotion/). Use whenever a Venduá video is requested or an existing one under videos/ is changed, and before generating any voice, music or sound effect for it — it sets the house defaults (frenético pace, "Vendu-á" pronunciation, 128 BPM grid, music and SFX scored in code) and asks the author before any voice is generated.
 ---
 
 # Venduá Reels
 
-The playbook is `videos/README.md`: read it first. This skill is the checklist.
+New videos are built in **`videos/remotion/`** (Remotion + Tone.js, the author's call on
+2026-10-10). Read `videos/remotion/README.md` first; `videos/README.md` keeps the house defaults and
+the findings from the HyperFrames videos, which still apply to pace, copy and sound.
 
 ## Route
 
-1. Load `/hyperframes`, then the `product-launch-video` workflow, as usual: its steps, scripts and
-   gates still apply. This skill only overrides its defaults and its audio path.
-2. Start the project by copying from `videos/vendua-audio-47s/`: `frame.md` (Venduá tokens at Reel
-   scale, Reels safe area), `.hyperframes/caption-skin.html` (caption band y 1300–1520),
-   `assets/vendor/gsap.min.js`, `assets/fonts/`, `scripts/build-audio.py`. Then edit them.
+1. Copy `videos/remotion/src/videos/hype30/` to `src/videos/<id>/`, register it in `src/Root.tsx`.
+   Don't load the HyperFrames workflows for a new video; `videos/vendua-hype-60s/` is the last
+   HyperFrames project, kept for reference.
+2. Write `timeline.ts` first (grid, scene spans, cues, the `SFX` list), then `score.ts`, then the
+   scenes. Picture and score import the same times.
 
 ## Defaults (ask only to change them)
 
@@ -26,28 +28,24 @@ The playbook is `videos/README.md`: read it first. This skill is the checklist.
 - The brand is said **ven-du-Á**: spell it `Vendu-á` in every TTS prompt (`Ven-du-á` on
   a TTS model that says "Vendu-á" as "Van-duá" at a sentence start or before a plan name, where
   `Ven-du-á` is safer) and have the author hear one line with it before generating the rest.
-- Sound effects are the premium set: soft, tonal UI sounds mixed low under the voice, one per
-  moment, an accent (never an impact) on the logo. Prompts and processing are in
-  `videos/README.md` → Premium SFX; `scripts/build-audio.py sfx` rebuilds them from the takes.
+- Sound effects are the premium set: soft, tonal UI sounds, one per moment, in the track's key,
+  each on the time of the motion it belongs to (the `play` table in `hype30/score.ts`: FM glass
+  bells, pitched sine pops, filtered-noise swishes, a sub bloom on the hits).
 - Read every line as a stranger would before generating it: a verb like "chega" can sound like
   Venduá delivers. Say where the order lands (the shop's phone), not how it travels.
 - Real captures only; prices, plans and dates on screen are the author's decision.
 
-## Audio source: ask first
+## Audio source
 
-- Before any voice, music or SFX is generated, ask the author which provider and voices to use, and
-  record the answer in the project's `BRIEF.md`. Never reuse a provider key, a voice ID or a tool
-  from an older commit.
-- Save raw takes in the project's gitignored `audio/takes/`. Batch 3–4 calls at a time, run them in
-  one shell (a trailing `&` loses `cd` and `export`).
+- Music and SFX: **Tone.js, scored in code** (`score.ts`, `npm run audio -- <id>`), the default
+  since 2026-10-10. Ask the author only to change it.
+- Voices (narrator, customer): still **not chosen**. Ask the author before generating any, and
+  record the answer in the video's folder. Never reuse a provider key or voice ID from an older commit.
 
 ## Order of work
 
-Brief → voice + pronunciation test → all lines → Whisper words mapped onto the script →
-`build-audio.py voices`/`mix` (bed on its first beat, frame lengths from the voice lengths rounded up to whole eighths, SFX on words) →
-storyboard with numeric seams → one Haiku agent per frame at `xhigh` from a shared brief file (tell them to
-wrap their browser checks in `timeout 120`; a hung agent can be stopped and its frame finished by
-hand) → `videos/tools/build-reel.sh <project> --bpm 128 --snapshots <dir>` (assembly, checks and
-the cut check in one command; it must pass) → look at the cut snapshots → draft render to the
-author → final render, −14 LUFS with gain + limiter, commit `renders/<name>.mp4`. The gotchas list
-in `videos/README.md` covers the failures each step hit last time.
+Timeline (grid, spans, cues, copy from `site/src/lib/content.ts`) → `score.ts` → `npm run audio --
+<id> --stems` and balance each effect within ~3 dB of the music → World + scenes, one at a time,
+each checked with `node scripts/stills.mjs <Comp> <seconds…>` → full render to `out/` → send it to
+the author. Renders aren't committed. You write the scenes yourself (UI work is Opus-grade per the
+repo `CLAUDE.md`).
