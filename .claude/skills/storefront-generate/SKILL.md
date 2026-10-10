@@ -80,12 +80,12 @@ transformation.
 ### Haiku only
 
 This routine runs on Haiku 5.5, and every agent it spawns runs on Haiku too: `model: "haiku"`,
-with `subagent_type: "general-purpose"`, `effort: "high"` when it edits files and `"medium"`
-when it only runs a check or reads a log. Never `opus`, `sonnet` or `fable`, never a spawn
-without `model` (it would inherit the session's model), never `xhigh` or `max`, and no Workflow
-tool (it caps concurrency at 2 here). This overrides CLAUDE.md's "Subagents", which sends UI and
-`storefronts/*` work to Opus. When a Haiku agent gets something wrong, send it back to a fresh
-Haiku agent with its failure; never escalate to a bigger model.
+with `subagent_type: "general-purpose"` and `effort: "xhigh"`, for edits and for checks or log
+reads alike. Never `opus`, `sonnet` or `fable`, never a spawn without `model` (it would inherit the
+session's model), never `max`, and no Workflow tool (it caps concurrency at 2 here). This
+overrides CLAUDE.md's "Subagents" for this routine: the Haiku agents write the storefront UI
+themselves, so no Opus step is involved. When a Haiku agent gets something wrong, send it back to
+a fresh Haiku agent with its failure; never escalate to a bigger model.
 
 Haiku stops early and can report a change done without running its check, so:
 

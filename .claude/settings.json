@@ -1,6 +1,6 @@
 {
   "env": {
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "600000"
   },
   "modelSettings": {
     "claude-sonnet-5-5": {
@@ -8,6 +8,9 @@
     },
     "claude-opus-5-5": {
       "effortLevel": "high"
+    },
+    "claude-haiku-5-5": {
+      "effortLevel": "xhigh"
     }
   },
   "permissions": {
