@@ -102,18 +102,40 @@ jobs:
     needs: [gate, images]
     if: needs.gate.outputs.go == 'true' && vars.DEPLOY_DOKPLOY == 'on'
     runs-on: ubuntu-latest
+    # its secrets live in the `production` environment, which only main may use: a branch that
+    # edits this file can't read them
+    environment: production
+    env:
+      DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
+      DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
+      DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
     steps:
       # Dokploy runs `docker stack deploy`: services whose image didn't change stay as they are,
       # the rest start their new task, pass its healthcheck, then stop the old one
       - name: Deploy the stack
-        env:
-          DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
-          DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
-          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
         run: |
           curl -fsS --max-time 60 -X POST "${DOKPLOY_URL%/}/api/compose.deploy" \
             -H "x-api-key: $DOKPLOY_API_KEY" -H 'content-type: application/json' \
             -d "{\"composeId\":\"$DOKPLOY_COMPOSE_ID\"}"
+      # storefronts publish after the new Core serves (a store built on a new Kernel may call it).
+      # Dokploy's status covers the stack deploy; Swarm's swaps finish after it, within its 30 s
+      # update monitor plus Core's healthcheck, hence the settle.
+      - name: Wait for the deploy
+        run: |
+          # the status still reads the previous deploy's until Dokploy picks this one up
+          sleep 10
+          for i in $(seq 1 120); do
+            status=$(curl -fsS --max-time 20 "${DOKPLOY_URL%/}/api/compose.one?composeId=$DOKPLOY_COMPOSE_ID" \
+              -H "x-api-key: $DOKPLOY_API_KEY" | jq -r '.composeStatus // "unknown"')
+            case "$status" in
+              done) break ;;
+              error) echo "::error::Dokploy reports the deploy failed"; exit 1 ;;
+              unknown) echo "::warning::no composeStatus in Dokploy's answer; settling only"; break ;;
+            esac
+            sleep 5
+          done
+          [ "$status" = running ] && { echo "::error::deploy still running after 10 min"; exit 1; }
+          sleep 90
 
   storefronts:
     needs: [gate, images, platform]
@@ -123,6 +145,7 @@ jobs:
       always() && needs.gate.outputs.go == 'true' && vars.DEPLOY_STOREFRONTS == 'on' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

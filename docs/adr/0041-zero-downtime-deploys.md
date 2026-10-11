@@ -58,6 +58,11 @@ place.
   wa-gateway first (two Cores would otherwise hold its session at once).
 - A start-first swap briefly runs two copies of Core, the edge, the CRM, the admin, the site and
   the wa-gateway: the VPS needs that much free memory for the swap.
+- Storefronts publish after the stack deploy plus a 90 s settle, not after a confirmed swap:
+  Dokploy reports `docker stack deploy` done, not Swarm's convergence, and a Swarm rollback
+  doesn't fail the workflow.
+- The jobs holding secrets run in the `production` environment, open to `main` only: the site
+  routine pushes branches here, and a branch editing the workflow must not reach them.
 - Rollback is a Dokploy variable (`VENDUA_IMAGE_TAG=<commit>`) and a redeploy. Storefronts keep the
   fleet's own rollback.
 

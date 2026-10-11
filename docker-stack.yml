@@ -19,6 +19,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    # a clean shutdown checkpoints first; the default 10 s can end in a kill and crash recovery
+    stop_grace_period: 60s
     # never two Postgres on one data directory
     deploy:
       update_config: { order: stop-first, failure_action: rollback, monitor: 30s }
@@ -69,7 +71,9 @@ services:
       VENDUA_GITHUB_WEBHOOK_SECRET: ${VENDUA_GITHUB_WEBHOOK_SECRET:-}
       # Venduá's own WhatsApp number: Core's socket (default) or `gateway` after the cutover
       # (platform-whatsapp/cutover-cli.ts).
-      WA_PLATFORM_TRANSPORT: ${WA_PLATFORM_TRANSPORT:-}
+      # Required here: on Core's own socket (the compose default) two Cores would hold the number
+      # during a swap. `gateway` after the cutover (docs/deploy/zero-downtime.md, phase B step 4).
+      WA_PLATFORM_TRANSPORT: ${WA_PLATFORM_TRANSPORT:?set WA_PLATFORM_TRANSPORT to gateway}
       # Postgres pool sizes (default 10 each); unset/empty = default.
       DB_POOL_MAX: ${DB_POOL_MAX:-}
       DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
