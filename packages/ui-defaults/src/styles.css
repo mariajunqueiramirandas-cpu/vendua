@@ -677,7 +677,7 @@
   }
   /* nothing here yet: a marked-out space waiting to be filled, not another card */
   .v-panel.v-empty {
-    background: transparent;
+    background: color-mix(in srgb, var(--v-color-surface, #fff) 45%, transparent);
     border: 1.5px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
     box-shadow: none;
   }
