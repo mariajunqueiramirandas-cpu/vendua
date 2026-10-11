@@ -67,11 +67,11 @@ const minutesOf = (hhmm: string) => {
 // the store's wall clock, a minute at a time: the strip's needle walks with it, and "today"
 // turns over at the store's midnight even in a tab left open overnight
 const clockOf = (timeZone: string) => {
-  const { date, minutes } = localNow(timeZone);
-  return { date, minutes };
+  const { date, weekday, minutes } = localNow(timeZone);
+  return { date, weekday, minutes };
 };
 
-function useStoreClock(timeZone: string): { date: string; minutes: number } {
+function useStoreClock(timeZone: string): { date: string; weekday: number; minutes: number } {
   const [now, setNow] = useState(() => clockOf(timeZone));
   useEffect(() => {
     setNow(clockOf(timeZone));
@@ -274,7 +274,10 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
                   {hasHours ? (
                     <dl className="hero-hours">
                       {rows.map((r) => (
-                        <div key={r.days.join()} data-today={r.today || undefined}>
+                        <div
+                          key={r.days.join()}
+                          data-today={r.days.includes(clock.weekday) || undefined}
+                        >
                           <dt>{r.days.length === 7 ? s.everyDayLabel : r.label}</dt>
                           <dd className="tnum">
                             {r.closed
