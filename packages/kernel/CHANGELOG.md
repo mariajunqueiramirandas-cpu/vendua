@@ -20,6 +20,24 @@ edit, no new runtime export.
   size, contacts are outlined chips, and the week's hours follow the footer's colours.
 - Bag: the lines read as one receipt (a sheet of paper with hairlines between items), a larger
   thumbnail, quieter "Remover" / "Observação", and the total in the display face.
+- Checkout: delivery and payment choices are cards with a glyph per way to receive and to pay
+  (new part `option-icon`; each `option` carries `data-mode` or `data-method`), a drawn radio on
+  the right and the chosen card outlined in the accent; steps behind you are ticked; legends
+  are set in the display face. On phones the step's button rides the bottom edge with
+  "Voltar" as an arrow beside it (`[data-part="back"]`), and lets go while a text field has
+  the keyboard. Cash change puts the amount and "Não preciso de troco" side by side.
+- Checkout: the coupon field waits behind "Tenho um cupom de desconto" (`[data-part="open"]`,
+  the root `data-closed` until it opens; an error opens it). The notes counter shows once
+  something is typed. `checkout.Summary` gains a head ("Seu pedido", the item count,
+  `[data-part="head"]`, hidden in the bag) and, at checkout, a torn bottom edge.
+- Order placed: `checkout.SuccessPage` is a ticket — the order number at bakery-ticket size on
+  a stub in the accent (`[data-part="stub"]`, aria-hidden; the title still reads "Pedido #n
+  recebido!"), notched from the rest. Right under it `order.StatusPage` drops its own eyebrow
+  and state title, which the ticket already carries, and keeps the promise, progress and facts.
+- `.v-eyebrow` ("Pague com Pix", "Erro 404", sections' `eyebrow`) and the order facts' labels
+  are set in the sentence's own case, not tracked capitals. Empty states are a dashed outline
+  with the glyph in a tinted disc instead of a card; `/pedidos` reads down a 44rem column; a
+  missing product says why.
 
 ## 1.24.0
 

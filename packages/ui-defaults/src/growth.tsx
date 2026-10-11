@@ -257,6 +257,8 @@ export function CouponField({
   onRemove,
 }: SlotProps['checkout.CouponField']) {
   const [code, setCode] = useState('');
+  // most orders carry no coupon: a link, not an empty box asking for one, until someone has it
+  const [open, setOpen] = useState(false);
   if (coupon)
     return (
       <div
@@ -296,6 +298,20 @@ export function CouponField({
   const apply = () => {
     if (code.trim()) onApply(code.trim());
   };
+  if (!open && !error && !code)
+    return (
+      <div className="v-coupon" data-vendua="coupon" data-part="root" data-closed="">
+        <button
+          type="button"
+          className="v-link-btn"
+          data-part="open"
+          aria-expanded="false"
+          onClick={() => setOpen(true)}
+        >
+          Tenho um cupom de desconto
+        </button>
+      </div>
+    );
   return (
     <div className="v-coupon" data-vendua="coupon" data-part="root" role="group" aria-label="Cupom">
       <label className="v-label" htmlFor="v-coupon-code">
@@ -309,6 +325,7 @@ export function CouponField({
           autoComplete="off"
           autoCapitalize="characters"
           maxLength={32}
+          autoFocus={open}
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           onKeyDown={(e) => {
@@ -580,7 +597,7 @@ export function OrderItems({
         {items.map((i, k) => (
           <li key={`${i.slug}-${k}`} className="v-summary-line">
             <span>
-              {i.qty}× {i.name}
+              <span className="v-summary-qty v-num">{i.qty}×</span> {i.name}
               {i.modifiers.length || i.combo.length ? (
                 <span className="v-muted v-line-mods"> — {lineSummary(i, currency)}</span>
               ) : null}

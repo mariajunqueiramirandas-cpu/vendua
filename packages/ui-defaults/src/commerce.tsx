@@ -460,7 +460,7 @@ export function OrderTrackingPage({
               {order.items.map((i, k) => (
                 <li key={k} className="v-summary-line">
                   <span>
-                    {i.qty}× {i.name}
+                    <span className="v-summary-qty v-num">{i.qty}×</span> {i.name}
                     {i.modifiers.length || i.combo.length ? (
                       <span className="v-muted v-line-mods">
                         {' '}

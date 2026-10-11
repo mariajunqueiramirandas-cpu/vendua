@@ -912,6 +912,13 @@ the id `categoria-<slug>`), `terms` (`sdk:delivery-eta`), `when` (`sdk:notify-me
 distance) `form` (field `input[name="estimate-cep"]`), `submit`, `result`, `fee`, `total`,
 `min-order`, `free-delivery`, `out`, `later`, `error` and `change`.
 
+Parts added in Kernel 1.25: in the checkout's delivery and payment options `option-icon` (the
+glyph tile; each `option` carries `data-mode` delivery | pickup | dine_in or `data-method` = the
+method id), `back` (the form's "Voltar"), in `[data-vendua="coupon"]` `open` (the "Tenho um
+cupom de desconto" link; the root has `data-closed` until it opens), in
+`[data-vendua="checkout-summary"]` `head` (the "Seu pedido" line with the item count), and in
+`[data-vendua="checkout-success"]` `stub` (the ticket stub with the order number, aria-hidden).
+
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are
 the last resort — each one is counted in the artifact manifest.

@@ -1153,6 +1153,7 @@ export function CheckoutPage() {
                 <button
                   type="button"
                   className="v-btn v-btn-ghost"
+                  data-part="back"
                   onClick={() => setStep(ORDER[ORDER.indexOf(step) - 1] ?? 'dados')}
                 >
                   Voltar
