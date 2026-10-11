@@ -43,6 +43,7 @@ hashing live in `src/manifest.ts` (`@vendua/edge/manifest`), the store in `src/a
 | `VENDUA_EDGE_CACHE_DIR`                                                | `/var/cache/vendua-edge` | snapshot + verified release files                     |
 | `VENDUA_EDGE_ROUTE_TTL_MS`                                             | `30000`                  |                                                       |
 | `VENDUA_EDGE_STATE_TTL_MS`                                             | `30000`                  |                                                       |
+| `VENDUA_EDGE_DRAIN_MS`                                                 | `0`                      | keep serving this long after SIGTERM (stack: 20000)   |
 
 Logs are JSON lines on stdout, warnings and errors only.
 

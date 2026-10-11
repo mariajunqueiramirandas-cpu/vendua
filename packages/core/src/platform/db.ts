@@ -80,6 +80,18 @@ export const RENAMED_MIGRATIONS: Readonly<Record<string, string>> = {
   '0079_kitchen.sql': '0080_kitchen.sql',
 };
 
+/** The migration files in `dir` the database hasn't applied yet. Read-only, so the app role can
+ *  ask: a process that never migrates (the wa-gateway) waits on it until Core has. */
+export async function pendingMigrations(sql: Sql, dir: string): Promise<string[]> {
+  const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
+  // no ledger yet (a database Core never booted on) = everything pending
+  const rows = await sql<MigrationRow[]>`select name from schema_migrations`.catch(
+    () => [] as MigrationRow[],
+  );
+  const applied = new Set(rows.map((r) => RENAMED_MIGRATIONS[r.name] ?? r.name));
+  return files.filter((f) => !applied.has(f));
+}
+
 export async function migrate(sql: Sql, dir: string): Promise<string[]> {
   await sql`
     create table if not exists schema_migrations (

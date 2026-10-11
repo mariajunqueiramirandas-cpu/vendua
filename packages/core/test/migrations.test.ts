@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { migrate, RENAMED_MIGRATIONS } from '../src/platform/db.ts';
+import { migrate, pendingMigrations, RENAMED_MIGRATIONS } from '../src/platform/db.ts';
 
 const dir = join(import.meta.dir, '../db/migrations');
 const files = readdirSync(dir).filter((f) => f.endsWith('.sql'));
@@ -41,6 +42,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('migrate: renamed migrations (db
   });
   afterAll(async () => {
     await sql.end();
+  });
+
+  test('pending: nothing after migrate, a newer file until it runs, an old name counts', async () => {
+    expect(await pendingMigrations(sql, dir)).toEqual([]);
+    // an image one migration ahead of the database (the gateway waits on Core)
+    const ahead = mkdtempSync(join(tmpdir(), 'vendua-mig-'));
+    try {
+      for (const f of [...files, '9999_future.sql']) writeFileSync(join(ahead, f), '');
+      expect(await pendingMigrations(sql, ahead)).toEqual(['9999_future.sql']);
+    } finally {
+      rmSync(ahead, { recursive: true, force: true });
+    }
+    const [from, to] = Object.entries(RENAMED_MIGRATIONS)[0]!;
+    try {
+      await sql`update schema_migrations set name = ${from} where name = ${to}`;
+      expect(await pendingMigrations(sql, dir)).toEqual([]);
+    } finally {
+      await sql`update schema_migrations set name = ${to} where name = ${from}`;
+    }
   });
 
   test('a DB that ran the old name moves its ledger row and does not run it again', async () => {

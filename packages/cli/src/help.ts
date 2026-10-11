@@ -147,7 +147,8 @@ vendua release publish <slug…|--all> [--artifacts <uri>] [--no-build] [--no-re
   --no-register      upload only, do not register with the Control Plane
   --core             build with data from Core, not the repo
 
-${CORE_ENV}`,
+${CORE_ENV} CI registers with VENDUA_PUBLISH_SECRET instead: Core takes that key for this call
+only.`,
   },
   ops: {
     list: `  vendua ops <tenant> [--maintenance "msg" [--href u] | --normal] [--ring r] [--demand high|normal]

@@ -65,9 +65,11 @@ hour per account.
 | `VENDUA_GITHUB_TOKEN`          | the fine-grained token from step 1.3 |
 | `VENDUA_GITHUB_WEBHOOK_SECRET` | the webhook secret from step 1.4     |
 
-**Auto-deploy on push to `main`** must be on in Dokploy. Staff approval merges the PR, and
-the merge only reaches the store when a deploy runs `vendua release publish --all`. Without
-auto-deploy, every site waits for someone to click deploy, which eats the 24-hour promise.
+**Something must publish a merged `main`.** Staff approval merges the PR, and the merge only
+reaches the store when `vendua release publish --all` runs. With the deploy workflow's
+`DEPLOY_STOREFRONTS=on` ([zero-downtime.md](zero-downtime.md)) CI does it minutes after the merge,
+with no restart; on the plain compose install, Dokploy's auto-deploy on `main` must be on.
+Without either, every site waits for someone to click deploy, which eats the 24-hour promise.
 
 ## 4. Staff
 

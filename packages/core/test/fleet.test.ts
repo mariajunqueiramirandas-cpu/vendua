@@ -76,6 +76,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
+    publishSecret: 'pub-key',
     autoDrain: false,
     storeDomain,
     notify,
@@ -245,6 +246,42 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     const liar = manifest(rid());
     liar.qa.checks = [{ id: 'budget', ok: false }];
     expect((await publish(liar)).status).toBe(422);
+  });
+
+  test("CI's publish key registers releases and opens nothing else", async () => {
+    const asPublisher = (method: string, path: string, body?: unknown) =>
+      app.request(path, {
+        method,
+        headers: {
+          'content-type': 'application/json',
+          'x-vendua-control': 'pub-key',
+          'idempotency-key': `${nonce}-${++seq}`,
+          'x-forwarded-for': '10.9.9.9',
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+    const r = rid();
+    // failed QA: registered, never promoted, so later tests keep the stores where they are
+    const res = await asPublisher('POST', '/control/v1/fleet/releases', {
+      manifest: manifest(r, { qa: 'failed' }),
+      artifactUri: `s3://vendua-artifacts/storefronts/${bundle}/${r}`,
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { release: { id: string } }).release.id).toBe(r);
+
+    expect((await asPublisher('GET', '/control/v1/fleet/releases')).status).toBe(404);
+    expect((await asPublisher('GET', '/control/v1/session')).status).toBe(404);
+    expect(
+      (await asPublisher('POST', `/control/v1/fleet/storefronts/${tenants.a.slug}/rollback`, {}))
+        .status,
+    ).toBe(404);
+    const login = await app.request('/control/v1/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.9.9.8' },
+      body: JSON.stringify({ key: 'pub-key' }),
+    });
+    expect(login.status).toBe(404);
+    expect(login.headers.get('set-cookie')).toBeNull();
   });
 
   test('the edge resolves hosts to releases, behind its own secret', async () => {

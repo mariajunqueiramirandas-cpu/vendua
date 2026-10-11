@@ -101,6 +101,7 @@ const app = createApp({
   sql,
   sessionSecret,
   controlSecret: process.env.CONTROL_SECRET || undefined,
+  publishSecret: process.env.VENDUA_PUBLISH_SECRET || undefined,
   adminHub,
   paymentProvider,
   notify,

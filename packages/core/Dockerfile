@@ -1,31 +1,22 @@
 # Build from repo root: docker build -f packages/core/Dockerfile -t vendua-core .
 # Runtime: DATABASE_URL, MIGRATION_DATABASE_URL, SESSION_SECRET, VENDUA_APP_DB_PASSWORD.
 
+# What `bun install` reads: the root files and every workspace's package.json, found from the
+# root's `workspaces` globs (a new storefront needs no line here). The install layer below keys on
+# these files' content, so it stays cached whatever else in the repo changed.
+FROM oven/bun:1.4.2 AS manifests
+WORKDIR /src
+COPY . .
+RUN bun -e "const { workspaces } = await Bun.file('package.json').json(); \
+      for (const w of workspaces) for await (const f of new Bun.Glob(w + '/package.json').scan('.')) \
+        await Bun.write('/out/' + f, Bun.file(f));" \
+    && cp package.json bun.lock tsconfig.base.json /out/ \
+    && cp -r patches /out/patches
+
 FROM oven/bun:1.4.2 AS runtime
 WORKDIR /app
 
-# All workspace manifests must be present or --frozen-lockfile fails.
-COPY package.json bun.lock tsconfig.base.json ./
-# patchedDependencies (package.json) are applied at install
-COPY patches patches
-COPY packages/agent-runtime/package.json packages/agent-runtime/package.json
-COPY packages/cli/package.json packages/cli/package.json
-COPY packages/codemods/package.json packages/codemods/package.json
-COPY packages/conformance/package.json packages/conformance/package.json
-COPY packages/conformance/fixtures/override-crash/package.json packages/conformance/fixtures/override-crash/package.json
-COPY packages/core/package.json packages/core/package.json
-COPY packages/edge/package.json packages/edge/package.json
-COPY packages/kernel/package.json packages/kernel/package.json
-COPY packages/loader/package.json packages/loader/package.json
-COPY packages/templates/package.json packages/templates/package.json
-COPY packages/ui-defaults/package.json packages/ui-defaults/package.json
-COPY apps/control/package.json apps/control/package.json
-COPY apps/admin/package.json apps/admin/package.json
-COPY site/package.json site/package.json
-# New workspaces go here.
-COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
-COPY storefronts/quero-pudim-gourmet/package.json storefronts/quero-pudim-gourmet/package.json
-COPY storefronts/_template/package.json storefronts/_template/package.json
+COPY --from=manifests /out/ ./
 RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
 

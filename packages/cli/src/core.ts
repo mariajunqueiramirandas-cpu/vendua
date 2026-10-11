@@ -1,5 +1,6 @@
 // Staff calls to Core's control API (the Control Plane stand-in until Phase 4).
-//   VENDUA_CORE_ORIGIN (default http://localhost:8787), CONTROL_SECRET (required)
+//   VENDUA_CORE_ORIGIN (default http://localhost:8787), CONTROL_SECRET (required) — or, for
+//   `release publish` alone, VENDUA_PUBLISH_SECRET (CI's key: Core accepts it on that call only)
 
 import { suggest } from './args.ts';
 
@@ -22,8 +23,11 @@ export async function control<T>(
   body?: unknown,
   idemKey?: string,
 ): Promise<T> {
-  const secret = process.env.CONTROL_SECRET;
-  if (!secret) throw new Error('CONTROL_SECRET is not set — staff calls to Core need it');
+  const secret = process.env.CONTROL_SECRET || process.env.VENDUA_PUBLISH_SECRET;
+  if (!secret)
+    throw new Error(
+      'CONTROL_SECRET is not set — staff calls to Core need it (VENDUA_PUBLISH_SECRET for publish)',
+    );
   let res: Response;
   try {
     res = await fetch(`${coreOrigin()}${path}`, {
