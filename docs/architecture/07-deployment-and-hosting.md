@@ -117,9 +117,8 @@ exactly the marginal-cost trap the artifact model avoids.
 ## Release pipeline
 
 ```
-deploy (Dokploy compose) or CI
-  → storefronts built (the shared Docker build stage)
-  → `publish` service: vendua release publish --all
+green main → the deploy workflow (ADR 0041; the compose install: its `publish` one-shot)
+  → vendua release publish --all: every storefront built
       → release id, QA checks, storefront.manifest.json → artifact store (skipped if present)
       → POST /control/v1/fleet/releases
   → Control Plane: every `auto` store on that bundle gets a `pending` deployment (pointer flip)
@@ -142,8 +141,10 @@ rollback). The Kernel's conformance suite stays the rendering gate on every stor
 
 ## Where this runs
 
-`docker-compose.yml` on the Dokploy-managed VPS: `db`, `core` (with the Control Plane),
-`edge`, the one-shot `publish`, `crm`, `admin`, `site` ([deploy/dokploy.md](../deploy/dokploy.md)).
-Artifacts live in the `artifacts` volume or an S3-compatible bucket. At fleet scale the edge
+`docker-stack.yml` as a Swarm stack on the Dokploy-managed VPS, images built in CI and swapped
+start-first ([deploy/zero-downtime.md](../deploy/zero-downtime.md)): `db`, `core` (with the
+Control Plane), `edge`, `crm`, `admin`, `site` and the internal services. Storefront releases live
+in an S3-compatible bucket (R2) that CI publishes to. `docker-compose.yml` is the plain install
+([deploy/dokploy.md](../deploy/dokploy.md)), with a one-shot `publish` and an `artifacts` volume. At fleet scale the edge
 wants ≥2 nodes behind a floating IP / anycast (Phase 7); until then it is the single most
 important process to monitor (see [16](16-operations-and-incidents.md)).

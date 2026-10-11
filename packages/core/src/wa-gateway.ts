@@ -1,4 +1,5 @@
-import { createSql } from './platform/db.ts';
+import { join } from 'node:path';
+import { createSql, pendingMigrations } from './platform/db.ts';
 import { log } from './platform/log.ts';
 import { Gateway } from './store-whatsapp/gateway.ts';
 import { PlatformGateway } from './store-whatsapp/platform.ts';
@@ -23,6 +24,16 @@ const num = (v: string | undefined, d: number) => (v && Number(v) > 0 ? Number(v
 const port = num(process.env.WA_GATEWAY_PORT, 8791);
 
 const sql = createSql(databaseUrl);
+// Core migrates on boot, and this process must start on the schema it was built with. A Swarm
+// stack has no depends_on, so it waits here: /healthz isn't up yet, and a start-first update keeps
+// the old gateway serving meanwhile.
+const migrations = join(import.meta.dir, '../db/migrations');
+for (let tries = 0; ; tries++) {
+  const pending = await pendingMigrations(sql, migrations);
+  if (!pending.length) break;
+  if (tries % 15 === 0) gwLog.info({ pending }, 'waiting for Core to apply migrations');
+  await Bun.sleep(2_000);
+}
 const runtime = await baileysRuntime(gwLog);
 const gateway = new Gateway({
   sql,

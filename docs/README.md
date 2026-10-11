@@ -116,6 +116,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0038](adr/0038-included-domains.md)                   | Pangolim's domain bought, hosted and renewed by Venduá                                    |
 | [0039](adr/0039-site-builder-on-claude-code.md)        | Pangolim's site built by a cloud Claude Code routine, judged by CI                        |
 | [0040](adr/0040-design-per-bundle.md)                  | A store's saved design belongs to its bundle: switch between site sob medida and template |
+| [0041](adr/0041-zero-downtime-deploys.md)              | Deploys without downtime: storefronts from CI, the platform as a start-first stack        |
 
 ## Conventions
 

@@ -11,7 +11,9 @@ the Kernel surface: [packages/kernel/API.md](../packages/kernel/API.md).
 fleet commands use it). In-repo stores: `_template` → `loja-modelo` (:5175),
 `quero-pudim` (:5174).
 
-Shipping: every deploy runs `vendua release publish --all` (the compose `publish` service).
+Shipping: `vendua release publish --all` runs after CI passes on `main` (the deploy workflow,
+[ADR 0041](../docs/adr/0041-zero-downtime-deploys.md); on the plain compose install, its `publish`
+one-shot on every deploy).
 Each storefront folder is a **bundle**; its build becomes an immutable release the edge serves
 and the Control Plane promotes to the stores on that bundle — `_template` serves every store
 without a bundle of its own, and a bundle whose `vendua.tenant` names a store becomes that

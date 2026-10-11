@@ -1,0 +1,145 @@
+name: deploy
+
+# Ships a green main (ADR 0041, docs/deploy/zero-downtime.md): platform images to GHCR, a Dokploy
+# stack deploy that swaps services start-first, then every storefront's release to the artifact
+# store, registered with Core. Each job stays off until its repo variable is `on`, so this file can
+# land before the R2 bucket, the GHCR registry and the Dokploy stack exist.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one deploy at a time, in order; a newer main queued behind a running one replaces older queued runs
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # CI passed on main: a push, or the dispatch that re-checks prettier's autofix commit
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+        contains(fromJSON('["push","workflow_dispatch"]'), github.event.workflow_run.event))
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+      go: ${{ steps.head.outputs.go }}
+    steps:
+      - id: head
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # a run that finishes after a newer main's must not ship older code over it
+        run: |
+          tip=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [ "$tip" = "$SHA" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else
+            echo "main moved on to $tip; its own run deploys it"; echo "go=false" >> "$GITHUB_OUTPUT"; fi
+
+  images:
+    needs: gate
+    if: needs.gate.outputs.go == 'true' && vars.DEPLOY_IMAGES == 'on'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # wa-gateway runs the core image with its own entrypoint
+          - { name: core, context: ., file: packages/core/Dockerfile }
+          - { name: edge, context: ., file: packages/edge/Dockerfile }
+          - { name: domains-sync, context: ., file: packages/domains-sync/Dockerfile }
+          - { name: crm, context: apps/control, file: apps/control/Dockerfile }
+          - { name: admin, context: apps/admin, file: apps/admin/Dockerfile }
+          - { name: site, context: ., file: storefronts/Dockerfile, target: site }
+          - { name: ig-sidecar, context: services/ig-sidecar, file: services/ig-sidecar/Dockerfile }
+          - { name: stt, context: services/stt, file: services/stt/Dockerfile }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+      - id: image
+        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vendua-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          push: true
+          tags: |
+            ${{ steps.image.outputs.repo }}:${{ needs.gate.outputs.sha }}
+            ${{ steps.image.outputs.repo }}:main
+          # site: baked in at build (site/README.md). stt: the runner's CPU is not the VPS's, so
+          # reduce-range is set here, never `auto` (ADR 0037); 1 runs on any x86 CPU.
+          build-args: |
+            PUBLIC_ADMIN_URL=${{ vars.PUBLIC_ADMIN_URL || 'https://painel.vendua.com.br' }}
+            PUBLIC_GA_ID=${{ vars.PUBLIC_GA_ID }}
+            PUBLIC_GOOGLE_ADS_ID=${{ vars.PUBLIC_GOOGLE_ADS_ID }}
+            STT_MODEL=${{ vars.STT_MODEL || 'parakeet-tdt-0.6b-v3' }}
+            STT_REDUCE_RANGE=${{ vars.STT_REDUCE_RANGE || '1' }}
+            GIT_COMMIT=${{ needs.gate.outputs.sha }}
+          # links the GHCR package to this repo (its access follows the repo's)
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }}
+
+  platform:
+    needs: [gate, images]
+    if: needs.gate.outputs.go == 'true' && vars.DEPLOY_DOKPLOY == 'on'
+    runs-on: ubuntu-latest
+    steps:
+      # Dokploy runs `docker stack deploy`: services whose image didn't change stay as they are,
+      # the rest start their new task, pass its healthcheck, then stop the old one
+      - name: Deploy the stack
+        env:
+          DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
+          DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+        run: |
+          curl -fsS --max-time 60 -X POST "${DOKPLOY_URL%/}/api/compose.deploy" \
+            -H "x-api-key: $DOKPLOY_API_KEY" -H 'content-type: application/json' \
+            -d "{\"composeId\":\"$DOKPLOY_COMPOSE_ID\"}"
+
+  storefronts:
+    needs: [gate, images, platform]
+    # after the platform when both run (a store built on a new Kernel may need the new Core);
+    # never after a failed one
+    if: >-
+      always() && needs.gate.outputs.go == 'true' && vars.DEPLOY_STOREFRONTS == 'on' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      # content-addressed: an unchanged store hashes to the release it has and changes nothing
+      - name: Publish every storefront
+        env:
+          GIT_COMMIT: ${{ needs.gate.outputs.sha }}
+          VENDUA_CORE_ORIGIN: ${{ vars.VENDUA_CORE_ORIGIN }}
+          VENDUA_PUBLISH_SECRET: ${{ secrets.VENDUA_PUBLISH_SECRET }}
+          VENDUA_ARTIFACTS: ${{ vars.VENDUA_ARTIFACTS }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION || 'auto' }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: bun packages/cli/src/main.ts release publish --all

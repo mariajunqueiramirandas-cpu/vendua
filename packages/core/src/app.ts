@@ -266,6 +266,9 @@ export interface AppDeps {
   sessionSecret: string;
   /** distinct from sessionSecret so a staff key never doubles as the session signing key */
   controlSecret?: string | undefined;
+  /** CI's storefront publish key: registers releases (POST /control/v1/fleet/releases) and
+   *  nothing else — never a staff login, so the repo's secrets don't hold the staff key */
+  publishSecret?: string | undefined;
   /** tests pass false — a background drain mid-assertion races expectations */
   autoDrain?: boolean | undefined;
   /** CEP → address; tests inject a stub (default: ViaCEP) */
@@ -541,6 +544,7 @@ export function createApp({
   sql,
   sessionSecret,
   controlSecret,
+  publishSecret,
   autoDrain,
   cepLookup,
   geocoder,
@@ -1333,25 +1337,35 @@ export function createApp({
     };
   };
   // Resolved once per request by the middleware below; controlGate stays synchronous.
-  const staffAuth = new WeakMap<Request, { viaHeader: boolean; sessionToken: string | null }>();
+  const staffAuth = new WeakMap<
+    Request,
+    { viaHeader: boolean; viaPublishKey: boolean; sessionToken: string | null }
+  >();
   app.use('/control/v1/*', async (c, next) => {
     const header = c.req.header('x-vendua-control');
     let viaHeader = false;
+    let viaPublishKey = false;
     if (header !== undefined) {
       const miss = staffGuessGate(c);
       viaHeader = constantTimeEqual(header, staffSecret);
-      if (!viaHeader) miss();
+      if (!viaHeader) viaPublishKey = constantTimeEqual(header, publishSecret ?? '');
+      if (!viaHeader && !viaPublishKey) miss();
     }
-    const cookie = viaHeader ? undefined : getCookie(c, CONTROL_COOKIE);
+    const cookie = viaHeader || viaPublishKey ? undefined : getCookie(c, CONTROL_COOKIE);
     const sessionToken =
       cookie && cookie.length <= 100 && (await touchControlSession(sql, cookie)) ? cookie : null;
-    staffAuth.set(c.req.raw, { viaHeader, sessionToken });
+    staffAuth.set(c.req.raw, { viaHeader, viaPublishKey, sessionToken });
     await next();
   });
   const controlAuth = (c: Context) =>
-    staffAuth.get(c.req.raw) ?? { viaHeader: false, sessionToken: null };
+    staffAuth.get(c.req.raw) ?? { viaHeader: false, viaPublishKey: false, sessionToken: null };
   const controlGate = (c: Context) => {
-    const { viaHeader, sessionToken } = controlAuth(c);
+    const { viaHeader, viaPublishKey, sessionToken } = controlAuth(c);
+    if (viaPublishKey) {
+      // every staff route passes through here, so the publish key opens exactly one of them
+      if (c.req.method === 'POST' && c.req.path === '/control/v1/fleet/releases') return;
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
     if (!viaHeader && !sessionToken) throw new HttpError(404, 'NOT_FOUND', 'not found');
     // CSRF: cookie-authed mutations need the custom x-vendua-staff marker + same-host Origin.
     if (!viaHeader && c.req.method !== 'GET') {

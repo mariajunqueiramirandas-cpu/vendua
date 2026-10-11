@@ -27,10 +27,15 @@ const server = Bun.serve({
   fetch: (req, srv) => edge.fetch(req, srv),
 });
 
+// keep serving this long after SIGTERM: a proxy routing to task IPs (Traefik's swarm provider
+// re-reads them every 15 s) still sends requests here until it sees the new task (ADR 0041)
+const drainMs = num(env.VENDUA_EDGE_DRAIN_MS, 0);
+
 let closing = false;
 async function shutdown() {
   if (closing) return;
   closing = true;
+  if (drainMs > 0) await Bun.sleep(drainMs);
   // SSE streams never finish on their own: give requests a moment, then cut them
   await Promise.race([server.stop(), Bun.sleep(5_000)]);
   void server.stop(true);

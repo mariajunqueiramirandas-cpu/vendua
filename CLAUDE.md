@@ -25,6 +25,8 @@ the only producer of `site_tasks`),
   `platform/http.ts`; checkout creates at most one order per cart.
 - Storefronts talk to Core only through the kernel api client (never raw `fetch`).
 - Inputs are bounded (length/size caps) and bad ids return stable 4xx, never a 500.
+- A migration keeps the previous Core working: a deploy runs old and new Core on one schema for
+  seconds (ADR 0041). Add now; drop or rename in a later PR, once no running Core reads it.
 - Storefront pages are templates (Core data) + sections; store code never calls cart
   mutations or builds product URLs by hand, and store CSS never targets `.v-*` /
   `[data-vendua]` — `vendua check` (K01–K15) enforces it.
@@ -62,6 +64,9 @@ the only producer of `site_tasks`),
 
 ## Working here
 
+- Deploys: a green `main` runs `.github/workflows/deploy.yml` (images to GHCR, `docker-stack.yml`
+  swapped start-first, storefronts published to R2), ADR 0041 and `docs/deploy/zero-downtime.md`.
+  A new storefront needs no Dockerfile line.
 - Starting Core / the CRM / the admin, seeding, screenshots, fleet commands and Docker: the
   `local-stack` skill (`.claude/skills/local-stack/SKILL.md`). `apps/control` and `apps/admin`
   each have a `CLAUDE.md` with their UI rules; it loads when you work in that app.

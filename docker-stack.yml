@@ -1,0 +1,496 @@
+# The platform as a Docker Swarm stack (Dokploy compose type "Stack"; ADR 0041,
+# docs/deploy/zero-downtime.md). Same services as docker-compose.yml, but every image comes
+# prebuilt from GHCR (the deploy workflow builds them), and a deploy swaps each changed service
+# start-first: the new task passes its healthcheck before the old one stops. Storefronts aren't
+# here at all: CI publishes them to the artifact store (R2) and the edge serves them.
+# `core` is internal-only — the storefront edge proxies /storefront/v1, /checkout/v1, /v1 to it.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vendua
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: vendua
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vendua -d vendua']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # never two Postgres on one data directory
+    deploy:
+      update_config: { order: stop-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: stop-first }
+      restart_policy: { condition: any, delay: 5s }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  core:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-core:${VENDUA_IMAGE_TAG:-main}
+    environment:
+      PORT: '8787'
+      DATABASE_URL: postgres://vendua_app:${VENDUA_APP_DB_PASSWORD:?set VENDUA_APP_DB_PASSWORD in .env}@db:5432/vendua
+      MIGRATION_DATABASE_URL: postgres://vendua:${POSTGRES_PASSWORD}@db:5432/vendua
+      VENDUA_APP_DB_PASSWORD: ${VENDUA_APP_DB_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      # Staff login key for the CRM at /control/ (the login page's "key").
+      CONTROL_SECRET: ${CONTROL_SECRET:?set CONTROL_SECRET in .env}
+      # CI's storefront publish key (ADR 0041): registers releases, nothing else. Unset = off.
+      VENDUA_PUBLISH_SECRET: ${VENDUA_PUBLISH_SECRET:-}
+      # Traefik fronts everything — X-Forwarded-* carries routing truth.
+      VENDUA_TRUST_PROXY: '1'
+      # Chain is client → Traefik → edge/nginx → core; trust that proxy's append (1 hop from the right).
+      VENDUA_PROXY_HOPS: ${VENDUA_PROXY_HOPS:-1}
+      # Control Plane (docs/architecture/08): the edge's key for /edge/v1/resolve — same value below.
+      VENDUA_EDGE_SECRET: ${VENDUA_EDGE_SECRET:?set VENDUA_EDGE_SECRET in .env}
+      # Own domains (ADR 0038): domains-sync's key for /sync/v1 (same value below), the VPS's
+      # public addresses for hosted zones, Cloudflare (DNS host) and Openprovider (.com.br
+      # registrar). Unset Cloudflare/IPv4 = no delegation; unset Openprovider = no purchase.
+      VENDUA_SYNC_SECRET: ${VENDUA_SYNC_SECRET:-}
+      VENDUA_EDGE_IPV4: ${VENDUA_EDGE_IPV4:-}
+      VENDUA_EDGE_IPV6: ${VENDUA_EDGE_IPV6:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      OPENPROVIDER_USERNAME: ${OPENPROVIDER_USERNAME:-}
+      OPENPROVIDER_PASSWORD: ${OPENPROVIDER_PASSWORD:-}
+      OPENPROVIDER_CONTACT_HANDLE: ${OPENPROVIDER_CONTACT_HANDLE:-}
+      OPENPROVIDER_PROVIDER_NAME: ${OPENPROVIDER_PROVIDER_NAME:-}
+      # unset = Openprovider's production API; its OTE sandbox URL for a staging stack
+      OPENPROVIDER_URL: ${OPENPROVIDER_URL:-}
+      # Site builder (ADR 0039, docs/deploy/site-builder.md): the Claude Code routine that builds
+      # sites, and the GitHub repo whose PRs staff approval merges. Unset = tasks wait / merge by hand.
+      VENDUA_SITE_ROUTINE_URL: ${VENDUA_SITE_ROUTINE_URL:-}
+      VENDUA_SITE_ROUTINE_TOKEN: ${VENDUA_SITE_ROUTINE_TOKEN:-}
+      VENDUA_GITHUB_REPO: ${VENDUA_GITHUB_REPO:-}
+      VENDUA_GITHUB_TOKEN: ${VENDUA_GITHUB_TOKEN:-}
+      VENDUA_GITHUB_WEBHOOK_SECRET: ${VENDUA_GITHUB_WEBHOOK_SECRET:-}
+      # Venduá's own WhatsApp number: Core's socket (default) or `gateway` after the cutover
+      # (platform-whatsapp/cutover-cli.ts).
+      WA_PLATFORM_TRANSPORT: ${WA_PLATFORM_TRANSPORT:-}
+      # Postgres pool sizes (default 10 each); unset/empty = default.
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
+      # signup codes sent from Venduá's number: per IP per day / platform per hour / per day (30/60/300)
+      VENDUA_SIGNUP_OTP_PER_IP_DAY: ${VENDUA_SIGNUP_OTP_PER_IP_DAY:-}
+      VENDUA_SIGNUP_OTP_PER_HOUR: ${VENDUA_SIGNUP_OTP_PER_HOUR:-}
+      VENDUA_SIGNUP_OTP_PER_DAY: ${VENDUA_SIGNUP_OTP_PER_DAY:-}
+      # Synthetic probes verify deployments and watch every live host (default on in production).
+      VENDUA_PROBES: ${VENDUA_PROBES:-1}
+      # unset = probe https://<host> (DNS + TLS + edge); http://edge:8080 = through the edge only
+      VENDUA_PROBE_ORIGIN: ${VENDUA_PROBE_ORIGIN:-}
+      # Merchant admin: stores live at <slug>.<VENDUA_STORE_DOMAIN>.
+      VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
+      # The admin's own domain (the `admin` service's); set, no other host serves /admin.
+      VENDUA_ADMIN_HOST: ${VENDUA_ADMIN_HOST:-}
+      # Web push for new orders (npx web-push generate-vapid-keys); unset = push off, sound still on.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:suporte@vendua.com.br}
+      # Ajuda's "chamar no WhatsApp" number (digits); unset = in-app message only.
+      VENDUA_SUPPORT_WHATSAPP: ${VENDUA_SUPPORT_WHATSAPP:-}
+      # Mercado Pago (docs/deploy/dokploy.md): stores connect by OAuth to this application;
+      # unset = stores keep the offline methods. The platform token bills plans (signup needs it).
+      MP_CLIENT_ID: ${MP_CLIENT_ID:-}
+      MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
+      MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+      MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
+      # signup with this code skips Mercado Pago; the team marks its invoices paid in the CRM
+      VENDUA_SIGNUP_ACCESS_CODE: ${VENDUA_SIGNUP_ACCESS_CODE:-}
+      # the app's production public key: card-form fallback for a store whose OAuth gave none, and
+      # MercadoPago.js in the admin (its device fingerprint goes with the plan's Pix)
+      MP_PUBLIC_KEY: ${MP_PUBLIC_KEY:-}
+      # Seals stores' MP tokens at rest (optional); unset = derived from SESSION_SECRET (warns at
+      # boot). Setting it later is safe: tokens sealed under the derived key still open.
+      VENDUA_SECRETS_KEY: ${VENDUA_SECRETS_KEY:-}
+      # 1 = on each boot, create the quero-pudim store (+ its owner, CRM record) if missing.
+      # Production only adds: an existing store keeps everything; it just gains new SEED_DOMAINS.
+      SEED_DEMO: ${SEED_DEMO:-0}
+      # slug:public-host[,slug:host2] — registers each storefront's real domain at seed time.
+      SEED_DOMAINS: ${SEED_DOMAINS:-}
+      # the seeded store's owner in the merchant admin (only used when the seed creates it)
+      SEED_OWNER_NAME: ${SEED_OWNER_NAME:-}
+      SEED_OWNER_PHONE: ${SEED_OWNER_PHONE:-}
+      SEED_OWNER_EMAIL: ${SEED_OWNER_EMAIL:-}
+      # Driver reads the key its Config row's secret_ref names; unset = driver reports "ausente".
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # Svix signing secret for the inbound email webhook; unset = inbound events rejected.
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      TINYFISH_API_KEY: ${TINYFISH_API_KEY:-}
+      # Agent Runtime v3 model routes when control_settings has none (same JSON, zdr routes only)
+      AGENT_MODEL_ROUTES: ${AGENT_MODEL_ROUTES:-}
+      # Delivery by road distance (ADR 0024); unset = straight line × 1.3.
+      ORS_API_KEY: ${ORS_API_KEY:-}
+      # a self-hosted OpenRouteService; unset = api.openrouteservice.org
+      ORS_URL: ${ORS_URL:-}
+      # Pin maps: geocoder and raster tiles; unset = OSM's public Nominatim and tiles.
+      NOMINATIM_URL: ${NOMINATIM_URL:-}
+      NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-}
+      MAP_TILE_URL: ${MAP_TILE_URL:-}
+      MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
+      MAP_TILE_MAX_ZOOM: ${MAP_TILE_MAX_ZOOM:-}
+      VENDUA_WEBHOOK_SECRET: ${VENDUA_WEBHOOK_SECRET:-}
+      # monid.ai gateway for the agent's paid enrichment tools — read directly; unset = tools report missing.
+      MONID_API_KEY: ${MONID_API_KEY:-}
+      # Meeting integrations (optional): B64 SA key for deploy, plain JSON for dev; unset = gcal off, static roomUrl.
+      GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64:-}
+      GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON:-}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
+      DAILY_API_KEY: ${DAILY_API_KEY:-}
+      # The team's Discord bot (ADR 0023, docs/deploy/discord.md): the token only — the
+      # application id, public key, server and channels are set in the CRM (Config → Discord).
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      # optional: the commit the "Core reiniciou" card shows
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      # Voice-note transcription via the stt service below (ADR 0037); unset secret = off.
+      STT_URL: http://stt:8792
+      STT_SECRET: ${STT_SECRET:-}
+      # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
+      IG_SIDECAR_URL: http://ig-sidecar:8790
+      IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
+      # pino level for core itself / the Baileys socket logger.
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bun -e "fetch(''http://127.0.0.1:8787/healthz'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    # old and new Core overlap for seconds: each migration must keep the previous Core working
+    # (CLAUDE.md), and Venduá's own WhatsApp must be on the wa-gateway (WA_PLATFORM_TRANSPORT)
+    stop_grace_period: 30s
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: start-first }
+      restart_policy: { condition: any, delay: 5s }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Every store, one service (docs/architecture/07): the edge maps Host → store → release through
+  # Core, serves that release's immutable files from the artifact store and injects vendua-state.
+  # New stores, releases and own domains need no compose change: domains-sync (below) routes the
+  # stores' own domains to this service — see docs/deploy/dokploy.md.
+  edge:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-edge:${VENDUA_IMAGE_TAG:-main}
+    environment:
+      VENDUA_CORE_URL: http://core:8787
+      VENDUA_EDGE_SECRET: ${VENDUA_EDGE_SECRET}
+      # s3://bucket[/prefix] on R2: CI's publish writes there (no artifacts volume in a stack)
+      VENDUA_ARTIFACTS: ${VENDUA_ARTIFACTS:?set VENDUA_ARTIFACTS to the R2 bucket uri}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-auto}
+      # how long a Host → store route / a store's state is cached (ms, default 30000 each)
+      VENDUA_EDGE_ROUTE_TTL_MS: ${VENDUA_EDGE_ROUTE_TTL_MS:-}
+      VENDUA_EDGE_STATE_TTL_MS: ${VENDUA_EDGE_STATE_TTL_MS:-}
+      # the old edge keeps answering this long after SIGTERM, until Traefik routes to the new one
+      VENDUA_EDGE_DRAIN_MS: ${VENDUA_EDGE_DRAIN_MS:-20000}
+    stop_grace_period: 35s
+    volumes:
+      # route/state snapshot + verified files: a restart during a Core outage keeps serving
+      - edgecache:/var/cache/vendua-edge
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bun -e "fetch(''http://127.0.0.1:8080/_edge/healthz'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    # The wildcard route. Priority 1 = last: the exact hosts below (admin, crm, site) and the
+    # stores' own domains always win over it.
+    networks: [default, dokploy-network]
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: start-first }
+      restart_policy: { condition: any, delay: 5s }
+      # Swarm services carry Traefik's labels here, on the service, not the container; Traefik v3
+      # skips a service with any traefik.docker.* label beside these, so swarm ones only
+      labels:
+        - traefik.enable=true
+        - traefik.swarm.network=dokploy-network
+        # through the service's virtual IP: Swarm takes a task out of it before stopping it
+        - traefik.swarm.lbswarm=true
+        - traefik.http.services.vendua-edge.loadbalancer.server.port=8080
+        - traefik.http.routers.vendua-edge-http.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+        # the rule is v3 regex syntax: pinned, or a Traefik whose core.defaultRuleSyntax is v2 never
+        # matches it and every store 404s
+        - traefik.http.routers.vendua-edge-http.ruleSyntax=v3
+        - traefik.http.routers.vendua-edge-http.entrypoints=web
+        - traefik.http.routers.vendua-edge-http.priority=1
+        - traefik.http.routers.vendua-edge-http.middlewares=vendua-edge-https
+        - traefik.http.middlewares.vendua-edge-https.redirectscheme.scheme=https
+        - traefik.http.routers.vendua-edge.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+        - traefik.http.routers.vendua-edge.ruleSyntax=v3
+        - traefik.http.routers.vendua-edge.entrypoints=websecure
+        - traefik.http.routers.vendua-edge.priority=1
+        - traefik.http.routers.vendua-edge.tls=true
+        # wildcard certificate over DNS-01: the `cloudflare` resolver in Dokploy's traefik.yml
+        # (docs/deploy/dokploy.md). Stores' own domains must reach the VPS directly, so the
+        # `*` record stays DNS only and Traefik, not Cloudflare, holds this certificate.
+        - traefik.http.routers.vendua-edge.tls.certresolver=cloudflare
+        - traefik.http.routers.vendua-edge.tls.domains[0].main=vendua.com.br
+        - traefik.http.routers.vendua-edge.tls.domains[0].sans=*.vendua.com.br
+        - traefik.http.routers.vendua-edge.service=vendua-edge
+        - traefik.http.routers.vendua-edge-http.service=vendua-edge
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Writes the Traefik dynamic file that routes verified custom domains to the edge (ADR 0038).
+  # Internal network only, no labels: nothing reaches it, and the internet-facing edge never gets
+  # this mount. Without VENDUA_SYNC_SECRET it idles.
+  domains-sync:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-domains-sync:${VENDUA_IMAGE_TAG:-main}
+    environment:
+      VENDUA_CORE_URL: http://core:8787
+      VENDUA_SYNC_SECRET: ${VENDUA_SYNC_SECRET:-}
+      VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
+      # the platform's own hosts (admin, CRM, site), comma-separated: never routed from the file
+      DOMAINS_SYNC_DENY: ${DOMAINS_SYNC_DENY:-}
+      # Traefik's certificate resolver for those routes (default letsencrypt, Dokploy's)
+      DOMAINS_SYNC_RESOLVER: ${DOMAINS_SYNC_RESOLVER:-}
+      DOMAINS_SYNC_INTERVAL_MS: ${DOMAINS_SYNC_INTERVAL_MS:-}
+      # in a stack Traefik sees the edge's labels through its swarm provider, not docker
+      DOMAINS_SYNC_SERVICE: vendua-edge@swarm
+      DOMAINS_SYNC_MIDDLEWARE: vendua-edge-https@swarm
+    volumes:
+      - ${TRAEFIK_DYNAMIC_DIR:-/etc/dokploy/traefik/dynamic}:/traefik-dynamic
+    networks: [default]
+    # one writer of the Traefik file at a time
+    deploy:
+      update_config: { order: stop-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: stop-first }
+      restart_policy: { condition: any, delay: 5s }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Every store's own WhatsApp (ADR 0026): one linked-device socket per store that turned it on.
+  # Core's image, its own process, so a Core deploy or a baileys crash never takes the other
+  # down. Talks only to Postgres (leases, the message queue, sealed logins); never migrates.
+  wa-gateway:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-core:${VENDUA_IMAGE_TAG:-main}
+    entrypoint: ['bun', 'src/wa-gateway.ts']
+    command: []
+    environment:
+      DATABASE_URL: postgres://vendua_app:${VENDUA_APP_DB_PASSWORD:?set VENDUA_APP_DB_PASSWORD in .env}@db:5432/vendua
+      # Logins are sealed under these: the same values Core has, or nothing opens.
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      VENDUA_SECRETS_KEY: ${VENDUA_SECRETS_KEY:-}
+      # sockets this process holds; a second replica takes the rest (leases split the stores)
+      WA_MAX_SESSIONS: ${WA_MAX_SESSIONS:-300}
+      # per store: pause between messages (plus jitter) and an hourly ceiling
+      WA_MIN_SEND_GAP_MS: ${WA_MIN_SEND_GAP_MS:-1500}
+      WA_MAX_PER_HOUR: ${WA_MAX_PER_HOUR:-200}
+      # per store: gap between messages in one chat / between conversations (ms)
+      WA_CHAT_GAP_MS: ${WA_CHAT_GAP_MS:-1500}
+      WA_CONVERSATION_GAP_MS: ${WA_CONVERSATION_GAP_MS:-250}
+      # Venduá's own number: 0 = this gateway leaves it alone; pacing of its messages (ms)
+      WA_PLATFORM_SESSIONS: ${WA_PLATFORM_SESSIONS:-}
+      WA_PLATFORM_MIN_SEND_GAP_MS: ${WA_PLATFORM_MIN_SEND_GAP_MS:-1500}
+      # the version this gateway records in wa_gateways
+      VENDUA_VERSION: ${GIT_COMMIT:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_JOBS_POOL_MAX: ${DB_JOBS_POOL_MAX:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
+    # no depends_on in a stack: the gateway waits at boot until Core has applied its migrations
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bun -e "fetch(''http://127.0.0.1:8791/healthz'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    # SIGTERM closes every socket and hands the leases back; 15 s is its own hard stop
+    stop_grace_period: 20s
+    # two gateways split the stores by lease, so the new one takes over as the old hands back
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: start-first }
+      restart_policy: { condition: any, delay: 5s }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Instagram DM transport (services/ig-sidecar, Go + mautrix-meta, AGPL-3.0). Internal
+  # only: Core pushes the stored session in and it posts signed events back. Without
+  # IG_SIDECAR_SECRET it idles and refuses every call.
+  ig-sidecar:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-ig-sidecar:${VENDUA_IMAGE_TAG:-main}
+    environment:
+      IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
+      CORE_EVENTS_URL: http://core:8787/control/v1/ig/events
+      # static residential proxy (http:// or socks5://) — Instagram flags datacenter IPs
+      IG_PROXY: ${IG_PROXY:-}
+      IG_MIN_SEND_GAP_SECONDS: ${IG_MIN_SEND_GAP_SECONDS:-20}
+      LOG_LEVEL: ${IG_SIDECAR_LOG_LEVEL:-info}
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8790/healthz || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    # one Instagram login: never two sidecars holding it
+    deploy:
+      update_config: { order: stop-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: stop-first }
+      restart_policy: { condition: any, delay: 5s }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Self-hosted speech-to-text for shoppers' voice notes (services/stt, ADR 0037): Parakeet-TDT
+  # 0.6B v3 on CPU. Internal only; without STT_SECRET it idles and refuses every call. The first
+  # build downloads the 0.8 GB compiled model for this host's CPU from our GitHub Release.
+  # `cpus` keeps it off Core's and Postgres' cores; the engine sizes its threads to it.
+  stt:
+    # built in CI with STT_MODEL / STT_REDUCE_RANGE from the repo's variables (the runner's CPU
+    # isn't this host's, so reduce-range is never `auto` there)
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-stt:${VENDUA_IMAGE_TAG:-main}
+    environment:
+      STT_SECRET: ${STT_SECRET:-}
+      # defaults spelled out: the service parses these with int()/float(), so empty would crash it.
+      # Threads follow `cpus` (STT_CPUS); STT_THREADS has no safe empty value, so it isn't passed.
+      STT_MAX_BATCH: ${STT_MAX_BATCH:-8}
+      STT_MAX_WAIT_MS: ${STT_MAX_WAIT_MS:-0}
+      STT_MAX_QUEUE: ${STT_MAX_QUEUE:-64}
+      STT_MAX_SECONDS: ${STT_MAX_SECONDS:-200}
+      STT_MAX_BYTES: ${STT_MAX_BYTES:-10485760}
+      STT_REQUEST_TIMEOUT_S: ${STT_REQUEST_TIMEOUT_S:-120}
+      LOG_LEVEL: ${STT_LOG_LEVEL:-info}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8792/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+    # stop-first: two copies would need twice the RAM; Core falls back while it restarts
+    deploy:
+      update_config: { order: stop-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: stop-first }
+      restart_policy: { condition: any, delay: 5s }
+      resources:
+        limits: { cpus: '${STT_CPUS:-2}', memory: '${STT_MEM_LIMIT:-3g}' }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Staff CRM on VENDUA_CRM_HOST (the route is the labels below, not Dokploy's Domains UI) — never on core (shortens the proxy
+  # chain and breaks VENDUA_PROXY_HOPS accounting for the login limiter).
+  crm:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-crm:${VENDUA_IMAGE_TAG:-main}
+    networks: [default, dokploy-network]
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: start-first }
+      restart_policy: { condition: any, delay: 5s }
+      labels:
+        - traefik.enable=true
+        - traefik.swarm.network=dokploy-network
+        # through the service's virtual IP: Swarm takes a task out of it before stopping it
+        - traefik.swarm.lbswarm=true
+        - traefik.http.services.vendua-crm.loadbalancer.server.port=80
+        - traefik.http.routers.vendua-crm-http.rule=Host(`${VENDUA_CRM_HOST:?set VENDUA_CRM_HOST}`)
+        - traefik.http.routers.vendua-crm-http.entrypoints=web
+        - traefik.http.routers.vendua-crm-http.middlewares=vendua-edge-https
+        - traefik.http.routers.vendua-crm-http.service=vendua-crm
+        - traefik.http.routers.vendua-crm.rule=Host(`${VENDUA_CRM_HOST:?set VENDUA_CRM_HOST}`)
+        - traefik.http.routers.vendua-crm.entrypoints=websecure
+        - traefik.http.routers.vendua-crm.tls=true
+        - traefik.http.routers.vendua-crm.tls.certresolver=letsencrypt
+        - traefik.http.routers.vendua-crm.service=vendua-crm
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Merchant admin on its own domain — proxies /admin and /v1/media to core.
+  admin:
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-admin:${VENDUA_IMAGE_TAG:-main}
+    networks: [default, dokploy-network]
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: start-first }
+      restart_policy: { condition: any, delay: 5s }
+      labels:
+        - traefik.enable=true
+        - traefik.swarm.network=dokploy-network
+        # through the service's virtual IP: Swarm takes a task out of it before stopping it
+        - traefik.swarm.lbswarm=true
+        - traefik.http.services.vendua-admin.loadbalancer.server.port=80
+        - traefik.http.routers.vendua-admin-http.rule=Host(`${VENDUA_ADMIN_HOST:?set VENDUA_ADMIN_HOST}`)
+        - traefik.http.routers.vendua-admin-http.entrypoints=web
+        - traefik.http.routers.vendua-admin-http.middlewares=vendua-edge-https
+        - traefik.http.routers.vendua-admin-http.service=vendua-admin
+        - traefik.http.routers.vendua-admin.rule=Host(`${VENDUA_ADMIN_HOST:?set VENDUA_ADMIN_HOST}`)
+        - traefik.http.routers.vendua-admin.entrypoints=websecure
+        - traefik.http.routers.vendua-admin.tls=true
+        - traefik.http.routers.vendua-admin.tls.certresolver=letsencrypt
+        - traefik.http.routers.vendua-admin.service=vendua-admin
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  site:
+    # PUBLIC_ADMIN_URL and the Google tag ids are baked in by the deploy workflow (repo variables)
+    image: ${VENDUA_IMAGES:-ghcr.io/mariajunqueiramirandas-cpu}/vendua-site:${VENDUA_IMAGE_TAG:-main}
+    networks: [default, dokploy-network]
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: start-first }
+      restart_policy: { condition: any, delay: 5s }
+      labels:
+        - traefik.enable=true
+        - traefik.swarm.network=dokploy-network
+        # through the service's virtual IP: Swarm takes a task out of it before stopping it
+        - traefik.swarm.lbswarm=true
+        - traefik.http.services.vendua-site.loadbalancer.server.port=80
+        - traefik.http.routers.vendua-site-http.rule=Host(`${VENDUA_SITE_HOST:?set VENDUA_SITE_HOST}`)
+        - traefik.http.routers.vendua-site-http.entrypoints=web
+        - traefik.http.routers.vendua-site-http.middlewares=vendua-edge-https
+        - traefik.http.routers.vendua-site-http.service=vendua-site
+        - traefik.http.routers.vendua-site.rule=Host(`${VENDUA_SITE_HOST:?set VENDUA_SITE_HOST}`)
+        - traefik.http.routers.vendua-site.entrypoints=websecure
+        - traefik.http.routers.vendua-site.tls=true
+        - traefik.http.routers.vendua-site.tls.certresolver=letsencrypt
+        - traefik.http.routers.vendua-site.service=vendua-site
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+networks:
+  # Dokploy's Traefik network — the edge's wildcard route is reached through it
+  dokploy-network:
+    external: true
+
+volumes:
+  # the compose project's existing volume, by its full name (`docker volume ls`): a stack would
+  # otherwise create <stack>_pgdata and Postgres would start empty
+  pgdata:
+    external: true
+    name: ${VENDUA_PGDATA_VOLUME:?set VENDUA_PGDATA_VOLUME to the existing Postgres volume}
+  edgecache:

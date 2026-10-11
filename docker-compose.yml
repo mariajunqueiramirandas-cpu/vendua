@@ -32,6 +32,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       # Staff login key for the CRM at /control/ (the login page's "key").
       CONTROL_SECRET: ${CONTROL_SECRET:?set CONTROL_SECRET in .env}
+      # CI's storefront publish key (ADR 0041): registers releases, nothing else. Unset = off.
+      VENDUA_PUBLISH_SECRET: ${VENDUA_PUBLISH_SECRET:-}
       # Traefik fronts everything — X-Forwarded-* carries routing truth.
       VENDUA_TRUST_PROXY: '1'
       # Chain is client → Traefik → edge/nginx → core; trust that proxy's append (1 hop from the right).

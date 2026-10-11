@@ -37,6 +37,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `OPENPROVIDER_CONTACT_HANDLE`              | Venduá's Openprovider contact: admin/tech/billing of each domain  |
 | `OPENPROVIDER_PROVIDER_NAME`               | the provider name owners pick at registro.br (conflict steps)     |
 | `VENDUA_ARTIFACTS`                         | release store: unset = the `artifacts` volume; `s3://bucket/pfx`  |
+| `VENDUA_PUBLISH_SECRET`                    | CI's storefront publish key ([zero-downtime](zero-downtime.md))   |
 | `S3_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY`  | with an `s3://` store: R2/MinIO credentials                       |
 | `S3_ENDPOINT` / `S3_REGION`                | with an `s3://` store: the endpoint (R2: account URL), region     |
 | `VENDUA_PROBES`                            | `1` (default) = synthetic probes verify deployments and alert     |
@@ -345,10 +346,18 @@ through the edge with the store's Host header (DNS and TLS unchecked).
 | `wa-gateway` | `packages/core/Dockerfile`, entrypoint `src/wa-gateway.ts` | 8791, internal |
 | `stt`        | `services/stt/Dockerfile` (Python, ONNX Runtime)           | 8792, internal |
 
-`site` and `publish` share the storefronts Dockerfile's `build` stage, so a deploy runs one
-`bun install` + one vite pass for both (compose/bake dedupe the shared stage).
+`site` and `publish` share the storefronts Dockerfile's install stage, so a deploy runs one
+`bun install` for both (compose/bake dedupe the shared stage). The Dockerfiles collect every
+workspace's `package.json` from the root's `workspaces` globs, so a storefront change never
+rebuilds Core.
 
-Adding a storefront with its own bundle = its folder under `storefronts/` and one `COPY` line
-for its `package.json` in the Dockerfiles' manifest blocks (`--frozen-lockfile` needs it on
-disk); the next deploy publishes it, and the store whose tenant it names
-(`package.json` `vendua.tenant`) moves to it. No compose service and no Dokploy domain.
+Adding a storefront with its own bundle = its folder under `storefronts/`; the next publish
+ships it, and the store whose tenant it names (`package.json` `vendua.tenant`) moves to it. No
+Dockerfile line, no compose service and no Dokploy domain.
+
+## Without downtime
+
+This compose install rebuilds every image on the VPS and restarts each changed container, so a
+deploy takes things offline for a while. [zero-downtime.md](zero-downtime.md) moves it to CI
+(storefronts published to R2, images on GHCR) and to `docker-stack.yml`, a Swarm stack that
+swaps each service start-first ([ADR 0041](../adr/0041-zero-downtime-deploys.md)).
