@@ -20,6 +20,11 @@
     --v-purchase-panel-media-ratio: 1 / 1;
     --v-announcement-bg: var(--v-color-accent, #3f5e4e);
     --v-announcement-fg: var(--v-color-on-accent, #fff);
+    /* Kernel 1.25: the strip of store notices over the header, and the footer */
+    --v-banner-bg: color-mix(in srgb, var(--v-color-text, #1a1714) 7%, var(--v-color-bg, #fff));
+    --v-banner-fg: var(--v-color-text, #1a1714);
+    --v-footer-bg: color-mix(in srgb, var(--v-color-text, #1c1b1a) 3%, var(--v-color-bg, #f7f6f4));
+    --v-footer-fg: var(--v-color-text, #1c1b1a);
     --v-header-height: 64px;
     --v-focus: 2px solid var(--v-color-accent, #3f5e4e);
     /* private: the page gutter, widened into the notch when the store sets viewport-fit=cover */
@@ -330,50 +335,80 @@
     flex-direction: column;
     align-items: stretch;
   }
+  /* one quiet strip per notice: a dot in the notice's tone, the title, then the words; colours
+     from --v-banner-bg / --v-banner-fg */
   .v-banner-stack > .v-notice {
+    --_v-banner-muted: color-mix(in srgb, var(--v-banner-fg) 74%, var(--v-banner-bg));
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 2px 10px;
     max-width: none;
     margin: 0;
-    padding: 9px 48px 9px 16px;
+    padding: 10px 52px 10px 20px;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     text-align: center;
-    line-height: 1.4;
-    background: color-mix(in srgb, var(--v-color-accent, #b06010) 12%, var(--v-color-bg, #fff));
-    border-bottom: 1px solid color-mix(in srgb, var(--v-color-accent, #b06010) 22%, transparent);
+    line-height: 1.35;
+    background: var(--v-banner-bg);
+    color: var(--v-banner-fg);
   }
-  .v-banner-stack > .v-notice-info {
-    border-left: 0;
-    background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 10%, var(--v-color-bg, #fff));
-    border-bottom-color: color-mix(in srgb, var(--v-color-success, #3d7a4f) 22%, transparent);
+  .v-banner-stack > .v-notice + .v-notice {
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--v-banner-fg) 12%, transparent);
   }
-  .v-banner-stack > .v-notice-warning {
-    border-left: 0;
+  .v-banner-stack > .v-notice::before {
+    content: '';
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--_v-banner-muted);
   }
-  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body, .v-notice-dismiss) {
-    color: var(--v-color-text, #1a1714);
+  .v-banner-stack > .v-notice-warning::before {
+    background: color-mix(in srgb, var(--v-color-danger, #b3372f) 72%, var(--v-banner-fg));
   }
-  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body) {
+  .v-banner-stack > .v-notice-info::before {
+    background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 70%, var(--v-banner-fg));
+  }
+  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body, .v-notice-meta) {
     display: inline;
     margin: 0;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
-  .v-banner-stack > .v-notice .v-notice-title::after {
-    content: ' — ';
-    font-weight: 400;
+  .v-banner-stack > .v-notice .v-notice-title {
+    font-family: var(--v-font-body, system-ui);
+    font-weight: 600;
+    color: var(--v-banner-fg);
   }
-  .v-banner-stack > .v-notice .v-notice-title:only-child::after {
-    content: none;
+  .v-banner-stack > .v-notice :is(.v-notice-body, .v-notice-meta) {
+    color: var(--_v-banner-muted);
   }
   .v-banner-stack > .v-notice .v-notice-actions {
     display: inline-flex;
-    margin: 0 0 0 10px;
+    margin: 0;
+  }
+  .v-banner-stack > .v-notice .v-notice-action {
+    color: var(--v-banner-fg);
+    font-size: 0.875rem;
+    text-underline-offset: 3px;
+  }
+  .v-banner-stack > .v-notice .v-btn {
+    min-height: 34px;
+    margin: 4px 0;
+    padding: 0.4em 1em;
+    background: var(--v-banner-fg);
+    color: var(--v-banner-bg);
+    box-shadow: none;
+    font-size: 0.875rem;
   }
   .v-banner-stack > .v-notice .v-notice-dismiss {
     top: 50%;
-    right: 6px;
+    right: 8px;
     /* translate, not transform: the press scale and reduced motion own transform */
     translate: 0 -50%;
+    color: var(--_v-banner-muted);
   }
   .v-toast-region {
     position: fixed;
@@ -1410,11 +1445,17 @@
     margin: 0;
   }
   .v-summary-total {
+    align-items: baseline;
     margin-top: 6px;
-    padding-top: 10px;
+    padding-top: 12px;
     border-top: 1px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 14%, transparent);
     font-weight: 600;
     font-size: 1.125rem;
+  }
+  .v-summary-total dd {
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-size: 1.375rem;
+    letter-spacing: -0.015em;
   }
   .v-success {
     margin-bottom: 24px;
@@ -1447,42 +1488,46 @@
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
+  /* the bag reads like a receipt: one sheet of paper, a line per item, hairlines between */
   .v-cart-lines {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 0 16px;
     display: grid;
-    gap: 12px;
+    border-radius: var(--v-radius-lg, 14px);
+    background: var(--v-color-surface, #fff);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 9%, transparent),
+      0 1px 2px color-mix(in srgb, var(--v-color-text, #1c1b1a) 5%, transparent);
   }
   .v-line {
     position: relative;
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-columns: 60px minmax(0, 1fr);
     align-items: start;
     gap: 14px;
-    padding: 14px;
-    border-radius: var(--v-radius-md, 8px);
-    background: var(--v-color-surface, #fff);
-    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    padding: 16px 0;
   }
-  .v-line[data-unavailable] {
-    border-color: color-mix(in srgb, var(--v-color-danger, #a33b32) 40%, transparent);
+  .v-line + .v-line {
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 9%, transparent);
+  }
+  .v-line[data-unavailable] .v-line-thumb {
+    opacity: 0.5;
+    filter: grayscale(1);
   }
   .v-line-thumb {
     display: grid;
     place-items: center;
-    width: 56px;
+    width: 60px;
     aspect-ratio: 1;
     overflow: hidden;
-    border-radius: var(--v-radius-md, 8px);
+    border-radius: min(var(--v-radius-md, 8px), 14px);
     font-family: var(--v-font-display, serif);
     font-size: 1.5rem;
+    font-weight: 600;
     color: var(--v-color-accent, #3f5e4e);
-    background: color-mix(
-      in srgb,
-      var(--v-color-accent, #3f5e4e) 10%,
-      var(--v-color-surface, #fff)
-    );
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 9%, var(--v-color-surface, #fff));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 5%, transparent);
   }
   .v-line-thumb img {
     width: 100%;
@@ -1494,12 +1539,13 @@
   }
   .v-line-name {
     margin: 0;
-    padding-right: 96px;
+    padding-right: 92px;
     font-weight: 600;
+    line-height: 1.3;
     overflow-wrap: anywhere;
   }
   .v-line-mods {
-    margin: 2px 0 0;
+    margin: 4px 0 0;
     font-size: 0.875rem;
     line-height: 1.4;
   }
@@ -1507,16 +1553,34 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 16px;
-    margin-top: 10px;
+    gap: 4px 14px;
+    margin-top: 12px;
+  }
+  .v-line-actions .v-qty button {
+    width: 32px;
+    height: 32px;
+  }
+  /* "Remover" and "Observação": small, quiet, underlined only under a pointer */
+  .v-line-actions .v-link-btn {
+    min-height: 32px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-line-actions .v-link-btn:hover:not(:disabled) {
+      text-decoration: underline;
+    }
   }
   .v-line-total {
     position: absolute;
-    top: 14px;
-    right: 14px;
+    top: 16px;
+    right: 0;
     margin: 0;
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
     font-weight: 600;
     white-space: nowrap;
+    letter-spacing: -0.01em;
   }
   .v-cart-aside > .v-btn {
     margin-top: 8px;
@@ -1907,9 +1971,9 @@
     position: sticky;
     top: 0;
     z-index: 50;
-    background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 86%, transparent);
-    -webkit-backdrop-filter: saturate(1.4) blur(14px);
-    backdrop-filter: saturate(1.4) blur(14px);
+    background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 92%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(18px);
+    backdrop-filter: saturate(1.4) blur(18px);
     border-bottom: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
     font-family: var(--v-font-body, system-ui, sans-serif);
     padding-top: env(safe-area-inset-top, 0px);
@@ -2053,8 +2117,10 @@
     min-width: 24px;
     padding: calc((24px - 1cap) / 2) 7px;
     border-radius: 999px;
-    background: var(--v-color-accent, #3f5e4e);
-    color: var(--v-color-on-accent, #fff);
+    /* the pill is ink; its count, the page's paper */
+    background: var(--v-color-bg, #f7f6f4);
+    color: var(--v-color-text, #1c1b1a);
+    font-weight: 700;
     font-size: 0.75rem;
     line-height: 1;
     text-align: center;
@@ -2062,24 +2128,38 @@
     font-variant-numeric: tabular-nums;
     animation: v-bump 360ms var(--v-motion-easing, ease);
   }
+  /* sdk:header-cart's text variant sits on the page, not on an ink pill */
+  .v-link-btn > .v-cart-count {
+    background: var(--v-color-text, #1c1b1a);
+    color: var(--v-color-bg, #f7f6f4);
+  }
+  /* an empty bag reads "Sacola", not "Sacola 0": the count appears with the first item */
   .v-cart-count[data-empty] {
-    background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 22%, transparent);
-    color: inherit;
-    animation: none;
+    display: none;
+  }
+  .v-cart-pill:has(> .v-cart-count[data-empty]) {
+    padding-right: 16px;
   }
   .v-header-cart {
     padding-block: 8px;
     display: flex;
     justify-content: flex-end;
   }
+  /* the footer signs the page off: the store's name large, how to reach it, its week. Colours
+     from --v-footer-bg / --v-footer-fg; the column lines up with the page's. */
   .v-footer {
+    --_v-footer-muted: color-mix(in srgb, var(--v-footer-fg) 70%, var(--v-footer-bg));
+    --_v-footer-line: color-mix(in srgb, var(--v-footer-fg) 14%, transparent);
     box-sizing: border-box;
-    margin-top: 64px;
-    padding: 48px var(--_v-gutter) calc(40px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
-    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 3%, var(--v-color-bg, #f7f6f4));
+    margin-top: 72px;
+    padding: 56px 0 calc(48px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--_v-footer-line);
+    background: var(--v-footer-bg);
     font-family: var(--v-font-body, system-ui, sans-serif);
-    color: var(--v-color-text, #1c1b1a);
+    color: var(--v-footer-fg);
+  }
+  .v-footer .v-muted {
+    color: var(--_v-footer-muted);
   }
   .v-footer a {
     color: inherit;
@@ -2091,48 +2171,83 @@
   }
   .v-footer-name {
     font-family: var(--v-font-display, var(--v-font-body, serif));
-    font-size: 1.25rem;
+    font-size: clamp(2rem, 1.5rem + 2.4vw, 3.25rem);
     font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -0.01em;
+    line-height: 1;
+    letter-spacing: -0.035em;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+  .v-footer .v-footer-name {
+    margin-bottom: 16px;
   }
   .v-footer .v-footer-contacts {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 14px;
+    margin-top: 20px;
   }
   .v-footer-contacts a {
     display: inline-flex;
     align-items: center;
-    min-height: 36px;
-    padding: 4px 14px;
+    min-height: 40px;
+    padding: 4px 16px;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 18%, transparent);
-    background: var(--v-color-surface, #fff);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-footer-fg) 28%, transparent);
     font-size: 0.875rem;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.2;
     text-decoration: none;
+    transition: box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
   @media (hover: hover) and (pointer: fine) {
     .v-footer-contacts a:hover {
-      border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 40%, transparent);
+      box-shadow: inset 0 0 0 1px var(--v-footer-fg);
     }
   }
   .v-footer-inner {
+    box-sizing: border-box;
     max-width: var(--v-page-max);
     margin: 0 auto;
+    padding-inline: var(--_v-gutter);
     display: grid;
-    gap: 24px;
+    gap: 40px;
   }
   @media (min-width: 720px) {
     .v-footer-inner {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+      column-gap: 64px;
     }
   }
   .v-footer p {
     margin: 0 0 6px;
+  }
+  .v-footer [data-part='about'] > .v-muted {
+    max-width: 44ch;
+  }
+  .v-footer [data-part='links'] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    margin-top: 16px;
+  }
+  .v-footer .v-hours {
+    max-width: none;
+    color: inherit;
+    font-size: 0.875rem;
+  }
+  .v-footer .v-hours :is(th, td) {
+    border-bottom-color: var(--_v-footer-line);
+  }
+  .v-footer .v-hours th,
+  .v-footer .v-hours tr[data-closed] td {
+    color: var(--_v-footer-muted);
+  }
+  .v-footer .v-hours tr[data-today] > * {
+    color: var(--v-footer-fg);
+  }
+  .v-footer .v-hours-today {
+    color: inherit;
   }
   .v-status-card {
     display: grid;

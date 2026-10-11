@@ -868,7 +868,8 @@ Three layers, in order of preference (17 — styling API):
    `--v-card-media-ratio`, `--v-card-gap`, `--v-grid-min`, `--v-grid-gap`,
    `--v-section-pad`, `--v-page-max`, `--v-purchase-panel-gap`,
    `--v-purchase-panel-media-ratio`, `--v-announcement-bg`, `--v-announcement-fg`,
-   `--v-header-height`, `--v-focus`.
+   `--v-header-height`, `--v-focus`; since 1.25 `--v-banner-bg` / `--v-banner-fg` (the notice
+   strip over the header) and `--v-footer-bg` / `--v-footer-fg` (`sdk:footer`).
 
 Parts added in Kernel 1.12: `compare-at` (the struck "de" price, in the product card's and
 `sdk:purchase-panel`'s `price`), `category-description` (`sdk:catalog-grid`), and inside

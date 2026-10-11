@@ -1,15 +1,17 @@
-import { RefreshCw, Search, SearchX, X } from 'lucide-react';
+import { Instagram, MessageCircle, RefreshCw, Search, SearchX, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   BlockArea,
   defineSection,
   text,
+  useLinks,
   useMenu,
   usePageContext,
   useReducedMotion,
   useScrollSpy,
   type SectionProps,
 } from '@vendua/kernel';
+import { DishGlyph } from './_shared/DishArt.tsx';
 import { DishRow, type DishLabels } from './_shared/Dish.tsx';
 
 // The menu as a delivery app lays it out: search, a sticky strip of categories that follows the
@@ -47,6 +49,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
   const { categories: menu, loading, error, refetch } = useMenu();
   const found = useMenu({ query });
   const { page } = usePageContext();
+  const { contacts } = useLinks();
   const still = useReducedMotion();
   const q = query.trim();
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -104,12 +107,14 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
   };
 
   const Title = page === 'catalog' ? 'h1' : 'h2';
+  // nothing to search or jump to yet: the empty menu speaks alone
+  const bare = !loading && !error && menu.length === 0;
 
   return (
     <section id="cardapio" className="menu" aria-label={s.title || s.categoriesLabel}>
       {s.title ? <Title className="menu-title">{s.title}</Title> : null}
 
-      <div className="menu-bar">
+      <div className="menu-bar" hidden={bare || undefined}>
         <form role="search" className="menu-search" onSubmit={(e) => e.preventDefault()}>
           <Search size={18} aria-hidden="true" className="menu-search-icon" />
           <label htmlFor="menu-busca" className="sr-only">
@@ -213,9 +218,27 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
           </div>
         )
       ) : menu.length === 0 ? (
-        <div className="menu-empty">
+        <div className="menu-empty" data-kind="soon">
+          <span className="menu-empty-art" aria-hidden="true">
+            <DishGlyph dish="cloche" />
+          </span>
           <p className="menu-empty-title">{s.emptyTitle}</p>
           {s.emptyText ? <p>{s.emptyText}</p> : null}
+          {contacts.whatsapp || contacts.instagram ? (
+            <p className="menu-empty-actions">
+              {contacts.whatsapp ? (
+                <a href={contacts.whatsapp.href} target="_blank" rel="noopener noreferrer">
+                  <MessageCircle size={18} aria-hidden="true" />
+                  WhatsApp
+                </a>
+              ) : null}
+              {contacts.instagram ? (
+                <a href={contacts.instagram.href} target="_blank" rel="noopener noreferrer">
+                  <Instagram size={18} aria-hidden="true" />@{contacts.instagram.handle}
+                </a>
+              ) : null}
+            </p>
+          ) : null}
         </div>
       ) : (
         menu.map((c) => (

@@ -6,6 +6,7 @@
 :root {
   color-scheme: light;
 
+  --ink: var(--v-color-text, #123c32);
   --spark: #d9f875;
   /* ink on lime follows the store's text token — lime is always light */
   --on-spark: var(--v-color-text, #123c32);
@@ -25,6 +26,7 @@
   --shadow-3:
     0 8px 16px color-mix(in srgb, var(--v-color-text, #123c32) 10%, transparent),
     0 24px 64px color-mix(in srgb, var(--v-color-text, #123c32) 16%, transparent);
+  --radius-xl: 28px;
   --ease: var(--v-motion-easing, cubic-bezier(0.2, 0.8, 0.2, 1));
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   /* widens into the notch in landscape (index.html sets viewport-fit=cover) */
@@ -37,6 +39,9 @@
   --fs-lg: 1.1875rem;
   --fs-title: clamp(1.375rem, 1.2rem + 0.8vw, 1.625rem);
   --fs-display: clamp(1.75rem, 1.3rem + 2.2vw, 2.75rem);
+  /* the store's name over the door */
+  --fs-sign: clamp(2.75rem, 1.6rem + 5vw, 5rem);
+  --track-sign: -0.04em;
   --lh-tight: 1.08;
   --lh-snug: 1.28;
   --lh-body: 1.5;
@@ -54,6 +59,11 @@
   --v-notice-radius: var(--v-radius-md, 16px);
   --v-announcement-bg: var(--spark);
   --v-announcement-fg: var(--on-spark);
+  /* the store's notices and its footer in ink: the page opens and closes on the same colour */
+  --v-banner-bg: var(--ink);
+  --v-banner-fg: var(--v-color-bg, #f7f4ea);
+  --v-footer-bg: var(--ink);
+  --v-footer-fg: var(--v-color-bg, #f7f4ea);
   --v-focus: 2px solid var(--v-color-text, #123c32);
 }
 
@@ -78,6 +88,18 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+}
+
+/* the page is at least a screen tall, so a short one (an empty menu, a lone product) still ends
+ * on its footer instead of on bare paper */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+#main {
+  flex: 1 0 auto;
 }
 
 /* headings never leave one word alone on a line; running text breaks like a book page */
@@ -188,7 +210,7 @@ img {
 }
 
 [data-section='sdk:footer'] [data-part='root'] {
-  margin-top: 48px;
+  margin-top: 88px;
 }
 
 /* At the top of the page the frosted header already reads as paper; its hairline waits until
@@ -240,19 +262,25 @@ img {
   padding: 0 var(--gutter);
 }
 
+/* the cover: a photo, or the store's dishes printed on its own colour like wrapping paper, lit
+ * from one corner like paper under a shop lamp */
 .hero-cover {
   position: relative;
-  height: 136px;
+  height: 152px;
   margin: 0 calc(-1 * var(--gutter));
   overflow: hidden;
   background:
     radial-gradient(
-      120px 120px at 86% 34%,
-      color-mix(in srgb, var(--spark) 85%, transparent),
-      transparent 70%
+      90% 140% at 92% -10%,
+      color-mix(in srgb, var(--v-color-on-accent, #fffdf8) 13%, transparent),
+      transparent 62%
     ),
-    linear-gradient(120deg, var(--tint-peach), var(--tint-golden) 55%, var(--spark-soft));
-  color: var(--v-color-text, #123c32);
+    var(--v-color-accent, #123c32);
+  color: color-mix(in srgb, var(--v-color-on-accent, #fffdf8) 15%, transparent);
+}
+
+.hero-cover[data-photo] {
+  background: var(--tint-sunken);
 }
 
 .hero-cover img {
@@ -262,143 +290,164 @@ img {
   object-fit: cover;
 }
 
-.hero-doodles {
+.dish-print {
   position: absolute;
-  inset: 0 -12px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.hero-body {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  align-items: center;
-  justify-items: center;
-  opacity: 0.2;
+  gap: 20px;
 }
 
-.hero-doodles svg {
-  width: clamp(44px, 12vw, 84px);
-  height: auto;
-  transform: translateY(-14px) rotate(-8deg);
+.hero-id {
+  min-width: 0;
 }
 
-.hero-doodles svg:nth-child(even) {
-  transform: translateY(18px) rotate(10deg);
-}
-
-.hero-card {
-  position: relative;
-  margin-top: -40px;
-  padding: 0 16px 14px;
-  border-radius: var(--v-radius-lg, 24px);
-  background: var(--v-color-surface, #fffdf8);
-  box-shadow: var(--shadow-2);
-  display: grid;
-  gap: 12px;
-}
-
-.hero-top {
-  display: flex;
-  align-items: flex-end;
-  gap: 14px;
-}
-
-.hero-avatar {
-  flex: none;
+/* the logo as an app icon cut out of the cover's edge */
+.hero-logo {
   display: grid;
   place-items: center;
-  width: 76px;
-  height: 76px;
-  margin-top: -28px;
-  border-radius: 50%;
+  width: 88px;
+  height: 88px;
+  margin-top: -44px;
+  position: relative;
+  border-radius: 26px;
   overflow: hidden;
   background: var(--spark);
   color: var(--on-spark);
-  border: 4px solid var(--v-color-surface, #fffdf8);
-  box-shadow: var(--shadow-1);
+  box-shadow:
+    0 0 0 4px var(--v-color-bg, #f7f4ea),
+    0 10px 28px -6px color-mix(in srgb, var(--ink) 30%, transparent);
   font-family: var(--v-font-display, system-ui);
-  font-size: 2rem;
-  font-weight: var(--w-strong);
+  font-size: 2.75rem;
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: -0.04em;
 }
 
-.hero-avatar img {
+.hero-logo img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   background: var(--v-color-surface, #fffdf8);
 }
 
-.hero-id {
-  min-width: 0;
-  padding-top: 10px;
-}
-
+/* the name set like the sign over the door */
 .hero-name {
-  margin: 0;
+  margin: 16px 0 0;
   font-family: var(--v-font-display, system-ui);
-  font-size: var(--fs-display);
-  font-weight: var(--w-strong);
-  line-height: var(--lh-tight);
-  letter-spacing: var(--track-display);
+  font-size: var(--fs-sign);
+  font-weight: 650;
+  line-height: 0.96;
+  letter-spacing: var(--track-sign);
   overflow-wrap: anywhere;
   text-wrap: balance;
 }
 
+.hero-name[data-long] {
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-display);
+}
+
 .hero-tagline {
-  margin: 2px 0 0;
+  margin: 10px 0 0;
+  max-width: 46ch;
   color: var(--v-color-muted, #4f6a5e);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-lg);
   line-height: var(--lh-snug);
-  max-width: 44ch;
 }
 
 .hero-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 7px 12px 7px 10px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 16px 0 0;
+  padding: 9px 14px 9px 12px;
   border-radius: 999px;
-  font-size: var(--fs-xs);
   background: var(--tint-sunken);
   color: var(--v-color-muted, #4f6a5e);
-  letter-spacing: var(--track-label);
-  text-box: trim-both cap alphabetic;
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+}
+
+.hero-status strong {
+  color: var(--ink);
+  font-weight: var(--w-strong);
 }
 
 .hero-status[data-status='open'] {
   background: var(--spark);
+  color: color-mix(in srgb, var(--on-spark) 78%, transparent);
+}
+
+.hero-status[data-status='open'] strong {
   color: var(--on-spark);
 }
 
 .hero-status[data-status='paused'] {
-  background: #fff0d6;
-  color: var(--v-color-text, #123c32);
-}
-
-.hero-status strong {
-  font-weight: var(--w-num);
+  background: var(--tint-golden);
 }
 
 .hero-dot {
+  position: relative;
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: currentColor;
 }
 
+/* open: the dot breathes, the one thing on the page that moves on its own */
+.hero-status[data-status='open'] .hero-dot {
+  background: var(--on-spark);
+}
+
+.hero-status[data-status='open'] .hero-dot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--on-spark);
+  opacity: 0;
+  animation: breathe 2.4s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
 .hero-facts {
   list-style: none;
-  margin: 0;
+  margin: 20px 0 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 18px;
+  gap: 10px 22px;
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
+}
+
+.hero-facts:empty {
+  display: none;
 }
 
 .hero-facts li {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .hero-facts svg {
@@ -406,22 +455,128 @@ img {
   color: var(--v-color-muted, #4f6a5e);
 }
 
+.hero-aside {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 .hero-aside:empty {
   display: none;
 }
 
-.hero-more {
+/* today, on a card: the hours in words, the strip, then the address and the whole week */
+.hero-today {
+  align-self: start;
+  border-radius: var(--v-radius-lg, 24px);
+  background: var(--v-color-surface, #fffdf8);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--shadow-1);
+}
+
+.hero-today-head {
+  padding: 18px 18px 16px;
+}
+
+.hero-today-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+
+.hero-today-line span {
+  font-family: var(--v-font-display, system-ui);
+  font-size: var(--fs-lg);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--track-display);
+}
+
+.hero-today-line strong {
+  font-weight: var(--w-strong);
+  text-align: right;
+}
+
+.day {
+  margin-top: 14px;
+}
+
+.day-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--tint-sunken);
+}
+
+.day-span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+/* the part of the day already gone fades under a veil of the card's paper */
+.day-past {
+  position: absolute;
+  inset: -1px auto -1px 0;
+  border-radius: 999px 0 0 999px;
+  background: color-mix(in srgb, var(--v-color-surface, #fffdf8) 62%, transparent);
+}
+
+.day-now {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--spark);
+  box-shadow:
+    0 0 0 3px var(--v-color-surface, #fffdf8),
+    0 0 0 4px color-mix(in srgb, var(--ink) 22%, transparent),
+    0 4px 10px color-mix(in srgb, var(--ink) 25%, transparent);
+}
+
+.day-ticks {
+  position: relative;
+  height: 14px;
+  margin-top: 8px;
+  color: var(--v-color-muted, #4f6a5e);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.day-ticks span {
+  position: absolute;
+  translate: -50% 0;
+}
+
+.day-ticks span:first-child {
+  translate: 0;
+}
+
+.day-ticks span:last-child {
+  translate: -100% 0;
+}
+
+.hero-today-head + .hero-more {
   border-top: 1px solid var(--line);
-  margin-inline: -16px;
-  padding-inline: 16px;
+}
+
+.hero-more {
+  padding-inline: 18px;
 }
 
 .hero-more summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
-  padding-top: 4px;
+  min-height: 52px;
   font-weight: var(--w-strong);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -449,8 +604,8 @@ img {
 
 .hero-more-body {
   display: grid;
-  gap: 12px;
-  padding: 4px 0 6px;
+  gap: 14px;
+  padding: 2px 0 18px;
   animation: rise 240ms var(--ease);
 }
 
@@ -459,18 +614,19 @@ img {
   gap: 8px;
   margin: 0;
   color: var(--v-color-muted, #4f6a5e);
+  font-size: var(--fs-sm);
 }
 
 .hero-line svg {
   flex: none;
-  margin-top: 3px;
+  margin-top: 2px;
 }
 
 .hero-hours {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
-  max-width: 360px;
+  font-size: var(--fs-sm);
 }
 
 .hero-hours div {
@@ -483,13 +639,19 @@ img {
   color: var(--v-color-muted, #4f6a5e);
 }
 
+.hero-hours [data-today] dt {
+  color: var(--ink);
+  font-weight: var(--w-strong);
+}
+
 .hero-hours dd {
   margin: 0;
   font-weight: var(--w-strong);
   font-variant-numeric: tabular-nums;
 }
 
-.hero-contacts {
+.hero-contacts,
+.menu-empty-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -500,43 +662,54 @@ img {
   display: none;
 }
 
-.hero-contacts a {
+.hero-contacts a,
+.menu-empty-actions a {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 6px 14px;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 16px 6px 14px;
   border-radius: 999px;
-  border: 1px solid var(--line-strong);
+  background: var(--v-color-surface, #fffdf8);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
   color: inherit;
   font-weight: var(--w-strong);
   font-size: var(--fs-sm);
   text-decoration: none;
-  text-box: trim-both cap alphabetic;
 }
 
 @media (min-width: 768px) {
   .hero-cover {
-    height: 208px;
-    margin: 16px 0 0;
-    border-radius: var(--v-radius-lg, 24px);
+    height: 248px;
   }
-  .hero-card {
-    margin: -56px 24px 0;
-    padding: 0 24px 16px;
+  .hero-logo {
+    width: 120px;
+    height: 120px;
+    margin-top: -60px;
+    border-radius: 34px;
+    box-shadow:
+      0 0 0 6px var(--v-color-bg, #f7f4ea),
+      0 14px 36px -8px color-mix(in srgb, var(--ink) 32%, transparent);
+    font-size: 3.75rem;
   }
-  .hero-top {
-    gap: 18px;
+}
+
+/* wide screens: the cover becomes a card that bleeds a little past the page column, so the logo
+ * (on the column's edge) sits inset on it like an app icon */
+@media (min-width: 1200px) {
+  .hero-cover {
+    margin: 12px -28px 0;
+    border-radius: var(--radius-xl);
   }
-  .hero-avatar {
-    width: 104px;
-    height: 104px;
-    margin-top: -36px;
-    font-size: 2.75rem;
+}
+
+@media (min-width: 880px) {
+  .hero-body[data-today] {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    column-gap: 56px;
   }
-  .hero-more {
-    margin-inline: -24px;
-    padding-inline: 24px;
+  .hero-body[data-today] .hero-today {
+    margin-top: 28px;
   }
 }
 
@@ -545,7 +718,14 @@ img {
 .rail {
   max-width: var(--v-page-max);
   margin: 0 auto;
-  padding: 28px var(--gutter) 0;
+  padding: 44px var(--gutter) 0;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .rail-title,
@@ -553,7 +733,7 @@ img {
 .menu-cat-title {
   margin: 0;
   font-family: var(--v-font-display, system-ui);
-  font-weight: var(--w-strong);
+  font-weight: 650;
   letter-spacing: var(--track-display);
   line-height: var(--lh-tight);
 }
@@ -563,15 +743,46 @@ img {
   font-size: var(--fs-title);
 }
 
+/* arrows only where there's a pointer to aim them; fingers swipe */
+.rail-nav {
+  display: none;
+  gap: 8px;
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 768px) {
+  .rail-nav {
+    display: flex;
+  }
+}
+
+.rail-nav button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--v-color-surface, #fffdf8);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rail-nav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .rail-list {
-  --w: 148px;
+  --w: 156px;
   list-style: none;
-  margin: 12px calc(-1 * var(--gutter)) 0;
+  margin: 16px calc(-1 * var(--gutter)) 0;
   padding: 4px var(--gutter) 12px;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: var(--w);
-  gap: 12px;
+  gap: 14px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scroll-snap-type: x mandatory;
@@ -585,12 +796,16 @@ img {
 
 @media (min-width: 768px) {
   .rail-list {
-    --w: 176px;
+    --w: 200px;
+    gap: 20px;
     margin-inline: 0;
     padding-inline: 0;
     scroll-padding-inline: 0;
-    scrollbar-width: thin;
-    scrollbar-color: var(--line-strong) transparent;
+  }
+  /* more dishes past the edge: the row fades out instead of being cut */
+  .rail-list:not([data-end]) {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 96px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 96px), transparent);
   }
 }
 
@@ -599,18 +814,21 @@ img {
 .menu {
   max-width: var(--v-page-max);
   margin: 0 auto;
-  padding: 20px var(--gutter) 24px;
+  padding: 40px var(--gutter) 24px;
 }
 
 .menu-title {
   font-size: var(--fs-display);
-  margin-bottom: 12px;
-  line-height: var(--lh-tight);
+  margin-bottom: 16px;
 }
 
 /* search and tabs are siblings of the categories, so the tab strip sticks for the whole menu */
 .menu-bar {
   display: contents;
+}
+
+.menu-bar[hidden] {
+  display: none;
 }
 
 .menu-search {
@@ -622,14 +840,18 @@ img {
 
 .menu-search input {
   width: 100%;
-  min-height: 48px;
-  padding: 0 46px 0 44px;
+  min-height: 50px;
+  padding: 0 46px 0 46px;
   border-radius: 999px;
-  border: 1px solid var(--line-strong);
+  border: 0;
   background: var(--v-color-surface, #fffdf8);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    0 1px 2px color-mix(in srgb, var(--ink) 4%, transparent);
   color: inherit;
   font: inherit;
   font-size: var(--fs-body);
+  transition: box-shadow var(--v-motion-duration, 180ms) var(--ease);
 }
 
 .menu-search input::placeholder {
@@ -642,20 +864,21 @@ img {
 
 .menu-search input:focus {
   outline: none;
-  border-color: var(--v-color-text, #123c32);
-  box-shadow: 0 0 0 4px var(--spark);
+  box-shadow:
+    inset 0 0 0 1.5px var(--ink),
+    0 0 0 4px var(--spark);
 }
 
 .menu-search-icon {
   position: absolute;
-  left: 16px;
+  left: 17px;
   color: var(--v-color-muted, #4f6a5e);
   pointer-events: none;
 }
 
 .menu-search-clear {
   position: absolute;
-  right: 6px;
+  right: 7px;
   display: grid;
   place-items: center;
   width: 36px;
@@ -671,7 +894,7 @@ img {
   position: sticky;
   top: calc(var(--v-header-height) - 1px);
   z-index: 30;
-  margin: 12px calc(-1 * var(--gutter)) 0;
+  margin: 14px calc(-1 * var(--gutter)) 0;
 }
 
 /* the bar's paper runs edge to edge while the tabs keep to the page column */
@@ -680,7 +903,7 @@ img {
   position: absolute;
   inset: 0 calc(50% - 50vw);
   z-index: -1;
-  background: color-mix(in srgb, var(--v-color-bg, #f7f4ea) 92%, transparent);
+  background: color-mix(in srgb, var(--v-color-bg, #f7f4ea) 90%, transparent);
   -webkit-backdrop-filter: saturate(1.4) blur(18px);
   backdrop-filter: saturate(1.4) blur(18px);
   border-bottom: 1px solid var(--line);
@@ -688,10 +911,24 @@ img {
 
 .menu-tabs-strip {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   padding: 10px var(--gutter);
   overflow-x: auto;
   scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 var(--gutter),
+    #000 calc(100% - 32px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 var(--gutter),
+    #000 calc(100% - 32px),
+    transparent
+  );
 }
 
 .menu-tabs-strip::-webkit-scrollbar {
@@ -705,20 +942,66 @@ img {
   min-height: 40px;
   padding: 6px 16px;
   border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  color: var(--v-color-text, #123c32);
+  background: var(--tint-sunken);
+  color: var(--ink);
   font-weight: var(--w-strong);
   font-size: var(--fs-sm);
   text-decoration: none;
   white-space: nowrap;
   text-box: trim-both cap alphabetic;
   touch-action: manipulation;
+  transition:
+    background-color var(--v-motion-duration, 180ms) var(--ease),
+    color var(--v-motion-duration, 180ms) var(--ease);
 }
 
 .menu-tab[aria-current='true'] {
   background: var(--v-color-accent, #123c32);
-  border-color: var(--v-color-accent, #123c32);
   color: var(--v-color-on-accent, #fffdf8);
+}
+
+/* wide screens: one sticky bar, the categories on the left and the search on the right */
+@media (min-width: 880px) {
+  .menu-bar {
+    position: sticky;
+    top: calc(var(--v-header-height) - 1px);
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding-block: 10px;
+  }
+  .menu-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0 calc(50% - 50vw);
+    z-index: -1;
+    background: color-mix(in srgb, var(--v-color-bg, #f7f4ea) 90%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(18px);
+    backdrop-filter: saturate(1.4) blur(18px);
+    border-bottom: 1px solid var(--line);
+  }
+  .menu-tabs {
+    position: static;
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
+  .menu-tabs::before {
+    content: none;
+  }
+  .menu-tabs-strip {
+    padding: 0;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent);
+  }
+  .menu-search {
+    order: 2;
+    flex: 0 0 300px;
+  }
+  .menu-search input {
+    min-height: 44px;
+  }
 }
 
 .menu-blocks:empty {
@@ -728,23 +1011,23 @@ img {
 .menu-blocks {
   display: grid;
   gap: 12px;
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .menu-cat {
-  margin-top: 28px;
+  margin-top: 40px;
   scroll-margin-top: calc(var(--v-header-height) + 76px);
 }
 
 .menu-cat-title {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .menu-cat-desc {
-  margin: -4px 0 14px;
+  margin: 4px 0 0;
   max-width: 60ch;
   color: var(--v-color-muted, #4f6a5e);
   font-size: var(--fs-sm);
@@ -752,31 +1035,28 @@ img {
   text-wrap: pretty;
 }
 
+/* the count rides at the title's shoulder, the way a menu numbers its pages */
 .menu-count {
-  padding: 6px 9px;
-  border-radius: 999px;
-  background: var(--tint-sunken);
+  padding-top: 0.2em;
   color: var(--v-color-muted, #4f6a5e);
   font-family: var(--v-font-body, system-ui);
   font-size: var(--fs-xs);
   font-weight: var(--w-strong);
-  letter-spacing: var(--track-label);
   font-variant-numeric: tabular-nums;
-  text-box: trim-both cap alphabetic;
+  line-height: 1;
 }
 
 .menu-list {
   list-style: none;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
   display: grid;
-  gap: 10px;
 }
 
 @media (min-width: 880px) {
   .menu-list {
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    column-gap: 56px;
   }
 }
 
@@ -784,31 +1064,59 @@ img {
   display: grid;
   justify-items: center;
   gap: 8px;
-  margin-top: 24px;
+  margin-top: 8px;
   padding: 40px 24px;
-  border-radius: var(--v-radius-lg, 24px);
+  border-radius: var(--radius-xl);
   background: var(--v-color-surface, #fffdf8);
-  border: 1px dashed var(--line-strong);
+  box-shadow: inset 0 0 0 1px var(--line);
   text-align: center;
   color: var(--v-color-muted, #4f6a5e);
 }
 
+.menu-empty[data-kind='soon'] {
+  padding-block: 56px 48px;
+}
+
 .menu-empty p {
   margin: 0;
+  max-width: 40ch;
 }
 
 .menu-empty .menu-empty-title {
-  color: var(--v-color-text, #123c32);
+  color: var(--ink);
   font-family: var(--v-font-display, system-ui);
-  font-size: var(--fs-lg);
-  font-weight: var(--w-strong);
+  font-size: var(--fs-title);
+  font-weight: 650;
   letter-spacing: var(--track-display);
+  line-height: var(--lh-tight);
   text-wrap: balance;
+}
+
+.menu-empty-art {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  margin-bottom: 12px;
+  border-radius: 30px;
+  background: var(--spark-soft);
+  color: var(--ink);
+  rotate: -4deg;
+}
+
+.menu-empty-art .dish-glyph {
+  width: 64px;
+  height: 64px;
+}
+
+.menu-empty .menu-empty-actions {
+  justify-content: center;
+  margin-top: 16px;
 }
 
 .menu-pill {
   min-height: 44px;
-  margin-top: 4px;
+  margin-top: 8px;
   padding: 8px 20px;
   border: 0;
   border-radius: 999px;
@@ -823,35 +1131,43 @@ img {
 
 /* ── dishes (rows in the menu, cards in rails) ───────────────────────────── */
 
+/* a menu line: no box around it — the hairline under it is the menu's ruling, and the photo
+ * carries the colour */
 .dish {
-  --m: 104px;
-  --pad: 14px;
+  --m: 108px;
+  --pad: 18px;
   position: relative;
-  border-radius: var(--v-radius-md, 16px);
-  background: var(--v-color-surface, #fffdf8);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-1);
-}
-
-/* a #produto-<slug> link: the Kernel scrolls the dish to the top of its scroll margin (here,
- * mid-screen below the sticky bars) and marks it data-target for a moment */
-.dish {
+  box-shadow: inset 0 -1px 0 var(--line);
+  /* a #produto-<slug> link: the Kernel scrolls the dish to the top of its scroll margin (here,
+   * mid-screen below the sticky bars) and marks it data-target for a moment */
   scroll-margin-top: max(calc(var(--v-header-height) + 88px), calc(50vh - 72px));
 }
 
-.dish[data-target] {
-  box-shadow:
-    0 0 0 3px var(--spark),
-    var(--shadow-2);
+/* the row's own paper, shown on hover, press and when a link lands on it */
+.dish::before {
+  content: '';
+  position: absolute;
+  inset: 4px -12px;
+  border-radius: var(--v-radius-md, 16px);
+  background: var(--hover);
+  opacity: 0;
+  transition: opacity var(--v-motion-duration, 180ms) var(--ease);
+  pointer-events: none;
+}
+
+.dish[data-target]::before {
+  background: var(--spark-soft);
+  opacity: 1;
 }
 
 .dish-link {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--m);
-  gap: 14px;
+  gap: 16px;
   min-height: calc(var(--m) + 2 * var(--pad));
-  padding: var(--pad);
-  border-radius: inherit;
+  padding: var(--pad) 0;
+  border-radius: var(--v-radius-md, 16px);
   color: inherit;
   text-decoration: none;
 }
@@ -890,11 +1206,12 @@ img {
   align-items: center;
   gap: 6px 10px;
   margin-top: auto;
-  padding-top: 6px;
+  padding-top: 8px;
 }
 
 .dish-price {
-  font-weight: var(--w-num);
+  font-family: var(--v-font-display, system-ui);
+  font-weight: var(--w-strong);
   font-variant-numeric: tabular-nums;
   font-size: var(--fs-body);
   letter-spacing: -0.01em;
@@ -923,9 +1240,10 @@ img {
   align-self: start;
   width: var(--m);
   aspect-ratio: 1;
-  border-radius: 12px;
+  border-radius: 18px;
   overflow: hidden;
   background: var(--tint-sunken);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .dish-media img {
@@ -942,7 +1260,7 @@ img {
   place-items: center;
   width: 100%;
   height: 100%;
-  color: var(--v-color-text, #123c32);
+  color: var(--ink);
   background: var(--tint-sunken);
 }
 
@@ -962,8 +1280,8 @@ img {
 }
 
 .dish-glyph {
-  width: 66%;
-  height: 66%;
+  width: 62%;
+  height: 62%;
 }
 
 .dish-glyph-spark {
@@ -984,7 +1302,7 @@ img {
   border: 2px solid currentColor;
   border-radius: 6px;
   background: color-mix(in srgb, var(--v-color-surface, #fffdf8) 88%, transparent);
-  color: var(--v-color-text, #123c32);
+  color: var(--ink);
   font-size: var(--fs-xs);
   font-weight: 750;
   letter-spacing: 0.04em;
@@ -1003,8 +1321,8 @@ img {
 
 .dish-inbag {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 7px;
+  left: 7px;
   display: grid;
   place-items: center;
   min-width: 26px;
@@ -1020,31 +1338,44 @@ img {
   animation: pop 360ms var(--spring);
 }
 
+/* the quick "+": ink on the photo's corner, ringed in the page's paper so it cuts out of it */
 .dish-add {
   position: absolute;
-  top: calc(var(--pad) + var(--m) - 32px);
-  right: calc(var(--pad) - 8px);
+  top: calc(var(--pad) + var(--m) - 30px);
+  right: -6px;
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 50%;
-  background: var(--v-color-surface, #fffdf8);
-  color: var(--v-color-text, #123c32);
-  box-shadow: var(--shadow-2);
+  background: var(--v-color-accent, #123c32);
+  color: var(--v-color-on-accent, #fffdf8);
+  box-shadow:
+    0 0 0 3px var(--v-color-bg, #f7f4ea),
+    0 6px 14px -4px color-mix(in srgb, var(--ink) 40%, transparent);
   cursor: pointer;
+}
+
+/* a 46px target around the 38px mark */
+.dish-add::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
 }
 
 .dish-add[data-kind='choose'] {
   pointer-events: none;
+  background: var(--v-color-surface, #fffdf8);
+  color: var(--ink);
 }
 
 @media (min-width: 880px) {
   .dish {
-    --m: 120px;
-    --pad: 16px;
+    --m: 124px;
+    --pad: 20px;
   }
 }
 
@@ -1056,15 +1387,15 @@ img {
 .dish-card-link {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   color: inherit;
   text-decoration: none;
 }
 
 .dish-card .dish-media {
   width: 100%;
-  border-radius: var(--v-radius-md, 16px);
-  box-shadow: inset 0 0 0 1px var(--line);
+  margin-bottom: 8px;
+  border-radius: 22px;
 }
 
 .dish-card .dish-name {
@@ -1072,7 +1403,6 @@ img {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  margin-top: 4px;
   font-size: var(--fs-sm);
 }
 
@@ -1082,14 +1412,16 @@ img {
 }
 
 .dish-card .dish-add {
-  top: calc(var(--w) - 50px);
-  right: 8px;
+  top: calc(var(--w) - 48px);
+  right: 10px;
+  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--ink) 40%, transparent);
 }
 
 /* prices: the sign small and quiet, the figure carries the weight */
 .price-cur {
   margin-right: 0.18em;
-  font-size: 0.8em;
+  font-family: var(--v-font-body, system-ui);
+  font-size: 0.78em;
   font-weight: 500;
   letter-spacing: 0;
 }
@@ -1106,7 +1438,6 @@ img {
   font-weight: var(--w-body);
   text-decoration-thickness: 1.5px;
 }
-
 /* ── store:dish-media (the product page's picture) ────────────────────────── */
 
 .pd-media {
@@ -1203,6 +1534,8 @@ img {
   .menu-pill,
   .menu-search-clear,
   .hero-contacts a,
+  .menu-empty-actions a,
+  .rail-nav button,
   button.dish-add,
   [data-section='sdk:header'] [data-part='cart'],
   [data-section='sdk:bag-bar'] [data-part='trigger'],
@@ -1219,6 +1552,8 @@ img {
     .menu-pill,
     .menu-search-clear,
     .hero-contacts a,
+    .menu-empty-actions a,
+    .rail-nav button,
     button.dish-add,
     [data-section='sdk:header'] [data-part='cart'],
     [data-section='sdk:purchase-panel'] [data-part='buy'] button
@@ -1234,13 +1569,18 @@ img {
   transition-timing-function: var(--ease);
 }
 
-/* pressing the card (not its "+") sinks it a touch */
-.dish {
+/* pressing the line (not its "+") lights its paper and sinks the photo a touch */
+.dish .dish-media {
   transition: transform 320ms var(--spring);
 }
 
-.dish:has(> .dish-link:active) {
-  transform: scale(0.985);
+.dish:has(> .dish-link:active)::before {
+  opacity: 1;
+  transition-duration: 60ms;
+}
+
+.dish:has(> .dish-link:active) .dish-media {
+  transform: scale(0.97);
   transition-duration: 90ms;
 }
 
@@ -1277,12 +1617,14 @@ img {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .dish:hover {
-    box-shadow: var(--shadow-2);
+  .dish:hover::before {
+    opacity: 1;
   }
-  .menu-tab:not([aria-current='true']):hover,
-  .hero-contacts a:hover {
-    background: var(--hover);
+  .menu-tab:not([aria-current='true']):hover {
+    background: color-mix(in srgb, var(--ink) 11%, var(--v-color-bg, #f7f4ea));
+  }
+  :is(.hero-contacts a, .menu-empty-actions a, .rail-nav button:not(:disabled)):hover {
+    box-shadow: inset 0 0 0 1px var(--ink);
   }
   .menu-search-clear:hover {
     background: var(--line-strong);
@@ -1293,7 +1635,6 @@ img {
   button.dish-add:not(:disabled, [data-added]):hover {
     background: var(--spark);
     color: var(--on-spark);
-    border-color: transparent;
   }
   .hero-more summary:hover {
     text-decoration: underline;
@@ -1315,17 +1656,16 @@ img {
 .dish-add[aria-busy='true']::after {
   content: '';
   position: absolute;
-  inset: 11px;
+  inset: 10px;
   border-radius: 50%;
-  border: 2.5px solid var(--line-strong);
-  border-top-color: var(--v-color-text, #123c32);
+  border: 2.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   animation: spin 640ms linear infinite;
 }
 
 .dish-add[data-added] {
   background: var(--spark);
   color: var(--on-spark);
-  border-color: transparent;
 }
 
 .dish-add[data-added] .dish-add-icon {
@@ -1351,8 +1691,8 @@ img {
 
 /* limit reached (stock the sacola already holds) or store paused */
 .dish-add:disabled {
-  opacity: 0.4;
-  box-shadow: none;
+  background: var(--tint-sunken);
+  color: var(--v-color-muted, #4f6a5e);
   cursor: not-allowed;
 }
 
@@ -1361,8 +1701,6 @@ img {
   pointer-events: none;
   background: var(--spark-soft);
   color: var(--on-spark);
-  border-color: transparent;
-  box-shadow: none;
 }
 
 @keyframes spin {
@@ -1388,34 +1726,82 @@ img {
 
 /* ── the product page (sdk:purchase-panel parts) ───────────────────────── */
 
+[data-section='sdk:purchase-panel'] [data-part='back'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-bottom: 20px;
+  padding: 6px 16px 6px 12px;
+  border-radius: 999px;
+  background: var(--tint-sunken);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: var(--w-strong);
+}
+
+/* the dish's picture: the same tile as the menu, grown up */
+[data-section='sdk:purchase-panel'] [data-part='media'] {
+  border-radius: var(--radius-xl);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
 [data-section='sdk:purchase-panel'] [data-part='name'] {
   font-family: var(--v-font-display, system-ui);
-  font-size: var(--fs-display);
-  font-weight: var(--w-strong);
-  line-height: var(--lh-tight);
-  letter-spacing: var(--track-display);
+  font-size: clamp(2.25rem, 1.5rem + 3vw, 3.5rem);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.035em;
   text-wrap: balance;
 }
 
 [data-section='sdk:purchase-panel'] [data-part='price'] {
-  font-size: var(--fs-lg);
-  font-weight: var(--w-num);
+  margin-top: 12px;
+  color: var(--ink);
+  font-family: var(--v-font-display, system-ui);
+  font-size: 1.625rem;
+  font-weight: var(--w-strong);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 [data-section='sdk:purchase-panel'] [data-part='description'] {
-  max-width: 60ch;
-  font-size: var(--fs-body);
+  max-width: 52ch;
+  font-size: var(--fs-lg);
   line-height: 1.55;
   text-wrap: pretty;
   hyphens: auto;
 }
 
 [data-section='sdk:purchase-panel'] [data-part='add'] {
-  min-height: 52px;
+  min-height: 56px;
+  border-radius: 999px;
   font-weight: var(--w-strong);
   font-variant-numeric: tabular-nums;
+}
+
+[data-section='sdk:purchase-panel'] [data-part='share'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin-top: 8px;
+  padding: 6px 16px 6px 14px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink);
+  font-weight: var(--w-strong);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-section='sdk:purchase-panel'] [data-part='back']:hover {
+    background: color-mix(in srgb, var(--ink) 11%, var(--v-color-bg, #f7f4ea));
+  }
+  [data-section='sdk:purchase-panel'] [data-part='share']:hover {
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
 }
 
 /* ── loading ─────────────────────────────────────────────────────────────── */
@@ -1443,8 +1829,8 @@ img {
 .dish-skel {
   display: grid;
   grid-template-columns: 1fr var(--m);
-  gap: 14px;
-  padding: var(--pad);
+  gap: 16px;
+  padding: var(--pad) 0;
 }
 
 .dish-skel .dish-text {
@@ -1454,7 +1840,7 @@ img {
 .skel-media {
   width: var(--m);
   height: var(--m);
-  border-radius: 12px;
+  border-radius: 18px;
 }
 
 /* ── store:intro (kept for templates that still place it) ────────────────── */
@@ -1516,7 +1902,10 @@ img {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dish,
+  .dish::before,
+  .dish .dish-media,
+  .rail-nav button,
+  .menu-empty-actions a,
   .dish-add,
   .dish-add-icon,
   .dish-inbag,
@@ -1541,6 +1930,8 @@ img {
       .menu-pill,
       .menu-search-clear,
       .hero-contacts a,
+      .menu-empty-actions a,
+      .rail-nav button,
       button.dish-add,
       [data-section='sdk:header'] [data-part='cart'],
       [data-section='sdk:bag-bar'] [data-part='trigger'],
@@ -1549,13 +1940,18 @@ img {
     transform: none;
     opacity: 0.7;
   }
-  .dish:has(> .dish-link:active),
+  .dish:has(> .dish-link:active) .dish-media,
   .dish-card:has(> .dish-card-link:active) .dish-media {
     transform: none;
     opacity: 0.7;
   }
   .pd-dot[aria-current='true']::before {
     transform: none;
+  }
+  /* the open dot holds still; its colour already says "open" */
+  .hero-status .hero-dot::after {
+    animation: none;
+    opacity: 0;
   }
   /* no motion: the "+1" and spinner become a still badge and a dimmed button */
   .dish-plus1 {

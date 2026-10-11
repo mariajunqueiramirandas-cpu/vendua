@@ -1,4 +1,5 @@
-import { useId, useMemo } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   category,
   defineSection,
@@ -6,6 +7,7 @@ import {
   text,
   useCatalog,
   usePageContext,
+  useReducedMotion,
   type SectionProps,
 } from '@vendua/kernel';
 import { DishCard, type DishLabels } from './_shared/Dish.tsx';
@@ -23,13 +25,40 @@ export const schema = defineSection({
     preorderLabel: text({ max: 30, default: 'sob encomenda' }),
     inBagLabel: text({ max: 30, default: 'na sacola' }),
     allInBagLabel: text({ max: 30, default: 'tudo na sacola' }),
+    prevLabel: text({ max: 30, default: 'Anteriores' }),
+    nextLabel: text({ max: 30, default: 'Próximos' }),
   },
 });
+
+// which ends of the strip still have dishes past them
+function useEnds(list: RefObject<HTMLOListElement>, count: number) {
+  const [ends, setEnds] = useState({ start: true, end: true });
+  useEffect(() => {
+    const el = list.current;
+    if (!el) return;
+    const read = () =>
+      setEnds({
+        start: el.scrollLeft <= 4,
+        end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 4,
+      });
+    read();
+    el.addEventListener('scroll', read, { passive: true });
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', read);
+      ro.disconnect();
+    };
+  }, [list, count]);
+  return ends;
+}
 
 export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
   const { categories } = useCatalog();
   const { params } = usePageContext();
   const titleId = useId();
+  const list = useRef<HTMLOListElement>(null);
+  const still = useReducedMotion();
 
   // one of each category first, so the rail shows the range of the menu; photos lead
   const picks = useMemo(() => {
@@ -48,7 +77,14 @@ export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
       .sort((a, b) => Number(!a.product.imageUrl) - Number(!b.product.imageUrl));
   }, [categories, s.category, s.limit, params.slug]);
 
+  const ends = useEnds(list, picks.length);
+
   if (picks.length < 2) return null;
+
+  const page = (dir: 1 | -1) => {
+    const el = list.current;
+    if (el) el.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: still ? 'auto' : 'smooth' });
+  };
 
   const labels: DishLabels = {
     add: s.addLabel,
@@ -61,10 +97,37 @@ export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
 
   return (
     <section className="rail" aria-labelledby={titleId}>
-      <h2 id={titleId} className="rail-title">
-        {s.title}
-      </h2>
-      <ol className="rail-list">
+      <div className="rail-head">
+        <h2 id={titleId} className="rail-title">
+          {s.title}
+        </h2>
+        {ends.start && ends.end ? null : (
+          <div className="rail-nav">
+            <button
+              type="button"
+              aria-label={s.prevLabel}
+              disabled={ends.start}
+              onClick={() => page(-1)}
+            >
+              <ChevronLeft size={20} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label={s.nextLabel}
+              disabled={ends.end}
+              onClick={() => page(1)}
+            >
+              <ChevronRight size={20} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
+      <ol
+        className="rail-list"
+        ref={list}
+        data-start={ends.start || undefined}
+        data-end={ends.end || undefined}
+      >
         {picks.map(({ product, category: c }) => (
           <DishCard key={product.id} product={product} category={c} labels={labels} />
         ))}

@@ -3,6 +3,24 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.25.0
+
+Default UI refresh, part two — visual polish in `@vendua/ui-defaults`; additive, no storefront
+edit, no new runtime export.
+
+- New styling hooks: `--v-banner-bg` / `--v-banner-fg` (the strip of store notices over the
+  header) and `--v-footer-bg` / `--v-footer-fg` (`sdk:footer`). Their defaults keep each surface
+  close to its old paper tone; a store sets them to put either in its ink.
+- Notice strip: a dot in the notice's tone, the title, then the body, centred on one line (no
+  more "Título — texto"); actions and the pause button sit inline.
+- Header: an empty bag reads "Sacola" (the count appears with the first item, as a paper chip
+  on the ink pill); the frosted bar is a touch more opaque, so a page scrolling under it doesn't
+  show through.
+- Footer: its column lines up with the page's, the store's name signs the page off at display
+  size, contacts are outlined chips, and the week's hours follow the footer's colours.
+- Bag: the lines read as one receipt (a sheet of paper with hairlines between items), a larger
+  thumbnail, quieter "Remover" / "Observação", and the total in the display face.
+
 ## 1.24.0
 
 Voice messages and photos in the store chat — additive; no storefront edit, no new runtime
