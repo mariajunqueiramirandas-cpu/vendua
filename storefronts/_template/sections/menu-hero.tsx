@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bike, Clock, Instagram, MapPin, MessageCircle, ShoppingBag, Store } from 'lucide-react';
 import {
   BlockArea,
@@ -9,6 +9,7 @@ import {
   image,
   localNow,
   text,
+  todayHours,
   useDeliverySummary,
   useLinks,
   useMoney,
@@ -63,12 +64,18 @@ const minutesOf = (hhmm: string) => {
   return (h ?? 0) * 60 + (m ?? 0);
 };
 
-// the store's wall clock, a minute at a time — the strip's needle walks with it
-function useStoreMinutes(timeZone: string): number {
-  const [now, setNow] = useState(() => localNow(timeZone).minutes);
+// the store's wall clock, a minute at a time: the strip's needle walks with it, and "today"
+// turns over at the store's midnight even in a tab left open overnight
+const clockOf = (timeZone: string) => {
+  const { date, minutes } = localNow(timeZone);
+  return { date, minutes };
+};
+
+function useStoreClock(timeZone: string): { date: string; minutes: number } {
+  const [now, setNow] = useState(() => clockOf(timeZone));
   useEffect(() => {
-    setNow(localNow(timeZone).minutes);
-    const t = window.setInterval(() => setNow(localNow(timeZone).minutes), 60_000);
+    setNow(clockOf(timeZone));
+    const t = window.setInterval(() => setNow(clockOf(timeZone)), 60_000);
     return () => window.clearInterval(t);
   }, [timeZone]);
   return now;
@@ -79,14 +86,7 @@ function useStoreMinutes(timeZone: string): number {
  * midnight, with a needle at the store's own clock. The words beside it say the same thing; the
  * strip is for the glance ("fecha daqui a pouco", "abre de novo à noite").
  */
-function DayStrip({
-  windows,
-  timeZone,
-}: {
-  windows: { open: string; close: string }[];
-  timeZone: string;
-}) {
-  const now = useStoreMinutes(timeZone);
+function DayStrip({ windows, now }: { windows: { open: string; close: string }[]; now: number }) {
   const spans = windows.map((w) => {
     const open = minutesOf(w.open);
     const close = minutesOf(w.close);
@@ -124,7 +124,11 @@ function DayStrip({
 export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
   const { store, loading } = useStore();
   const { status, hint, timeZone } = useStoreStatus();
-  const { rows, today } = useStoreHours();
+  const { rows } = useStoreHours();
+  const clock = useStoreClock(timeZone);
+  const hours = store?.hours;
+  // today by the store's own date, recomputed when it rolls over (special days included)
+  const today = useMemo(() => (hours ? todayHours(hours) : null), [hours, clock.date]);
   const { delivery, pickup } = useDeliverySummary();
   const { contacts } = useLinks();
   const money = useMoney();
@@ -147,6 +151,8 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
     ? { cents: delivery.minOrderCents, varies: delivery.minOrderVaries }
     : { cents: store?.minOrderCents ?? 0, varies: false };
   const hasHours = rows.some((r) => !r.closed);
+  // a store open only on special days (a pop-up) still shows today's card
+  const showToday = !!today && (hasHours || !today.closed);
   const hasMore =
     !!store && !!(store.address || hasHours || contacts.whatsapp || contacts.instagram);
   const name = store?.name.trim() ?? '';
@@ -161,7 +167,7 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
         )}
       </div>
 
-      <div className="hero-body" data-today={hasHours || hasMore || undefined}>
+      <div className="hero-body" data-today={showToday || hasMore || undefined}>
         <div className="hero-id">
           <span className="hero-logo" aria-hidden="true">
             {store?.logoUrl ? (
@@ -239,9 +245,9 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
           <BlockArea name="aside" className="hero-aside" />
         </div>
 
-        {hasHours || hasMore ? (
+        {showToday || hasMore ? (
           <div className="hero-today">
-            {today && hasHours ? (
+            {today && showToday ? (
               <div className="hero-today-head">
                 <p className="hero-today-line">
                   <span>{today.special?.label || s.todayLabel}</span>
@@ -251,7 +257,7 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
                       : today.windows.map((w) => `${w.open}–${w.close}`).join(', ')}
                   </strong>
                 </p>
-                {!today.closed ? <DayStrip windows={today.windows} timeZone={timeZone} /> : null}
+                {!today.closed ? <DayStrip windows={today.windows} now={clock.minutes} /> : null}
               </div>
             ) : null}
 
