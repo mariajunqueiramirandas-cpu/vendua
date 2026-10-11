@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import {
   adjustmentKind,
@@ -12,6 +12,7 @@ import {
   maskPhone,
   ORDER_STATE_LABEL,
   PAYMENT_METHOD_LABEL,
+  plural,
 } from '@vendua/kernel/rules';
 
 // checkout.* defaults. Validation and the step machine live in the Kernel's
@@ -49,10 +50,16 @@ export function CheckoutLayout({ steps, current, onStep, children }: SlotProps['
   );
 }
 
-export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['checkout.Summary']) {
+export function CheckoutSummary({
+  cart,
+  currency,
+  paymentLabel,
+  vocabulary = DEFAULT_VOCABULARY,
+}: SlotProps['checkout.Summary']) {
   const t = cart.totals;
   const adjustment = t.paymentAdjustmentCents ?? 0;
   const adjustKind = adjustmentKind({ fixedCents: adjustment });
+  const count = cart.items.reduce((n, i) => n + i.qty, 0);
   return (
     <section
       className="v-summary"
@@ -60,11 +67,17 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
       data-part="root"
       aria-label="Resumo do pedido"
     >
+      <header className="v-summary-head" data-part="head">
+        <h2 className="v-summary-title">Seu pedido</h2>
+        <span className="v-muted v-num">
+          {count} {plural(count, vocabulary.itemSingular, vocabulary.itemPlural)}
+        </span>
+      </header>
       <ul className="v-summary-lines" data-part="lines">
         {cart.items.map((i) => (
           <li key={i.id} className="v-summary-line">
             <span>
-              {i.qty}× {i.name}
+              <span className="v-summary-qty v-num">{i.qty}×</span> {i.name}
               {i.modifiers.length || i.combo?.length ? (
                 <span className="v-muted v-line-mods"> — {lineSummary(i, currency)}</span>
               ) : null}
@@ -443,6 +456,7 @@ export function DeliveryOptions({
             key={o.mode}
             className="v-option"
             data-part="option"
+            data-mode={o.mode}
             data-selected={o.mode === selected || undefined}
           >
             <input
@@ -453,6 +467,7 @@ export function DeliveryOptions({
               disabled={o.disabled}
               onChange={() => onSelect(o.mode)}
             />
+            <OptionIcon kind={o.mode} />
             <span className="v-option-label">{o.label}</span>
             {o.detail ? <span className="v-option-detail v-muted">{o.detail}</span> : null}
             {o.note && o.mode === selected ? (
@@ -485,6 +500,7 @@ export function PaymentMethods({
             key={m.id}
             className="v-option"
             data-part="option"
+            data-method={m.id}
             data-selected={m.id === selected || undefined}
           >
             <input
@@ -494,6 +510,7 @@ export function PaymentMethods({
               checked={m.id === selected}
               onChange={() => onSelect(m.id)}
             />
+            <OptionIcon kind={m.id} />
             <span className="v-option-label">
               {m.label}
               {m.adjustment ? (
@@ -526,6 +543,84 @@ export function PaymentMethods({
         />
       ) : null}
     </fieldset>
+  );
+}
+
+// a line glyph per way to receive and to pay, drawn like the rest of the chrome; an id
+// without one (a future method) shows none rather than a wrong one
+const OPTION_GLYPHS: Record<string, ReactNode> = {
+  delivery: (
+    <>
+      <circle cx="5.5" cy="17" r="3.2" />
+      <circle cx="18.5" cy="17" r="3.2" />
+      <path d="M5.5 17h5l3.5-7h3l1.5 7M14 10l-1.6-3H10M8.5 10.5h4" />
+    </>
+  ),
+  pickup: (
+    <>
+      <path d="M5.2 8.5h13.6l-1 11a1.5 1.5 0 0 1-1.5 1.4H7.7a1.5 1.5 0 0 1-1.5-1.4Z" />
+      <path d="M9 11V7a3 3 0 0 1 6 0v4" />
+    </>
+  ),
+  dine_in: (
+    <>
+      <path d="M7 3v18M4.5 3v5a2.5 2.5 0 0 0 5 0V3" />
+      <path d="M18 21V3c-2 0-3.5 2.5-3.5 6.5 0 2.5 1.2 3.5 3.5 3.5" />
+    </>
+  ),
+  pix: (
+    <>
+      <rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.2" />
+      <rect x="14" y="3.5" width="6.5" height="6.5" rx="1.2" />
+      <rect x="3.5" y="14" width="6.5" height="6.5" rx="1.2" />
+      <path d="M14 14h2.5v2.5H14ZM20.5 14v.01M14 20.5h.01M17.5 20.5h3v-3" />
+    </>
+  ),
+  card: (
+    <>
+      <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
+      <path d="M2.5 10h19M6.5 14.5h4" />
+    </>
+  ),
+  cash: (
+    <>
+      <rect x="2.5" y="6.5" width="19" height="11" rx="2" />
+      <circle cx="12" cy="12" r="2.4" />
+      <path d="M6 12h.01M18 12h.01" />
+    </>
+  ),
+  tab: (
+    <>
+      <path d="M6 2.5h12v19l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4Z" />
+      <path d="M9 8h6M9 12h6M9 16h3" />
+    </>
+  ),
+};
+const GLYPH_OF: Record<string, string> = {
+  card_online: 'card',
+  card_on_delivery: 'card',
+  meal_voucher: 'card',
+};
+
+function OptionIcon({ kind }: { kind: string }) {
+  const glyph = OPTION_GLYPHS[GLYPH_OF[kind] ?? kind];
+  if (!glyph) return null;
+  return (
+    <span className="v-option-icon" data-part="option-icon" aria-hidden="true">
+      <svg
+        viewBox="0 0 24 24"
+        width="22"
+        height="22"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        focusable="false"
+      >
+        {glyph}
+      </svg>
+    </span>
   );
 }
 
@@ -633,6 +728,11 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
       data-part="root"
       role="status"
     >
+      {/* the number the counter calls out, as big as a bakery ticket's; the title says it too */}
+      <p className="v-success-stub" data-part="stub" aria-hidden="true">
+        <span>Pedido</span>
+        <strong className="v-num">{order.number}</strong>
+      </p>
       <svg
         className="v-success-icon"
         data-part="icon"
@@ -652,7 +752,7 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
         />
       </svg>
       <h1 className="v-page-title" data-part="title">
-        Pedido #{order.number} recebido!
+        Pedido <span className="v-success-n">#{order.number}</span> recebido!
       </h1>
       <p className="v-muted" data-part="body">
         {/* the title already says "recebido" — the state only earns a mention once it moves on */}

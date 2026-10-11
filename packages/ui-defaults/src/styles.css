@@ -20,6 +20,11 @@
     --v-purchase-panel-media-ratio: 1 / 1;
     --v-announcement-bg: var(--v-color-accent, #3f5e4e);
     --v-announcement-fg: var(--v-color-on-accent, #fff);
+    /* Kernel 1.25: the strip of store notices over the header, and the footer */
+    --v-banner-bg: color-mix(in srgb, var(--v-color-text, #1a1714) 7%, var(--v-color-bg, #fff));
+    --v-banner-fg: var(--v-color-text, #1a1714);
+    --v-footer-bg: color-mix(in srgb, var(--v-color-text, #1c1b1a) 3%, var(--v-color-bg, #f7f6f4));
+    --v-footer-fg: var(--v-color-text, #1c1b1a);
     --v-header-height: 64px;
     --v-focus: 2px solid var(--v-color-accent, #3f5e4e);
     /* private: the page gutter, widened into the notch when the store sets viewport-fit=cover */
@@ -89,11 +94,10 @@
   .v-num {
     font-variant-numeric: tabular-nums lining-nums;
   }
+  /* a kicker in the sentence's own case, set apart by weight and colour, not shouted */
   .v-eyebrow {
-    margin: 0 0 8px;
-    font-size: 0.75rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    margin: 0 0 6px;
+    font-size: 0.875rem;
     color: var(--v-color-muted, #6e6a64);
     font-weight: 600;
     line-height: 1.3;
@@ -330,50 +334,80 @@
     flex-direction: column;
     align-items: stretch;
   }
+  /* one quiet strip per notice: a dot in the notice's tone, the title, then the words; colours
+     from --v-banner-bg / --v-banner-fg */
   .v-banner-stack > .v-notice {
+    --_v-banner-muted: color-mix(in srgb, var(--v-banner-fg) 74%, var(--v-banner-bg));
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 2px 10px;
     max-width: none;
     margin: 0;
-    padding: 9px 48px 9px 16px;
+    padding: 10px 52px 10px 20px;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     text-align: center;
-    line-height: 1.4;
-    background: color-mix(in srgb, var(--v-color-accent, #b06010) 12%, var(--v-color-bg, #fff));
-    border-bottom: 1px solid color-mix(in srgb, var(--v-color-accent, #b06010) 22%, transparent);
+    line-height: 1.35;
+    background: var(--v-banner-bg);
+    color: var(--v-banner-fg);
   }
-  .v-banner-stack > .v-notice-info {
-    border-left: 0;
-    background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 10%, var(--v-color-bg, #fff));
-    border-bottom-color: color-mix(in srgb, var(--v-color-success, #3d7a4f) 22%, transparent);
+  .v-banner-stack > .v-notice + .v-notice {
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--v-banner-fg) 12%, transparent);
   }
-  .v-banner-stack > .v-notice-warning {
-    border-left: 0;
+  .v-banner-stack > .v-notice::before {
+    content: '';
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--_v-banner-muted);
   }
-  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body, .v-notice-dismiss) {
-    color: var(--v-color-text, #1a1714);
+  .v-banner-stack > .v-notice-warning::before {
+    background: color-mix(in srgb, var(--v-color-danger, #b3372f) 72%, var(--v-banner-fg));
   }
-  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body) {
+  .v-banner-stack > .v-notice-info::before {
+    background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 70%, var(--v-banner-fg));
+  }
+  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body, .v-notice-meta) {
     display: inline;
     margin: 0;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
-  .v-banner-stack > .v-notice .v-notice-title::after {
-    content: ' — ';
-    font-weight: 400;
+  .v-banner-stack > .v-notice .v-notice-title {
+    font-family: var(--v-font-body, system-ui);
+    font-weight: 600;
+    color: var(--v-banner-fg);
   }
-  .v-banner-stack > .v-notice .v-notice-title:only-child::after {
-    content: none;
+  .v-banner-stack > .v-notice :is(.v-notice-body, .v-notice-meta) {
+    color: var(--_v-banner-muted);
   }
   .v-banner-stack > .v-notice .v-notice-actions {
     display: inline-flex;
-    margin: 0 0 0 10px;
+    margin: 0;
+  }
+  .v-banner-stack > .v-notice .v-notice-action {
+    color: var(--v-banner-fg);
+    font-size: 0.875rem;
+    text-underline-offset: 3px;
+  }
+  .v-banner-stack > .v-notice .v-btn {
+    min-height: 34px;
+    margin: 4px 0;
+    padding: 0.4em 1em;
+    background: var(--v-banner-fg);
+    color: var(--v-banner-bg);
+    box-shadow: none;
+    font-size: 0.875rem;
   }
   .v-banner-stack > .v-notice .v-notice-dismiss {
     top: 50%;
-    right: 6px;
+    right: 8px;
     /* translate, not transform: the press scale and reduced motion own transform */
     translate: 0 -50%;
+    color: var(--_v-banner-muted);
   }
   .v-toast-region {
     position: fixed;
@@ -641,6 +675,12 @@
   .v-empty {
     padding-block: 40px;
   }
+  /* nothing here yet: a marked-out space waiting to be filled, not another card */
+  .v-panel.v-empty {
+    background: color-mix(in srgb, var(--v-color-surface, #fff) 45%, transparent);
+    border: 1.5px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
+    box-shadow: none;
+  }
   .v-not-found {
     max-width: 34rem;
     margin-inline: auto;
@@ -655,8 +695,14 @@
   }
   .v-empty-icon {
     display: block;
-    margin: 0 auto 12px;
-    color: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 70%, var(--v-color-muted, #6e6a64));
+    box-sizing: border-box;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 16px;
+    padding: 16px;
+    border-radius: 50%;
+    color: var(--v-color-accent, #3f5e4e);
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 9%, transparent);
   }
   .v-empty .v-btn,
   .v-error .v-btn,
@@ -1141,8 +1187,7 @@
     font-size: 0.9375rem;
     cursor: pointer;
   }
-  .v-check input,
-  .v-option input {
+  .v-check input {
     width: 18px;
     height: 18px;
     margin: 0;
@@ -1150,38 +1195,123 @@
   }
   .v-options {
     display: grid;
-    gap: 8px;
+    gap: 10px;
   }
+  /* A choice card: its glyph in a tile, the words, and the mark on the right where the thumb
+     lands. The words sit between two flexible rows, so one line or three stay centred against
+     the tile and the mark, which span them all. */
   .v-option {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 1fr auto auto auto 1fr;
     align-items: center;
-    column-gap: 10px;
-    padding: 12px 14px;
+    column-gap: 14px;
+    min-height: 60px;
+    padding: 12px 16px;
     border-radius: var(--v-radius-md, 8px);
-    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
     background: var(--v-color-surface, #fff);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 14%, transparent);
     cursor: pointer;
+    transition: box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
-  .v-option:hover:not([data-selected]) {
-    border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 36%, transparent);
+  .v-option:has(> .v-option-icon) {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding-left: 12px;
   }
-  .v-option[data-selected] {
+  .v-option > :is(.v-option-label, .v-option-detail, .v-option-note) {
+    grid-column: -3 / -2;
+  }
+  .v-option-label {
+    grid-row: 2;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .v-option-detail {
+    grid-row: 3;
+    margin-top: 2px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+  .v-option > .v-option-note {
+    grid-row: 4;
+  }
+  .v-option > input {
+    grid-column: -2 / -1;
+    grid-row: 1 / -1;
+  }
+  .v-option-icon {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: var(--v-radius-sm, 6px);
+    color: var(--v-color-text, #1c1b1a);
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, transparent);
+    transition:
+      background-color var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
+      color var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  /* the radio, drawn: a ring, then a filled disc with a dot of the paper left in it */
+  .v-option > input[type='radio'] {
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 32%, transparent);
+    background: var(--v-color-surface, #fff);
+    cursor: inherit;
+    transition:
+      border-color var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
+      box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  .v-option > input[type='radio']:checked {
     border-color: var(--v-color-accent, #3f5e4e);
-    box-shadow: 0 0 0 1px var(--v-color-accent, #3f5e4e);
-    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 5%, var(--v-color-surface, #fff));
+    background: var(--v-color-on-accent, #fff);
+    box-shadow: inset 0 0 0 5px var(--v-color-accent, #3f5e4e);
+  }
+  .v-option > input:focus-visible {
+    outline: none;
+  }
+  .v-option:has(> input:focus-visible) {
+    outline: var(--v-focus, 2px solid var(--v-color-accent, #3f5e4e));
+    outline-offset: 2px;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-option:hover:not([data-selected]):not(:has(input:disabled)) {
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 34%, transparent);
+    }
+  }
+  .v-option[data-selected],
+  .v-option:has(> input:checked) {
+    box-shadow: inset 0 0 0 2px var(--v-color-accent, #3f5e4e);
+  }
+  .v-option:is([data-selected], :has(> input:checked)) .v-option-icon {
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
   }
   .v-option:has(input:disabled) {
     opacity: 0.55;
     cursor: not-allowed;
   }
-  .v-option-label {
-    font-weight: 500;
-  }
-  .v-option-detail {
-    grid-column: 2;
-    font-size: 0.875rem;
-    line-height: 1.4;
+  /* high contrast drops box-shadows: draw the mark and the chosen card in system colours */
+  @media (forced-colors: active) {
+    .v-option > input[type='radio'] {
+      forced-color-adjust: none;
+      border-color: CanvasText;
+      background: Canvas;
+    }
+    .v-option > input[type='radio']:checked {
+      border-color: Highlight;
+      background: Highlight;
+      box-shadow: inset 0 0 0 4px Canvas;
+    }
+    .v-option:is([data-selected], :has(> input:checked)) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
   }
   /* Kernel 1.12 — a payment method's discount/surcharge */
   .v-option-adjust {
@@ -1200,13 +1330,17 @@
   .v-option-adjust[data-kind='discount'] {
     background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 16%, transparent);
   }
-  /* Kernel 1.17 — cash change, under the payment options while cash is chosen */
+  /* Kernel 1.17 — cash change, under the payment options while cash is chosen: the amount and
+     "no change" side by side, the way the question is answered */
   .v-change {
     display: grid;
-    margin-top: 12px;
-    padding: 14px;
+    align-items: center;
+    column-gap: 20px;
+    margin-top: 10px;
+    padding: 14px 16px 12px;
     border-radius: var(--v-radius-md, 8px);
     background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 4%, var(--v-color-surface, #fff));
+    animation: v-fade var(--v-motion-duration, 180ms) var(--v-motion-easing, ease) both;
   }
   .v-change-title {
     margin: 0 0 10px;
@@ -1219,6 +1353,18 @@
   }
   .v-change .v-check {
     min-height: 44px;
+  }
+  @media (min-width: 480px) {
+    .v-change {
+      grid-template-columns: minmax(0, 220px) auto;
+    }
+    .v-change-title {
+      grid-column: 1 / -1;
+    }
+    .v-change .v-check {
+      align-self: end;
+      margin-bottom: 4px;
+    }
   }
   .v-money {
     position: relative;
@@ -1317,35 +1463,89 @@
     background: var(--v-color-accent, #3f5e4e);
     color: var(--v-color-on-accent, #fff);
   }
+  /* a step behind you is ticked off, not numbered (the number stays for screen readers) */
+  .v-step[data-state='done'] .v-step-n {
+    font-size: 0;
+  }
+  .v-step[data-state='done'] .v-step-n::before {
+    content: '';
+    width: 9px;
+    height: 5px;
+    border: solid currentColor;
+    border-width: 0 0 1.75px 1.75px;
+    transform: translateY(-1px) rotate(-45deg);
+  }
   /* narrow: the track carries position, labels keep their words */
   @media (max-width: 479px) {
     .v-step-n {
       display: none;
     }
   }
+  .v-checkout .v-legend {
+    margin-bottom: 14px;
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-size: 1.25rem;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
   .v-form-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
-    margin-top: 16px;
+    margin-top: 20px;
   }
   .v-form-actions .v-btn-accent {
     flex: 1 1 220px;
-  }
-  @media (max-width: 479px) {
-    .v-form-actions {
-      flex-direction: column-reverse;
-    }
-    .v-form-actions .v-btn,
-    .v-form-actions .v-btn-accent {
-      flex: none;
-      width: 100%;
-    }
   }
   @media (min-width: 720px) {
     .v-form-actions .v-btn-accent {
       flex: 0 1 auto;
       min-width: 220px;
+    }
+  }
+  /* Phone: the step's button rides the bottom edge while the form scrolls under it, "Voltar"
+     beside it rather than stacked; it lets go while a text field has the keyboard up. */
+  @media (max-width: 719px) {
+    .v-form-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      flex-wrap: nowrap;
+      gap: 10px;
+      margin-inline: calc(-1 * var(--_v-gutter));
+      padding: 12px var(--_v-gutter) max(12px, env(safe-area-inset-bottom));
+      background: color-mix(in srgb, var(--v-color-bg, #faf9f7) 92%, transparent);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 -1px 0 color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+    }
+    .v-form-actions .v-btn {
+      flex: none;
+    }
+    .v-form-actions .v-btn-accent {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding-inline: 16px;
+    }
+    /* "Voltar" keeps its name for screen readers and shows as an arrow, so the main button
+       keeps its total on one line */
+    .v-form-actions [data-part='back'] {
+      width: 52px;
+      padding: 0;
+      font-size: 0;
+    }
+    .v-form-actions [data-part='back']::before {
+      content: '';
+      width: 10px;
+      height: 10px;
+      margin-left: 4px;
+      border: solid currentColor;
+      border-width: 0 0 2px 2px;
+      transform: rotate(45deg);
+    }
+    form:has(:is(input:not([type='radio'], [type='checkbox']), textarea, select):focus)
+      .v-form-actions {
+      position: static;
     }
   }
   .v-checkout-grid,
@@ -1370,6 +1570,23 @@
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
     margin-bottom: 16px;
   }
+  /* At checkout the summary is the order slip itself: torn along the bottom like a pad's
+     page. Only here; the bag's summary is a plain card. */
+  .v-checkout-grid > .v-summary {
+    --_v-tear: 6px;
+    padding-bottom: calc(20px + var(--_v-tear));
+    border: 0;
+    border-radius: var(--v-radius-lg, 14px) var(--v-radius-lg, 14px) 0 0;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+    -webkit-mask: radial-gradient(
+        circle var(--_v-tear) at 50% 100%,
+        #0000 calc(100% - 0.5px),
+        #000 100%
+      )
+      50% 100% / calc(var(--_v-tear) * 3) 100% repeat-x;
+    mask: radial-gradient(circle var(--_v-tear) at 50% 100%, #0000 calc(100% - 0.5px), #000 100%)
+      50% 100% / calc(var(--_v-tear) * 3) 100% repeat-x;
+  }
   @media (min-width: 860px) {
     .v-checkout-grid > .v-summary,
     .v-cart-aside {
@@ -1377,8 +1594,28 @@
       top: calc(var(--v-header-height) + 24px);
     }
   }
+  .v-summary-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
+  }
+  .v-summary-title {
+    margin: 0;
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  .v-summary-head .v-muted {
+    font-size: 0.875rem;
+  }
   /* the cart page lists the lines already — its summary only totals them */
-  .v-cart-aside .v-summary-lines {
+  .v-cart-aside :is(.v-summary-head, .v-summary-lines) {
     display: none;
   }
   .v-cart-aside .v-summary-totals {
@@ -1387,11 +1624,12 @@
   }
   .v-summary-lines {
     list-style: none;
-    margin: 0 0 12px;
+    margin: 0 0 14px;
     padding: 0;
     display: grid;
-    gap: 6px;
+    gap: 10px;
     font-size: 0.9375rem;
+    line-height: 1.35;
   }
   .v-summary-line,
   .v-summary-totals > div {
@@ -1399,44 +1637,176 @@
     justify-content: space-between;
     gap: 12px;
   }
+  .v-summary-line > .v-num {
+    flex: none;
+  }
+  .v-summary-qty {
+    display: inline-block;
+    min-width: 1.6em;
+    color: var(--v-color-muted, #6e6a64);
+    font-weight: 500;
+  }
+  .v-summary-line .v-line-mods {
+    display: block;
+    margin: 2px 0 0 1.6em;
+    font-size: 0.8125rem;
+  }
+  .v-summary-line .v-line-note {
+    margin-left: 1.6em;
+  }
   .v-summary-totals {
     margin: 0;
     display: grid;
     gap: 6px;
     padding-top: 12px;
     border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    font-size: 0.9375rem;
+  }
+  .v-summary-totals dt {
+    color: var(--v-color-muted, #6e6a64);
   }
   .v-summary-totals dd {
     margin: 0;
   }
   .v-summary-total {
+    align-items: baseline;
     margin-top: 6px;
-    padding-top: 10px;
-    border-top: 1px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 14%, transparent);
+    padding-top: 12px;
+    border-top: 1px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
     font-weight: 600;
-    font-size: 1.125rem;
+    font-size: 1.0625rem;
   }
+  .v-summary-totals .v-summary-total dt {
+    color: inherit;
+  }
+  .v-summary-total dd {
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-size: 1.5rem;
+    letter-spacing: -0.02em;
+  }
+
+  /* ── order placed: a ticket ─────────────────────────────────────────────── */
+  /* The stub carries the number the counter calls out, bakery-ticket size, cut from the rest
+     by two notches. The title keeps "Pedido #n recebido!" for screen readers; the stub is
+     aria-hidden, so the number shows once on screen and is read once. */
   .v-success {
+    --_v-stub: 9.5rem;
+    --_v-notch: 9px;
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--_v-stub) minmax(0, 1fr);
+    overflow: hidden;
+    align-content: center;
     margin-bottom: 24px;
-    text-align: center;
-    border-color: color-mix(in srgb, var(--v-color-success, #3d7a4f) 50%, transparent);
-    background: color-mix(
-      in srgb,
-      var(--v-color-success, #3d7a4f) 6%,
-      var(--v-color-surface, #fff)
-    );
+    padding: 24px 0;
+    border: 0;
+    text-align: left;
+    background: var(--v-color-surface, #fff);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+    -webkit-mask:
+      radial-gradient(circle var(--_v-notch) at var(--_v-stub) 0, #0000 98%, #000) top / 100% 51%
+        no-repeat,
+      radial-gradient(circle var(--_v-notch) at var(--_v-stub) 100%, #0000 98%, #000) bottom / 100%
+        51% no-repeat;
+    mask:
+      radial-gradient(circle var(--_v-notch) at var(--_v-stub) 0, #0000 98%, #000) top / 100% 51%
+        no-repeat,
+      radial-gradient(circle var(--_v-notch) at var(--_v-stub) 100%, #0000 98%, #000) bottom / 100%
+        51% no-repeat;
   }
-  .v-success-next {
-    margin: 12px auto 0;
-    max-width: 30em;
-    font-weight: 500;
-    text-wrap: balance;
+  .v-success > :not(.v-success-stub) {
+    grid-column: 2;
+    margin-inline: 28px;
+  }
+  .v-success-stub {
+    grid-column: 1;
+    grid-row: 1 / span 5;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 2px;
+    margin: -24px 0;
+    padding: 20px 12px;
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+    text-align: center;
+  }
+  .v-success-stub span {
+    font-size: 0.875rem;
+    font-weight: 600;
+    opacity: 0.8;
+  }
+  .v-success-stub strong {
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-size: clamp(3rem, 2.5rem + 2vw, 4.25rem);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    overflow-wrap: anywhere;
+    animation: v-pop 420ms var(--v-motion-easing, ease) both;
+  }
+  .v-success-n {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .v-success > p:not(.v-success-stub) {
+    margin-block: 0;
+  }
+  .v-success .v-page-title {
+    margin-bottom: 4px;
+    font-size: clamp(1.5rem, 1.25rem + 1vw, 2rem);
   }
   .v-success-icon {
     display: block;
-    margin: 0 auto 12px;
+    width: 28px;
+    height: 28px;
+    margin-bottom: 8px;
     color: var(--v-color-success, #3d7a4f);
-    animation: v-pop 420ms var(--v-motion-easing, ease) both;
+  }
+  .v-success-next {
+    max-width: 34em;
+    font-weight: 500;
+    text-wrap: pretty;
+  }
+  .v-success > p:is(.v-success-next, .v-note) {
+    margin-top: 12px;
+  }
+  /* phone: the stub becomes the ticket's top band, notched at both ends */
+  @media (max-width: 559px) {
+    .v-success {
+      --_v-band: 6.5rem;
+      grid-template-columns: minmax(0, 1fr);
+      padding: 0 0 22px;
+      -webkit-mask:
+        radial-gradient(circle var(--_v-notch) at 0 var(--_v-band), #0000 98%, #000) left / 51% 100%
+          no-repeat,
+        radial-gradient(circle var(--_v-notch) at 100% var(--_v-band), #0000 98%, #000) right / 51%
+          100% no-repeat;
+      mask:
+        radial-gradient(circle var(--_v-notch) at 0 var(--_v-band), #0000 98%, #000) left / 51% 100%
+          no-repeat,
+        radial-gradient(circle var(--_v-notch) at 100% var(--_v-band), #0000 98%, #000) right / 51%
+          100% no-repeat;
+    }
+    .v-success > :not(.v-success-stub) {
+      grid-column: 1;
+      margin-inline: 20px;
+    }
+    .v-success-stub {
+      grid-row: auto;
+      height: var(--_v-band);
+      margin: 0 0 20px;
+      padding: 0 20px;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: baseline;
+      align-content: center;
+      gap: 12px;
+    }
   }
 
   /* ── cart ───────────────────────────────────────────────────────────────── */
@@ -1447,42 +1817,46 @@
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
+  /* the bag reads like a receipt: one sheet of paper, a line per item, hairlines between */
   .v-cart-lines {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 0 16px;
     display: grid;
-    gap: 12px;
+    border-radius: var(--v-radius-lg, 14px);
+    background: var(--v-color-surface, #fff);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 9%, transparent),
+      0 1px 2px color-mix(in srgb, var(--v-color-text, #1c1b1a) 5%, transparent);
   }
   .v-line {
     position: relative;
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-columns: 60px minmax(0, 1fr);
     align-items: start;
     gap: 14px;
-    padding: 14px;
-    border-radius: var(--v-radius-md, 8px);
-    background: var(--v-color-surface, #fff);
-    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    padding: 16px 0;
   }
-  .v-line[data-unavailable] {
-    border-color: color-mix(in srgb, var(--v-color-danger, #a33b32) 40%, transparent);
+  .v-line + .v-line {
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 9%, transparent);
+  }
+  .v-line[data-unavailable] .v-line-thumb {
+    opacity: 0.5;
+    filter: grayscale(1);
   }
   .v-line-thumb {
     display: grid;
     place-items: center;
-    width: 56px;
+    width: 60px;
     aspect-ratio: 1;
     overflow: hidden;
-    border-radius: var(--v-radius-md, 8px);
+    border-radius: min(var(--v-radius-md, 8px), 14px);
     font-family: var(--v-font-display, serif);
     font-size: 1.5rem;
+    font-weight: 600;
     color: var(--v-color-accent, #3f5e4e);
-    background: color-mix(
-      in srgb,
-      var(--v-color-accent, #3f5e4e) 10%,
-      var(--v-color-surface, #fff)
-    );
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 9%, var(--v-color-surface, #fff));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-color-text, #1c1b1a) 5%, transparent);
   }
   .v-line-thumb img {
     width: 100%;
@@ -1494,12 +1868,13 @@
   }
   .v-line-name {
     margin: 0;
-    padding-right: 96px;
+    padding-right: 92px;
     font-weight: 600;
+    line-height: 1.3;
     overflow-wrap: anywhere;
   }
   .v-line-mods {
-    margin: 2px 0 0;
+    margin: 4px 0 0;
     font-size: 0.875rem;
     line-height: 1.4;
   }
@@ -1507,16 +1882,34 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 16px;
-    margin-top: 10px;
+    gap: 4px 14px;
+    margin-top: 12px;
+  }
+  .v-line-actions .v-qty button {
+    width: 32px;
+    height: 32px;
+  }
+  /* "Remover" and "Observação": small, quiet, underlined only under a pointer */
+  .v-line-actions .v-link-btn {
+    min-height: 32px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-line-actions .v-link-btn:hover:not(:disabled) {
+      text-decoration: underline;
+    }
   }
   .v-line-total {
     position: absolute;
-    top: 14px;
-    right: 14px;
+    top: 16px;
+    right: 0;
     margin: 0;
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
     font-weight: 600;
     white-space: nowrap;
+    letter-spacing: -0.01em;
   }
   .v-cart-aside > .v-btn {
     margin-top: 8px;
@@ -1575,7 +1968,7 @@
   }
   .v-order-progress li::before {
     content: '';
-    height: 6px;
+    height: 4px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
   }
@@ -1606,6 +1999,16 @@
       display: none;
     }
   }
+  /* Right after checkout the ticket above already says "Pedido #n recebido!" and moves its
+     line on with the order; the status keeps only the promise, the progress and the facts. */
+  .v-success ~ .v-order > .v-order-head > :is(.v-eyebrow, [data-part='state']) {
+    display: none;
+  }
+  .v-success ~ .v-order > .v-order-head > .v-muted {
+    margin: 0 0 12px;
+    color: var(--v-color-text, #1c1b1a);
+    font-weight: 500;
+  }
   .v-order-facts {
     margin: 0;
     display: grid;
@@ -1616,11 +2019,9 @@
     border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
   }
   .v-order-facts dt {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: var(--v-color-muted, #6e6a64);
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-weight: 500;
   }
   .v-order-facts dd {
     margin: 2px 0 0;
@@ -1907,9 +2308,9 @@
     position: sticky;
     top: 0;
     z-index: 50;
-    background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 86%, transparent);
-    -webkit-backdrop-filter: saturate(1.4) blur(14px);
-    backdrop-filter: saturate(1.4) blur(14px);
+    background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 92%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(18px);
+    backdrop-filter: saturate(1.4) blur(18px);
     border-bottom: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
     font-family: var(--v-font-body, system-ui, sans-serif);
     padding-top: env(safe-area-inset-top, 0px);
@@ -2053,8 +2454,10 @@
     min-width: 24px;
     padding: calc((24px - 1cap) / 2) 7px;
     border-radius: 999px;
-    background: var(--v-color-accent, #3f5e4e);
-    color: var(--v-color-on-accent, #fff);
+    /* the pill is ink; its count, the page's paper */
+    background: var(--v-color-bg, #f7f6f4);
+    color: var(--v-color-text, #1c1b1a);
+    font-weight: 700;
     font-size: 0.75rem;
     line-height: 1;
     text-align: center;
@@ -2062,24 +2465,38 @@
     font-variant-numeric: tabular-nums;
     animation: v-bump 360ms var(--v-motion-easing, ease);
   }
+  /* sdk:header-cart's text variant sits on the page, not on an ink pill */
+  .v-link-btn > .v-cart-count {
+    background: var(--v-color-text, #1c1b1a);
+    color: var(--v-color-bg, #f7f6f4);
+  }
+  /* an empty bag reads "Sacola", not "Sacola 0": the count appears with the first item */
   .v-cart-count[data-empty] {
-    background: color-mix(in srgb, var(--v-color-bg, #f7f6f4) 22%, transparent);
-    color: inherit;
-    animation: none;
+    display: none;
+  }
+  .v-cart-pill:has(> .v-cart-count[data-empty]) {
+    padding-right: 16px;
   }
   .v-header-cart {
     padding-block: 8px;
     display: flex;
     justify-content: flex-end;
   }
+  /* the footer signs the page off: the store's name large, how to reach it, its week. Colours
+     from --v-footer-bg / --v-footer-fg; the column lines up with the page's. */
   .v-footer {
+    --_v-footer-muted: color-mix(in srgb, var(--v-footer-fg) 70%, var(--v-footer-bg));
+    --_v-footer-line: color-mix(in srgb, var(--v-footer-fg) 14%, transparent);
     box-sizing: border-box;
-    margin-top: 64px;
-    padding: 48px var(--_v-gutter) calc(40px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
-    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 3%, var(--v-color-bg, #f7f6f4));
+    margin-top: 72px;
+    padding: 56px 0 calc(48px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--_v-footer-line);
+    background: var(--v-footer-bg);
     font-family: var(--v-font-body, system-ui, sans-serif);
-    color: var(--v-color-text, #1c1b1a);
+    color: var(--v-footer-fg);
+  }
+  .v-footer .v-muted {
+    color: var(--_v-footer-muted);
   }
   .v-footer a {
     color: inherit;
@@ -2091,48 +2508,83 @@
   }
   .v-footer-name {
     font-family: var(--v-font-display, var(--v-font-body, serif));
-    font-size: 1.25rem;
+    font-size: clamp(2rem, 1.5rem + 2.4vw, 3.25rem);
     font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -0.01em;
+    line-height: 1;
+    letter-spacing: -0.035em;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+  .v-footer .v-footer-name {
+    margin-bottom: 16px;
   }
   .v-footer .v-footer-contacts {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 14px;
+    margin-top: 20px;
   }
   .v-footer-contacts a {
     display: inline-flex;
     align-items: center;
-    min-height: 36px;
-    padding: 4px 14px;
+    min-height: 40px;
+    padding: 4px 16px;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 18%, transparent);
-    background: var(--v-color-surface, #fff);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-footer-fg) 28%, transparent);
     font-size: 0.875rem;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.2;
     text-decoration: none;
+    transition: box-shadow var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
   }
   @media (hover: hover) and (pointer: fine) {
     .v-footer-contacts a:hover {
-      border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 40%, transparent);
+      box-shadow: inset 0 0 0 1px var(--v-footer-fg);
     }
   }
   .v-footer-inner {
+    box-sizing: border-box;
     max-width: var(--v-page-max);
     margin: 0 auto;
+    padding-inline: var(--_v-gutter);
     display: grid;
-    gap: 24px;
+    gap: 40px;
   }
   @media (min-width: 720px) {
     .v-footer-inner {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+      column-gap: 64px;
     }
   }
   .v-footer p {
     margin: 0 0 6px;
+  }
+  .v-footer [data-part='about'] > .v-muted {
+    max-width: 44ch;
+  }
+  .v-footer [data-part='links'] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    margin-top: 16px;
+  }
+  .v-footer .v-hours {
+    max-width: none;
+    color: inherit;
+    font-size: 0.875rem;
+  }
+  .v-footer .v-hours :is(th, td) {
+    border-bottom-color: var(--_v-footer-line);
+  }
+  .v-footer .v-hours th,
+  .v-footer .v-hours tr[data-closed] td {
+    color: var(--_v-footer-muted);
+  }
+  .v-footer .v-hours tr[data-today] > * {
+    color: var(--v-footer-fg);
+  }
+  .v-footer .v-hours-today {
+    color: inherit;
   }
   .v-status-card {
     display: grid;
@@ -2547,6 +2999,19 @@
     display: grid;
     gap: 6px;
     margin-block: 12px;
+  }
+  .v-coupon[data-closed] {
+    margin-block: 4px 16px;
+  }
+  .v-coupon [data-part='open'] {
+    justify-self: start;
+    min-height: 44px;
+    color: var(--v-color-text, #1c1b1a);
+    font-weight: 500;
+  }
+  /* an empty notes box doesn't count to 500 yet */
+  .v-textarea:placeholder-shown ~ .v-counter {
+    visibility: hidden;
   }
   .v-coupon-code {
     font-family: var(--v-font-mono, ui-monospace, monospace);
@@ -3343,6 +3808,10 @@
     display: grid;
     gap: 10px;
     margin-top: 16px;
+  }
+  /* a list of one's own orders reads down a column, not across the whole page */
+  [data-vendua-page='orders'] > * {
+    max-width: 44rem;
   }
 
   /* ── touch: every tap target answers the finger ──────────────────────────────

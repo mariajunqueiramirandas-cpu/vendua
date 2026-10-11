@@ -3,6 +3,42 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.25.0
+
+Default UI refresh, part two — visual polish in `@vendua/ui-defaults`; additive, no storefront
+edit, no new runtime export.
+
+- New styling hooks: `--v-banner-bg` / `--v-banner-fg` (the strip of store notices over the
+  header) and `--v-footer-bg` / `--v-footer-fg` (`sdk:footer`). Their defaults keep each surface
+  close to its old paper tone; a store sets them to put either in its ink.
+- Notice strip: a dot in the notice's tone, the title, then the body, centred on one line (no
+  more "Título — texto"); actions and the pause button sit inline.
+- Header: an empty bag reads "Sacola" (the count appears with the first item, as a paper chip
+  on the ink pill); the frosted bar is a touch more opaque, so a page scrolling under it doesn't
+  show through.
+- Footer: its column lines up with the page's, the store's name signs the page off at display
+  size, contacts are outlined chips, and the week's hours follow the footer's colours.
+- Bag: the lines read as one receipt (a sheet of paper with hairlines between items), a larger
+  thumbnail, quieter "Remover" / "Observação", and the total in the display face.
+- Checkout: delivery and payment choices are cards with a glyph per way to receive and to pay
+  (new part `option-icon`; each `option` carries `data-mode` or `data-method`), a drawn radio on
+  the right and the chosen card outlined in the accent; steps behind you are ticked; legends
+  are set in the display face. On phones the step's button rides the bottom edge with
+  "Voltar" as an arrow beside it (`[data-part="back"]`), and lets go while a text field has
+  the keyboard. Cash change puts the amount and "Não preciso de troco" side by side.
+- Checkout: the coupon field waits behind "Tenho um cupom de desconto" (`[data-part="open"]`,
+  the root `data-closed` until it opens; an error opens it). The notes counter shows once
+  something is typed. `checkout.Summary` gains a head ("Seu pedido", the item count,
+  `[data-part="head"]`, hidden in the bag) and, at checkout, a torn bottom edge.
+- Order placed: `checkout.SuccessPage` is a ticket — the order number at bakery-ticket size on
+  a stub in the accent (`[data-part="stub"]`, aria-hidden; the title still reads "Pedido #n
+  recebido!"), notched from the rest. Right under it `order.StatusPage` drops its own eyebrow
+  and state title, which the ticket already carries, and keeps the promise, progress and facts.
+- `.v-eyebrow` ("Pague com Pix", "Erro 404", sections' `eyebrow`) and the order facts' labels
+  are set in the sentence's own case, not tracked capitals. Empty states are a dashed outline
+  with the glyph in a tinted disc instead of a card; `/pedidos` reads down a 44rem column; a
+  missing product says why.
+
 ## 1.24.0
 
 Voice messages and photos in the store chat — additive; no storefront edit, no new runtime

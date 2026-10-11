@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { foldText } from '@vendua/kernel';
 
 // Stand-in art for a product without a photo: a forest line drawing on a warm tint with one
@@ -113,6 +113,44 @@ export function DishGlyph({ dish, spark = true }: { dish: Dish; spark?: boolean 
       >
         {DRAWINGS[dish]}
       </g>
+    </svg>
+  );
+}
+
+// one tile of the print, staggered like a bakery's wrapping paper: [dish, x, y, rotation]
+const PRINT: [Dish, number, number, number][] = [
+  ['flan', 8, 10, -10],
+  ['cup', 92, 2, 8],
+  ['pop', 178, 16, -6],
+  ['bowl', 48, 92, 12],
+  ['pizza', 134, 88, -14],
+  ['burger', 214, 96, 6],
+];
+
+/** The cover a store without a photo wears: its dishes printed edge to edge. */
+export function DishPrint() {
+  // useId's colons don't survive inside url(#…)
+  const id = `print${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+  return (
+    <svg className="dish-print" aria-hidden="true" focusable="false">
+      <defs>
+        <pattern id={id} width="264" height="176" patternUnits="userSpaceOnUse">
+          <g
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {PRINT.map(([dish, x, y, r]) => (
+              <g key={dish} transform={`translate(${x} ${y}) rotate(${r} 32 32)`}>
+                {DRAWINGS[dish]}
+              </g>
+            ))}
+          </g>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill={`url(#${id})`} />
     </svg>
   );
 }

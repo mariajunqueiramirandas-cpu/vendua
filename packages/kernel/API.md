@@ -868,7 +868,8 @@ Three layers, in order of preference (17 — styling API):
    `--v-card-media-ratio`, `--v-card-gap`, `--v-grid-min`, `--v-grid-gap`,
    `--v-section-pad`, `--v-page-max`, `--v-purchase-panel-gap`,
    `--v-purchase-panel-media-ratio`, `--v-announcement-bg`, `--v-announcement-fg`,
-   `--v-header-height`, `--v-focus`.
+   `--v-header-height`, `--v-focus`; since 1.25 `--v-banner-bg` / `--v-banner-fg` (the notice
+   strip over the header) and `--v-footer-bg` / `--v-footer-fg` (`sdk:footer`).
 
 Parts added in Kernel 1.12: `compare-at` (the struck "de" price, in the product card's and
 `sdk:purchase-panel`'s `price`), `category-description` (`sdk:catalog-grid`), and inside
@@ -910,6 +911,13 @@ the id `categoria-<slug>`), `terms` (`sdk:delivery-eta`), `when` (`sdk:notify-me
 `[data-vendua="delivery-estimate"]` (`data-state` idle | pending | ok | out | later | error |
 distance) `form` (field `input[name="estimate-cep"]`), `submit`, `result`, `fee`, `total`,
 `min-order`, `free-delivery`, `out`, `later`, `error` and `change`.
+
+Parts added in Kernel 1.25: in the checkout's delivery and payment options `option-icon` (the
+glyph tile; each `option` carries `data-mode` delivery | pickup | dine_in or `data-method` = the
+method id), `back` (the form's "Voltar"), in `[data-vendua="coupon"]` `open` (the "Tenho um
+cupom de desconto" link; the root has `data-closed` until it opens), in
+`[data-vendua="checkout-summary"]` `head` (the "Seu pedido" line with the item count), and in
+`[data-vendua="checkout-success"]` `stub` (the ticket stub with the order number, aria-hidden).
 
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are

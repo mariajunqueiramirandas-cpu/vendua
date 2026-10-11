@@ -372,6 +372,11 @@ function Purchase({ settings, slug }: SectionProps<typeof S.purchasePanel> & { s
               ? 'Não foi possível carregar o produto.'
               : 'Produto não encontrado.'}
           </h1>
+          <p className="v-muted">
+            {error && error.code !== 'PRODUCT_NOT_FOUND'
+              ? 'Confira a conexão e tente de novo.'
+              : 'Ele pode ter saído do cardápio, ou o link mudou.'}
+          </p>
           {error && error.code !== 'PRODUCT_NOT_FOUND' ? (
             <button type="button" className="v-btn v-btn-accent" onClick={refetch}>
               Tentar novamente
