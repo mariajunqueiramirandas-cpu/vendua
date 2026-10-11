@@ -81,6 +81,19 @@ function useStoreClock(timeZone: string): { date: string; weekday: number; minut
   return now;
 }
 
+type Hours = Parameters<typeof todayHours>[0];
+
+// Core keeps a store open past midnight on yesterday's overnight window (Sun 18:00–02:00 is open
+// on Monday at 00:30), so today's line carries that tail and never says "fechado" beside
+// "aberto". Yesterday is 24h back, as Core takes it; a special day yesterday spills nothing.
+function spillOf(hours: Hours, minutes: number): { open: string; close: string }[] {
+  const prev = todayHours(hours, new Date(Date.now() - 86_400_000));
+  if (prev.special) return [];
+  return prev.windows
+    .filter((w) => minutesOf(w.close) <= minutesOf(w.open) && minutes < minutesOf(w.close))
+    .map((w) => ({ open: '00:00', close: w.close }));
+}
+
 /**
  * Today on one line: the hours the store opens, drawn from 6h (earlier when it opens earlier) to
  * midnight, with a needle at the store's own clock. The words beside it say the same thing; the
@@ -127,8 +140,14 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
   const { rows } = useStoreHours();
   const clock = useStoreClock(timeZone);
   const hours = store?.hours;
-  // today by the store's own date, recomputed when it rolls over (special days included)
-  const today = useMemo(() => (hours ? todayHours(hours) : null), [hours, clock.date]);
+  // today by the store's own date, recomputed when it rolls over (special days included), with
+  // last night's window while it still runs
+  const today = useMemo(() => {
+    if (!hours) return null;
+    const t = todayHours(hours);
+    const spill = spillOf(hours, clock.minutes);
+    return spill.length ? { ...t, windows: [...spill, ...t.windows], closed: false } : t;
+  }, [hours, clock.date, clock.minutes]);
   const { delivery, pickup } = useDeliverySummary();
   const { contacts } = useLinks();
   const money = useMoney();
