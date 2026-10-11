@@ -43,11 +43,14 @@ function useEnds(list: RefObject<HTMLOListElement>, count: number) {
       });
     read();
     el.addEventListener('scroll', read, { passive: true });
-    const ro = new ResizeObserver(read);
-    ro.observe(el);
+    // an old WebView has no ResizeObserver: the window's resize stands in
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(read);
+    if (ro) ro.observe(el);
+    else window.addEventListener('resize', read);
     return () => {
       el.removeEventListener('scroll', read);
-      ro.disconnect();
+      ro?.disconnect();
+      window.removeEventListener('resize', read);
     };
   }, [list, count]);
   return ends;
