@@ -39,7 +39,7 @@ place.
 - **The workflow triggers the Dokploy deploy** through Dokploy's API, after the images, and
   publishes storefronts after that. Dokploy's own auto-deploy is off, so a red `main` never ships.
 - **Dockerfiles find workspace manifests from the root's `workspaces` globs**, so a new store needs
-  no Dockerfile line, and a storefront change leaves Core's image byte-identical.
+  no Dockerfile line, and a change to a store's sources leaves Core's image byte-identical.
 - **Migrations keep the previous Core working** (CLAUDE.md invariant): for a few seconds two Cores
   run against one schema. The wa-gateway, which has no `depends_on` in a stack, waits at boot until
   the migrations it ships with are applied.
@@ -49,7 +49,11 @@ place.
 
 ## Consequences
 
-- A storefront merge touches no container. A platform merge swaps only the services whose image
+- A storefront merge touches no container, unless it changes `bun.lock` (a new store's first
+  PR, or a store's dependencies): every image installs from the one lockfile, so Core and the
+  wa-gateway get a new image and swap, start-first, the stores' WhatsApp sockets handing over
+  within seconds. Pruning the lockfile per image would avoid it; not worth it for a gapless swap.
+  A platform merge swaps only the services whose image
   changed, each without a gap. Tested on a local Swarm: no failed request across edge, Core and
   wa-gateway swaps under constant load, and a no-op redeploy replaced no container.
 - Setup is manual and one-time: an R2 bucket and the existing releases copied into it, GitHub

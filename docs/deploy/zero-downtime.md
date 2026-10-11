@@ -22,7 +22,7 @@ Each job runs only when its repository variable is `on` (`DEPLOY_IMAGES`, `DEPLO
 skips). `workflow_dispatch` runs it by hand. After the stack deploy the workflow waits for
 Dokploy to report it done, plus 90 s for Swarm's swaps, before publishing storefronts (a store
 built on a new Kernel may call the new Core). A stack whose update Swarm rolls back still counts
-as deployed: check `docker service ps` when a deploy changed Core. Nothing restarts for a storefront merge. A
+as deployed: check `docker service ps` when a deploy changed Core. Nothing restarts for a storefront merge, unless it changes `bun.lock` (a new store's first PR): then Core and the wa-gateway swap, start-first, like a platform merge. A
 platform merge swaps the changed services one by one, `start-first`, except Postgres, stt,
 ig-sidecar and domains-sync, which are `stop-first` (their gaps are internal).
 
