@@ -98,8 +98,11 @@ body {
   min-height: 100dvh;
 }
 
+/* full-bleed backdrops (the sticky menu bar's paper) and the cover's bleed never widen the page;
+ * clip, unlike hidden, leaves the sticky bars stuck to the viewport */
 #main {
   flex: 1 0 auto;
+  overflow-x: clip;
 }
 
 /* headings never leave one word alone on a line; running text breaks like a book page */
