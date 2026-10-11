@@ -110,9 +110,22 @@ jobs:
       DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
       DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
     steps:
+      # the builds take minutes: a main that moved on meanwhile is the next run's to ship, and this
+      # one must not deploy or publish older code ahead of it
+      - name: Still the newest main?
+        id: tip
+        env:
+          SHA: ${{ needs.gate.outputs.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tip=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          if [ "$tip" = "$SHA" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else
+            echo "main moved on to $tip; its own run ships it"; echo "go=false" >> "$GITHUB_OUTPUT"; fi
       # Dokploy runs `docker stack deploy`: services whose image didn't change stay as they are,
       # the rest start their new task, pass its healthcheck, then stop the old one
       - name: Deploy the stack
+        if: steps.tip.outputs.go == 'true'
         run: |
           curl -fsS --max-time 60 -X POST "${DOKPLOY_URL%/}/api/compose.deploy" \
             -H "x-api-key: $DOKPLOY_API_KEY" -H 'content-type: application/json' \
@@ -121,6 +134,7 @@ jobs:
       # Dokploy's status covers the stack deploy; Swarm's swaps finish after it, within its 30 s
       # update monitor plus Core's healthcheck, hence the settle.
       - name: Wait for the deploy
+        if: steps.tip.outputs.go == 'true'
         run: |
           # the status still reads the previous deploy's until Dokploy picks this one up
           sleep 10
@@ -147,15 +161,31 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      # the builds take minutes: a main that moved on meanwhile is the next run's to ship, and this
+      # one must not deploy or publish older code ahead of it
+      - name: Still the newest main?
+        id: tip
+        env:
+          SHA: ${{ needs.gate.outputs.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tip=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          if [ "$tip" = "$SHA" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else
+            echo "main moved on to $tip; its own run ships it"; echo "go=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.tip.outputs.go == 'true'
         with:
           ref: ${{ needs.gate.outputs.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.tip.outputs.go == 'true'
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
+        if: steps.tip.outputs.go == 'true'
       # content-addressed: an unchanged store hashes to the release it has and changes nothing
       - name: Publish every storefront
+        if: steps.tip.outputs.go == 'true'
         env:
           GIT_COMMIT: ${{ needs.gate.outputs.sha }}
           VENDUA_CORE_ORIGIN: ${{ vars.VENDUA_CORE_ORIGIN }}
