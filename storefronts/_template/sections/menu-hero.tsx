@@ -81,17 +81,23 @@ function useStoreClock(timeZone: string): { date: string; weekday: number; minut
   return now;
 }
 
-type Hours = Parameters<typeof todayHours>[0];
-
 // Core keeps a store open past midnight on yesterday's overnight window (Sun 18:00–02:00 is open
-// on Monday at 00:30), so today's line carries that tail and never says "fechado" beside
-// "aberto". Yesterday is 24h back, as Core takes it; a special day yesterday spills nothing.
-function spillOf(hours: Hours, minutes: number): { open: string; close: string }[] {
-  const prev = todayHours(hours, new Date(Date.now() - 86_400_000));
-  if (prev.special) return [];
-  return prev.windows
-    .filter((w) => minutesOf(w.close) <= minutesOf(w.open) && minutes < minutesOf(w.close))
-    .map((w) => ({ open: '00:00', close: w.close }));
+// on Monday at 00:30), and only Core knows whether yesterday was overridden: the profile lists
+// special days from today on. So the tail comes from Core's answer, not from rebuilding
+// yesterday: open now, none of today's windows running, until Core's closing time.
+function spillOf(
+  windows: { open: string; close: string }[],
+  minutes: number,
+  hint: StatusHint | null,
+  timeZone: string,
+): { open: string; close: string }[] {
+  if (hint?.kind !== 'open-until' || !hint.at) return [];
+  const running = windows.some((w) => {
+    const o = minutesOf(w.open);
+    const c = minutesOf(w.close);
+    return minutes >= o && (c <= o || minutes < c);
+  });
+  return running ? [] : [{ open: '00:00', close: formatTime(hint.at, timeZone) }];
 }
 
 /**
@@ -145,9 +151,9 @@ export default function MenuHero({ settings: s }: SectionProps<typeof schema>) {
   const today = useMemo(() => {
     if (!hours) return null;
     const t = todayHours(hours);
-    const spill = spillOf(hours, clock.minutes);
+    const spill = status === 'open' ? spillOf(t.windows, clock.minutes, hint, timeZone) : [];
     return spill.length ? { ...t, windows: [...spill, ...t.windows], closed: false } : t;
-  }, [hours, clock.date, clock.minutes]);
+  }, [hours, clock.date, clock.minutes, status, hint, timeZone]);
   const { delivery, pickup } = useDeliverySummary();
   const { contacts } = useLinks();
   const money = useMoney();

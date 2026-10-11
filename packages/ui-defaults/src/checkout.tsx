@@ -12,6 +12,7 @@ import {
   maskPhone,
   ORDER_STATE_LABEL,
   PAYMENT_METHOD_LABEL,
+  plural,
 } from '@vendua/kernel/rules';
 
 // checkout.* defaults. Validation and the step machine live in the Kernel's
@@ -49,7 +50,12 @@ export function CheckoutLayout({ steps, current, onStep, children }: SlotProps['
   );
 }
 
-export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['checkout.Summary']) {
+export function CheckoutSummary({
+  cart,
+  currency,
+  paymentLabel,
+  vocabulary = DEFAULT_VOCABULARY,
+}: SlotProps['checkout.Summary']) {
   const t = cart.totals;
   const adjustment = t.paymentAdjustmentCents ?? 0;
   const adjustKind = adjustmentKind({ fixedCents: adjustment });
@@ -64,7 +70,7 @@ export function CheckoutSummary({ cart, currency, paymentLabel }: SlotProps['che
       <header className="v-summary-head" data-part="head">
         <h2 className="v-summary-title">Seu pedido</h2>
         <span className="v-muted v-num">
-          {count} {count === 1 ? 'item' : 'itens'}
+          {count} {plural(count, vocabulary.itemSingular, vocabulary.itemPlural)}
         </span>
       </header>
       <ul className="v-summary-lines" data-part="lines">
