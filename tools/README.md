@@ -5,7 +5,7 @@ Repo-level CI utilities implementing the fleet isolation machinery
 the changed-path check that enforces storefront write scope, and the
 affected graph that decides what CI builds. Also the developer scripts
 the root `package.json` exposes: `workspaces.mjs` (`check` / `test`),
-`dev-stack.mjs` (`dev:stack` / `dev:stop`) and `new-migration.mjs`.
+`dev-stack.mjs` (`dev:stack` / `dev:stop` / `dev:reset`) and `new-migration.mjs`.
 
 ## check-storefront-paths.mjs
 
@@ -99,8 +99,10 @@ and `bun run dev:stop [--dry-run]`: Core :8787 (dev env, `VENDUA_ADMIN_DEV_OTP=1
 admin :5196 and the CRM :5195, each in its own process group with a pidfile and log under
 `/tmp/vendua-dev/` (`VENDUA_DEV_DIR`). A service whose port already answers is left alone, and
 `dev:stop` only signals the groups its own pidfiles name. `--seed` runs migrate and
-`seed:fixtures` before Core boots, then the CRM leads and the demo orders. Details and the manual
-equivalents are in `.claude/skills/local-stack/SKILL.md`.
+`seed:fixtures` before Core boots, then the CRM leads and the demo orders.
+`bun run dev:reset [--start | --seed] [--dry-run]` stops the stack, drops and recreates the dev
+database (localhost only), migrates it and runs the base seed; `--start`/`--seed` then start it.
+Details and the manual equivalents are in `.claude/skills/local-stack/SKILL.md`.
 
 ## new-migration.mjs
 

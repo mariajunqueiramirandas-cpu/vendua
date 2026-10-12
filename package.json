@@ -15,6 +15,7 @@
     "dev": "bun --filter @vendua/site dev",
     "dev:stack": "bun tools/dev-stack.mjs",
     "dev:stop": "bun tools/dev-stack.mjs stop",
+    "dev:reset": "bun tools/dev-stack.mjs reset",
     "build": "bun --filter @vendua/site build",
     "preview": "bun --filter @vendua/site preview",
     "check": "bun tools/workspaces.mjs check",

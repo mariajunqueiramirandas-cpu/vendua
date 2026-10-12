@@ -14,7 +14,16 @@ bun run dev:stack --seed       # ... plus the seeds, in dependency order (below)
 bun run dev:stack --dry-run    # print every command it would run, start nothing
 bun run dev:stack status       # what answers on each port, and which pids are ours
 bun run dev:stop               # stop what dev:stack started
+bun run dev:reset              # wipe: stop, drop + recreate the dev database, migrate, base seed
+bun run dev:reset --seed       # ... then start the stack and run the full seeds
 ```
+
+`dev:reset` leaves the `vendua` database the way a fresh session's hook does (migrated, the blank
+quero-pudim store, owner 22999990001) and deletes the shots scripts' saved sign-ins
+(`/tmp/vendua-{admin,control}-auth.json`). `--start` restarts the stack without seeding, `--dry-run`
+prints the plan. It drops whatever `MIGRATION_DATABASE_URL` names (default the dev database) and
+refuses a host other than localhost; `vendua_test` is the tests' own and isn't touched. A Core on
+:8787 that dev:stack didn't start makes it stop and ask you to stop that Core first.
 
 `tools/dev-stack.mjs` starts Core with the dev env (`CONTROL_SECRET=dev SESSION_SECRET=devsecret
 VENDUA_WEBHOOK_SECRET=devhook VENDUA_ADMIN_DEV_OTP=1`: fixed, whatever secrets your shell has don't

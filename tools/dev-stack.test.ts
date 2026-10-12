@@ -4,7 +4,18 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { context, listening, parseArgs, seeds, services, start, stop } from './dev-stack.mjs';
+import {
+  context,
+  listening,
+  parseArgs,
+  reset,
+  resetSteps,
+  resetTarget,
+  seeds,
+  services,
+  start,
+  stop,
+} from './dev-stack.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dirs: string[] = [];
@@ -31,8 +42,20 @@ describe('parseArgs', () => {
       command: 'start',
       seed: false,
       dryRun: false,
+      start: false,
       only: ['core', 'admin', 'control'],
     });
+  });
+
+  test('reset takes --start, --seed and --dry-run; --start goes with nothing else', () => {
+    expect(parseArgs(['reset'])).toMatchObject({ command: 'reset', start: false, seed: false });
+    expect(parseArgs(['reset', '--start', '--dry-run'])).toMatchObject({
+      start: true,
+      dryRun: true,
+    });
+    expect(parseArgs(['reset', '--seed']).seed).toBe(true);
+    expect(() => parseArgs(['--start'])).toThrow('--start only goes with reset');
+    expect(() => parseArgs(['stop', '--start'])).toThrow('--start only goes with reset');
   });
 
   test('flags, in any order, with --only in both spellings', () => {
@@ -51,7 +74,7 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--only', 'core,crm'])).toThrow("not 'crm'");
     expect(() => parseArgs(['--only'])).toThrow('--only takes');
     expect(() => parseArgs(['restart'])).toThrow("unknown command 'restart'");
-    expect(() => parseArgs(['stop', '--seed'])).toThrow('--seed only goes with start');
+    expect(() => parseArgs(['stop', '--seed'])).toThrow('--seed only goes with start and reset');
   });
 });
 
@@ -150,6 +173,76 @@ describe('--dry-run', () => {
     );
     expect(o.text()).toContain('core  pid 999999 is gone');
     expect(readdirSync(dir)).toEqual(['core.pid']);
+  });
+});
+
+describe('reset', () => {
+  test('targets the dev database by default and only ever a local one', () => {
+    expect(resetTarget({})).toMatchObject({ name: 'vendua', port: 5433 });
+    expect(resetTarget({}).admin).toBe('postgres://vendua:vendua@localhost:5433/postgres');
+    expect(
+      resetTarget({ MIGRATION_DATABASE_URL: 'postgres://u:p@127.0.0.1:5432/other' }),
+    ).toMatchObject({ name: 'other', port: 5432 });
+    expect(resetTarget({ MIGRATION_DATABASE_URL: 'postgres://u:p@[::1]:5433/x' }).name).toBe('x');
+    expect(() =>
+      resetTarget({ MIGRATION_DATABASE_URL: 'postgres://u:p@db.example.com:5432/vendua' }),
+    ).toThrow("refusing to reset a database on 'db.example.com'");
+    expect(() =>
+      resetTarget({ MIGRATION_DATABASE_URL: 'postgres://u:p@localhost:5433/postgres' }),
+    ).toThrow("refusing to reset database 'postgres'");
+    expect(() =>
+      resetTarget({ MIGRATION_DATABASE_URL: 'postgres://u:p@localhost:5433/a"b' }),
+    ).toThrow('refusing to reset database');
+  });
+
+  test('migrates and runs the base seed, scripts the session hook runs on a fresh database', () => {
+    const core = JSON.parse(readFileSync(join(ROOT, 'packages/core/package.json'), 'utf8')).scripts;
+    const scripts = resetSteps().map((s: { cmd: string[] }) => s.cmd[2]);
+    expect(scripts).toEqual(['migrate', 'seed']);
+    for (const s of scripts) expect(core[s!]).toBeTruthy();
+    const hook = readFileSync(join(ROOT, '.claude/hooks/session-start.sh'), 'utf8');
+    expect(hook).toContain('bun run migrate');
+    expect(hook).toContain('bun run seed');
+  });
+
+  test('a remote database is refused before anything is stopped', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'core.pid'), '999999\n');
+    const o = capture();
+    const code = await reset(
+      { command: 'reset', seed: false, dryRun: false, start: false, only: [] },
+      context({
+        dir,
+        out: o.out,
+        env: { MIGRATION_DATABASE_URL: 'postgres://u:p@prod.example.com/vendua' },
+      }),
+    );
+    expect(code).toBe(1);
+    expect(o.lines).toEqual([]);
+    expect(readdirSync(dir)).toEqual(['core.pid']);
+  });
+
+  test('--dry-run prints the drop, the steps and the restart, and touches nothing', async () => {
+    const dir = join(tmp(), 'state');
+    const o = capture();
+    const code = await reset(
+      { command: 'reset', seed: true, dryRun: true, start: false, only: [] },
+      context({ dir, out: o.out, env: {} }),
+    );
+    expect(code).toBe(0);
+    const text = o.text();
+    for (const needle of [
+      `drop database if exists "vendua" with (force); create database "vendua"`,
+      'packages/core && bun run migrate',
+      'packages/core && bun run seed)',
+      'vendua-control-auth.json',
+      'bun run seed:fixtures',
+      'cd apps/admin && bun run dev',
+      'bun scripts/demo-orders.ts 40',
+    ])
+      expect(text).toContain(needle);
+    expect(text.indexOf('drop database')).toBeLessThan(text.indexOf('seed:fixtures'));
+    expect(existsSync(dir)).toBe(false);
   });
 });
 
