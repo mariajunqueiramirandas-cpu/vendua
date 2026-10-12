@@ -22,7 +22,7 @@ bun run dev:reset --seed       # ... then start the stack and run the full seeds
 quero-pudim store, owner 22999990001) and deletes the shots scripts' saved sign-ins
 (`/tmp/vendua-{admin,control}-auth.json`). `--start` restarts the stack without seeding, `--dry-run`
 prints the plan. It drops whatever `MIGRATION_DATABASE_URL` names (default the dev database) and
-refuses a host other than localhost; `vendua_test` is the tests' own and isn't touched. A Core on
+refuses a host other than localhost (`--start`/`--seed` only with the dev database itself); `vendua_test` is the tests' own and isn't touched. A Core on
 :8787 that dev:stack didn't start makes it stop and ask you to stop that Core first.
 
 `tools/dev-stack.mjs` starts Core with the dev env (`CONTROL_SECRET=dev SESSION_SECRET=devsecret

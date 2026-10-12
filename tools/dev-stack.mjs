@@ -529,6 +529,13 @@ export async function reset(opts, ctx = context()) {
   }
   const steps = resetSteps();
   const then = opts.start || opts.seed;
+  // the stack runs on the dev database (Core reads DATABASE_URL, as vendua_app), not this target
+  if (then && target.url !== DEV_DB) {
+    console.error(
+      'dev:reset: --start/--seed only go with the dev database; MIGRATION_DATABASE_URL points elsewhere',
+    );
+    return 1;
+  }
   const startOpts = { ...opts, command: 'start', only: [...SERVICES] };
 
   if (opts.dryRun) {

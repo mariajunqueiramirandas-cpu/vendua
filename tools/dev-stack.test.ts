@@ -222,6 +222,23 @@ describe('reset', () => {
     expect(readdirSync(dir)).toEqual(['core.pid']);
   });
 
+  test('--start/--seed on another database are refused: the stack would run on the dev one', async () => {
+    const dir = tmp();
+    for (const flags of [{ start: true }, { seed: true }]) {
+      const o = capture();
+      const code = await reset(
+        { command: 'reset', seed: false, dryRun: true, start: false, only: [], ...flags },
+        context({
+          dir,
+          out: o.out,
+          env: { MIGRATION_DATABASE_URL: 'postgres://vendua:vendua@localhost:5433/scratch' },
+        }),
+      );
+      expect(code).toBe(1);
+      expect(o.lines).toEqual([]);
+    }
+  });
+
   test('--dry-run prints the drop, the steps and the restart, and touches nothing', async () => {
     const dir = join(tmp(), 'state');
     const o = capture();
