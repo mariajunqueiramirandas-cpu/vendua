@@ -239,6 +239,22 @@ describe('reset', () => {
     }
   });
 
+  test('--start/--seed refuse a DATABASE_URL other than the database being reset', async () => {
+    const dir = tmp();
+    const run = async (DATABASE_URL: string) => {
+      const o = capture();
+      const code = await reset(
+        { command: 'reset', seed: false, dryRun: true, start: true, only: [] },
+        context({ dir, out: o.out, env: { DATABASE_URL } }),
+      );
+      return { code, lines: o.lines };
+    };
+    expect(await run('postgres://u:p@db.example.com:5432/vendua')).toEqual({ code: 1, lines: [] });
+    expect((await run('postgres://vendua_app:x@localhost:5433/other')).code).toBe(1);
+    // Core's own default: same database, the app role
+    expect((await run('postgres://vendua_app:vendua_app@127.0.0.1:5433/vendua')).code).toBe(0);
+  });
+
   test('--dry-run prints the drop, the steps and the restart, and touches nothing', async () => {
     const dir = join(tmp(), 'state');
     const o = capture();

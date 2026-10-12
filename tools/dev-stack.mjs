@@ -153,6 +153,22 @@ export function resetTarget(env = process.env) {
   return { url: raw, name, port: Number(url.port || 5432), admin: url.toString() };
 }
 
+/** Same server and database, whatever role connects. */
+function sameDb(a, b) {
+  try {
+    const [x, y] = [new URL(a), new URL(b)];
+    const local = (h) => ['localhost', '127.0.0.1', '::1'].includes(h.replace(/^\[|\]$/g, ''));
+    return (
+      local(x.hostname) &&
+      local(y.hostname) &&
+      (x.port || '5432') === (y.port || '5432') &&
+      x.pathname === y.pathname
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** What runs on the empty database: the session hook's own first boot. */
 export function resetSteps() {
   return [
@@ -529,10 +545,17 @@ export async function reset(opts, ctx = context()) {
   }
   const steps = resetSteps();
   const then = opts.start || opts.seed;
-  // the stack runs on the dev database (Core reads DATABASE_URL, as vendua_app), not this target
+  // the restarted stack runs on DATABASE_URL (Core, as vendua_app), which the reset doesn't touch
   if (then && target.url !== DEV_DB) {
     console.error(
       'dev:reset: --start/--seed only go with the dev database; MIGRATION_DATABASE_URL points elsewhere',
+    );
+    return 1;
+  }
+  const runtime = (ctx.env ?? process.env).DATABASE_URL;
+  if (then && runtime && !sameDb(runtime, target.url)) {
+    console.error(
+      'dev:reset: --start/--seed would run the stack on DATABASE_URL, not the database being reset; unset it',
     );
     return 1;
   }
