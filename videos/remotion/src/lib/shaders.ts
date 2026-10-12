@@ -140,3 +140,40 @@ void main() {
   outColor = vec4(col, 1.0);
 }
 `;
+
+/**
+ * Hyperspace: light streaks rushing out from the centre on a transparent field, for screen-blending
+ * over the liquid. uTravel = distance travelled (integrate speed on the JS side so a speed change
+ * never jumps the streaks), uSpeed stretches them, uFade 0…1 overall strength.
+ */
+export const WARP =
+  HEADER +
+  PALETTE +
+  `
+uniform float uTravel, uSpeed, uFade;
+float hash(float n) { return fract(sin(n) * 43758.5453); }
+void main() {
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;
+  float r = length(p);
+  float a = atan(p.y, p.x) / 6.28318 + 0.5;
+  vec3 col = vec3(0.0);
+  for (int l = 0; l < 3; l++) {
+    float N = 70.0 + float(l) * 55.0;
+    float id = floor(a * N);
+    float h = hash(id * 1.37 + float(l) * 17.0);
+    float h2 = hash(id * 3.11 + float(l) * 5.0);
+    float da = abs(fract(a * N) - 0.5 - (h2 - 0.5) * 0.6) / N * 6.28318 * r;
+    float z = fract(h * 9.0 + uTravel * (0.35 + 0.65 * h2));
+    float head = 0.05 + z * z * 1.25;
+    float len = 0.01 + uSpeed * (0.06 + 0.5 * z * z);
+    float body = smoothstep(head - len, head, r) * (1.0 - smoothstep(head, head + 0.004, r));
+    float w = 0.0012 + 0.0035 * z * (0.4 + uSpeed);
+    float line = 1.0 - smoothstep(w * 0.4, w, da);
+    vec3 c = mix(LIME, CREAM, h2 * h2);
+    col += c * body * line * (0.35 + 0.9 * z) * step(0.35, h);
+  }
+  float core = exp(-r * r * 28.0) * (0.25 + 0.5 * uSpeed);
+  col += mix(LIME, CREAM, 0.5) * core;
+  outColor = vec4(col * uFade, 1.0);
+}
+`;
