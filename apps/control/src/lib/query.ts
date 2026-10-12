@@ -33,6 +33,7 @@ export const qk = {
   waQr: () => ['integrations', 'wa'] as const,
   igStatus: () => ['integrations', 'ig'] as const,
   settings: () => ['settings'] as const,
+  instance: () => ['instance'] as const,
   discord: () => ['discord'] as const,
   discordGuild: () => ['discord', 'guild'] as const,
   wakeups: (params?: Record<string, string>) => ['wakeups', params ?? {}] as const,

@@ -2,6 +2,10 @@
 # migrate (idempotent), optionally seed the blank dev store, then serve
 set -e
 
+# a reset staff asked for in the CRM (VENDUA_ALLOW_RESET=1 only): drop and recreate the database
+if [ "$VENDUA_ALLOW_RESET" = "1" ]; then
+  bun run reset:pending
+fi
 bun run migrate
 if [ "$SEED_DEMO" = "1" ]; then
   bun run seed

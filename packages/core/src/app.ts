@@ -251,6 +251,7 @@ import { mountControlBilling } from './modules/control-billing.ts';
 import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
 import { mountAgentRuntimeAi } from './agent-host/control-ai.ts';
 import { mountControlCustomers } from './modules/control-customers.ts';
+import { mountInstanceReset } from './modules/instance-reset.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
@@ -311,6 +312,10 @@ export interface AppDeps {
   /** voice transcription and photo reading for Duá (default: the staff-set routes); tests pass
    *  fakes */
   duaMedia?: CopilotMediaDeps | undefined;
+  /** VENDUA_ALLOW_RESET=1: staff may wipe this instance from the CRM (test deploys only) */
+  allowReset?: boolean | undefined;
+  /** restarts Core once a reset is requested, so the entrypoint performs it */
+  onResetRequested?: (() => void) | undefined;
 }
 
 // the tables each cached storefront read comes from — migration 0088 notifies on every one
@@ -564,6 +569,8 @@ export function createApp({
   domains,
   syncSecret,
   duaMedia,
+  allowReset,
+  onResetRequested,
 }: AppDeps) {
   const domainProviders = domains ?? domainProvidersFromEnv();
   const ears = duaMedia ?? { media: mediaProviders(sql), gateway: hostGateway(sql) };
@@ -3129,6 +3136,14 @@ export function createApp({
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
   });
   mountControlCustomers({ app, sql, controlGate, storeDomain: publicStoreDomain });
+  mountInstanceReset({
+    app,
+    sql,
+    controlGate,
+    requireIdemKey,
+    enabled: allowReset ?? false,
+    onRequested: onResetRequested,
+  });
   mountSavedViews({ app, sql, controlGate, requireIdemKey });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });

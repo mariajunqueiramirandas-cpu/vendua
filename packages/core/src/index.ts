@@ -106,6 +106,9 @@ const app = createApp({
   paymentProvider,
   notify,
   readCache,
+  allowReset: process.env.VENDUA_ALLOW_RESET === '1',
+  // the graceful shutdown below, after this response is out; the restart runs the reset
+  onResetRequested: () => setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500),
 });
 const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
 const adminOrigin = adminHost ? `https://${adminHost}` : null;
