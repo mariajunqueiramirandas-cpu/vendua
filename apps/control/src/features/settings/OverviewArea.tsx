@@ -8,7 +8,8 @@ import { DataList, type Column } from '@/components/DataList.tsx';
 import { EmptyState, ErrorState, LoadingRows } from '@/components/common.tsx';
 import { SectionHead } from './bits.tsx';
 import type { ProvTone } from './providers.ts';
-import { useChannelHealth } from './queries.ts';
+import { useChannelHealth, useInstance } from './queries.ts';
+import { ResetPanel } from './ResetPanel.tsx';
 import type { AreaKey, Check, Readiness } from './readiness.ts';
 
 const DOT: Record<ProvTone, string> = {
@@ -26,6 +27,7 @@ export function OverviewArea({
   loading: boolean;
   onGo: (a: AreaKey, p?: string) => void;
 }) {
+  const instance = useInstance();
   const allUp = r.ready === r.essential.length && r.attn === 0;
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:items-start [&>*]:min-w-0">
@@ -73,6 +75,11 @@ export function OverviewArea({
           sub="envios, falhas e bloqueios de guarda · últimos 30 dias"
         />
         <ChannelHealthPanel />
+        {instance.data?.resetEnabled && (
+          <div className="mt-4">
+            <ResetPanel />
+          </div>
+        )}
       </section>
     </div>
   );

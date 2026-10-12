@@ -102,6 +102,9 @@ services:
       # 1 = on each boot, create the quero-pudim store (+ its owner, CRM record) if missing.
       # Production only adds: an existing store keeps everything; it just gains new SEED_DOMAINS.
       SEED_DEMO: ${SEED_DEMO:-0}
+      # 1 = staff can wipe this instance from the CRM (Config → visão geral). Test instances only:
+      # the database is dropped and rebuilt on the restart (SEED_DEMO=1 brings quero-pudim back).
+      VENDUA_ALLOW_RESET: ${VENDUA_ALLOW_RESET:-0}
       # slug:public-host[,slug:host2] — registers each storefront's real domain at seed time.
       SEED_DOMAINS: ${SEED_DOMAINS:-}
       # the seeded store's owner in the merchant admin (only used when the seed creates it)

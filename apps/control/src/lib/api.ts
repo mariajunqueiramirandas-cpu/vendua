@@ -653,6 +653,13 @@ const apiBase = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     }),
+  /** whether this instance may be wiped from here (Core's VENDUA_ALLOW_RESET) */
+  instance: () => req<{ resetEnabled: boolean; resetRequestedAt: string | null }>('/instance'),
+  resetInstance: (confirm: string) =>
+    req<{ requestedAt: string }>('/instance/reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirm }),
+    }),
   waQr: () => req<WaQr>('/wa/qr'),
   waPairCode: (phone: string) =>
     req<{ code: string | null }>('/wa/pair-code', {

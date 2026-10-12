@@ -18,6 +18,8 @@ export const useSettingsMap = () =>
 export const useMeetingsStatus = () =>
   useQuery({ queryKey: qk.meetingsStatus(), queryFn: api.meetingsStatus });
 
+export const useInstance = () => useQuery({ queryKey: qk.instance(), queryFn: api.instance });
+
 export const useChannelHealth = () =>
   useQuery({ queryKey: qk.channelHealth(), queryFn: api.channelHealth });
 

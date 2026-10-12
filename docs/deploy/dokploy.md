@@ -23,6 +23,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `CONTROL_SECRET`                           | staff login key for the CRM at `/control/` — keep distinct        |
 | `SEED_DEMO`                                | `1` creates the quero-pudim store if missing; `0` (default) = off |
 | `SEED_OWNER_NAME` / `_PHONE` / `_EMAIL`    | that store's admin owner when the seed creates it (fake if unset) |
+| `VENDUA_ALLOW_RESET`                       | `1` = the CRM can wipe the instance (test instances only, below)  |
 | `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains      |
 | `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→edge/nginx chain  |
 | `VENDUA_EDGE_SECRET`                       | the edge's key for Core's `/edge/v1/resolve` — required           |
@@ -301,6 +302,17 @@ must have the same values). It never migrates; it starts once `core` is healthy.
   expire after 6 h).
 - It is an unofficial client: WhatsApp can restrict a number that looks like spam. The gateway
   only sends order updates to people who ordered, paced per store, with SAIR to stop.
+
+## Resetting a test instance
+
+On a throwaway instance, set `VENDUA_ALLOW_RESET=1` (and `SEED_DEMO=1` to get quero-pudim back
+each time) and redeploy. The CRM's **Config → visão geral** then shows **resetar instância**: type
+`resetar` and Core restarts; on the way up its entrypoint drops and recreates the `vendua`
+database, migrates and seeds before serving again. Everyone is signed out (staff sign in again
+with `CONTROL_SECRET`). Storefront releases, Cloudflare zones and registered domains live outside
+the database and stay. Only Core restarts: if WhatsApp acts up afterwards, restart the
+`wa-gateway` service from Dokploy too. A request the restart doesn't act on within 15 minutes is
+discarded, so it can't fire on a later deploy. Never set it on production.
 
 ## 4. Deploy
 

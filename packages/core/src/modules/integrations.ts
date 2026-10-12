@@ -8,6 +8,7 @@ import { JOB_KINDS } from '../agent/tool-meta.ts';
 import { normalizeStaff } from './staff-config.ts';
 import { validateDiscordConfig, validateDiscordSetting } from './discord/config.ts';
 import { validateMediaRoutes } from '../vendedor/media.ts';
+import { RESET_KEY } from './instance-reset.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
@@ -556,6 +557,8 @@ export function validateSetting(key: string, value: unknown): void {
   const bad = (field: string, why: string) =>
     new HttpError(422, 'BAD_REQUEST', `settings.${key}.${field} ${why}`, { field });
 
+  // written only by POST /control/v1/instance/reset, which checks VENDUA_ALLOW_RESET
+  if (key === RESET_KEY) throw bad('*', 'is not a setting');
   if (key === 'agent_runtime.routes') {
     validateModelRoutes(value, bad);
     return;
