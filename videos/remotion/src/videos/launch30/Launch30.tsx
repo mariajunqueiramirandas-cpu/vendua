@@ -2,24 +2,21 @@ import { AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame } from 'remo
 import '../../lib/fonts';
 import { C } from '../../lib/brand';
 import { Grain } from '../../lib/grain';
-import { kick, shake } from '../../lib/motion';
-import { Hud } from './Hud';
-import { Checks } from './scenes/Checks';
+import { Brand } from './scenes/Brand';
 import { DateReveal } from './scenes/DateReveal';
-import { Dua } from './scenes/Dua';
 import { End } from './scenes/End';
-import { Hook } from './scenes/Hook';
-import { Ready } from './scenes/Ready';
-import { BIG_HITS, G, HITS, SCENES } from './timeline';
+import { Features } from './scenes/Features';
+import { Open } from './scenes/Open';
+import { DURATION, G, SCENES, XF } from './timeline';
 import { World } from './World';
 
 // 30 s, 9:16, for Instagram Reels and Stories: the launch film for 16.10.2026.
-// Picture and score share timeline.ts.
+// Calm and cinematic; picture and score share timeline.ts. Each shot stays mounted XF past its
+// end so it can fade under the next one.
 const SEQ = [
-  ['hook', Hook],
-  ['checks', Checks],
-  ['dua', Dua],
-  ['ready', Ready],
+  ['open', Open],
+  ['brand', Brand],
+  ['features', Features],
   ['date', DateReveal],
   ['end', End],
 ] as const;
@@ -27,22 +24,19 @@ const SEQ = [
 export const Launch30: React.FC = () => {
   const frame = useCurrentFrame();
   const t = frame / G.fps;
-  const big = BIG_HITS.reduce((m, h) => Math.max(m, kick(t, h, 0.18)), 0);
-  const s = shake(t, HITS, 14 + 22 * big, 0.32);
-
   return (
     <AbsoluteFill style={{ background: C.night, overflow: 'hidden' }}>
-      <AbsoluteFill style={{ transform: `translate(${s.x}px, ${s.y}px) rotate(${s.r}deg) scale(1.03)` }}>
-        <World t={t} />
-        {SEQ.map(([id, Scene]) => (
-          <Sequence key={id} name={id} from={G.f(SCENES[id][0])} durationInFrames={G.f(SCENES[id][1]) - G.f(SCENES[id][0])}>
+      <World t={t} />
+      {SEQ.map(([id, Scene]) => {
+        const [a, b] = SCENES[id];
+        const to = Math.min(DURATION, b + XF);
+        return (
+          <Sequence key={id} name={id} from={G.f(a)} durationInFrames={G.f(to) - G.f(a)}>
             <Scene t={t} />
           </Sequence>
-        ))}
-        <Hud t={t} />
-      </AbsoluteFill>
-      <AbsoluteFill style={{ background: C.cream, opacity: big * 0.55, mixBlendMode: 'screen' }} />
-      <Grain frame={frame} />
+        );
+      })}
+      <Grain frame={frame} opacity={0.05} />
       <Audio src={staticFile('launch30/score.wav')} />
     </AbsoluteFill>
   );
