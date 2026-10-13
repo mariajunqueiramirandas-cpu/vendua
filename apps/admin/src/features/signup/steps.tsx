@@ -864,9 +864,9 @@ export function PayStep({
             ? 'Presente do cupom: sem cartão e sem cobrança agora. A loja já abre para pedidos.'
             : welcomeDays
               ? `Presente da indicação da ${referral.data?.referral.name}: sem cartão e sem cobrança agora. A loja já abre para pedidos.`
-            : trial
-              ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
-              : 'Dá para trocar depois, em Conta e plano.'
+              : trial
+                ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
+                : 'Dá para trocar depois, em Conta e plano.'
       }
       back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
       busy={create.isPending}

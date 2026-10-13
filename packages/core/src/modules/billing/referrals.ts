@@ -306,4 +306,3 @@ export async function referralSummary(tx: Sql, tenantId: string): Promise<Referr
     referredBy: by ? ((await previewReferral(tx, by.code))?.name ?? null) : null,
   };
 }
-

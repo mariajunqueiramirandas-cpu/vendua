@@ -380,7 +380,13 @@ export interface PartnerDetail {
     status: 'due' | 'paid' | 'void';
     createdAt: string;
   }[];
-  payouts: { id: string; totalCents: number; commissions: number; paidAt: string; note: string | null }[];
+  payouts: {
+    id: string;
+    totalCents: number;
+    commissions: number;
+    paidAt: string;
+    note: string | null;
+  }[];
 }
 export type NewPartner = {
   name: string;
