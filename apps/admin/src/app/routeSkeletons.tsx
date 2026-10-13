@@ -137,6 +137,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
       </div>,
     ),
   marketing: () => page('Marketing', <SectionsSkeleton columns={2} />, { wide: true }),
+  bagCard: () => page('Cartão da sacola', <TilesSkeleton count={1} />),
   appearance: () => (
     <EditorFrame>
       <HeaderSkeleton title="Aparência" subtitle={false} />

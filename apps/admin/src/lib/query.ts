@@ -11,6 +11,8 @@ import { ApiError, withRetryScope } from './api.ts';
 export const qk = {
   session: ['session'] as const,
   home: ['home'] as const,
+  // under 'home': whatever refreshes Início refreshes it too
+  homeSavings: ['home', 'savings'] as const,
   board: ['orders', 'board'] as const,
   orders: (p: object) => ['orders', 'list', p] as const,
   scheduled: (from: string, to: string) => ['orders', 'scheduled', from, to] as const,

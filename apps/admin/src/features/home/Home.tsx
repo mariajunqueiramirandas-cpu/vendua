@@ -49,6 +49,7 @@ import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { BILLING_HOLD_TEXT, isBillingHold } from '../store/BillingHold.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
+import { SavingsCard } from './SavingsCard.tsx';
 import { hasLeft } from '../onboarding/progress.ts';
 import { usePreload } from '../../app/routes.ts';
 
@@ -128,6 +129,7 @@ export default function Home() {
           <Section title="Mais vendidos hoje" className="order-4 lg:order-none">
             {data ? <Best data={data} /> : <RowsSkeleton rows={3} avatar={false} />}
           </Section>
+          <SavingsCard className="order-5 lg:order-none" />
         </div>
       </div>
       {milestone && data ? (

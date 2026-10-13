@@ -289,4 +289,45 @@ describe.skipIf(!OWNER_URL)('moving in: menu photos and the customer list (db)',
       403,
     );
   });
+  test('what the app would have kept: own-site orders this month, PDV left out, per order', async () => {
+    await sql`insert into store_settings (tenant_id, hours) values (${tenantId},
+      ${sql.json({ timezone: 'America/Sao_Paulo', windows: [] })}) on conflict (tenant_id) do nothing`;
+    const fresh = await request(owner, 'GET', '/home/savings');
+    expect(fresh.body.feePercent).toBeNull();
+    expect(fresh.body.month.feeCents).toBe(0);
+    let n = 900;
+    const order = async (source: string, total: number, state = 'delivered', ago = '1 minute') => {
+      const cart =
+        source === 'pdv'
+          ? null
+          : (
+              await sql<
+                { id: string }[]
+              >`insert into carts (tenant_id, session_hash) values (${tenantId}, ${crypto.randomUUID()}) returning id`
+            )[0]!.id;
+      await sql`
+        insert into orders (tenant_id, number, source, cart_id, state, customer, customer_phone, delivery,
+                            payment, subtotal_cents, total_cents, placed_at)
+        values (${tenantId}, ${++n}, ${source}, ${cart}, ${state}, ${sql.json({ name: 'Ana' })}, null,
+                ${sql.json({ mode: 'pickup' })}, ${sql.json({ method: 'cash' })}, ${total}, ${total},
+                now() - ${ago}::interval)`;
+    };
+    await order('storefront', 4999);
+    await order('storefront', 1001);
+    await order('pdv', 10000);
+    await order('storefront', 5000, 'cancelled');
+    await order('storefront', 2000, 'delivered', '70 days');
+    // 12.5%: 624.875 → 625 and 125.125 → 125, rounded per order
+    const set = await request(owner, 'PUT', '/home/savings', { feePercent: 12.5 });
+    expect(set.status).toBe(200);
+    expect(set.body.feePercent).toBe(12.5);
+    expect(set.body.month).toEqual({ orders: 2, salesCents: 6000, feeCents: 750 });
+    expect(set.body.all).toEqual({ orders: 3, feeCents: 1000 });
+    for (const bad of [0.5, 51, '27', true])
+      expect((await request(owner, 'PUT', '/home/savings', { feePercent: bad })).status).toBe(422);
+    expect((await request(attendant, 'GET', '/home/savings')).status).toBe(403);
+    expect((await request(attendant, 'PUT', '/home/savings', { feePercent: 20 })).status).toBe(403);
+    const none = await request(owner, 'PUT', '/home/savings', { feePercent: 0 });
+    expect([none.body.feePercent, none.body.month.feeCents]).toEqual([0, 0]);
+  });
 });

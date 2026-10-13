@@ -5,6 +5,7 @@ import {
   Gift,
   Megaphone,
   Plus,
+  Printer,
   QrCode,
   ShareNetwork,
   Ticket,
@@ -25,7 +26,7 @@ import {
 import { dateShort, endOfDay, isoDate, money, phone, plural } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
-import { Button } from '../../ui/Button.tsx';
+import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
@@ -107,7 +108,7 @@ function Share() {
     <Section
       id="compartilhar"
       title="Compartilhar a loja"
-      hint="O link, o QR code para o balcão e cartões prontos para o WhatsApp."
+      hint="O link, o QR code para o balcão, o cartão para a sacola dos apps e cartões para o WhatsApp."
     >
       <Card className="space-y-4 p-5">
         <div className="flex items-center gap-2 rounded-md bg-sunken p-2 pl-4">
@@ -137,6 +138,9 @@ function Share() {
           <Button variant="secondary" icon={<QrCode />} onClick={() => setQrOpen(true)}>
             QR code
           </Button>
+          <ButtonLink to="/marketing/cartao" variant="secondary" icon={<Printer />}>
+            cartão da sacola
+          </ButtonLink>
         </div>
       </Card>
       {data?.products.length ? (

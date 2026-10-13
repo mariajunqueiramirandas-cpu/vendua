@@ -1118,6 +1118,17 @@ export interface Whatsapp {
   recent: WaMessage[];
 }
 
+/** Início › the commission own-site orders didn't pay (0123). Core does the arithmetic. */
+export interface HomeSavings {
+  /** what the owner said their delivery app charges, 1–50; 0 = no app; null = not told */
+  feePercent: number | null;
+  /** this calendar month in the store's timezone; PDV sales don't count */
+  month: { orders: number; salesCents: number; feeCents: number };
+  all: { orders: number; feeCents: number };
+  /** the first own-site order, YYYY-MM-DD */
+  since: string | null;
+}
+
 export interface Payments {
   methods: PayMethod[];
   adjustments: PaymentAdjustments;
@@ -2457,6 +2468,9 @@ export const api = {
     send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
 
   home: () => get<Home>('/home'),
+  homeSavings: () => get<HomeSavings>('/home/savings'),
+  setMarketplaceFee: (feePercent: number | null) =>
+    send<HomeSavings>('PUT', '/home/savings', { feePercent }),
   search: (q: string) => get<SearchResult>(`/search?q=${encodeURIComponent(q)}`),
 
   board: () => get<Board>('/orders/board'),
