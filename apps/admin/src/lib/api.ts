@@ -2659,6 +2659,8 @@ export const api = {
       days: { date: string; count: number; totalCents: number }[];
       /** each day's ceiling, only when the store set one */
       caps?: Record<string, number>;
+      /** pieces per party group a day (Festa calculada), only when there are party orders */
+      production?: Record<string, { name: string; units: number }[]>;
     }>(`/orders/scheduled?from=${from}&to=${to}`),
   order: (id: string) =>
     get<{

@@ -2,7 +2,7 @@ import { CaretLeft, CaretRight } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { api } from '../../lib/api.ts';
-import { dateShort, isoDate, money } from '../../lib/format.ts';
+import { dateShort, isoDate, money, num } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
@@ -127,6 +127,14 @@ export default function Scheduled() {
               </span>
             ) : null}
           </h2>
+          {data?.production?.[day]?.length ? (
+            <p className="t-body -mt-2 mb-3 px-1 text-muted">
+              Produção das festas:{' '}
+              {data.production[day]!.map(
+                (m) => `${num(m.units)} ${m.name.toLocaleLowerCase('pt-BR')}`,
+              ).join(' · ')}
+            </p>
+          ) : null}
           {error ? (
             <ErrorState error={error} retry={() => void refetch()} />
           ) : isPending ? (

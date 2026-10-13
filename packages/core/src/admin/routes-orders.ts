@@ -614,7 +614,26 @@ export function mountOrders(d: AdminDeps) {
           const c = capacityOn(st.cap, day);
           if (c !== null) caps[day] = c;
         }
-      return st?.cap ? { orders: rows, days, caps } : { orders: rows, days };
+      // Festa calculada (0126): pieces per party group a day, from each order's frozen units
+      const made = await tx<{ date: string; name: string; units: number }[]>`
+        select o.scheduled_for::text as date, coalesce(pg.name, 'Outros') as name,
+               sum((g ->> 'units')::int)::int as units
+        from orders o
+        cross join lateral jsonb_array_elements(o.party -> 'groups') g
+        left join party_groups pg on pg.tenant_id = o.tenant_id and pg.id = (g ->> 'groupId')::uuid
+        where o.tenant_id = ${t.id} and o.party is not null
+          and o.scheduled_for between ${from}::date and ${to}::date
+          and o.state not in ('cancelled', 'refunded')
+        group by 1, 2
+        order by 1, 3 desc`;
+      const production: Record<string, { name: string; units: number }[]> = {};
+      for (const m of made) (production[m.date] ??= []).push({ name: m.name, units: m.units });
+      return {
+        orders: rows,
+        days,
+        ...(st?.cap ? { caps } : {}),
+        ...(made.length ? { production } : {}),
+      };
     }),
   );
 

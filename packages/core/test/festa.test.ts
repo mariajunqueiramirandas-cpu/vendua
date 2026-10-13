@@ -4,7 +4,8 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { capacityOn, parseCapacity } from '../src/modules/encomenda-capacity.ts';
 import { eveReminderPass } from '../src/modules/party.ts';
-import { migrate } from '../src/platform/db.ts';
+import { migrate, withTenant } from '../src/platform/db.ts';
+import { partyTool } from '../src/agent-host/agents/vendedor/tools-party.ts';
 
 // Festa calculada F0 + F1 (0126): party profiles turn guests into an ordinary cart, a day's
 // encomendas have a ceiling checkout enforces, and the day before the store says so.
@@ -305,6 +306,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('festa calculada (db)', () => {
     expect((await place(day)).r.status).toBe(201);
     const over = await place(day);
     expect([over.r.status, over.r.body.error.details.groupId]).toEqual([409, s.salgados]);
+  });
+
+  test('the Vendedor lists the parties and quotes with Core’s numbers', async () => {
+    const s = await store();
+    const book = new Map<string, { kind: string; id: string }>();
+    const ctx = (tx: unknown) =>
+      ({
+        tx,
+        tenantId: s.id,
+        alias: (kind: string, id: string) => {
+          for (const [a, v] of book) if (v.kind === kind && v.id === id) return a;
+          const a = `${kind[0]}${book.size + 1}`;
+          book.set(a, { kind, id });
+          return a;
+        },
+        resolve: (a: string, kind: string) => {
+          const v = book.get(a);
+          if (!v || v.kind !== kind) throw new Error(`unknown ${a}`);
+          return v.id;
+        },
+      }) as never;
+    const run = (input: unknown) =>
+      withTenant(sql, s.id, (tx) => (partyTool as any).run(ctx(tx), input)) as Promise<{
+        content: string;
+      }>;
+    const opts = await run({ action: 'options' });
+    expect(opts.content).toContain('Aniversário (10–300 pessoas; criança conta 50%)');
+    const alias = (kind: string, id: string) =>
+      [...book].find(([, v]) => v.kind === kind && v.id === id)![0];
+    const q = await run({
+      action: 'quote',
+      festa: alias('festa', s.profileId),
+      adults: 40,
+      picks: [
+        { group: alias('grupo', s.salgados), products: [alias('product', s.p.coxinha!)] },
+        { group: alias('grupo', s.doces), products: [alias('product', s.p.brigadeiro!)] },
+        { group: alias('grupo', s.bolo), products: [alias('product', s.p.bolo!)] },
+      ],
+    });
+    expect(q.content).toContain('Para 40 pessoas:');
+    expect(q.content).toContain('6× ');
+    expect(q.content).toContain('(600 salgados · 6 × 100)');
   });
 
   test('the day before, the store reminds each encomenda once', async () => {
