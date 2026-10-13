@@ -192,9 +192,10 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       // created its store and is resuming) Core decides whether the store still holds it
       (cur.current.step === 'plano' && !open.some((p) => p.id === cur.current.planId))
     ) {
-      const trial = plans.data?.billing.available
-        ? open.find((p) => p.trialDays > 0 && p.priceCents !== null)
-        : undefined;
+      const trials = plans.data?.billing.available
+        ? open.filter((p) => p.trialDays > 0 && p.priceCents !== null)
+        : [];
+      const trial = trials.find((p) => p.recommended) ?? trials[0];
       const pick = trial ?? open.find((p) => p.recommended) ?? open[0];
       if (pick) patch({ planId: pick.id });
     }

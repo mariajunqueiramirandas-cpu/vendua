@@ -24,10 +24,25 @@
   ];
 
   const { mirim, bandeira, pangolim } = plans;
+  const names = (l: { short: string }[]) =>
+    l.map((p, i) => (i === 0 ? `No ${p.short}` : ` e no ${p.short}`)).join('');
+  // how a new store starts, from what the CRM says each open plan has (trial or first month)
+  const start = () => {
+    const open = [mirim, bandeira, pangolim].filter((p) => p.available);
+    const trials = open.filter((p) => p.trial);
+    const paid = open.filter((p) => !p.trial);
+    if (!trials.length) return 'Você paga o primeiro mês pelo Pix ou pelo cartão.';
+    if (!paid.length && trials.every((p) => p.trial === trials[0].trial))
+      return `Todo plano começa com ${trials[0].trial}, sem cartão.`;
+    const t = trials.map((p) => `${names([p])}, você começa com ${p.trial}, sem cartão`).join('; ');
+    return paid.length
+      ? `${t}; ${names(paid).replace(/^No/, 'no')}, paga o primeiro mês.`
+      : `${t}.`;
+  };
   const faq: { q: string; a: string }[] = $derived([
     {
       q: 'Já posso criar a minha loja?',
-      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. ${bandeira.trial ? `No ${bandeira.short}, você começa com ${bandeira.trial}, sem cartão; no ${mirim.short}${pangolim.available ? ` e no ${pangolim.short}` : ''}, paga o primeiro mês.` : 'Você paga o primeiro mês pelo Pix ou pelo cartão.'}${pangolim.available ? '' : ` O ${pangolim.short} ainda não está aberto para assinatura.`}`,
+      a: `Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja e confirma o seu WhatsApp. ${start()}${pangolim.available ? '' : ` O ${pangolim.short} ainda não está aberto para assinatura.`}`,
     },
     {
       q: 'O que é o Duá?',

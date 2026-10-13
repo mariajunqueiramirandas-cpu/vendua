@@ -64,7 +64,13 @@ export function PlanStep({
   const open = plans.signup.open;
   // the trial is for a new owner paying the Venduá: not with an access code
   const trial = plans.billing.available && !d.byCode && trialEligible !== false;
-  const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0 && p.available) : undefined;
+  const openPlans = plans.plans.filter((p) => p.available);
+  const trialPlans = trial ? openPlans.filter((p) => p.trialDays > 0) : [];
+  const trialPlan = trialPlans.find((p) => p.recommended) ?? trialPlans[0];
+  const everyTrials =
+    trialPlans.length > 1 &&
+    trialPlans.length === openPlans.length &&
+    trialPlans.every((p) => p.trialDays === trialPlans[0]!.trialDays);
   const chosen = plans.plans.find((p) => p.id === d.planId);
   return (
     <StepFrame
@@ -104,6 +110,7 @@ export function PlanStep({
       {trialPlan ? (
         <PlanTrialStrip
           plan={trialPlan}
+          every={everyTrials}
           selected={d.planId === trialPlan.id}
           onPick={() => patch({ planId: trialPlan.id })}
         />

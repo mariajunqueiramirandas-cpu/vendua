@@ -179,7 +179,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan tiers (db)', () => {
     expect(plans.map((p) => p.id)).toEqual(['mirim', 'bandeira', 'pangolim']);
     expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(['bandeira']);
     expect(plans.map((p) => [p.priceCents, p.trialDays, p.feeBps])).toEqual([
-      [6990, 0, 0],
+      [6990, 14, 0],
       [16900, 14, 0],
       [44900, 0, 0],
     ]);

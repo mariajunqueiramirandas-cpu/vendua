@@ -107,6 +107,7 @@
       <h3 class="name">{mirim.name}</h3>
       <p class="cost tnum">{mirim.price}<small>/mês</small></p>
     </div>
+    {#if mirim.trial}<p class="trial">começa com {mirim.trial}, sem cartão</p>{/if}
     <p class="addr"><span class="lock" aria-hidden="true"></span>seunome.vendua.com.br</p>
     {@render list(view.mirim)}
     {#if lacks.length}<p class="lacks">Sem {listE(lacks)}.</p>{/if}
@@ -353,6 +354,9 @@
   .mirim {
     padding-inline: 0;
     border-top: 2px dashed var(--line-strong);
+  }
+  .mirim .trial {
+    max-width: none;
   }
   .mirim .perks li::before {
     border-color: var(--ink-faint);

@@ -52,8 +52,8 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
   - A conversation is one customer talking to Duá, counted once every 24 hours (FAQ).
   - The plan is paid by Pix every month or by recurring card, through Mercado Pago. Venduá takes no
     per-order fee on any plan, but Mercado Pago keeps its own on each payment, so never "sem taxas".
-- Bandeira starts with a **14-day free trial, no card**; Mirim (and Pangolim, once open) pays the
-  first month.
+- Mirim and Bandeira start with a **14-day free trial, no card** (the owner, 2026-10-13); Pangolim,
+  once open, pays the first month.
   "14 dias grátis" is the only "grátis" the site says: no other free offer, no discount, no price
   beyond the three plans (the +100-conversation pack is sold in the admin, not quoted here), and no
   date for the custom site. Plan names, prices, conversations and the trial live in `plans` in

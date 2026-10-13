@@ -252,7 +252,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         copilot: false,
         pdv: false,
       },
-      trialDays: 0,
+      trialDays: 14,
       recommended: false,
       aiConversations: 0,
       aiTrialConversations: 0,
