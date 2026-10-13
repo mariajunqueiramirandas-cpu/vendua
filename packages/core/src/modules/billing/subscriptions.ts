@@ -1334,10 +1334,12 @@ export async function recordCardCharge(
       });
     }
   }
-  // a charge in a coupon's discounted months uses one of them when MP took less than the price
+  // a charge in a coupon's discounted months uses one of them only at (or under) the coupon's
+  // price: less than the list price for another reason (a price rise MP hasn't synced) uses none
   const listed = await planOrThrow(tx, inv.plan_id);
+  const coupon = await periodPrice(tx, tenantId, listed, inv.period_start);
   const discountCents =
-    (await periodPrice(tx, tenantId, listed, inv.period_start)).discountCents > 0
+    coupon.discountCents > 0 && charge.amountCents <= coupon.amountCents
       ? Math.max(0, listed.price_cents - charge.amountCents)
       : 0;
   await tx`
