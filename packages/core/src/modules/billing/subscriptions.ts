@@ -567,8 +567,10 @@ async function unpaidAhead(tx: Sql, sub: SubRow) {
 async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow, now: Date) {
   for (const inv of await unpaidAhead(tx, sub)) {
     const price = await periodPrice(tx, sub.tenant_id, plan, inv.period_start);
-    if (inv.plan_id === plan.id && inv.amount_cents === price.amountCents) continue;
-    const hadPix = !!inv.pix_copy_paste;
+    // the same charge with another split (a percent coupon rounds two prices to one) keeps its Pix
+    const sameCharge = inv.plan_id === plan.id && inv.amount_cents === price.amountCents;
+    if (sameCharge && inv.discount_cents === price.discountCents) continue;
+    const reissue = !!inv.pix_copy_paste && !sameCharge;
     let next = await upsertInvoice(tx, {
       tenantId: sub.tenant_id,
       provider: ctx.provider.name,
@@ -580,7 +582,7 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
       dueAt: inv.due_at,
       reuse: inv,
     });
-    if (hadPix && next.method === 'pix') {
+    if (reissue && next.method === 'pix') {
       const payer = await payerFor(tx, sub.tenant_id, sub.payer_email);
       if (payer?.document)
         next = await viaProvider(() =>

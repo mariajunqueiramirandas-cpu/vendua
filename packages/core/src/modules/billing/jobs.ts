@@ -723,9 +723,12 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       select i.id, i.tenant_id from invoices i
         join plans p on p.id = i.plan_id
         join subscriptions s on s.tenant_id = i.tenant_id
+        cross join lateral (
+          select period_charge_cents(i.tenant_id, p.price_cents, i.period_start) as c
+        ) w
       where i.status = 'open' and i.method = 'pix' and i.kind = 'period'
         and i.provider = ${base.provider.name}
-        and i.amount_cents <> period_charge_cents(i.tenant_id, p.price_cents, i.period_start)
+        and (i.amount_cents <> w.c or i.discount_cents <> p.price_cents - w.c)
         and (s.status = 'pending' or i.period_start > ${now})
       limit ${BATCH}
     `,
@@ -740,7 +743,8 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       const plan = await planRow(tx, inv.plan_id);
       if (!plan) return null;
       const price = await periodPrice(tx, tenant_id, plan, inv.period_start);
-      if (price.amountCents === inv.amount_cents) return null;
+      if (price.amountCents === inv.amount_cents && price.discountCents === inv.discount_cents)
+        return null;
       return { sub, inv, plan, price };
     };
     const reprice = (
@@ -767,9 +771,12 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       withTenant(sql, tenant_id, async (tx) => {
         const got = await load(tx);
         if (!got) return null;
-        const payer = got.inv.pix_copy_paste
-          ? await payerFor(tx, tenant_id, got.sub.payer_email)
-          : null;
+        // the same charge with another split (a percent coupon rounds two prices to one) keeps
+        // its Pix: upsertInvoice only rewrites the discount
+        const payer =
+          got.inv.pix_copy_paste && got.price.amountCents !== got.inv.amount_cents
+            ? await payerFor(tx, tenant_id, got.sub.payer_email)
+            : null;
         if (!payer?.document) {
           const next = await reprice(ctx, tx, got.inv, got.price);
           await emitAdminTx(tx, tenant_id, 'billing', next.id);

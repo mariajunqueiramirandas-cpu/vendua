@@ -191,6 +191,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('signup coupons (db)', () => {
     `;
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     await sql`delete from signup_coupons where code like ${`%${nonce}%`}`;
+    await sql`delete from plans where id = ${`cp_${nonce.toLowerCase()}`}`;
     if (appSql !== sql) await appSql.end();
     await sql.end();
   });
@@ -456,6 +457,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('signup coupons (db)', () => {
     `;
     await tick();
     expect(await invoices(store)).toMatchObject([{ amount_cents: 5990, discount_cents: 1000 }]);
+  });
+
+  test('a plan price that rounds to the same coupon charge keeps the Pix and fixes the discount', async () => {
+    const planId = `cp_${nonce.toLowerCase()}`;
+    await sql`
+      insert into plans (id, name, price_cents, features, public, sort)
+      values (${planId}, 'Plano cupom', 6990, '{}', false, 99)
+    `;
+    await coupon({ code: `METADE-${nonce}`, discount: { kind: 'percent', value: 50, months: 2 } });
+    const r = await signup(await verified(mkPhone()), `cupom-${nonce.toLowerCase()}-round`, {
+      coupon: `METADE-${nonce}`,
+    });
+    expect(r.status).toBe(201);
+    const store = r.body.store.id as string;
+    await sql`update subscriptions set plan_id = ${planId} where tenant_id = ${store}`;
+    await sql`update invoices set plan_id = ${planId} where tenant_id = ${store}`;
+    const before = (
+      await sql`select provider_payment_id from invoices where tenant_id = ${store}`
+    )[0]!.provider_payment_id;
+    expect(before).toBeTruthy();
+    // 50% of 6990 and of 6991 both charge 3495
+    await sql`update plans set price_cents = 6991 where id = ${planId}`;
+    await tick();
+    expect(await invoices(store)).toMatchObject([
+      { amount_cents: 3495, discount_cents: 3496, status: 'open' },
+    ]);
+    expect(
+      (await sql`select provider_payment_id from invoices where tenant_id = ${store}`)[0]!
+        .provider_payment_id,
+    ).toBe(before);
   });
 
   test('card: the assinatura starts at the coupon price and goes back to the plan price', async () => {
