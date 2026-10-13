@@ -1,6 +1,7 @@
 # Festa calculada: party orders with a sinal
 
-> Status: Proposed, not planned · Started 2026-10-07 · Kind: differentiator (not a gap in
+> Status: F0, F1 and F3 shipped (2026-10-13, migration 0126, Kernel 1.26); F2 (the sinal)
+> waits on the legal review and open decisions 2–4 · Started 2026-10-07 · Kind: differentiator (not a gap in
 > [`competitor-parity.md`](../competitor-parity.md); none of our [competitor profiles](../competitors/README.md)
 > mention it) · Builds on: encomendas (Phase 2), [ADR 0009](../adr/0009-mercado-pago-marketplace.md),
 > [ADR 0026](../adr/0026-store-whatsapp-gateway.md), [ADR 0031](../adr/0031-vendedor.md),
@@ -317,5 +318,18 @@ F2 touches money and payments: after editing, the invariant review runs on the d
   The admin shows days at capacity on Início.
 
 ## Change log
+
+- 2026-10-13: F0, F1 and F3 shipped. Differences from this design:
+  - No `cart_items.party_group_id`: changing the cart line unique index would break the previous
+    Core during a deploy (ADR 0041). Instead a product sits in one group per profile
+    (`party_group_products unique (profile_id, product_id)`), so a cart's units map back to
+    their group without counting twice.
+  - The quote returns quantities, not money. The shopper sees Core's total in the cart, one
+    tap later.
+  - Products that ask for a required option or a kit to fill can't be in a party: the
+    calculator adds plain lines.
+  - The calculator lives at `/festa`, a Kernel route that yields to a store's own `page:festa`.
+    The entry is block `sdk:party-cta`, which template migration `2026-10-party-cta-on-home`
+    places on the home page.
 
 - 2026-10-07: first proposal.
