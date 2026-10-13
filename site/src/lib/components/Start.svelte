@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import { recommended, signup, type PlanId } from '$lib/content';
 
   // The one call to action: a plain link to sign-up in the merchant admin, so it works without JS.
@@ -22,10 +22,24 @@
     note?: string;
     children?: Snippet;
   } = $props();
+
+  // a link that brought a coupon or a referral (?cupom=, ?indica=, ?parceiro=) carries it on to
+  // sign-up, read from this page's own address (nothing is kept in the browser)
+  let carry = $state('');
+  onMount(() => {
+    const q = new URLSearchParams(location.search);
+    const keep = new URLSearchParams();
+    for (const k of ['cupom', 'indica', 'parceiro']) {
+      const v = q.get(k);
+      if (v && /^[A-Za-z0-9-]{3,40}$/.test(v)) keep.set(k, v);
+    }
+    carry = keep.toString();
+  });
+  const href = $derived(carry ? `${signup(plano)}&${carry}` : signup(plano));
 </script>
 
 <p class="start {size} {tone}">
-  <a class="pill" href={signup(plano)}
+  <a class="pill" {href}
     >{#if short}<span>Criar <span class="minha">minha</span> loja</span>{:else}{label}{/if}<i
       class="go"
       aria-hidden="true"

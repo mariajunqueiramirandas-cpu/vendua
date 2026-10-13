@@ -15,7 +15,9 @@ the two phones come up one after the other and the order push drops onto the fro
 plays it back (Duá ducks, the letters sink) while the header's logo takes over. All CSS (`linear()`
 springs, scroll-driven animations); without support or with reduced motion it's the finished poster.
 Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
-`/para/hamburguerias/`, `/para/padarias/`), the guides (`/guias/` and four articles), the news (`/novidades/` and twelve posts), `/sobre/`,
+`/para/hamburguerias/`, `/para/padarias/`, `/para/pizzarias/`, `/para/salgadeiras/`,
+`/para/acaiterias/`, `/para/comida-japonesa/`, `/para/adegas/`; the home draws the first four and
+links the rest in a line under them), the partner program (`/parceiros/`, ADR 0043), the guides (`/guias/` and four articles), the news (`/novidades/` and twelve posts), `/sobre/`,
 `/privacidade/` and the 404. See "Search" below for why they exist and the rules they follow.
 
 ## Launch decisions the copy encodes
@@ -24,9 +26,16 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
   `<PUBLIC_ADMIN_URL>/admin/comecar?plano=bandeira` (works without JS): in the header, and in the
   closing. Not in the hero, where it would sit right under the header's. The price block links each
   open plan to the same page with `?plano=mirim` or `?plano=bandeira` (and `?plano=pangolim` once it
-  opens, see below). No form, contact
-  or WhatsApp CTA on the site; Instagram only in the footer (and at most one line near the closing
-  CTA).
+  opens, see below). No WhatsApp or
+  contact link on the site; Instagram only in the footer (and at most one line near the closing
+  CTA). Two forms, both opt-in and JS-only (owner, 2026-10-13), posting first-party through the
+  site's nginx: "Prefere conversar antes?" (`CallMe`, under the closing CTA, a button that opens
+  into name + WhatsApp + segment → `POST /site/v1/leads`, a CRM lead the sales agent may contact
+  first) and the partner application on `/parceiros/` (`PartnerForm` → `POST /site/v1/partners`).
+  Neither is a second call to action: `<Start/>` stays the only link that sells. `/privacidade/`
+  says what each keeps; keep the three in step. The signup link carries `?cupom`, `?indica` and
+  `?parceiro` from the page's own URL (`Start`), so a referral or partner link that lands here
+  still counts.
 - Three plans, the owner's decision (2026-10-03), shown exactly and cheapest first, with Bandeira in
   the middle as the recommended one ("Recomendado", raised, the section's main button, and the plan
   `<Start/>` preselects):
@@ -100,6 +109,9 @@ Other pages: one per kind of shop (`/para/doceiras/`, `/para/marmitarias/`,
   notifications, with Core's real push text.
 - The only character is Duá (`static/dua/`, never mirrored or recolored), plus line drawings in the
   admin's illustration style. No photos, people, AI images, stock, or fake testimonials/numbers.
+  Real testimonials go in `testimonials` in `src/lib/content.ts` (the owner's exact words, with
+  written consent); `Voices` renders nothing while the list is empty. A quote linking to the
+  owner's store needs the e2e's external-link rule widened to `*.vendua.com.br`.
 - Colors come from `src/lib/styles/theme.css`, copied from `apps/admin/src/ui/theme.css` (Creme,
   and Noite under `prefers-color-scheme: dark`). The header's switch (`ThemeToggle`) can override
   the system: it sets `<html data-theme>` (applied before paint by `app.html`), and a PostCSS step in

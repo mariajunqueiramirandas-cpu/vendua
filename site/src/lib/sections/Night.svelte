@@ -1,7 +1,9 @@
 <script lang="ts">
+  import CallMe from '$lib/components/CallMe.svelte';
   import Dua, { type Pose } from '$lib/components/Dua.svelte';
   import Section from '$lib/components/Section.svelte';
   import Start from '$lib/components/Start.svelte';
+  import Voices from '$lib/components/Voices.svelte';
   import { site } from '$lib/content';
   import { plans } from '$lib/plans/live.svelte';
 
@@ -47,6 +49,14 @@
     {
       q: 'O que é o Duá?',
       a: `É o vendedor com IA no WhatsApp da sua loja: atende os seus clientes e fecha o pedido com eles, sempre com os preços e os horários da loja. É o mesmo Duá que monta a loja com você e que você encontra no app. Para o cliente, ele se apresenta como assistente virtual da sua loja, nunca como uma pessoa. Vem no ${bandeira.short}, com ${bandeira.conversations} conversas por mês${bandeira.trial && bandeira.trialConversations ? ` (${bandeira.trialConversations} durante o teste)` : ''}, e no ${pangolim.short}, com ${pangolim.conversations}. Cada cliente que fala com o Duá conta uma conversa a cada 24 horas.`,
+    },
+    {
+      q: 'Tem fidelidade ou multa para cancelar?',
+      a: 'Não. Você cancela quando quiser, em Conta e plano, sem multa e sem ligar para ninguém. O plano vale até o fim do mês que você já pagou.',
+    },
+    {
+      q: 'A Venduá cobra alguma coisa por pedido?',
+      a: 'Não. A Venduá cobra só o plano do mês, venda a loja 10 ou 1.000 pedidos. O Mercado Pago desconta a taxa dele de cada pagamento online, como em qualquer maquininha; Pix com chave e dinheiro na entrega não passam por ele.',
     },
     {
       q: 'Preciso entender de tecnologia?',
@@ -106,6 +116,8 @@
     {/each}
   </ol>
 
+  <Voices />
+
   <!-- 2 · questions -->
   <div class="faq" id="perguntas">
     <div class="faq-head">
@@ -136,6 +148,7 @@
         Também tem o {mirim.short}, por {mirim.price}/mês{#if pangolim.available}, e o {pangolim.short},
           por {pangolim.price}/mês{/if}.
       </p>
+      <CallMe />
       <p class="follow">
         Acompanhe no Instagram:
         <a href={site.instagram.url} rel="noopener" target="_blank"

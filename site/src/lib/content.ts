@@ -131,3 +131,19 @@ export const push = {
     `${o.customer} · ${o.total} · ${o.mode}`,
   action: 'aceitar',
 };
+
+/**
+ * What real store owners said, with their consent in writing: never invented, never paraphrased, no
+ * stand-ins ("no fake testimonials/numbers"). Empty until there are some; `<Voices/>` renders
+ * nothing while it is.
+ */
+export type Testimonial = {
+  quote: string;
+  /** the person, as they agreed to be named */
+  who: string;
+  /** their store and city, e.g. "Doceria X, Niterói" */
+  store: string;
+  /** a link to their store, when they want one */
+  url?: string;
+};
+export const testimonials: Testimonial[] = [];

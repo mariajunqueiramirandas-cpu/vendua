@@ -47,8 +47,8 @@ own transaction. That call does one of two things:
 - A referred store pays its first period invoice. The call marks the referral rewarded and owes
   the referrer one month: a `billing_credits` row.
 
-**A credit is applied by the referrer's own billing.** Venduá can't charge R$ 0, and Pix
-Automático and Mercado Pago's assinatura need an amount, so a free month is not a 100% discount:
+**A credit is applied by the referrer's own billing.** A Pix and Mercado Pago's assinatura both
+need an amount (never R$ 0), so a free month is not a 100% discount:
 
 - **Pix plans.** The billing jobs' `credits` step moves `current_period_end` (and
   `trial_ends_at`, while trialing) one month later. It voids any renewal invoice already issued
