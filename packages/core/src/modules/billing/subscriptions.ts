@@ -1372,8 +1372,7 @@ export async function recordCardCharge(
       charge.paymentId ?? null,
     );
     await markInvoicePaid(ctx, tx, tenantId, inv.id, charge.date, now);
-  }
-  else {
+  } else {
     await emitAdminTx(tx, tenantId, 'billing', inv.id);
     const plan = await planOrThrow(tx, inv.plan_id);
     queueOwners(

@@ -164,7 +164,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     let welcomeDays = 0;
     if (await welcomeFor(sql, r, phone, phone ? phoneLockKey(phone) : null))
       welcomeDays =
-        WELCOME_DAYS + (plan && !(phone && (await phoneHadTrial(sql, phone))) ? plan.trial_days : 0);
+        WELCOME_DAYS +
+        (plan && !(phone && (await phoneHadTrial(sql, phone))) ? plan.trial_days : 0);
     return c.json({ referral: { kind: r.kind, name: r.name, welcomeDays } });
   });
 

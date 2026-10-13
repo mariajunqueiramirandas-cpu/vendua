@@ -165,10 +165,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
   test('a store link: the new store trials a month longer, once per WhatsApp', async () => {
     const referrer = await trialStore('r1');
     const slug = (await sql`select slug from tenants where id = ${referrer.id}`)[0]!.slug;
-    const pre = await call(
-      'GET',
-      `/admin/v1/signup/referral?code=${slug}&planId=bandeira`,
-    );
+    const pre = await call('GET', `/admin/v1/signup/referral?code=${slug}&planId=bandeira`);
     expect(pre.status).toBe(200);
     expect(pre.body.referral).toEqual({ kind: 'store', name: 'Doces da Lia', welcomeDays: 44 });
     expect((await call('GET', '/admin/v1/signup/referral?code=nobody-here')).status).toBe(404);
@@ -181,7 +178,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     const days = (Date.parse(r.body.next.endsAt) - Date.now()) / DAY;
     expect(Math.round(days)).toBe(44);
     const row = (await sql`select * from store_referrals where tenant_id = ${r.body.store.id}`)[0]!;
-    expect(row).toMatchObject({ referrer_tenant_id: referrer.id, welcome_days: 44, rewarded_at: null });
+    expect(row).toMatchObject({
+      referrer_tenant_id: referrer.id,
+      welcome_days: 44,
+      rewarded_at: null,
+    });
     const ev = (
       await sql`select data from staff_events where tenant_id = ${r.body.store.id} and kind = 'store.created'`
     )[0]!;
@@ -211,7 +212,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     ).toHaveLength(0);
   });
 
-  test('the referred store pays its first month: the referrer\'s next charge moves a month on', async () => {
+  test("the referred store pays its first month: the referrer's next charge moves a month on", async () => {
     const referrer = await trialStore('r2');
     const slug = (await sql`select slug from tenants where id = ${referrer.id}`)[0]!.slug;
     const { signupToken } = await verified(mkPhone());
@@ -220,7 +221,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     const newId = r.body.store.id as string;
 
     await payFirstMonth(newId);
-    expect((await sql`select rewarded_at from store_referrals where tenant_id = ${newId}`)[0]!.rewarded_at).not.toBeNull();
+    expect(
+      (await sql`select rewarded_at from store_referrals where tenant_id = ${newId}`)[0]!
+        .rewarded_at,
+    ).not.toBeNull();
     const credit = (await sql`select * from billing_credits where tenant_id = ${referrer.id}`)[0]!;
     expect(credit).toMatchObject({ status: 'pending', source_tenant_id: newId, months: 1 });
 
@@ -230,7 +234,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     const moved = (after.current_period_end as Date).getTime() - before.getTime();
     expect(moved).toBeGreaterThanOrEqual(28 * DAY);
     expect(moved).toBeLessThanOrEqual(31 * DAY);
-    expect((await sql`select status, applied_how from billing_credits where id = ${credit.id}`)[0]).toEqual({
+    expect(
+      (await sql`select status, applied_how from billing_credits where id = ${credit.id}`)[0],
+    ).toEqual({
       status: 'applied',
       applied_how: 'period',
     });
@@ -243,7 +249,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
 
     // a second paid month earns nothing more
     await tick();
-    expect(await sql`select 1 from billing_credits where tenant_id = ${referrer.id}`).toHaveLength(1);
+    expect(await sql`select 1 from billing_credits where tenant_id = ${referrer.id}`).toHaveLength(
+      1,
+    );
   });
 
   test('a card plan takes its free month as a refund of the next charge', async () => {
@@ -292,8 +300,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     const phone = `21${String(Date.now()).slice(-9)}`;
     const site = (body: unknown) =>
       call('POST', '/site/v1/partners', body, { 'x-forwarded-for': `198.51.100.${seq % 250}` });
-    expect((await site({ name: 'Escritório Lima', kind: 'contador', phone: 'abc' })).status).toBe(422);
-    const applied = await site({ name: 'Escritório Lima', kind: 'contador', phone, city: 'Niterói' });
+    expect((await site({ name: 'Escritório Lima', kind: 'contador', phone: 'abc' })).status).toBe(
+      422,
+    );
+    const applied = await site({
+      name: 'Escritório Lima',
+      kind: 'contador',
+      phone,
+      city: 'Niterói',
+    });
     expect(applied.status).toBe(202);
     expect((await site({ name: 'Outro nome', kind: 'outro', phone })).status).toBe(202);
     const list = await control('GET', '/control/v1/partners');
@@ -305,7 +320,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     expect(ok.status).toBe(200);
     expect(ok.body.partner).toMatchObject({ status: 'active', code });
     const look = await call('GET', `/admin/v1/signup/referral?code=${code.toLowerCase()}`);
-    expect(look.body.referral).toEqual({ kind: 'partner', name: 'Escritório Lima', welcomeDays: 0 });
+    expect(look.body.referral).toEqual({
+      kind: 'partner',
+      name: 'Escritório Lima',
+      welcomeDays: 0,
+    });
 
     const { signupToken } = await verified(mkPhone());
     const r = await signup(signupToken, `ref-${nonce}-p1`, { referral: code });
@@ -313,12 +332,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     expect(Math.round((Date.parse(r.body.next.endsAt) - Date.now()) / DAY)).toBe(14);
     const inv = await payFirstMonth(r.body.store.id);
     const k = (await sql`select * from partner_commissions where invoice_id = ${inv}`)[0]!;
-    expect(k).toMatchObject({ partner_id: p.id, paid_cents: 16900, commission_cents: 3380, status: 'due' });
+    expect(k).toMatchObject({
+      partner_id: p.id,
+      paid_cents: 16900,
+      commission_cents: 3380,
+      status: 'due',
+    });
 
     const detail = await control('GET', `/control/v1/partners/${p.id}`);
     expect(detail.body.partner.dueCents).toBe(3380);
     expect(detail.body.stores).toHaveLength(1);
-    const paid = await control('POST', `/control/v1/partners/${p.id}/payouts`, { note: 'pix 10/10' });
+    const paid = await control('POST', `/control/v1/partners/${p.id}/payouts`, {
+      note: 'pix 10/10',
+    });
     expect(paid.status).toBe(201);
     expect(paid.body.payout).toMatchObject({ totalCents: 3380, commissions: 1 });
     expect((await control('POST', `/control/v1/partners/${p.id}/payouts`, {})).status).toBe(409);
