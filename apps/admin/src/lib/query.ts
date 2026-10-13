@@ -22,6 +22,8 @@ export const qk = {
   // under 'orders': every order topic refreshes the kitchen too
   kitchen: ['orders', 'kitchen'] as const,
   catalog: ['catalog'] as const,
+  // under 'catalog': the catalog topic refreshes it
+  party: ['catalog', 'party'] as const,
   product: (id: string) => ['catalog', 'product', id] as const,
   // Estoque's reads sit under 'catalog': a sale, a cancel or a catalog write refreshes them
   addons: ['catalog', 'addons'] as const,

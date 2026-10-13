@@ -722,6 +722,11 @@ export interface StoreView {
     maxDays: number;
     /** while closed, a cart made only of encomendas still goes through */
     whileClosed: boolean;
+    /** Festa calculada (0126): encomendas a day, per weekday (Sunday first) and per date; null =
+     *  no ceiling */
+    capacity: EncomendaCapacity | null;
+    /** the D−1 message from the store's WhatsApp */
+    reminder: boolean;
   };
   zones: Zone[];
 }
@@ -1119,6 +1124,65 @@ export interface Whatsapp {
 }
 
 /** Início › the commission own-site orders didn't pay (0123). Core does the arithmetic. */
+/** Cardápio › Festa (0126): a party kind and its per-guest rules, as Core keeps them */
+export interface PartyProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  /** how much a child counts, 0..1 */
+  childFactor: number;
+  minGuests: number;
+  maxGuests: number;
+  active: boolean;
+  groups: {
+    id: string;
+    name: string;
+    /** pieces per guest */
+    perGuest: number;
+    maxChoices: number;
+    required: boolean;
+    /** pieces of the group a day across party orders; null = no ceiling */
+    dailyCapUnits: number | null;
+    products: {
+      productId: string;
+      name: string;
+      slug: string;
+      unitsPerSale: number;
+      /** asks for a required option or a kit: the calculator can't add it */
+      needsChoices?: boolean;
+    }[];
+  }[];
+}
+
+export interface PartyView {
+  profiles: PartyProfile[];
+  /** products that ask for a choice: the picker leaves them out */
+  needsChoices: string[];
+}
+
+export interface PartyProfileIn {
+  name: string;
+  description: string | null;
+  childFactor: number;
+  minGuests: number;
+  maxGuests: number;
+  active: boolean;
+  groups: {
+    id: string | null;
+    name: string;
+    perGuest: number;
+    maxChoices: number;
+    required: boolean;
+    dailyCapUnits: number | null;
+    products: { productId: string; unitsPerSale: number }[];
+  }[];
+}
+
+export interface EncomendaCapacity {
+  days?: (number | null)[];
+  dates?: Record<string, number | null>;
+}
+
 export type FreioLevel = 'normal' | 'busy' | 'full' | 'pickup_only';
 export type FreioMode = 'off' | 'suggest' | 'auto';
 
@@ -2552,6 +2616,11 @@ export const api = {
     send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
 
   home: () => get<Home>('/home'),
+  party: () => get<PartyView>('/party'),
+  createParty: (b: PartyProfileIn) =>
+    send<PartyView & { id: string }>('POST', '/party/profiles', b),
+  saveParty: (id: string, b: PartyProfileIn) => send<PartyView>('PUT', `/party/profiles/${id}`, b),
+  deleteParty: (id: string) => send<PartyView>('DELETE', `/party/profiles/${id}`),
   freio: () => get<Freio>('/freio'),
   patchFreio: (b: FreioPatch) => send<Freio>('PATCH', '/freio', b),
   freioApply: () => send<Freio>('POST', '/freio/apply'),
@@ -2585,9 +2654,12 @@ export const api = {
     return get<{ orders: OrderRow[]; next: string | null }>(`/orders?${s}`);
   },
   scheduled: (from: string, to: string) =>
-    get<{ orders: OrderRow[]; days: { date: string; count: number; totalCents: number }[] }>(
-      `/orders/scheduled?from=${from}&to=${to}`,
-    ),
+    get<{
+      orders: OrderRow[];
+      days: { date: string; count: number; totalCents: number }[];
+      /** each day's ceiling, only when the store set one */
+      caps?: Record<string, number>;
+    }>(`/orders/scheduled?from=${from}&to=${to}`),
   order: (id: string) =>
     get<{
       order: Order;

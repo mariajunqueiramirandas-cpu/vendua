@@ -1,4 +1,4 @@
-import { partyProfilesTx } from '../modules/party.ts';
+import { needsChoices, partyProfilesTx } from '../modules/party.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import { audit } from './audit.ts';
@@ -110,15 +110,26 @@ async function saveProfileTx(tx: Sql, tenantId: string, id: string, p: ProfileIn
   // products are checked against the store here: a foreign key doesn't look at RLS
   const ids = p.groups.flatMap((g) => g.products.map((x) => x.productId));
   if (ids.length) {
-    const found = await tx<{ id: string }[]>`
-      select id from products where tenant_id = ${tenantId} and id = any(${ids}::uuid[])
-        and status <> 'archived'`;
+    const found = await tx<{ id: string; needs: boolean }[]>`
+      select p.id, ${needsChoices(tx)} as needs from products p
+      where p.tenant_id = ${tenantId} and p.id = any(${ids}::uuid[]) and p.status <> 'archived'`;
     const missing = ids.find((x) => !found.some((f) => f.id === x));
     if (missing)
       throw new HttpError(422, 'BAD_REQUEST', 'a product is not in this store', {
         field: 'groups',
         productId: missing,
       });
+    const asks = found.find((f) => f.needs);
+    if (asks)
+      throw new HttpError(
+        422,
+        'PRODUCT_NEEDS_CHOICES',
+        'a product with required options or a kit to fill can’t be in a party',
+        {
+          field: 'groups',
+          productId: asks.id,
+        },
+      );
   }
   await tx`
     update party_profiles set name = ${p.name}, description = ${p.description},
@@ -158,9 +169,16 @@ async function saveProfileTx(tx: Sql, tenantId: string, id: string, p: ProfileIn
 export function mountParty(d: AdminDeps) {
   const { admin } = d;
   const { read, write } = handlers(d);
-  const view = async (tx: Sql, tenantId: string) => ({
-    profiles: await partyProfilesTx(tx, tenantId, false),
-  });
+  const view = async (tx: Sql, tenantId: string) => {
+    const [profiles, asks] = await Promise.all([
+      partyProfilesTx(tx, tenantId, false),
+      tx<{ id: string }[]>`
+        select p.id from products p
+        where p.tenant_id = ${tenantId} and p.status <> 'archived' and ${needsChoices(tx)}`,
+    ]);
+    // what the picker leaves out: the calculator adds plain lines
+    return { profiles, needsChoices: asks.map((r) => r.id) };
+  };
 
   admin.get(
     '/party',

@@ -287,7 +287,7 @@ function PartyForm({ profiles }: { profiles: PartyProfile[] }) {
           disabled={!quote || building}
           onClick={() => void build()}
         >
-          {building ? 'Montando…' : `Colocar ${vocabulary.toBag}`}
+          {building ? 'Montando…' : `Colocar ${vocabulary.inBag}`}
         </button>
         <p className="v-muted v-party-note">
           {vocabulary.inBag.charAt(0).toUpperCase() + vocabulary.inBag.slice(1)} você vê o total e

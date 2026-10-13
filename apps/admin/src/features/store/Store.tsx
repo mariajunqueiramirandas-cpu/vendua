@@ -51,6 +51,7 @@ import { holidaysAhead, type Holiday } from './holidays.ts';
 import { StatusPill, useStoreQuery } from './StatusPill.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { FreioSettings } from './Freio.tsx';
+import { Encomendas } from './Encomendas.tsx';
 
 const ZoneMap = lazy(() => import('../../ui/ZoneMap.tsx').then((m) => ({ default: m.ZoneMap })));
 
@@ -130,6 +131,7 @@ function StoreEditor({ s }: { s: StoreView }) {
           {[
             // the page's order on a phone (one column)
             ['horarios', 'Horários'],
+            ['encomendas', 'Encomendas'],
             ['mensagens', 'Mensagens'],
             ['perfil', 'Perfil'],
             ['entrega', 'Entrega e retirada'],
@@ -150,6 +152,7 @@ function StoreEditor({ s }: { s: StoreView }) {
         <div className="space-y-8">
           <Hours s={s} patch={patch} />
           <SpecialDays s={s} run={run} />
+          <Encomendas s={s} run={run} />
           <Section
             id="mensagens"
             title="Mensagens"

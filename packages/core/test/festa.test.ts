@@ -157,6 +157,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('festa calculada (db)', () => {
     expect(q.body.quote.lines[0].reason).toBe('300 de 600 salgados · 3 × 100');
   });
 
+  test('a product that asks for a choice never reaches the calculator', async () => {
+    const s = await store();
+    await sql`insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select)
+              values (${s.id}, ${s.p.kibe!}, 'Recheio', true, 1, 1)`;
+    const menu = await call(s.host, 'GET', '/storefront/v1/party');
+    const salgados = menu.body.profiles[0].groups.find((g: any) => g.id === s.salgados);
+    expect(salgados.products.map((x: any) => x.productId)).toEqual([s.p.coxinha]);
+    const q = await call(s.host, 'POST', '/checkout/v1/party/quote', {
+      profileId: s.profileId,
+      adults: 20,
+      choices: { [s.salgados]: [s.p.kibe], [s.doces]: [s.p.brigadeiro], [s.bolo]: [s.p.bolo] },
+    });
+    expect([q.status, q.body.error.code]).toEqual([422, 'INVALID_PARTY']);
+  });
+
   test('bad quotes are stable 4xx', async () => {
     const s = await store();
     const base = {

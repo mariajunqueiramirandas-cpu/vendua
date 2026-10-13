@@ -53,7 +53,14 @@ interface PickRow {
   name: string;
   slug: string;
   status: string;
+  needs_choices: boolean;
 }
+
+/** a product that can't go in the bag as it is: a required option, or a kit to fill. The
+ *  calculator adds plain lines, so such a product has no place in a party. */
+export const needsChoices = (tx: Sql) => tx`(
+  exists (select 1 from modifier_groups mg where mg.product_id = p.id and mg.required)
+  or exists (select 1 from combo_slots cs where cs.product_id = p.id and cs.min_select > 0))`;
 
 export interface PartyProfile {
   id: string;
@@ -72,7 +79,14 @@ export interface PartyProfile {
     maxChoices: number;
     required: boolean;
     dailyCapUnits: number | null;
-    products: { productId: string; name: string; slug: string; unitsPerSale: number }[];
+    products: {
+      productId: string;
+      name: string;
+      slug: string;
+      unitsPerSale: number;
+      /** admin view: the product asks for a choice, so the calculator can't add it */
+      needsChoices?: boolean;
+    }[];
   }[];
 }
 
@@ -91,7 +105,8 @@ export async function partyProfilesTx(
       select id, profile_id, name, per_guest_milli, max_choices, required, daily_cap_units, sort
       from party_groups where tenant_id = ${tenantId} order by sort, name`,
     tx<PickRow[]>`
-      select gp.group_id, gp.product_id, gp.units_per_sale, gp.sort, p.name, p.slug, p.status
+      select gp.group_id, gp.product_id, gp.units_per_sale, gp.sort, p.name, p.slug, p.status,
+             ${needsChoices(tx)} as needs_choices
       from party_group_products gp join products p on p.id = gp.product_id
       where gp.tenant_id = ${tenantId} ${forShopper ? tx`and p.status = 'active'` : tx`and p.status <> 'archived'`}
       order by gp.sort, p.name`,
@@ -115,12 +130,13 @@ export async function partyProfilesTx(
           required: g.required,
           dailyCapUnits: g.daily_cap_units,
           products: picks
-            .filter((x) => x.group_id === g.id)
+            .filter((x) => x.group_id === g.id && !(forShopper && x.needs_choices))
             .map((x) => ({
               productId: x.product_id,
               name: x.name,
               slug: x.slug,
               unitsPerSale: x.units_per_sale,
+              ...(forShopper ? {} : { needsChoices: x.needs_choices }),
             })),
         }))
         .filter((g) => !forShopper || g.products.length > 0),

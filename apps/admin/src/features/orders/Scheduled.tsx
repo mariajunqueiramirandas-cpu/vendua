@@ -44,6 +44,8 @@ export default function Scheduled() {
   }, [data]);
   // counts and totals are Core's, over the whole range (the list stops at 500 rows)
   const days = useMemo(() => new Map(data?.days.map((d) => [d.date, d])), [data]);
+  // Festa calculada (0126): a day's ceiling, when the store set one
+  const caps = data?.caps ?? {};
   const cells = [
     ...Array.from({ length: first.getDay() }, () => null),
     ...Array.from({ length: last.getDate() }, (_, i) => isoDate(new Date(y, m - 1, i + 1))),
@@ -95,7 +97,11 @@ export default function Scheduled() {
                     <span
                       className={cn(
                         'tnum mt-0.5 rounded-full px-1.5 text-[0.6875rem] font-bold leading-4',
-                        day === c ? 'bg-spark text-on-spark' : 'bg-info-soft text-info',
+                        day === c
+                          ? 'bg-spark text-on-spark'
+                          : caps[c] !== undefined && days.get(c)!.count >= caps[c]!
+                            ? 'bg-danger-soft text-danger'
+                            : 'bg-info-soft text-info',
                       )}
                     >
                       {days.get(c)!.count}
@@ -113,6 +119,12 @@ export default function Scheduled() {
             {dateShort(day)}
             {days.get(day) ? (
               <span className="t-body ml-2 text-muted">{money(days.get(day)!.totalCents)}</span>
+            ) : null}
+            {caps[day] !== undefined ? (
+              <span className="t-body ml-2 text-muted">
+                · {days.get(day)?.count ?? 0} de {caps[day]}
+                {(days.get(day)?.count ?? 0) >= caps[day]! ? ' (lotado)' : ''}
+              </span>
             ) : null}
           </h2>
           {error ? (

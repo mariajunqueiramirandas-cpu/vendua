@@ -114,6 +114,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   product: () => page('Produto', <ProductSkeleton />, { subtitle: false }),
   menu: () => page('Cardápio', <MenuSkeleton />, { wide: true, subtitle: false }),
   importMenu: () => page('Importar cardápio', <FieldSkeleton />),
+  festa: () => page('Calculadora de festa', <RowsSkeleton rows={2} />),
   stock: () =>
     page(
       'Estoque',
