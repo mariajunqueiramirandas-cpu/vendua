@@ -1119,6 +1119,46 @@ export interface Whatsapp {
 }
 
 /** Início › the commission own-site orders didn't pay (0123). Core does the arithmetic. */
+export type FreioLevel = 'normal' | 'busy' | 'full' | 'pickup_only';
+export type FreioMode = 'off' | 'suggest' | 'auto';
+
+/** Loja › Freio automático (0125): the kitchen now, the brake and its settings */
+export interface Freio {
+  settings: {
+    mode: FreioMode;
+    capacity: number;
+    bufferMinutes: number;
+    maxPromiseMinutes: number;
+    lateMode: FreioMode;
+    apologyKind: 'free_delivery' | 'fixed';
+    apologyValueCents: number;
+    apologyBudgetCents: number;
+  };
+  now: {
+    /** orders in the kitchen's queue */
+    queue: number;
+    backlogMinutes: number;
+    pickupMinutes: number;
+    level: FreioLevel;
+    deliveryPausedUntil: string | null;
+    deliveryEnabled: boolean;
+    suggestion: { level: FreioLevel; pausedUntil: string | null } | null;
+  };
+  /** Automático opens once the board is used: 80% of last week's orders marked ready */
+  auto: { unlocked: boolean; readyRate: number; orders: number };
+  apology: { spentCents: number; leftCents: number };
+  late: {
+    orderId: string;
+    number: number;
+    predictedMinutes: number;
+    mode: 'suggest' | 'auto';
+    state: string;
+    createdAt: string;
+  }[];
+}
+
+export type FreioPatch = Partial<Freio['settings']>;
+
 export interface HomeSavings {
   /** what the owner said their delivery app charges, 1–50; 0 = no app; null = not told */
   feePercent: number | null;
@@ -2512,6 +2552,17 @@ export const api = {
     send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
 
   home: () => get<Home>('/home'),
+  freio: () => get<Freio>('/freio'),
+  patchFreio: (b: FreioPatch) => send<Freio>('PATCH', '/freio', b),
+  freioApply: () => send<Freio>('POST', '/freio/apply'),
+  freioDismiss: () => send<Freio>('POST', '/freio/dismiss'),
+  freioRelease: () => send<Freio>('POST', '/freio/release'),
+  freioLateSend: (orderId: string) =>
+    send<{ notified: boolean; coupon: string | null; freio: Freio }>(
+      'POST',
+      `/freio/late/${orderId}`,
+    ),
+  freioLateDismiss: (orderId: string) => send<Freio>('POST', `/freio/late/${orderId}/dismiss`),
   homeSavings: () => get<HomeSavings>('/home/savings'),
   setMarketplaceFee: (feePercent: number | null) =>
     send<HomeSavings>('PUT', '/home/savings', { feePercent }),

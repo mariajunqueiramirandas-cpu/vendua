@@ -50,6 +50,7 @@ import { BillingHoldNotice } from './BillingHold.tsx';
 import { holidaysAhead, type Holiday } from './holidays.ts';
 import { StatusPill, useStoreQuery } from './StatusPill.tsx';
 import { Notice } from '../../ui/Notice.tsx';
+import { FreioSettings } from './Freio.tsx';
 
 const ZoneMap = lazy(() => import('../../ui/ZoneMap.tsx').then((m) => ({ default: m.ZoneMap })));
 
@@ -132,6 +133,7 @@ function StoreEditor({ s }: { s: StoreView }) {
             ['mensagens', 'Mensagens'],
             ['perfil', 'Perfil'],
             ['entrega', 'Entrega e retirada'],
+            ['freio', 'Freio automático'],
           ].map(([id, label]) => (
             <li key={id}>
               <a
@@ -185,6 +187,7 @@ function StoreEditor({ s }: { s: StoreView }) {
         </div>
         <div className="space-y-8">
           <Delivery s={s} patch={patch} run={run} />
+          <FreioSettings />
         </div>
       </div>
     </PageBody>

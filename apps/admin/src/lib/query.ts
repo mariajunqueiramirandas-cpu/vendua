@@ -13,6 +13,8 @@ export const qk = {
   home: ['home'] as const,
   // under 'home': whatever refreshes Início refreshes it too
   homeSavings: ['home', 'savings'] as const,
+  // under 'home': the store topic and every order topic refresh the kitchen's queue
+  freio: ['home', 'freio'] as const,
   board: ['orders', 'board'] as const,
   orders: (p: object) => ['orders', 'list', p] as const,
   scheduled: (from: string, to: string) => ['orders', 'scheduled', from, to] as const,
