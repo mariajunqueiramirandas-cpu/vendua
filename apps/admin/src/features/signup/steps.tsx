@@ -761,16 +761,19 @@ export function PayStep({
 }) {
   const plan: Plan | undefined = plans.plans.find((p) => p.id === d.planId);
   const [err, setErr] = useState<string | null>(null);
-  const byCode = plans.billing.accessCode && (!plans.billing.available || d.byCode);
-  const [code, setCode] = useState('');
-  // a parallel signup from this phone took its one trial meanwhile: pay like any other
-  const [trialLost, setTrialLost] = useState(false);
-  const planTrialDays = plan?.trialDays ?? 0;
   // a coupon (ADR 0042): Core says what it gives on this plan; its free days replace the trial
   const coupon = useSignupCoupon(d.coupon, d.planId);
   const [couponErr, setCouponErr] = useState<string | null>(null);
   const applied = d.coupon && coupon.data && !coupon.isError && !couponErr ? coupon.data : null;
   const couponDays = applied?.coupon.freeDays ?? 0;
+  // Core refuses free days with an access code (COUPON_NEEDS_BILLING): with billing on, the
+  // coupon's free days win over the code the owner picked
+  const codeChosen = d.byCode && !(couponDays > 0 && plans.billing.available);
+  const byCode = plans.billing.accessCode && (!plans.billing.available || codeChosen);
+  const [code, setCode] = useState('');
+  // a parallel signup from this phone took its one trial meanwhile: pay like any other
+  const [trialLost, setTrialLost] = useState(false);
+  const planTrialDays = plan?.trialDays ?? 0;
   const firstMonths = applied ? discountLine(applied) : null;
   const planTrial =
     !byCode &&
@@ -918,7 +921,7 @@ export function PayStep({
         </div>
       )}
       {d.coupon ? null : couponField}
-      {plans.billing.available && plans.billing.accessCode ? (
+      {plans.billing.available && plans.billing.accessCode && !couponDays ? (
         <Button
           type="button"
           variant="ghost"
