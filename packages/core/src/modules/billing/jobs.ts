@@ -27,6 +27,7 @@ import {
   trialEndedMessage,
   trialEndingMessage,
 } from './notices.ts';
+import { periodPrice } from './coupons.ts';
 import { planRow } from './plans.ts';
 import {
   applyHold,
@@ -339,7 +340,7 @@ const endTrials: Step = async (sql, base, now, o) => {
               drop: dropPix(ctx),
               start: sub.trial_ends_at,
               planId: plan.id,
-              amountCents: plan.price_cents,
+              ...(await periodPrice(tx, tenant_id, plan, sub.trial_ends_at)),
               method: 'pix',
               dueAt: now,
             });
@@ -646,10 +647,13 @@ const remindTrials: Step = async (sql, base, now) => {
       )[0];
       if (!sub) return null;
       const plan = await planRow(tx, sub.plan_id);
-      return plan ? { sub, plan } : null;
+      if (!plan) return null;
+      // the first month as it will be charged: a signup coupon's discount already off
+      const cents = (await periodPrice(tx, row.tenant_id, plan, sub.trial_ends_at)).amountCents;
+      return { sub, plan, cents };
     });
     if (!claimed) return;
-    const { sub, plan } = claimed;
+    const { sub, plan, cents } = claimed;
     const pay =
       sub.method !== 'card'
         ? 'pix'
@@ -661,7 +665,7 @@ const remindTrials: Step = async (sql, base, now) => {
       row.tenant_id,
       trialEndingMessage(
         stage,
-        { planName: plan.name, cents: plan.price_cents, endsAt: sub.trial_ends_at, pay },
+        { planName: plan.name, cents, endsAt: sub.trial_ends_at, pay },
         base.origin,
       ),
       `trial-reminder:${row.tenant_id}:${stage}`,
@@ -673,6 +677,8 @@ const remindTrials: Step = async (sql, base, now) => {
  * Prices follow the catalog (a CRM price change applies to future charges): the MP assinatura
  * amount, and unpaid Pix invoices for a period that hasn't begun (or a first one, nothing paid
  * yet). Idempotent: rows already at the price are skipped. Also run right after a CRM edit.
+ * "The price" is period_charge_cents: a signup coupon's discount while its months last, so a
+ * card's discounted months end here too (the charge after the last one goes back to the price).
  */
 export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, now: Date) {
   const cards = await controlTx(
@@ -683,7 +689,8 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       where s.method = 'card' and s.provider_subscription_id is not null
         and s.status in ('pending', 'trialing', 'active', 'past_due')
         and s.provider = ${base.provider.name}
-        and s.charge_cents is distinct from p.price_cents
+        and s.charge_cents is distinct from
+          period_charge_cents(s.tenant_id, p.price_cents, 'infinity'::timestamptz)
       limit ${BATCH}
     `,
   );
@@ -693,8 +700,10 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       if (!sub || sub.status === 'cancelled' || sub.method !== 'card') return null;
       if (!sub.provider_subscription_id) return null;
       const plan = await planRow(tx, chargePlanId(sub));
-      if (!plan || sub.charge_cents === plan.price_cents) return null;
-      return { id: sub.provider_subscription_id, cents: plan.price_cents, was: sub.charge_cents };
+      if (!plan) return null;
+      const cents = (await periodPrice(tx, tenant_id, plan, null)).amountCents;
+      if (sub.charge_cents === cents) return null;
+      return { id: sub.provider_subscription_id, cents, was: sub.charge_cents };
     });
     if (!want) return;
     await base.provider.updateSubscription(want.id, { amountCents: want.cents });
@@ -714,8 +723,13 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       select i.id, i.tenant_id from invoices i
         join plans p on p.id = i.plan_id
         join subscriptions s on s.tenant_id = i.tenant_id
+        cross join lateral (
+          select period_charge_cents(i.tenant_id, p.price_cents, i.period_start) as c
+        ) w
       where i.status = 'open' and i.method = 'pix' and i.kind = 'period'
-        and i.provider = ${base.provider.name} and i.amount_cents <> p.price_cents and (s.status = 'pending' or i.period_start > ${now})
+        and i.provider = ${base.provider.name}
+        and (i.amount_cents <> w.c or i.discount_cents <> p.price_cents - w.c)
+        and (s.status = 'pending' or i.period_start > ${now})
       limit ${BATCH}
     `,
   );
@@ -727,17 +741,25 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       )[0];
       if (!sub || !inv || inv.status !== 'open' || inv.method !== 'pix') return null;
       const plan = await planRow(tx, inv.plan_id);
-      if (!plan || plan.price_cents === inv.amount_cents) return null;
-      return { sub, inv, plan };
+      if (!plan) return null;
+      const price = await periodPrice(tx, tenant_id, plan, inv.period_start);
+      if (price.amountCents === inv.amount_cents && price.discountCents === inv.discount_cents)
+        return null;
+      return { sub, inv, plan, price };
     };
-    const reprice = (ctx: BillingCtx, tx: Sql, inv: InvoiceRow, cents: number) =>
+    const reprice = (
+      ctx: BillingCtx,
+      tx: Sql,
+      inv: InvoiceRow,
+      price: { amountCents: number; discountCents: number },
+    ) =>
       upsertInvoice(tx, {
         tenantId: tenant_id,
         provider: ctx.provider.name,
         drop: dropPix(ctx),
         start: inv.period_start,
         planId: inv.plan_id,
-        amountCents: cents,
+        ...price,
         method: 'pix',
         dueAt: inv.due_at,
         reuse: inv,
@@ -749,16 +771,19 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       withTenant(sql, tenant_id, async (tx) => {
         const got = await load(tx);
         if (!got) return null;
-        const payer = got.inv.pix_copy_paste
-          ? await payerFor(tx, tenant_id, got.sub.payer_email)
-          : null;
+        // the same charge with another split (a percent coupon rounds two prices to one) keeps
+        // its Pix: upsertInvoice only rewrites the discount
+        const payer =
+          got.inv.pix_copy_paste && got.price.amountCents !== got.inv.amount_cents
+            ? await payerFor(tx, tenant_id, got.sub.payer_email)
+            : null;
         if (!payer?.document) {
-          const next = await reprice(ctx, tx, got.inv, got.plan.price_cents);
+          const next = await reprice(ctx, tx, got.inv, got.price);
           await emitAdminTx(tx, tenant_id, 'billing', next.id);
           return null;
         }
         const r = await reservePix(tx, tenant_id, got.inv, payer, got.plan.name);
-        return { ...r, from: r.invoice.amount_cents, to: got.plan.price_cents };
+        return { ...r, from: r.invoice.amount_cents, to: got.price.amountCents };
       }),
     );
     if (!need) return;
@@ -773,7 +798,7 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
         const still =
           got?.inv.pix_attempt === need.invoice.pix_attempt &&
           got.inv.amount_cents === need.from &&
-          got.plan.price_cents === need.to;
+          got.price.amountCents === need.to;
         if (!still) {
           if (charge.payment.id !== got?.inv.provider_payment_id) dropPix(ctx)(charge.payment.id);
           return;
@@ -781,7 +806,7 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
         const next = await storePix(
           tx,
           ctx.provider,
-          await reprice(ctx, tx, got.inv, need.to),
+          await reprice(ctx, tx, got.inv, got.price),
           charge,
           dropPix(ctx),
         );

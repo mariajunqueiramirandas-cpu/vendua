@@ -31,6 +31,7 @@ import { DOCUMENT_ERR, PAYER_EMAIL_RE, expiry, savePending } from '../auth/pendi
 import { SegmentPicker } from '../onboarding/SegmentPicker.tsx';
 import { MiniStore } from '../onboarding/MiniStore.tsx';
 import { GENERIC, segmentOf } from '../onboarding/segments.ts';
+import { CouponField, couponError, discountLine, useSignupCoupon } from './coupon.tsx';
 import { saveToken, type Draft, type StepId, type Verified } from './progress.ts';
 
 export type PlansData = Awaited<ReturnType<typeof api.signup.plans>>;
@@ -650,7 +651,16 @@ const METHODS = [
 ];
 
 /** The trial, told as what happens when: today, the reminder, the first month. */
-function TrialPlan({ plan, days }: { plan: Plan; days: number }) {
+function TrialPlan({
+  plan,
+  days,
+  firstMonths,
+}: {
+  plan: Plan;
+  days: number;
+  /** a coupon's discount on the first paid months, worded (Core's amounts) */
+  firstMonths?: string | null | undefined;
+}) {
   const end = new Date(Date.now() + days * 86_400_000);
   const nudge = new Date(end.getTime() - 3 * 86_400_000);
   const day = (x: Date) => x.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
@@ -659,7 +669,9 @@ function TrialPlan({ plan, days }: { plan: Plan; days: number }) {
     { when: day(nudge), what: 'A gente avisa no WhatsApp que o teste está acabando.' },
     {
       when: day(end),
-      what: `Começa o ${plan.name}${perMonth(plan) ? `, ${perMonth(plan)}` : ''}, com Pix ou cartão: você escolhe em Conta.`,
+      what: firstMonths
+        ? `Começa o ${plan.name} com o desconto do cupom: ${firstMonths}. Pix ou cartão, você escolhe em Conta.`
+        : `Começa o ${plan.name}${perMonth(plan) ? `, ${perMonth(plan)}` : ''}, com Pix ou cartão: você escolhe em Conta.`,
     },
   ];
   return (
@@ -749,19 +761,37 @@ export function PayStep({
 }) {
   const plan: Plan | undefined = plans.plans.find((p) => p.id === d.planId);
   const [err, setErr] = useState<string | null>(null);
-  const byCode = plans.billing.accessCode && (!plans.billing.available || d.byCode);
+  // a coupon (ADR 0042): Core says what it gives on this plan; its free days replace the trial
+  const coupon = useSignupCoupon(d.coupon, d.planId);
+  const [couponErr, setCouponErr] = useState<string | null>(null);
+  const applied = d.coupon && coupon.data && !coupon.isError && !couponErr ? coupon.data : null;
+  const couponDays = applied?.coupon.freeDays ?? 0;
+  // Core refuses free days with an access code (COUPON_NEEDS_BILLING): with billing on, the
+  // coupon's free days win over the code the owner picked
+  const codeChosen = d.byCode && !(couponDays > 0 && plans.billing.available);
+  const byCode = plans.billing.accessCode && (!plans.billing.available || codeChosen);
   const [code, setCode] = useState('');
   // a parallel signup from this phone took its one trial meanwhile: pay like any other
   const [trialLost, setTrialLost] = useState(false);
-  const trialDays = plan?.trialDays ?? 0;
-  const trial =
-    !byCode && plans.billing.available && trialDays > 0 && !!verified.trialEligible && !trialLost;
+  const planTrialDays = plan?.trialDays ?? 0;
+  const firstMonths = applied ? discountLine(applied) : null;
+  const planTrial =
+    !byCode &&
+    plans.billing.available &&
+    planTrialDays > 0 &&
+    !!verified.trialEligible &&
+    !trialLost;
+  const trial = couponDays > 0 || planTrial;
+  const trialDays = couponDays || planTrialDays;
+  // a coupon still being checked, or refused: fix or take it off before creating the store
+  const couponPending = !!d.coupon && !applied;
   const create = useMutation({
     mutationFn: () =>
       api.signup.create({
         signupToken: verified.token,
         planId: d.planId!,
-        ...(trial ? { trial: true } : { method: d.method }),
+        ...(couponDays ? {} : trial ? { trial: true } : { method: d.method }),
+        ...(applied ? { coupon: d.coupon! } : {}),
         storeName: d.storeName.trim(),
         slug: d.slug,
         ownerName: d.ownerName.trim(),
@@ -772,6 +802,8 @@ export function PayStep({
       }),
     onSuccess: onCreated,
     onError: (e) => {
+      if (e instanceof ApiError && e.code.startsWith('COUPON_'))
+        return setCouponErr(couponError(e));
       if (e instanceof ApiError && e.code === 'TRIAL_USED') {
         setTrialLost(true);
         return setErr('Esse WhatsApp já usou o teste grátis em outra loja. Escolha como pagar.');
@@ -781,6 +813,17 @@ export function PayStep({
       else setErr((e instanceof ApiError && CREATE_ERR[e.code]) || messageOf(e));
     },
   });
+  const couponField = (
+    <CouponField
+      code={d.coupon}
+      planId={d.planId}
+      error={couponErr}
+      onChange={(c) => {
+        setCouponErr(null);
+        patch({ coupon: c });
+      }}
+    />
+  );
   return (
     <StepFrame
       title={
@@ -793,19 +836,31 @@ export function PayStep({
       hint={
         byCode
           ? 'Com o código, você cria a loja agora e acerta o pagamento do plano com a equipe da Venduá.'
-          : trial
-            ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
-            : 'Dá para trocar depois, em Conta e plano.'
+          : couponDays
+            ? 'Presente do cupom: sem cartão e sem cobrança agora. A loja já abre para pedidos.'
+            : trial
+              ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
+              : 'Dá para trocar depois, em Conta e plano.'
       }
       back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
       busy={create.isPending}
-      disabled={!plan || (byCode ? code.trim().length < 12 : !plans.billing.available)}
-      label={trial ? 'começar meu teste grátis' : 'criar minha loja'}
+      disabled={
+        !plan || couponPending || (byCode ? code.trim().length < 12 : !plans.billing.available)
+      }
+      label={
+        couponDays
+          ? 'começar meus dias grátis'
+          : trial
+            ? 'começar meu teste grátis'
+            : 'criar minha loja'
+      }
       onSubmit={() => {
         setErr(null);
         create.mutate();
       }}
     >
+      {/* an applied coupon is why this step reads as it does: it leads */}
+      {d.coupon ? couponField : null}
       {byCode ? (
         <Field label="Código de acesso" htmlFor="su-access" error={err}>
           <TextInput
@@ -824,7 +879,7 @@ export function PayStep({
           />
         </Field>
       ) : trial && plan ? (
-        <TrialPlan plan={plan} days={trialDays} />
+        <TrialPlan plan={plan} days={trialDays} firstMonths={firstMonths} />
       ) : (
         <div
           role="radiogroup"
@@ -865,7 +920,8 @@ export function PayStep({
           })}
         </div>
       )}
-      {plans.billing.available && plans.billing.accessCode ? (
+      {d.coupon ? null : couponField}
+      {plans.billing.available && plans.billing.accessCode && !couponDays ? (
         <Button
           type="button"
           variant="ghost"
@@ -888,8 +944,18 @@ export function PayStep({
         <div className="rounded-lg bg-sunken p-4">
           <div className="flex items-baseline justify-between gap-3">
             <p className="font-semibold">{plan.name}</p>
-            <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
+            {applied?.discountedCents != null ? (
+              <p className="flex items-baseline gap-2">
+                <s className="tnum text-muted">{perMonth(plan)}</s>
+                <span className="tnum font-display text-lg font-semibold text-success">
+                  {money(applied.discountedCents)}/mês
+                </span>
+              </p>
+            ) : (
+              <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
+            )}
           </div>
+          {firstMonths ? <p className="t-body mt-1 font-semibold">{firstMonths}</p> : null}
           <p className="t-body mt-2 text-muted">
             {byCode
               ? 'A loja abre para pedidos quando a equipe confirmar o pagamento. Enquanto isso, você já monta o cardápio.'

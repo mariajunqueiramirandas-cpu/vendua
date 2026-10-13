@@ -1288,6 +1288,8 @@ export interface Invoice {
   /** a paid pack's conversations went in; false = paid after the plan lost Duá, refunded */
   aiCredited: boolean | null;
   amountCents: number;
+  /** a signup coupon's discount, already off amountCents (ADR 0042) */
+  discountCents: number;
   periodStart: string;
   periodEnd: string;
   method: 'card' | 'pix';
@@ -1295,6 +1297,15 @@ export interface Invoice {
   dueAt: string;
   paidAt: string | null;
   pix: { copyPaste: string; expiresAt: string | null } | null;
+}
+
+/** what a signup coupon gives (ADR 0042); `label` is Core's own words for it */
+export interface SignupCoupon {
+  code: string;
+  freeDays: number;
+  /** percent: 1–99; amount: cents off each discounted month */
+  discount: { kind: 'percent' | 'amount'; value: number; months: number } | null;
+  label: string;
 }
 
 export interface Account {
@@ -1323,6 +1334,8 @@ export interface Account {
     /** the free trial's end (the first charge); kept after it converts */
     trialEndsAt: string | null;
   } | null;
+  /** the coupon the store signed up with (ADR 0042) */
+  coupon: (SignupCoupon & { discountMonthsLeft: number }) | null;
   /** publicKey: MercadoPago.js's key (MP_PUBLIC_KEY), null off Mercado Pago */
   billing: { available: boolean; publicKey: string | null };
   /** Duá's conversations: this month's (or the trial's) allowance, plus packs bought */
@@ -2352,6 +2365,13 @@ export const api = {
         reason?: 'taken' | 'reserved' | 'invalid';
         suggestion?: string;
       }>(`/signup/slug?slug=${encodeURIComponent(slug)}`),
+    /** what a coupon gives, and on `planId` each discounted month's price (Core computes it) */
+    coupon: (code: string, planId: string) =>
+      get<{
+        coupon: SignupCoupon & { planIds: string[] | null };
+        priceCents: number;
+        discountedCents: number | null;
+      }>(`/signup/coupon?code=${encodeURIComponent(code)}&planId=${encodeURIComponent(planId)}`),
     otpStart: (phone: string) =>
       send<{ sent: boolean; devCode?: string; expiresAt: string }>('POST', '/signup/otp/start', {
         phone,
@@ -2376,6 +2396,8 @@ export const api = {
       document: string;
       segment?: string;
       accessCode?: string;
+      /** a signup coupon (ADR 0042): its free days replace `trial` and the payment method */
+      coupon?: string;
     }) => sendPix<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),

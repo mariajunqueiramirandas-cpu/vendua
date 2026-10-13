@@ -46,6 +46,7 @@ export const qk = {
   alerts: ['alerts'] as const,
   helpStatus: ['help', 'status'] as const,
   signupPlans: ['signup', 'plans'] as const,
+  signupCoupon: (code: string, planId: string) => ['signup', 'coupon', code, planId] as const,
   imports: ['imports'] as const,
   importOf: (id: string) => ['imports', id] as const,
   // every Vendedor screen under one root: the live topic `vendedor` refreshes them all

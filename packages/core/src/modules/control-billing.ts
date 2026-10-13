@@ -19,6 +19,7 @@ import type { AiPackRow } from './billing/subscriptions.ts';
 import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/subscriptions.ts';
 import type { SignupReadiness } from './billing/signup-gate.ts';
 import { claimControl, controlTx } from './control.ts';
+import { mountControlCoupons } from './control-coupons.ts';
 import { ProviderError, type PaymentProvider } from './payments/provider.ts';
 
 const SITE_STATUSES = ['requested', 'in_progress', 'delivered', 'cancelled'] as const;
@@ -101,6 +102,7 @@ export function mountControlBilling(o: {
     if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
     return key;
   };
+  mountControlCoupons({ app, sql, controlGate, idemKey });
 
   app.get('/control/v1/billing/stores', async (c) => {
     controlGate(c);

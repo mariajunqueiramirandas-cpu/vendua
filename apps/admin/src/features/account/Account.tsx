@@ -12,6 +12,7 @@ import {
   PaintBrush,
   PencilSimpleLine,
   PixLogo,
+  SealPercent,
   Receipt,
   Sparkle,
   WarningCircle,
@@ -515,6 +516,23 @@ function PlanHero({
               <span>
                 Próxima cobrança em <strong>{dateShort(s.currentPeriodEnd)}</strong>, no{' '}
                 {METHOD_LABEL[s.method]}.
+              </span>
+            </p>
+          ) : null}
+          {a.coupon && (a.coupon.discountMonthsLeft > 0 || s.status === 'trialing') ? (
+            <p className="t-body flex items-center gap-2">
+              <SealPercent className="size-5 shrink-0 text-success" aria-hidden />
+              <span>
+                Cupom <strong className="font-mono tracking-wide">{a.coupon.code}</strong>:{' '}
+                {a.coupon.label}
+                {a.coupon.discount && a.coupon.discountMonthsLeft > 0
+                  ? a.coupon.discountMonthsLeft === a.coupon.discount.months
+                    ? ''
+                    : a.coupon.discountMonthsLeft === 1
+                      ? ' (falta 1 mês com desconto)'
+                      : ` (faltam ${a.coupon.discountMonthsLeft} meses com desconto)`
+                  : ''}
+                .
               </span>
             </p>
           ) : null}
@@ -1292,6 +1310,7 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
                 </span>
                 <span className="t-caption block text-muted">
                   {i.kind === 'ai_pack' ? 'conversas do Duá' : i.planName} ·{' '}
+                  {i.discountCents > 0 ? `${money(i.discountCents)} de desconto · ` : null}
                   {i.status === 'paid' && i.paidAt
                     ? `paga em ${dateShort(i.paidAt)}`
                     : payable

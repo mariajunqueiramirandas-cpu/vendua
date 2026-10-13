@@ -14,6 +14,7 @@ import { Panel } from '@/components/ui/card.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
 import { ResponsiveSheet } from '@/components/ui/overlay.tsx';
 import { AiPacksPanel } from './AiPacksPanel.tsx';
+import { SignupCouponsPanel } from './SignupCouponsPanel.tsx';
 import { SignupPanel } from './SignupPanel.tsx';
 import { PlanChangeDialog } from './PlanChangeDialog.tsx';
 import { FEATURES, trialLabel, usePlanEditors, type Change } from './planEdit.tsx';
@@ -270,6 +271,7 @@ export default function PlansPage() {
               do plano · planos ocultos não aparecem no cadastro nem em “trocar de plano”
             </p>
           </div>
+          <SignupCouponsPanel />
           <AiPacksPanel />
         </div>
       )}

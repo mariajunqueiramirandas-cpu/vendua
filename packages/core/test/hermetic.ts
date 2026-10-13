@@ -83,3 +83,16 @@ if (!process.env.TEST_DATABASE_URL) {
     process.exit(1);
   }
 }
+
+// Migrate once, before any test: the first DB test of a CI shard would otherwise migrate a fresh
+// database inside its own beforeAll, under bun's 5 s hook timeout.
+if (process.env.TEST_DATABASE_URL) {
+  const { default: postgres } = await import('postgres');
+  const { migrate } = await import('../src/platform/db.ts');
+  const sql = postgres(process.env.TEST_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+  } finally {
+    await sql.end();
+  }
+}

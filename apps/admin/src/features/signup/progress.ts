@@ -37,6 +37,8 @@ export interface Draft {
   method: 'pix' | 'card';
   /** signing up with an access code instead of paying (the code itself is never saved) */
   byCode: boolean;
+  /** a signup coupon the owner applied (or the site's ?cupom=); Core checks it again at the end */
+  coupon: string | null;
   /** after POST /signup: the store exists and this device is signed in to it */
   created: {
     store: StoreRef;
@@ -61,6 +63,7 @@ export const EMPTY: Draft = {
   codeExpiresAt: null,
   method: 'pix',
   byCode: false,
+  coupon: null,
   created: null,
 };
 
