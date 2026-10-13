@@ -114,6 +114,9 @@ export interface StoreSettingsRow {
   freio_level_since?: Date | string | null;
   freio_backlog_minutes?: number;
   delivery_paused_until?: Date | string | null;
+  /** Festa calculada (0126): orders a day per weekday / date; the D−1 reminder */
+  encomenda_capacity?: import('./encomenda-capacity.ts').EncomendaCapacity | null;
+  encomenda_reminder?: boolean;
   freio_suggestion?: { level: FreioLevel; pausedUntil: string | null; at: string } | null;
   freio_hold_until?: Date | string | null;
   late_mode?: 'off' | 'suggest' | 'auto';

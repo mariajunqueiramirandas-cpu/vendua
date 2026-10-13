@@ -1,3 +1,4 @@
+import { eveReminderPass } from '../modules/party.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
@@ -653,6 +654,10 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     // "o de sempre": a shopper who asked, a week or more after their last order
     await usualReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'usual reminder pass failed'),
+    );
+    // Festa calculada F0: tomorrow's encomendas hear from the store the day before
+    await eveReminderPass(sql, t.id).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'eve reminder pass failed'),
     );
     if (prune)
       await pruneTenant(sql, t.id).catch((err) =>

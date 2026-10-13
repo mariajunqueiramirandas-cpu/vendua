@@ -1,3 +1,4 @@
+import { capacityOn, type EncomendaCapacity } from '../modules/encomenda-capacity.ts';
 import { deliveryWindow, freioConfig, queueTx, readyInMinutes } from '../modules/freio.ts';
 import { loadSettings } from './routes-store.ts';
 import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
@@ -599,7 +600,21 @@ export function mountOrders(d: AdminDeps) {
         group by o.scheduled_for
         order by o.scheduled_for
       `;
-      return { orders: rows, days };
+      // Festa calculada (0126): each day's ceiling, where the store set one
+      const [st] = await tx<{ cap: EncomendaCapacity | null }[]>`
+        select encomenda_capacity as cap from store_settings where tenant_id = ${t.id}`;
+      const caps: Record<string, number> = {};
+      if (st?.cap)
+        for (
+          let d = Date.parse(`${from}T12:00:00Z`);
+          d <= Date.parse(`${to}T12:00:00Z`);
+          d += 86_400_000
+        ) {
+          const day = new Date(d).toISOString().slice(0, 10);
+          const c = capacityOn(st.cap, day);
+          if (c !== null) caps[day] = c;
+        }
+      return st?.cap ? { orders: rows, days, caps } : { orders: rows, days };
     }),
   );
 

@@ -24,6 +24,13 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     title: 'A cozinha está cheia agora',
     body: 'As entregas voltam em instantes. Retirada continua disponível.',
   },
+  // Kernel 1.26 — Festa calculada
+  INVALID_PARTY: { title: 'Confira a festa', body: 'Ajuste as pessoas ou as escolhas.' },
+  PARTY_TOO_BIG: {
+    title: 'Quantidade grande demais para um item',
+    body: 'Escolha mais opções nesse grupo para dividir.',
+  },
+  DATE_FULL: { title: 'Essa data lotou', body: 'Escolha outra data.' },
   PICKUP_UNAVAILABLE: { title: 'Retirada indisponível agora', body: 'Escolha entrega.' },
   EMPTY_CART: { title: 'Sua sacola está vazia' },
   CART_NOT_OPEN: { title: 'Essa sacola já virou pedido', body: 'Recarregue para começar outra.' },

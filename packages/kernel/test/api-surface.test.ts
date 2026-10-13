@@ -115,6 +115,8 @@ const SDK_CATALOG_V1 = [
   'loyaltyTeaser',
   'notifyMe',
   'pageContent',
+  // Kernel 1.26 — Festa calculada
+  'partyCta',
   'pixInfo',
   'productList',
   'promoBadge',

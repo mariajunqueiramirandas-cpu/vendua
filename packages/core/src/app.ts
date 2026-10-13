@@ -112,6 +112,7 @@ import { hostGateway } from './agent-host/models.ts';
 import type { CopilotMediaDeps } from './admin/context.ts';
 import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
 import { mountUsualReminder, usualReminderOffered } from './modules/usual-reminder.ts';
+import { mountParty } from './modules/party.ts';
 import { deliveryPaused } from './modules/freio.ts';
 import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
@@ -3150,6 +3151,7 @@ export function createApp({
   mountWebChat({ checkout, sql, sessionSecret, idempotency, media: ears.media });
   mountCartReminder({ checkout, sql, sessionSecret, idempotency });
   mountUsualReminder({ checkout, sql, sessionSecret, idempotency });
+  mountParty({ storefront, checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,

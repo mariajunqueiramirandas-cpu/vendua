@@ -32,6 +32,7 @@ import {
   type ZoneMatch,
 } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
+import { datesWithRoomTx, type CartParty } from './encomenda-capacity.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
 import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
@@ -210,6 +211,8 @@ export interface CartView {
   coupon: AppliedCoupon | null;
   /** encomenda calendar — dates Core accepts for `scheduledFor` */
   schedule: ScheduleView;
+  /** Festa calculada (0126): the guests the cart was built for; null = an ordinary cart */
+  party?: CartParty | null;
 }
 
 export interface GroupPicks {
@@ -642,6 +645,8 @@ export interface CartRow {
   delivery: CartDelivery | null;
   delivery_route: RouteQuote | null;
   coupon_code: string | null;
+  /** Festa calculada (0126): the guests this cart was built for */
+  party?: CartParty | null;
 }
 
 export function loadCartRow(
@@ -652,7 +657,7 @@ export function loadCartRow(
 ): Promise<CartRow | undefined> {
   const lock = opts.forUpdate ? tx`for update` : tx``;
   return tx<CartRow[]>`
-    select id, status, delivery, delivery_route, coupon_code from carts
+    select id, status, delivery, delivery_route, coupon_code, party from carts
     where tenant_id = ${tenantId} and id = ${cartId} ${lock}
   `.then((rows) => rows[0]);
 }
@@ -841,6 +846,26 @@ export async function loadCartView(
     }
   }
 
+  const schedule = scheduleView(
+    items,
+    {
+      hours: settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
+      preorder_payment_methods: settings?.preorder_payment_methods ?? null,
+      preorder_max_days: settings?.preorder_max_days ?? null,
+      special_days: settings?.special_days ?? [],
+    },
+    now,
+  );
+  // Festa calculada (0126): a party is an encomenda; a day at its ceiling isn't offered
+  if (cart.party) schedule.required = true;
+  if (settings?.encomenda_capacity && (schedule.required || schedule.dates.length))
+    schedule.dates = await datesWithRoomTx(
+      tx,
+      tenantId,
+      settings.encomenda_capacity,
+      schedule.dates,
+    );
+
   return {
     id: cart.id,
     status: cart.status,
@@ -866,16 +891,8 @@ export async function loadCartView(
         }
       : null,
     coupon,
-    schedule: scheduleView(
-      items,
-      {
-        hours: settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
-        preorder_payment_methods: settings?.preorder_payment_methods ?? null,
-        preorder_max_days: settings?.preorder_max_days ?? null,
-        special_days: settings?.special_days ?? [],
-      },
-      now,
-    ),
+    schedule,
+    party: cart.party ?? null,
   };
 }
 

@@ -14,6 +14,8 @@ import type {
   DeliveryZone,
   ImportLine,
   ImportReport,
+  PartyInput,
+  PartyQuote,
   LinePicks,
   LineQuote,
   LoyaltyCard,
@@ -225,10 +227,16 @@ export interface CartMutations {
   share: () => Promise<{ code: string; url: string; expiresAt: string }>;
   /** Kernel 1.2 — "pedir de novo": a past order's lines back in the sacola */
   reorder: (orderId: string) => Promise<{ cart: Cart; report: ImportReport }>;
+  /** Kernel 1.26 — the cart becomes a party (`api.buildPartyCart`). Optional like `addLine`;
+   *  `useCart().mutations` always has it. */
+  buildParty?: (
+    input: PartyInput,
+  ) => Promise<{ cart: Cart; quote: PartyQuote; report: ImportReport }>;
 }
 
 /** The Kernel's own cart mutations: every one, `addLine` and `setNote` included. */
-type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine' | 'setNote'>>;
+type KernelCartMutations = CartMutations &
+  Required<Pick<CartMutations, 'addLine' | 'setNote' | 'buildParty'>>;
 
 export function useCart(): {
   /** null = no session/cart yet (or a resolved empty read). */
@@ -294,6 +302,11 @@ export function useCart(): {
       },
       reorder: (orderId) =>
         api.reorder(orderId).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
+      buildParty: (input) =>
+        api.buildPartyCart(input).then((r) => {
           bump(r.cart);
           return r;
         }),

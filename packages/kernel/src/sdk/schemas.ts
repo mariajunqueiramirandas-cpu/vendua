@@ -252,6 +252,18 @@ export const recentOrder = defineBlock({
   },
 });
 
+/** Kernel 1.26 — Festa calculada: a card to the party calculator (`/festa`). Nothing while the
+ *  store has no party profile. */
+export const partyCta = defineBlock({
+  type: 'sdk:party-cta',
+  category: 'promo',
+  settings: {
+    title: text({ max: 60, default: 'Vai dar uma festa?' }),
+    text: text({ max: 160, default: 'Diga quantas pessoas vêm e a gente calcula tudo.' }),
+    cta: text({ max: 30, default: 'Monte sua festa' }),
+  },
+});
+
 export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pageContent,
   header,
@@ -271,6 +283,7 @@ export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pixInfo,
   loyaltyTeaser,
   recentOrder,
+  partyCta,
 ];
 
 /** The shape the artifact manifest publishes (template migrations target areas by category). */

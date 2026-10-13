@@ -315,6 +315,46 @@ async function orderFactsTx(
  * A step that repeats (a delay, a refund) names its `occurrence` (digits): the same one queued
  * twice is still one message.
  */
+/** Festa calculada F0: the day before an encomenda, its date and where it's picked up or goes */
+export function eveReminderText(o: OrderFacts): string | null {
+  if (!o.scheduledFor) return null;
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const how = o.mode === 'pickup' ? 'Pode vir retirar' : 'A entrega sai';
+  const text = `${hi}Amanhã (${ddmm(o.scheduledFor)}) é o dia da sua encomenda #${o.number} na ${o.storeName} 🎉 ${how} conforme combinado. Qualquer mudança, é só responder esta mensagem.`;
+  return o.trackUrl ? `${text}\n\nAcompanhe o pedido: ${o.trackUrl}` : text;
+}
+
+/** Queues the D−1 message once per order (event 'reminder_eve'), on the store's linked number. */
+export async function enqueueEveReminderTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<boolean> {
+  try {
+    return await (
+      tx as unknown as { savepoint<T>(fn: (s: Sql) => Promise<T>): Promise<T> }
+    ).savepoint(async (sp) => {
+      const wa = await sendingTx(sp, tenantId);
+      if (!wa) return false;
+      const facts = await orderFactsTx(sp, tenantId, orderId);
+      const phone = facts?.phone ?? null;
+      if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
+      if (await optedOutTx(sp, tenantId, phone)) return false;
+      const text = eveReminderText(facts);
+      if (!text) return false;
+      const rows = await sp`
+          insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body)
+          values (${tenantId}, ${orderId}, 'order', 'reminder_eve', ${phone}, ${text})
+          on conflict (order_id, event) where order_id is not null do nothing
+          returning id`;
+      return rows.length > 0;
+    });
+  } catch (err) {
+    msgLog.error({ err, orderId }, 'eve reminder not queued');
+    return false;
+  }
+}
+
 export async function enqueueOrderMessageTx(
   tx: Sql,
   tenantId: string,

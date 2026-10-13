@@ -5,7 +5,8 @@ never need a storefront edit; a major only ships with a Contract major.
 
 ## 1.26.0
 
-"O de sempre" — additive, no storefront edit, no new runtime export.
+"O de sempre", Freio automático, Festa calculada — additive, no storefront edit. One new
+sdk-catalog export (`partyCta`).
 
 - `StoreProfile.usualReminder`; `api.usualReminder(orderId)` / `api.cancelUsualReminder(orderId)`
   (`/checkout/v1/usual-reminder`, the phone read from the order); `ERROR_CODES` gains
@@ -19,6 +20,10 @@ never need a storefront edit; a major only ships with a Contract major.
   `deliveryWords` gains `paused`, `sdk:delivery-eta` and checkout say when delivery returns
   (Entrega disabled until then, except an encomenda for a date); `ERROR_CODES` gains
   `DELIVERY_PAUSED`.
+- Festa calculada: the `/festa` calculator page, block `sdk:party-cta`, `api.partyProfiles` /
+  `partyQuote` / `buildPartyCart` (and `mutations.buildParty`), `Cart.party`, types
+  `PartyProfile` / `PartyInput` / `PartyQuote`; `ERROR_CODES` gains `INVALID_PARTY`,
+  `PARTY_TOO_BIG`, `DATE_FULL`. A full day leaves `schedule.dates`.
 
 ## 1.25.0
 

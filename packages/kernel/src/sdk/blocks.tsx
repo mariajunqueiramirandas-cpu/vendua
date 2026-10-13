@@ -1,3 +1,4 @@
+import { PARTY_PATH, usePartyProfiles } from '../pages/party.tsx';
 import { useState } from 'react';
 import {
   useCopy,
@@ -336,6 +337,27 @@ function RecentOrderCard({ id, title }: { id: string; title: string }) {
           Meus pedidos
         </KLink>
       </div>
+    </div>
+  );
+}
+
+/** Kernel 1.26 — "Monte sua festa": the party calculator's door, while the store has profiles. */
+export function PartyCta({ settings }: BlockProps<typeof S.partyCta>) {
+  const { profiles } = usePartyProfiles();
+  if (!profiles.length) return null;
+  return (
+    <div className="v-party-cta" data-part="root">
+      <p className="v-party-cta-title" data-part="title">
+        {settings.title}
+      </p>
+      {settings.text ? (
+        <p className="v-muted" data-part="text">
+          {settings.text}
+        </p>
+      ) : null}
+      <KLink href={PARTY_PATH} className="v-btn v-btn-accent" data-part="cta">
+        {settings.cta}
+      </KLink>
     </div>
   );
 }

@@ -497,6 +497,58 @@ export interface Cart {
   /** Kernel 1.2 */
   coupon?: CartCoupon | null;
   schedule?: CartSchedule;
+  /** Kernel 1.26 — the guests the cart was built for (`api.buildPartyCart`); null/absent = an
+   *  ordinary cart. A party is an encomenda: `schedule.required` is true. */
+  party?: { profileId: string; adults: number; children: number } | null;
+}
+
+/** Kernel 1.26 — Festa calculada: one of the store's party kinds and its rules, as Core keeps
+ *  them. Quantities and money are always Core's (`api.partyQuote`, then the cart). */
+export interface PartyProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  /** how much a child counts (0.5 = half an adult) */
+  childFactor: number;
+  minGuests: number;
+  maxGuests: number;
+  groups: {
+    id: string;
+    name: string;
+    /** pieces per guest */
+    perGuest: number;
+    /** the shopper picks up to this many products in the group */
+    maxChoices: number;
+    required: boolean;
+    products: { productId: string; name: string; slug: string; unitsPerSale: number }[];
+  }[];
+}
+
+export interface PartyInput {
+  profileId: string;
+  adults: number;
+  children?: number;
+  /** groupId → the products picked in it */
+  choices: Record<string, string[]>;
+}
+
+export interface PartyQuote {
+  profileId: string;
+  adults: number;
+  children: number;
+  /** guests counted as adults */
+  guests: number;
+  groups: { groupId: string; name: string; units: number }[];
+  /** whole sales of each product; `reason` says why ("300 de 600 salgados · 3 × 100") */
+  lines: {
+    productId: string;
+    groupId: string;
+    name: string;
+    qty: number;
+    units: number;
+    unitsPerSale: number;
+    reason: string;
+  }[];
 }
 
 export interface CheckoutInput {
@@ -1309,6 +1361,20 @@ export function createApi(baseUrl = '') {
     store: () => apiFetch<StoreProfile>(sf('/store')),
     /** Kernel 1.22 — what a table's QR token names (404 TABLE_NOT_FOUND: bad, replaced or
      *  removed). `VenduaProvider` reads `?mesa=` itself; see `useTable` */
+    /** Kernel 1.26 — the store's party kinds (Festa calculada); [] = the store has none */
+    partyProfiles: () => apiFetch<{ profiles: PartyProfile[] }>(sf('/party')),
+    /** Kernel 1.26 — Core's quantities for guests and picks; nothing is written. 422
+     *  INVALID_PARTY / PARTY_TOO_BIG */
+    partyQuote: (input: PartyInput) =>
+      apiFetch<{ quote: PartyQuote }>(co('/party/quote'), {
+        method: 'POST',
+        headers: { 'idempotency-key': idemKey() },
+        body: JSON.stringify(input),
+      }),
+    /** Kernel 1.26 — the session's cart becomes the party (what was in it gives way); what
+     *  can't be sold now comes back in `report.skipped`, as for a shared bag */
+    buildPartyCart: (input: PartyInput) =>
+      cartPost<{ cart: Cart; quote: PartyQuote; report: ImportReport }>('/cart/party', input),
     table: (token: string) =>
       apiFetch<{ table: TableInfo }>(sf(`/table?t=${encodeURIComponent(token.slice(0, 400))}`)),
     catalog: () =>
@@ -1752,6 +1818,11 @@ export const ERROR_CODES = [
   'DELIVERY_UNAVAILABLE',
   // Kernel 1.26 — Freio paused delivery for a while (`details.until`); pickup is open
   'DELIVERY_PAUSED',
+  // Kernel 1.26 — Festa calculada: a quote that doesn't fit the profile (`details.field`,
+  // `details.groupId`), a line past 99 sales (`details.productId`), a date at its ceiling
+  'INVALID_PARTY',
+  'PARTY_TOO_BIG',
+  'DATE_FULL',
   'PICKUP_UNAVAILABLE',
   'OUT_OF_ZONE',
   'INVALID_DELIVERY',

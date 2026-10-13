@@ -149,6 +149,7 @@ may only use `store:` types.
 | `sdk:pix-info`         | block   | category `info`; title, showQr — **Kernel 1.2**                       | —                                                                                                                              |
 | `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                               | —                                                                                                                              |
 | `sdk:recent-order`     | block   | category `promo`; title — **Kernel 1.21**                             | —                                                                                                                              |
+| `sdk:party-cta`        | block   | category `promo`; title, text, cta — **Kernel 1.26**                  | —                                                                                                                              |
 
 Kernel 1.5: `catalog.ProductCard` receives an optional `quickAdd(children)` render prop — the
 Kernel's add-to-cart button, offered only for products that can be added as-is (active, not a
@@ -617,6 +618,31 @@ deliveryPausedUntil }`. `level` is `normal | busy | full | pickup_only` (new val
 - `sdk:delivery-eta` says "Entregas voltam às ~19:40" while paused. Checkout disables Entrega
   then (detail "voltam às ~19:40") unless the order is an encomenda for a date. New
   `ERROR_CODES` entry: `DELIVERY_PAUSED` (409, `details.until`), for a checkout that raced it.
+
+### Festa calculada (Kernel 1.26)
+
+Additive — no storefront edit. A store whose owner set up party kinds in the admin (Cardápio ›
+Festa) gets a party calculator: guests and picks in, Core's quantities out, an ordinary cart.
+
+- `/festa` — the calculator page (`data-vendua-page="party"`): the store's party kinds, adults and
+  children, a choice per group (up to the group's `maxChoices`), then Core's quote, one line per
+  product with its reason ("300 de 600 salgados · 3 × 100"), and "Colocar na sacola". A store's
+  own `page:festa` keeps the path, and this page isn't mounted.
+- New block `sdk:party-cta` (category `promo`; settings `title`, `text`, `cta`; schema `partyCta`
+  in `@vendua/kernel/sdk-catalog`): a card to `/festa`, nothing while the store has no party kind.
+  Template migration `2026-10-party-cta-on-home` places it in the home page's first area
+  accepting `promo` blocks.
+- Client: `api.partyProfiles()` → `GET /storefront/v1/party` (`{ profiles: PartyProfile[] }`);
+  `api.partyQuote(input)` → `POST /checkout/v1/party/quote` (`{ quote: PartyQuote }`, nothing
+  written); `api.buildPartyCart(input)` → `POST /checkout/v1/cart/party` (`{ cart, quote, report }`:
+  the cart's lines give way to the party's; `report.skipped` as for a shared bag), also
+  `useCart().mutations.buildParty` (optional on `CartMutations`). New types `PartyProfile`,
+  `PartyInput`, `PartyQuote`.
+- `Cart.party` (`{ profileId, adults, children }`, optional): a party cart is an encomenda,
+  `schedule.required` is true. A day at the store's ceiling leaves `schedule.dates`.
+- New `ERROR_CODES`: `INVALID_PARTY` (422, `details.field`, `details.groupId`), `PARTY_TOO_BIG`
+  (422, a line past 99 sales, `details.productId`), `DATE_FULL` (409 at checkout, the date or a
+  group's pieces a day are full; `details.date`, `details.groupId`).
 
 ### Where an order came from: `?ref=` (Kernel 1.26)
 

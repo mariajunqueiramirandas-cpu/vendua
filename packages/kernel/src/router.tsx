@@ -1,3 +1,4 @@
+import { PARTY_PATH, PartyPage } from './pages/party.tsx';
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   matchPath,
@@ -255,6 +256,10 @@ function PageRoutes() {
           <Route path={KERNEL_PATHS.checkout} element={<CheckoutPage />} />
           <Route path={KERNEL_PATHS.order} element={<OrderPage />} />
           <Route path={KERNEL_PATHS.orders} element={<OrderHistoryPage />} />
+          {/* Kernel 1.26 — Festa calculada; a store's own page:festa keeps the path */}
+          {handles.includes(PARTY_PATH.slice(1)) ? null : (
+            <Route path={PARTY_PATH} element={<PartyPage />} />
+          )}
           {handles
             .filter((h) => !taken.has(`/${h}`))
             .map((h) => (

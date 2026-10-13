@@ -1,3 +1,4 @@
+import { parseCapacity } from '../modules/encomenda-capacity.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
@@ -183,6 +184,9 @@ export async function storeView(
       paymentMethods: s.preorder_payment_methods ?? ['pix'],
       maxDays: s.preorder_max_days ?? 30,
       whileClosed: s.preorders_while_closed ?? true,
+      /** Festa calculada (0126): orders a day per weekday and per date; null = no ceiling */
+      capacity: s.encomenda_capacity ?? null,
+      reminder: s.encomenda_reminder ?? true,
     },
     zones: await zonesOf(tx, tenantId),
   };
@@ -587,6 +591,11 @@ export function mountStore(d: AdminDeps) {
         if (pre.maxDays !== undefined) set.preorder_max_days = int(pre.maxDays, 'maxDays', 1, 120);
         if (pre.whileClosed !== undefined)
           set.preorders_while_closed = bool(pre.whileClosed, 'whileClosed');
+        if (pre.capacity !== undefined) {
+          const cap = parseCapacity(pre.capacity);
+          set.encomenda_capacity = cap ? tx.json(cap as never) : null;
+        }
+        if (pre.reminder !== undefined) set.encomenda_reminder = bool(pre.reminder, 'reminder');
         changed.push('encomendas');
       }
       if (!changed.length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');

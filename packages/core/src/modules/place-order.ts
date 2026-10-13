@@ -1,3 +1,5 @@
+import { assertDateRoomTx } from './encomenda-capacity.ts';
+import { orderPartyTx } from './party.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
@@ -165,6 +167,15 @@ export async function placeOrderTx(
         field: 'payment.method',
       });
   }
+  // Festa calculada (0126): the party's units, frozen now; a full day says so (the cart already
+  // leaves it out of its dates, so this answers a stale page)
+  const party = cart.party ? await orderPartyTx(tx, tenantId, cart.party, cart.items) : null;
+  if (
+    typeof body.scheduledFor === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(body.scheduledFor) &&
+    (settings?.encomenda_capacity || party?.groups.length)
+  )
+    await assertDateRoomTx(tx, tenantId, settings?.encomenda_capacity, body.scheduledFor, party);
   const scheduledFor = validateSchedule(
     cart.schedule,
     body.scheduledFor ?? undefined,
@@ -391,13 +402,13 @@ export async function placeOrderTx(
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
-                        stock_drawn, addon_stock_drawn, ref)
+                        stock_drawn, addon_stock_drawn, ref, party)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
             ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
-            ${ref})
+            ${ref}, ${party ? tx.json(party as never) : null})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
