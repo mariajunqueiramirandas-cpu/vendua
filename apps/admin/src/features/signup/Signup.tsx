@@ -2,6 +2,7 @@ import { SignIn, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { trackPageview } from '../../lib/analytics.ts';
 import { api, type Session } from '../../lib/api.ts';
 import { resetClient } from '../../lib/persist.ts';
 import { qk } from '../../lib/query.ts';
@@ -202,17 +203,26 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   }, [plans.data, patch]);
 
   const storeDomain = plans.data?.storeDomain;
-  const finish = useCallback(() => {
-    clearDraft();
-    // in production (the admin on painel.<storeDomain>) the way to the first steps passes the site's
-    // /loja-criada/: Google Ads counts sign-ups on the site's own domain (site/src/lib/gtag.ts)
-    if (storeDomain && window.location.hostname.endsWith(`.${storeDomain}`))
-      window.location.replace(`https://${storeDomain}/loja-criada/`);
-    else nav('/bem-vindo', { replace: true });
-  }, [nav, storeDomain]);
+  const finish = useCallback(
+    (converted: boolean) => {
+      clearDraft();
+      // in production (the admin on painel.<storeDomain>) the way to the first steps passes the
+      // site's /loja-criada/: Google Ads counts sign-ups on the site's own domain
+      // (site/src/lib/gtag.ts). Only a store that is open (paid or trialing) counts: leaving with
+      // the payment still pending is not a sign-up yet.
+      if (converted && storeDomain && window.location.hostname.endsWith(`.${storeDomain}`))
+        window.location.replace(`https://${storeDomain}/loja-criada/`);
+      else nav('/bem-vindo', { replace: true });
+    },
+    [nav, storeDomain],
+  );
+  const finishOpen = useCallback(() => finish(true), [finish]);
+  const finishPending = useCallback(() => finish(false), [finish]);
   const toPronto = useCallback(() => go('pronto'), [go]);
 
   const step = d.step;
+  // each question counts as its own page (no answer is sent), so the CRM sees where signups stop
+  useEffect(() => trackPageview(`/comecar/${step}`), [step]);
   const at = AT[step];
   const answered = at ?? QUESTIONS.length;
   const questions = QUESTIONS.length;
@@ -243,7 +253,14 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
         )}
         paid={d.created?.next.kind === 'pix' || d.created?.next.kind === 'card'}
         trialEndsAt={trialOf(d.created?.next)}
-        onGo={finish}
+        onGo={
+          // an access-code store waits on the team's confirmation: not a sign-up for Ads yet
+          d.created?.next.kind === 'pix' ||
+          d.created?.next.kind === 'card' ||
+          trialOf(d.created?.next)
+            ? finishOpen
+            : finishPending
+        }
       />
     );
   else if (step === 'cartao')
@@ -262,13 +279,13 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
         }}
       />
     );
-  else if (step === 'confirmando') body = <CardConfirm onPaid={toPronto} onLater={finish} />;
+  else if (step === 'confirmando') body = <CardConfirm onPaid={toPronto} onLater={finishPending} />;
   else if (step === 'pix')
     body = (
       <PixPay
         invoiceId={d.created?.next.kind === 'pix' ? d.created.next.invoiceId || null : null}
         onPaid={toPronto}
-        onLater={finish}
+        onLater={finishPending}
         onCard={(url) => {
           patch({
             created: { ...cur.current.created!, next: { kind: 'card', url }, handedOff: false },

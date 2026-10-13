@@ -10,6 +10,7 @@ import {
   type StoreTokens,
   type StoreView,
 } from '../../lib/api.ts';
+import { trackPageview } from '../../lib/analytics.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
@@ -223,6 +224,8 @@ function Flow({
     else first.current = { step: 'oi', solo: false, resume: null };
   }
   const [step, setStep] = useState<StepId>(first.current.step);
+  // each question counts as its own page, so the CRM sees where the setup stalls
+  useEffect(() => trackPageview(`/bem-vindo/${step}`), [step]);
   const [solo, setSolo] = useState(first.current.solo);
   const [praise, setPraise] = useState<string | null>(null);
   const [peek, setPeek] = useState(false);

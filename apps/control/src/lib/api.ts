@@ -338,6 +338,20 @@ export interface StoreFunnel {
   revenueCents: number;
 }
 /** The storefront funnel across every store (Kernel beacon + Core's order_placed). */
+export interface SignupReport {
+  days: AnalyticsDays;
+  siteVisitors: number;
+  signup: { step: string; visitors: number }[];
+  setup: { step: string; visitors: number }[];
+  stores: {
+    created: number;
+    trialing: number;
+    paid: number;
+    firstOrder: number;
+    medianDaysToFirstOrder: number | null;
+  };
+}
+
 export interface StorefrontReport {
   days: AnalyticsDays;
   totals: StoreFunnel & { stores: number; avgTicketCents: number | null };
@@ -732,6 +746,7 @@ const apiBase = {
 
   webAnalytics: (property: WebProperty, days: AnalyticsDays) =>
     req<WebReport>(`/analytics/web?property=${property}&days=${days}`),
+  signupAnalytics: (days: AnalyticsDays) => req<SignupReport>(`/analytics/signup?days=${days}`),
   storefrontAnalytics: (days: AnalyticsDays) =>
     req<StorefrontReport>(`/analytics/storefronts?days=${days}`),
 

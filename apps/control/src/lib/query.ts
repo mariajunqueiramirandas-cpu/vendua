@@ -23,6 +23,7 @@ export const qk = {
   run: (id: string) => ['run', id] as const,
   agentMetrics: (days: number) => ['agent-metrics', days] as const,
   webAnalytics: (property: string, days: number) => ['analytics', property, days] as const,
+  signupAnalytics: (days: number) => ['analytics', 'signup', days] as const,
   storefrontAnalytics: (days: number) => ['analytics', 'storefronts', days] as const,
   briefs: () => ['briefs'] as const,
   segments: () => ['segments'] as const,
