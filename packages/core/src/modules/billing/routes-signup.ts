@@ -227,9 +227,14 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       });
     // after free days the first Pix needs Mercado Pago, which an access code means there isn't
     if (couponDays > 0 && manual)
-      throw new HttpError(422, 'COUPON_NEEDS_BILLING', 'free days need a paid plan, not an access code', {
-        field: 'coupon',
-      });
+      throw new HttpError(
+        422,
+        'COUPON_NEEDS_BILLING',
+        'free days need a paid plan, not an access code',
+        {
+          field: 'coupon',
+        },
+      );
     if (!manual && !trial && body.method !== 'card' && body.method !== 'pix')
       throw new HttpError(422, 'BAD_REQUEST', 'method must be card or pix', { field: 'method' });
     const method: 'card' | 'pix' = manual || body.method !== 'card' ? 'pix' : 'card';
@@ -338,7 +343,9 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               plan: plan.name,
               segment,
               trialEndsAt,
-              coupon: redeemed ? `${redeemed.code} (${describeCoupon(couponTerms(redeemed))})` : null,
+              coupon: redeemed
+                ? `${redeemed.code} (${describeCoupon(couponTerms(redeemed))})`
+                : null,
             },
             { tenantId, dedupeKey: `store.created:${tenantId}` },
           );
