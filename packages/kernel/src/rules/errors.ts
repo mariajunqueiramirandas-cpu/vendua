@@ -19,6 +19,11 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     body: 'Adicione mais itens para continuar.',
   },
   DELIVERY_UNAVAILABLE: { title: 'Entrega indisponível agora', body: 'Escolha retirada.' },
+  // Kernel 1.26 — the kitchen is full (Freio): details.until
+  DELIVERY_PAUSED: {
+    title: 'A cozinha está cheia agora',
+    body: 'As entregas voltam em instantes. Retirada continua disponível.',
+  },
   PICKUP_UNAVAILABLE: { title: 'Retirada indisponível agora', body: 'Escolha entrega.' },
   EMPTY_CART: { title: 'Sua sacola está vazia' },
   CART_NOT_OPEN: { title: 'Essa sacola já virou pedido', body: 'Recarregue para começar outra.' },

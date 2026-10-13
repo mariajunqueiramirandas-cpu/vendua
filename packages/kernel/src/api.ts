@@ -89,6 +89,15 @@ export interface StoreProfile {
   /** Kernel 1.26 — the store reminds a shopper who asked of their usual order, at most once a
    *  week, from its WhatsApp (`api.usualReminder`). Absent = false. */
   usualReminder?: boolean;
+  /** Kernel 1.26 — the kitchen right now (Freio automático): what a pickup takes, what a
+   *  delivery's zone ETA gains, and until when the store takes no delivery (null = it does).
+   *  Absent = the zones and `prepTimeMinutes` are the whole story. */
+  fulfillment?: {
+    pickupMinutes: number;
+    deliveryExtraMinutes: number;
+    level: 'normal' | 'busy' | 'full' | 'pickup_only';
+    deliveryPausedUntil: string | null;
+  };
   /** Kernel 1.22 — the store takes orders from its tables' QR codes (ADR 0036): its plan and its
    *  switch. Absent = false. */
   dineIn?: { enabled: boolean };
@@ -1741,6 +1750,8 @@ export const ERROR_CODES = [
   'STORE_PAUSED',
   'ORDER_MIN_NOT_MET',
   'DELIVERY_UNAVAILABLE',
+  // Kernel 1.26 — Freio paused delivery for a while (`details.until`); pickup is open
+  'DELIVERY_PAUSED',
   'PICKUP_UNAVAILABLE',
   'OUT_OF_ZONE',
   'INVALID_DELIVERY',

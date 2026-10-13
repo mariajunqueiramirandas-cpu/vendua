@@ -1081,10 +1081,21 @@ export function useStoreHours(): {
 export function useDeliverySummary(): DeliverySummary & { loading: boolean } {
   const { store, loading } = useStore();
   const { zones, loading: zonesLoading } = useDeliveryZones();
+  // a delivery pause ends on the clock, not on a refetch
+  const [tick, setTick] = useState(0);
   const summary = useMemo(
     () => (store ? deliverySummary(store, zones) : { delivery: null, pickup: null }),
-    [store, zones],
+    [store, zones, tick],
   );
+  const pausedUntil = summary.delivery?.pausedUntil;
+  useEffect(() => {
+    if (!pausedUntil) return;
+    const t = setTimeout(
+      () => setTick((n) => n + 1),
+      Math.min(Date.parse(pausedUntil) - Date.now() + 1000, 2 ** 31 - 1),
+    );
+    return () => clearTimeout(t);
+  }, [pausedUntil]);
   return { ...summary, loading: loading || zonesLoading };
 }
 

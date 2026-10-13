@@ -192,8 +192,8 @@ export function validateCheckout<Z extends ZoneLike>(
     if (!(settings?.delivery_enabled ?? true)) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');
     }
-    // Freio (0125): delivery braked for a while; pickup stays open
-    const paused = deliveryPaused(settings);
+    // Freio (0125): delivery braked for a while; pickup and another day's encomenda stay open
+    const paused = input.scheduledFor ? null : deliveryPaused(settings);
     if (paused)
       throw new HttpError(409, 'DELIVERY_PAUSED', 'delivery is paused for now', {
         until: paused.toISOString(),

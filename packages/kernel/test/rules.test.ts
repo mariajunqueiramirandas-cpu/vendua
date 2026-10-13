@@ -512,6 +512,31 @@ describe('delivery', () => {
     expect(deliveryWords({ delivery: null, pickup: null })).toBeNull();
   });
 
+  test('the live kitchen: longer waits, and a pause only while it lasts', () => {
+    const now = new Date('2026-10-13T22:00:00Z');
+    const fulfillment = {
+      pickupMinutes: 55,
+      deliveryExtraMinutes: 25,
+      level: 'full' as const,
+      deliveryPausedUntil: '2026-10-13T22:40:00Z',
+    };
+    const s = deliverySummary({ ...store, fulfillment }, [zone()], now);
+    expect(s.pickup).toEqual({ prepMinutes: 55 });
+    expect([s.delivery!.etaMin, s.delivery!.etaMax, s.delivery!.pausedUntil]).toEqual([
+      55,
+      75,
+      '2026-10-13T22:40:00Z',
+    ]);
+    expect(deliveryWords(s)!.paused).toBe('entregas voltam às ~19:40');
+    const later = deliverySummary(
+      { ...store, fulfillment },
+      [zone()],
+      new Date('2026-10-13T23:00Z'),
+    );
+    expect(later.delivery!.pausedUntil).toBeNull();
+    expect(deliveryWords(later)!.paused).toBeNull();
+  });
+
   test('words', () => {
     const w = (zones: DeliveryZone[], s = store) => deliveryWords(deliverySummary(s, zones))!;
     expect(w([zone({ feeCents: 0 })]).fee).toBe('entrega grátis');

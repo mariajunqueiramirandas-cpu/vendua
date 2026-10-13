@@ -299,7 +299,11 @@ export function CheckoutPage() {
   const [scheduleError, setScheduleError] = useState<string | undefined>();
   // a coupon Core refused at submit (the field shows it like an apply failure)
   const [couponError, setCouponError] = useState<string | undefined>();
-  const deliveryOk = store?.deliveryEnabled !== false;
+  // Kernel 1.26: the kitchen paused delivery for now; an encomenda for another day still goes
+  const pausedWords = scheduledFor
+    ? null
+    : (deliveryWords(summary, store?.currency, store?.hours.timezone)?.paused ?? null);
+  const deliveryOk = store?.deliveryEnabled !== false && !pausedWords;
   const pickupOk = store?.pickupEnabled !== false;
   // Kernel 1.15 (ADR 0024): Core prices the confirmed pin by road distance
   const byDistance = deliveryOk ? (store?.distancePricing ?? null) : null;
@@ -549,11 +553,13 @@ export function CheckoutPage() {
   const payLabel = methods.find((m) => m.id === pay)?.label;
   // "a partir de R$ 5,00", "grátis" — the least a zone charges (a per-km zone is never free)
   const feeWords = deliveryWords(summary, currency)?.fee.replace(/^entrega /, '');
-  const deliveryDetail = byDistance
-    ? byDistance.fromFeeCents > 0
-      ? `a partir de ${money(byDistance.fromFeeCents)}`
-      : 'calculada pela distância'
-    : feeWords;
+  const deliveryDetail = pausedWords
+    ? pausedWords.replace(/^entregas /, '')
+    : byDistance
+      ? byDistance.fromFeeCents > 0
+        ? `a partir de ${money(byDistance.fromFeeCents)}`
+        : 'calculada pela distância'
+      : feeWords;
   const options: DeliveryOption[] = atTable
     ? [
         {

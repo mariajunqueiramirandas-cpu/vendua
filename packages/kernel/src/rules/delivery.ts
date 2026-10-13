@@ -20,6 +20,8 @@ export interface DeliverySummary {
     /** the lowest minimum order across zones (Core: the store's or the zone's, the higher) */
     minOrderCents: number;
     minOrderVaries: boolean;
+    /** Kernel 1.26 — the kitchen is full: no delivery until then (ISO); null = it delivers */
+    pausedUntil: string | null;
   };
   pickup: null | { prepMinutes: number };
 }
@@ -27,13 +29,23 @@ export interface DeliverySummary {
 type SummaryStore = Pick<
   StoreProfile,
   'deliveryEnabled' | 'pickupEnabled' | 'minOrderCents' | 'prepTimeMinutes'
->;
+> &
+  Partial<Pick<StoreProfile, 'fulfillment'>>;
 
+/** The live kitchen (`StoreProfile.fulfillment`, Kernel 1.26) when Core sends it: a busy kitchen
+ *  lengthens the pickup and every zone's ETA; a pause in the future holds delivery. */
 export function deliverySummary(
   store: SummaryStore,
   zones: readonly DeliveryZone[],
+  now: Date = new Date(),
 ): DeliverySummary {
-  const pickup = store.pickupEnabled ? { prepMinutes: store.prepTimeMinutes } : null;
+  const live = store.fulfillment;
+  const pickup = store.pickupEnabled
+    ? { prepMinutes: live?.pickupMinutes ?? store.prepTimeMinutes }
+    : null;
+  const extra = live?.deliveryExtraMinutes ?? 0;
+  const until = live?.deliveryPausedUntil ?? null;
+  const pausedUntil = until && Date.parse(until) > now.getTime() ? until : null;
   // no zone, no address Core would deliver to
   if (!store.deliveryEnabled || zones.length === 0) return { delivery: null, pickup };
   const floors = zones.map(zoneFeeFloor);
@@ -56,12 +68,13 @@ export function deliverySummary(
   const mins = zones.map((z) => Math.max(store.minOrderCents, z.minOrderCents));
   return {
     delivery: {
-      etaMin: Math.min(...zones.map((z) => z.etaMin)),
-      etaMax: Math.max(...zones.map((z) => z.etaMax)),
+      etaMin: Math.min(...zones.map((z) => z.etaMin)) + extra,
+      etaMax: Math.max(...zones.map((z) => z.etaMax)) + extra,
       fee,
       freeOverCents,
       minOrderCents: Math.min(...mins),
       minOrderVaries: new Set(mins).size > 1,
+      pausedUntil,
     },
     pickup,
   };
@@ -77,10 +90,17 @@ export interface DeliveryWords {
   minOrder: string | null;
   /** `grátis acima de R$ 80,00`; null = none */
   freeOver: string | null;
+  /** Kernel 1.26 — `entregas voltam às ~19:40`; null = delivering */
+  paused: string | null;
 }
 
-/** Default pt-BR words for a summary's delivery; null when the store doesn't deliver. */
-export function deliveryWords(summary: DeliverySummary, currency = 'BRL'): DeliveryWords | null {
+/** Default pt-BR words for a summary's delivery; null when the store doesn't deliver. `timeZone`
+ *  (the store's) sets the hour a pause ends. */
+export function deliveryWords(
+  summary: DeliverySummary,
+  currency = 'BRL',
+  timeZone = 'America/Sao_Paulo',
+): DeliveryWords | null {
   const d = summary.delivery;
   if (!d) return null;
   const money = (c: number) => formatCents(c, currency);
@@ -100,5 +120,12 @@ export function deliveryWords(summary: DeliverySummary, currency = 'BRL'): Deliv
         ? `pedido mínimo ${d.minOrderVaries ? 'a partir de ' : ''}${money(d.minOrderCents)}`
         : null,
     freeOver: d.freeOverCents != null ? `grátis acima de ${money(d.freeOverCents)}` : null,
+    paused: d.pausedUntil
+      ? `entregas voltam às ~${new Date(d.pausedUntil).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone,
+        })}`
+      : null,
   };
 }

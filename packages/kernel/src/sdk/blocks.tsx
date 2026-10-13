@@ -180,14 +180,16 @@ export function PromoBadge({ settings }: BlockProps<typeof S.promoBadge>) {
 
 /** Kernel 1.1: "Entrega a partir de R$ 5,00 · 30–80 min · Retirada em ~40 min" — Core's zones
  *  and prep time, summed up by `deliverySummary` (a per-km zone is never "grátis"). Kernel 1.21:
- *  a second line with the minimum order and the free-delivery threshold, when Core has them. */
+ *  a second line with the minimum order and the free-delivery threshold, when Core has them.
+ *  Kernel 1.26: the kitchen's live times, and "Entregas voltam às ~19:40" while delivery is paused. */
 export function DeliveryEta({ settings }: BlockProps<typeof S.deliveryEta>) {
   const { store } = useStore();
   const summary = useDeliverySummary();
   if (!store) return null;
-  const words = deliveryWords(summary, store.currency);
+  const words = deliveryWords(summary, store.currency, store.hours.timezone);
   const parts: string[] = [];
-  if (words)
+  if (words?.paused) parts.push(`${words.paused.charAt(0).toUpperCase()}${words.paused.slice(1)}`);
+  else if (words)
     parts.push(
       settings.showFee
         ? `${words.fee.charAt(0).toUpperCase()}${words.fee.slice(1)} · ${words.eta}`

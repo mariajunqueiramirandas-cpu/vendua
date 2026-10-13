@@ -14,6 +14,11 @@ never need a storefront edit; a major only ships with a Contract major.
   (`[data-vendua="usual-reminder"]`), sent after the order is placed.
 - `?ref=CODE` on a link is kept for the tab and sent with checkout (`ref`), so Core can tell
   which Status do dia post or bag card an order came from.
+- `StoreProfile.fulfillment` (Freio automático): `deliverySummary` shows the kitchen's live
+  pickup time and delivery ETAs, and `delivery.pausedUntil` while delivery is paused;
+  `deliveryWords` gains `paused`, `sdk:delivery-eta` and checkout say when delivery returns
+  (Entrega disabled until then, except an encomenda for a date); `ERROR_CODES` gains
+  `DELIVERY_PAUSED`.
 
 ## 1.25.0
 

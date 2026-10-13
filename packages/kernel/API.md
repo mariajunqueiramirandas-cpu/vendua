@@ -602,6 +602,22 @@ order, under a daily ceiling the merchant sets, and SAIR stops it.
 - The reminder itself is a link to the store with the usual bag ready (`?cart=CODE`, the shared
   bag of 1.21): re-added at today's prices, unavailable lines reported as for any shared bag.
 
+### The kitchen right now: `StoreProfile.fulfillment` (Kernel 1.26)
+
+Additive — no storefront edit, no new runtime export. Core's Freio automático keeps a queue of the
+kitchen; the storefront shows its times instead of the configured ones.
+
+- `StoreProfile.fulfillment` (optional): `{ pickupMinutes, deliveryExtraMinutes, level,
+deliveryPausedUntil }`. `level` is `normal | busy | full | pickup_only` (new values may appear);
+  `deliveryPausedUntil` is an ISO time while delivery is paused, else null.
+- `deliverySummary` `(store, zones, now?)` uses it: `pickup.prepMinutes` is `pickupMinutes`, each
+  zone ETA gains `deliveryExtraMinutes`, and `delivery.pausedUntil` is set while the pause lasts
+  (null once it's past `now`). `deliveryWords` `(summary, currency?, timeZone?)` adds `paused`
+  ("entregas voltam às ~19:40"). `useDeliverySummary` re-renders when a pause ends.
+- `sdk:delivery-eta` says "Entregas voltam às ~19:40" while paused. Checkout disables Entrega
+  then (detail "voltam às ~19:40") unless the order is an encomenda for a date. New
+  `ERROR_CODES` entry: `DELIVERY_PAUSED` (409, `details.until`), for a checkout that raced it.
+
 ### Where an order came from: `?ref=` (Kernel 1.26)
 
 Additive — no storefront edit, no new export. A link with `?ref=CODE` (`^[a-z0-9]{6,12}$`: a
@@ -711,8 +727,8 @@ separate function a store may skip for its own voice. Additive — no storefront
 **Delivery** (`rules/delivery.ts`)
 
 - `zoneFeeFloor` `(zone)` — the least a zone charges: Core's `minFeeCents` (a per-km zone costs at least one km), else the zone's flat fee.
-- `deliverySummary` `(store, zones)` — `{ delivery: { etaMin, etaMax, fee: { form, cents }, freeOverCents, minOrderCents, minOrderVaries } | null, pickup: { prepMinutes } | null }`.
-- `deliveryWords` `(summary, currency?)` — `{ fee, eta, minOrder, freeOver }`: `entrega a partir de R$ 5,00`, `30–50 min`.
+- `deliverySummary` `(store, zones, now?)` — `{ delivery: { etaMin, etaMax, fee: { form, cents }, freeOverCents, minOrderCents, minOrderVaries, pausedUntil } | null, pickup: { prepMinutes } | null }` (1.26: the live kitchen when `store.fulfillment` is set).
+- `deliveryWords` `(summary, currency?, timeZone?)` — `{ fee, eta, minOrder, freeOver, paused }`: `entrega a partir de R$ 5,00`, `30–50 min`, `entregas voltam às ~19:40`.
 
 **Links** (`rules/links.ts`)
 
