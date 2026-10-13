@@ -112,6 +112,7 @@ import { hostGateway } from './agent-host/models.ts';
 import type { CopilotMediaDeps } from './admin/context.ts';
 import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
 import { mountUsualReminder, usualReminderOffered } from './modules/usual-reminder.ts';
+import { deliveryPaused } from './modules/freio.ts';
 import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
@@ -822,6 +823,13 @@ export function createApp({
       cartReminder,
       // Kernel 1.26: checkout may offer "me lembre do pedido de sempre" (modules/usual-reminder.ts)
       usualReminder,
+      // Kernel 1.26 (Freio, 0125): the promise from the kitchen's queue, and the brake
+      fulfillment: {
+        pickupMinutes: (settings?.prep_time_minutes ?? 30) + (settings?.freio_backlog_minutes ?? 0),
+        deliveryExtraMinutes: settings?.freio_backlog_minutes ?? 0,
+        level: settings?.freio_level ?? 'normal',
+        deliveryPausedUntil: deliveryPaused(settings, now)?.toISOString() ?? null,
+      },
     });
   });
 

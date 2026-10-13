@@ -3,11 +3,14 @@ import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
 import { usualReminderPass } from '../modules/usual-reminder.ts';
 import { statusDayPass } from '../modules/status-do-dia.ts';
+import { FREIO_ACTOR, freioPassTx } from '../modules/freio.ts';
+import { latePassTx } from './late-orders.ts';
 import { setStock } from '../modules/stock.ts';
 import { wakeStoreWaitlist } from '../modules/storefront-platform.ts';
 import { maskPhone } from '../vendedor/threads.ts';
 import type { MerchantNotify } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
+import { audit } from './audit.ts';
 import { DEMAND_DEFAULT_MINUTES } from './routes-store.ts';
 import { sendPushResult, vapidPublicKey, type PushResult } from './webpush.ts';
 
@@ -595,6 +598,39 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     await cartReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
     );
+    // Freio automático: the kitchen's queue measured, the level stepped, delivery braked or not
+    await withTenant(sql, t.id, (tx) =>
+      freioPassTx(tx, t.id, new Date(), {
+        audit: (summary) =>
+          audit(tx, t.id, FREIO_ACTOR, { action: 'store.freio', entity: 'store', summary }),
+        emitStore: () => emitAdminTx(tx, t.id, 'store'),
+      }),
+    )
+      .then(
+        (push) =>
+          push &&
+          pushManagers(
+            sql,
+            t.id,
+            push.key,
+            { title: push.title, body: push.body, tag: 'freio', url: '/admin/' },
+            'freio',
+          ),
+      )
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'freio pass failed'));
+    // Freio › atraso avisado: an order about to miss its promise, said before it's asked
+    await withTenant(sql, t.id, (tx) => latePassTx(tx, t.id, new Date()))
+      .then(async (pushes) => {
+        for (const p of pushes)
+          await pushManagers(
+            sql,
+            t.id,
+            p.key,
+            { title: p.title, body: p.body, tag: p.key, url: '/admin/' },
+            'freio.late',
+          );
+      })
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'late order pass failed'));
     // Status do dia: today's post prepared at the owner's hour, and a push to go post it
     await statusDayPass(sql, t.id)
       .then(

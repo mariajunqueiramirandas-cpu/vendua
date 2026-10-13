@@ -1,3 +1,4 @@
+import { mountFreio } from './routes-freio.ts';
 import type { Context, Hono } from 'hono';
 import { planAccess } from '../modules/billing/plans.ts';
 import { getCookie } from 'hono/cookie';
@@ -923,6 +924,7 @@ export function mountAdmin(o: MountAdminOpts) {
   });
 
   mountHome(deps);
+  mountFreio(deps);
   mountOnboarding(deps);
   mountOrders(deps);
   mountCatalog(deps);

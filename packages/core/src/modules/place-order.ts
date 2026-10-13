@@ -22,6 +22,7 @@ import { planHas } from './billing/plans.ts';
 import type { QrTable } from './pdv/qr.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 import { drawAddonStock, drawStock, modifierDemand, stockDemand } from './stock.ts';
+import { deliveryWindow, freioConfig, kitchenNowTx, promiseZoneOf } from './freio.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
 /** a link's attribution code (`?ref=`, Status do dia and the bag card; 0124) */
@@ -282,7 +283,13 @@ export async function placeOrderTx(
   };
   const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
 
-  const prep = settings?.prep_time_minutes ?? 30;
+  // Freio (0125): the promise is the kitchen's real queue, not the number typed once
+  const cfg = freioConfig(settings);
+  const kitchen = scheduledFor
+    ? null
+    : await kitchenNowTx(tx, tenantId, cfg, settings?.hours?.timezone || 'America/Sao_Paulo', now);
+  const ready = cfg.prep + (kitchen?.backlogMinutes ?? 0);
+  const win = deliveryWindow(promiseZoneOf(match.zone), ready, cfg.buffer);
   const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
   const delivery =
     body.delivery.mode === 'delivery'
@@ -300,8 +307,10 @@ export async function placeOrderTx(
           feeCents: deliveryFee,
           etaMin: match.zone?.eta_min_minutes ?? null,
           etaMax: match.zone?.eta_max_minutes ?? null,
-          promisedFrom: scheduledFor ? null : at(match.zone?.eta_min_minutes ?? prep),
-          promisedTo: scheduledFor ? null : at(match.zone?.eta_max_minutes ?? prep),
+          // the drive alone: accepting re-promises from it, never from etaMin (prep is in there)
+          driveMinutes: match.zone?.kind === 'distance' ? match.zone.drive_minutes : null,
+          promisedFrom: scheduledFor ? null : at(win.from),
+          promisedTo: scheduledFor ? null : at(win.to),
         }
       : atTable
         ? {
@@ -311,8 +320,8 @@ export async function placeOrderTx(
             feeCents: 0,
             etaMin: null,
             etaMax: null,
-            promisedFrom: at(prep),
-            promisedTo: at(prep),
+            promisedFrom: at(ready),
+            promisedTo: at(ready),
             table: table!.label,
             tabId: null as string | null,
           }
@@ -323,8 +332,8 @@ export async function placeOrderTx(
             feeCents: 0,
             etaMin: null,
             etaMax: null,
-            promisedFrom: scheduledFor ? null : at(prep),
-            promisedTo: scheduledFor ? null : at(prep),
+            promisedFrom: scheduledFor ? null : at(ready),
+            promisedTo: scheduledFor ? null : at(ready),
           };
 
   const customer = {

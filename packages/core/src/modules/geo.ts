@@ -153,6 +153,8 @@ export interface DistanceZone extends ZoneLike {
   max_distance_km: number;
   fee_per_km_cents: number;
   free_delivery_over_cents: number | null;
+  /** the drive alone, minutes (Freio: the promise adds the kitchen's queue and a buffer) */
+  drive_minutes: number;
 }
 
 const key5 = (lat: number, lng: number) => `${lat.toFixed(5)},${lng.toFixed(5)}`;
@@ -201,6 +203,7 @@ export function priceByDistance(
       max_distance_km: pricing.maxKm,
       fee_per_km_cents: pricing.feePerKmCents,
       free_delivery_over_cents: pricing.freeOverCents,
+      drive_minutes: drive,
     },
     distanceKm: km,
     feeCents: distanceFeeCents(pricing, km),

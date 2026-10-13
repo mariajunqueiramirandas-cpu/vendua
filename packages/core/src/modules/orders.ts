@@ -65,6 +65,8 @@ export interface OrderRow {
     feeCents?: number;
     etaMin?: number;
     etaMax?: number;
+    /** distance pricing: the drive alone, minutes (Freio, 0125); absent on older orders */
+    driveMinutes?: number | null;
     promisedFrom?: string | null;
     promisedTo?: string | null;
     /** minutes the store pushed the promise back after accepting ("atrasou"), summed */

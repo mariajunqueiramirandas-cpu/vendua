@@ -34,6 +34,7 @@ import {
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
+import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
 import type { StoreSettingsRow } from './store.ts';
 
 /**
@@ -796,6 +797,17 @@ export async function loadCartView(
     }
   }
 
+  // Freio (0125): the window the order would get now, from the queue the sweep last measured
+  const quoteZone = promiseZoneOf(match?.zone);
+  const quoteCfg = freioConfig(settings);
+  const quoteWindow = quoteZone
+    ? deliveryWindow(
+        quoteZone,
+        quoteCfg.prep + (settings?.freio_backlog_minutes ?? 0),
+        quoteCfg.buffer,
+      )
+    : null;
+
   let coupon: AppliedCoupon | null = null;
   let discount = 0;
   let itemDiscount = 0;
@@ -849,8 +861,8 @@ export async function loadCartView(
           zoneName: match?.zone.name ?? null,
           distanceKm: match?.distanceKm ?? null,
           distanceSource: match?.distanceSource ?? null,
-          etaMin: match?.zone.eta_min_minutes ?? null,
-          etaMax: match?.zone.eta_max_minutes ?? null,
+          etaMin: quoteWindow?.from ?? null,
+          etaMax: quoteWindow?.to ?? null,
         }
       : null,
     coupon,

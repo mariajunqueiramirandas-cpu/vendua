@@ -1,3 +1,5 @@
+import { deliveryWindow, freioConfig, queueTx, readyInMinutes } from '../modules/freio.ts';
+import { loadSettings } from './routes-store.ts';
 import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
 import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
@@ -31,7 +33,7 @@ import {
 } from '../modules/payments/store-payments.ts';
 import { log } from '../platform/log.ts';
 import { audit } from './audit.ts';
-import { int, isDate, need, oneOf, optInt, optText, type AdminDeps } from './context.ts';
+import { int, isDate, need, oneOf, optInt, optText, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -705,11 +707,43 @@ export function mountOrders(d: AdminDeps) {
       // invalid step still throws below and rolls this back with it
       if (to === 'confirmed' && prep && before.state === 'placed') {
         // accepting with a prep time re-promises the window the customer sees
+        // Freio (0125): the merchant's prep for this order after the tickets placed before it,
+        // plus the drive (a distance order) or no earlier than its zone's ETA. An older distance
+        // order has no driveMinutes: its etaMin already holds the prep, so it reads as a zone
+        // ETA and is never counted twice.
         const dl = before.delivery;
-        const now = Date.now();
-        const at = (min: number) => new Date(now + min * 60_000).toISOString();
-        const from = dl.mode === 'delivery' ? prep + (dl.etaMin ?? 0) : prep;
-        const until = dl.mode === 'delivery' ? prep + (dl.etaMax ?? dl.etaMin ?? 0) : prep;
+        const now = new Date();
+        const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
+        const s = await loadSettings(tx, t.id);
+        const cfg = freioConfig(s);
+        const queue = await queueTx(
+          tx,
+          t.id,
+          now,
+          cfg.prep,
+          s.hours?.timezone || 'America/Sao_Paulo',
+        );
+        const self = queue.find((q) => q.id === id);
+        const ready = readyInMinutes(
+          { id, placedAt: self?.placedAt ?? now, prep, startedAt: null },
+          queue,
+          cfg.capacity,
+          now,
+        );
+        const win =
+          dl.mode === 'delivery'
+            ? deliveryWindow(
+                dl.driveMinutes != null
+                  ? { kind: 'distance', driveMinutes: dl.driveMinutes }
+                  : dl.etaMin != null
+                    ? { kind: 'zone', etaMin: dl.etaMin, etaMax: dl.etaMax ?? dl.etaMin }
+                    : null,
+                ready,
+                cfg.buffer,
+              )
+            : { from: ready, to: ready };
+        const from = win.from;
+        const until = win.to;
         if (!before.scheduledFor)
           await tx`
             update orders set delivery = delivery || ${tx.json({ promisedFrom: at(from), promisedTo: at(until) })}
@@ -844,36 +878,7 @@ export function mountOrders(d: AdminDeps) {
         );
       if (cur.scheduled)
         throw new HttpError(409, 'ORDER_NOT_DELAYABLE', 'an encomenda is promised for its day');
-      const d = cur.delivery;
-      const now = Date.now();
-      const to0 = Date.parse(d.promisedTo ?? '');
-      const from0 = Date.parse(d.promisedFrom ?? '');
-      // a promise already past starts again from now; the window keeps its width
-      const to = (Number.isFinite(to0) ? Math.max(to0, now) : now) + minutes * 60_000;
-      const width = Number.isFinite(to0) && Number.isFinite(from0) ? Math.max(0, to0 - from0) : 0;
-      const patch = {
-        promisedFrom: new Date(to - width).toISOString(),
-        promisedTo: new Date(to).toISOString(),
-        delayMinutes: (d.delayMinutes ?? 0) + minutes,
-      };
-      // rev is the live cursor: the shopper's order page re-reads on it
-      await tx`
-        update orders set delivery = delivery || ${tx.json(patch)}, rev = rev + 1, updated_at = now()
-        where tenant_id = ${t.id} and id = ${id}
-      `;
-      await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
-      await emitAdminTx(tx, t.id, 'order.changed', id);
-      const notified = await enqueueOrderMessageTx(tx, t.id, id, 'delayed', {
-        occurrence: String(to),
-      });
-      await audit(tx, t.id, m, {
-        action: 'order.delayed',
-        entity: 'order',
-        entityId: id,
-        summary: `pedido #${cur.number}: atrasou ${minutes} min`,
-        before: { promisedFrom: d.promisedFrom ?? null, promisedTo: d.promisedTo ?? null },
-        after: patch,
-      });
+      const { notified } = await delayOrderTx(tx, t.id, m, id, cur, minutes);
       // whether the shopper hears of it: the store's WhatsApp sends this step to their number
       return { status: 200, body: { order: await loadOrderView(tx, t.id, id), notified } };
     }),
@@ -957,4 +962,52 @@ export function mountOrders(d: AdminDeps) {
       };
     })(c);
   });
+}
+
+/**
+ * "Atrasou": the promise moves `minutes` later (from now, if already past; the window keeps its
+ * width), the shopper's page re-reads, and the store's WhatsApp says so. Freio's late notice
+ * (admin/late-orders.ts) runs the same path, with its apology coupon on the message.
+ */
+export async function delayOrderTx(
+  tx: Sql,
+  tenantId: string,
+  actor: Pick<Merchant, 'name'> & { userId: string | null },
+  id: string,
+  cur: { number: number; delivery: OrderView['delivery'] },
+  minutes: number,
+  apology: { code: string; words: string } | null = null,
+): Promise<{ notified: boolean }> {
+  const d = cur.delivery;
+  const now = Date.now();
+  const to0 = Date.parse(d.promisedTo ?? '');
+  const from0 = Date.parse(d.promisedFrom ?? '');
+  // a promise already past starts again from now; the window keeps its width
+  const to = (Number.isFinite(to0) ? Math.max(to0, now) : now) + minutes * 60_000;
+  const width = Number.isFinite(to0) && Number.isFinite(from0) ? Math.max(0, to0 - from0) : 0;
+  const patch = {
+    promisedFrom: new Date(to - width).toISOString(),
+    promisedTo: new Date(to).toISOString(),
+    delayMinutes: (d.delayMinutes ?? 0) + minutes,
+  };
+  // rev is the live cursor: the shopper's order page re-reads on it
+  await tx`
+    update orders set delivery = delivery || ${tx.json(patch)}, rev = rev + 1, updated_at = now()
+    where tenant_id = ${tenantId} and id = ${id}
+  `;
+  await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
+  await emitAdminTx(tx, tenantId, 'order.changed', id);
+  const notified = await enqueueOrderMessageTx(tx, tenantId, id, 'delayed', {
+    occurrence: String(to),
+    ...(apology ? { apology } : {}),
+  });
+  await audit(tx, tenantId, actor, {
+    action: 'order.delayed',
+    entity: 'order',
+    entityId: id,
+    summary: `pedido #${cur.number}: atrasou ${minutes} min${apology ? `, cupom ${apology.code}` : ''}`,
+    before: { promisedFrom: d.promisedFrom ?? null, promisedTo: d.promisedTo ?? null },
+    after: patch,
+  });
+  return { notified };
 }

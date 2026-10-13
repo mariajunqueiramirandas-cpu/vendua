@@ -1,3 +1,4 @@
+import { deliveryPaused } from './freio.ts';
 import type { StorefrontTokens, TemplateSet } from '@vendua/templates';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
@@ -119,18 +120,51 @@ export function composeNotices(
   }
 
   // high_demand (Phase 1b): a kind no Kernel knows specially — it reaches every
-  // storefront, rebuilt or not, through the generic system.Notice path
-  if (settings?.demand_level === 'high' && derived.status !== 'paused') {
-    const prep = settings.prep_time_minutes;
+  // storefront, rebuilt or not, through the generic system.Notice path. Freio (0125) raises it
+  // from the kitchen's own queue too, with the wait a new order really has.
+  const freioBusy =
+    (settings?.freio_mode ?? 'suggest') !== 'off' &&
+    !!settings?.freio_level &&
+    settings.freio_level !== 'normal';
+  if ((settings?.demand_level === 'high' || freioBusy) && derived.status !== 'paused') {
+    const prep = settings!.prep_time_minutes;
+    const wait = prep + (settings!.freio_backlog_minutes ?? 0);
     notices.push({
       id: `${tenantSlug}:high_demand`,
       kind: 'high_demand',
       severity: 'warning',
       title: 'Muitos pedidos agora',
-      body: `O preparo está levando mais que os ~${prep} min de sempre. Seu pedido entra na fila normalmente.`,
+      body:
+        wait > prep
+          ? `Um pedido novo está levando ~${wait} min para ficar pronto. Seu pedido entra na fila normalmente.`
+          : `O preparo está levando mais que os ~${prep} min de sempre. Seu pedido entra na fila normalmente.`,
       dismissible: true,
       priority: 40,
-      payload: { prepTimeMinutes: prep },
+      payload: { prepTimeMinutes: wait },
+    });
+  }
+
+  // Freio: delivery braked for a while, pickup open with its honest time
+  const paused = deliveryPaused(settings);
+  if (paused && derived.status === 'open' && (settings?.delivery_enabled ?? true)) {
+    const wait = (settings?.prep_time_minutes ?? 30) + (settings?.freio_backlog_minutes ?? 0);
+    const until = paused.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: tz,
+    });
+    notices.push({
+      id: `${tenantSlug}:delivery_paused`,
+      kind: 'delivery_paused',
+      severity: 'warning',
+      title: `Entregas voltam às ~${until}`,
+      body:
+        settings?.pickup_enabled === false
+          ? 'A cozinha está cheia agora.'
+          : `A cozinha está cheia agora. A retirada continua, em ~${wait} min.`,
+      dismissible: true,
+      priority: 45,
+      payload: { deliveryPausedUntil: paused.toISOString() },
     });
   }
 

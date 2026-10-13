@@ -67,6 +67,8 @@ export interface OrderFacts {
   /** encomenda date YYYY-MM-DD */
   scheduledFor: string | null;
   timezone: string;
+  /** Freio's late notice: the apology coupon on the delay message */
+  apology?: { code: string; words: string } | null;
   /** the money this refund gave back; `full` when nothing paid is left */
   refund?: { cents: number; full: boolean; online: boolean } | null;
   /** the order's status-only page on the store's site (`/pedido/<id>?t=vot.…`) */
@@ -132,7 +134,11 @@ function stepText(event: OrderEvent, o: OrderFacts): string | null {
     }
     case 'delayed': {
       const when = promise(o);
-      return when ? `Seu pedido ${n} vai atrasar um pouquinho, desculpe 🙏 Agora ${when}.` : null;
+      if (!when) return null;
+      const sorry = o.apology
+        ? ` Pra compensar, seu próximo pedido tem ${o.apology.words}: cupom ${o.apology.code}.`
+        : '';
+      return `Seu pedido ${n} vai atrasar um pouquinho, desculpe 🙏 Agora ${when}.${sorry}`;
     }
     case 'preparing':
       return `Seu pedido ${n} está sendo preparado 👩‍🍳`;
@@ -314,7 +320,12 @@ export async function enqueueOrderMessageTx(
   tenantId: string,
   orderId: string,
   event: OrderEvent,
-  extra: { occurrence?: string; refund?: OrderFacts['refund'] } = {},
+  extra: {
+    occurrence?: string;
+    refund?: OrderFacts['refund'];
+    /** Freio's late notice: the apology coupon, said on the delay message */
+    apology?: { code: string; words: string };
+  } = {},
 ): Promise<boolean> {
   try {
     return await (
@@ -327,7 +338,11 @@ export async function enqueueOrderMessageTx(
       const phone = facts?.phone ?? null;
       if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
       if (await optedOutTx(sp, tenantId, phone)) return false;
-      let text = renderOrderMessage(event, { ...facts, refund: extra.refund ?? null });
+      let text = renderOrderMessage(event, {
+        ...facts,
+        refund: extra.refund ?? null,
+        apology: extra.apology ?? null,
+      });
       if (!text) return false;
       // a delivered order may offer "o de sempre" once, to someone who hasn't asked yet
       if (event === 'delivered' && (await usualInviteTx(sp, tenantId, phone)))

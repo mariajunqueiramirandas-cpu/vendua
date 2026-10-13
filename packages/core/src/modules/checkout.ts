@@ -1,3 +1,4 @@
+import { deliveryPaused } from './freio.ts';
 import { HttpError } from '../platform/http.ts';
 import { validPhone } from './customer.ts';
 import { deliveryPricing, validateLine, type CartView } from './cart.ts';
@@ -191,6 +192,12 @@ export function validateCheckout<Z extends ZoneLike>(
     if (!(settings?.delivery_enabled ?? true)) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');
     }
+    // Freio (0125): delivery braked for a while; pickup stays open
+    const paused = deliveryPaused(settings);
+    if (paused)
+      throw new HttpError(409, 'DELIVERY_PAUSED', 'delivery is paused for now', {
+        until: paused.toISOString(),
+      });
     const match = resolveDelivery(
       zones,
       {
