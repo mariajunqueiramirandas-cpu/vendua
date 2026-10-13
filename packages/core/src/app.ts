@@ -254,6 +254,7 @@ import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountInstanceReset } from './modules/instance-reset.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
+import { mountControlPartners } from './modules/control-partners.ts';
 import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
 import { mountDiscord } from './modules/discord/routes.ts';
 import { recordStaffEventTx } from './modules/staff-events.ts';
@@ -3153,6 +3154,20 @@ export function createApp({
     app,
     sql,
     controlGate,
+    trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  });
+  mountControlPartners({
+    app,
+    sql,
+    controlGate,
+    idemKey: (c) => {
+      const key = c.req.header('idempotency-key');
+      if (!key)
+        throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+      if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+      return key;
+    },
     trustProxy,
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
   });

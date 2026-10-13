@@ -39,6 +39,8 @@ export interface Draft {
   byCode: boolean;
   /** a signup coupon the owner applied (or the site's ?cupom=); Core checks it again at the end */
   coupon: string | null;
+  /** a referral link's code (?indica= a store's address, ?parceiro= a partner's code) */
+  referral?: string | null;
   /** after POST /signup: the store exists and this device is signed in to it */
   created: {
     store: StoreRef;
@@ -64,6 +66,7 @@ export const EMPTY: Draft = {
   method: 'pix',
   byCode: false,
   coupon: null,
+  referral: null,
   created: null,
 };
 

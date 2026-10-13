@@ -48,6 +48,7 @@ import {
   withEffects,
   type BillingCtx,
 } from './subscriptions.ts';
+import { applyPixCredits } from './referrals.ts';
 
 const TICK_MS = 10 * 60_000;
 /** MP charges a card on the period's last day; give its webhook a day before "em atraso" */
@@ -102,6 +103,7 @@ export async function runBillingTick(sql: Sql, o: BillingJobOpts, now: Date) {
     ['upgrades', expireUpgrades],
     ['downgrades', applyDowngrades],
     ['past_due', markPastDue],
+    ['credits', (sql, base, now) => applyPixCredits(sql, base, now)],
     ['renewals', issueRenewals],
     ['reminders', sendReminders],
     ['trial_reminders', remindTrials],

@@ -40,6 +40,7 @@ export const qk = {
   activity: ['activity'] as const,
   activityOf: (kind: string) => ['activity', kind] as const,
   account: ['account'] as const,
+  referrals: ['account', 'referrals'] as const,
   appearance: ['appearance'] as const,
   sessions: ['me', 'sessions'] as const,
   statement: (month: string) => ['payments', 'statement', month] as const,
@@ -47,6 +48,8 @@ export const qk = {
   helpStatus: ['help', 'status'] as const,
   signupPlans: ['signup', 'plans'] as const,
   signupCoupon: (code: string, planId: string) => ['signup', 'coupon', code, planId] as const,
+  signupReferral: (code: string, planId: string, token: string) =>
+    ['signup', 'referral', code, planId, token] as const,
   imports: ['imports'] as const,
   importOf: (id: string) => ['imports', id] as const,
   // every Vendedor screen under one root: the live topic `vendedor` refreshes them all

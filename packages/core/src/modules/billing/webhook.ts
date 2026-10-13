@@ -58,6 +58,7 @@ export async function handleBillingWebhook(
             status: sp.status as 'approved' | 'rejected',
             amountCents: sp.amountCents,
             date: validDate(sp.date) ?? now,
+            paymentId: sp.paymentId,
           },
           now,
         ),

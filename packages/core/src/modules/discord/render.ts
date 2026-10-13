@@ -598,6 +598,7 @@ function onboarding(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
           ? `teste grátis até ${dayMonthOf(created.data.trialEndsAt)}`
           : null,
         created.data.coupon ? `cupom ${esc(created.data.coupon)}` : null,
+        created.data.referral ? `indicação: ${esc(created.data.referral)}` : null,
       ]
         .filter(Boolean)
         .join(' · ')
@@ -749,6 +750,20 @@ function deploymentManual(ev: Ev<'deployment.manual'>, ctx: RenderCtx): Rendered
         description: d.releaseId ? `release ${d.releaseId.slice(0, 8)}` : '',
       },
       row(linkButton('frota no CRM', ctx.crm('/lojas/frota'))),
+    ),
+  };
+}
+
+function partnerApplied(ev: Ev<'partner.applied'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  return {
+    card: card(
+      ev,
+      {
+        title: `🤝 ${esc(d.name)} quer indicar lojas`,
+        description: [esc(d.kind), d.city ? esc(d.city) : null].filter(Boolean).join(' · '),
+      },
+      row(linkButton('ver parceiros', ctx.crm('/lojas/parceiros'))),
     ),
   };
 }
@@ -1208,6 +1223,7 @@ const STANDALONE: Standalone = {
   'deployment.failed': deploymentFailed,
   'deployment.manual': deploymentManual,
   'store.live': storeLive,
+  'partner.applied': partnerApplied,
   'agent.run_failed': runFailed,
   'agent.cost_cap': costCap,
   'system.boot': boot,

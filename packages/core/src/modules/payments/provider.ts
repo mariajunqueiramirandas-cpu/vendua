@@ -241,6 +241,12 @@ export interface PaymentProvider {
   platformPix(req: PixRequest): Promise<ProviderPayment>;
   platformGetPayment(id: string): Promise<ProviderPayment>;
   platformCancelPayment(id: string): Promise<ProviderPayment>;
+  /** give back a payment to Venduá's own account (a free month owed on a card plan) */
+  platformRefund(
+    paymentId: string,
+    amountCents: number | null,
+    idempotencyKey: string,
+  ): Promise<ProviderRefund>;
   createSubscription(req: SubscriptionRequest): Promise<ProviderSubscription>;
   getSubscription(id: string): Promise<ProviderSubscription>;
   updateSubscription(

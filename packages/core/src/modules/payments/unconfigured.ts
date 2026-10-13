@@ -26,6 +26,7 @@ export class UnconfiguredProvider implements PaymentProvider {
   platformPix = off;
   platformGetPayment = off;
   platformCancelPayment = off;
+  platformRefund = off;
   createSubscription = off;
   getSubscription = off;
   updateSubscription = off;

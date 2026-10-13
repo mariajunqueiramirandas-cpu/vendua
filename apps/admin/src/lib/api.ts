@@ -2372,6 +2372,11 @@ export const api = {
         priceCents: number;
         discountedCents: number | null;
       }>(`/signup/coupon?code=${encodeURIComponent(code)}&planId=${encodeURIComponent(planId)}`),
+    /** who a referral link names; with the confirmed phone, whether its welcome month holds */
+    referral: (code: string, planId: string | null, signupToken: string | null) =>
+      get<{ referral: { kind: 'store' | 'partner'; name: string; welcomeDays: number } }>(
+        `/signup/referral?code=${encodeURIComponent(code)}${planId ? `&planId=${encodeURIComponent(planId)}` : ''}${signupToken ? `&signupToken=${encodeURIComponent(signupToken)}` : ''}`,
+      ),
     otpStart: (phone: string) =>
       send<{ sent: boolean; devCode?: string; expiresAt: string }>('POST', '/signup/otp/start', {
         phone,
@@ -2398,6 +2403,8 @@ export const api = {
       accessCode?: string;
       /** a signup coupon (ADR 0042): its free days replace `trial` and the payment method */
       coupon?: string;
+      /** a referral link's code; a store's gives a welcome month (Core decides) */
+      referral?: string;
     }) => sendPix<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),
@@ -2752,6 +2759,16 @@ export const api = {
     return get<{ entries: ActivityEntry[]; next: number | null }>(`/activity?${s}`);
   },
   account: () => get<Account>('/account'),
+  /** Indique e ganhe: the store's link code and the stores it brought (migration 0120) */
+  referrals: () =>
+    get<{
+      code: string;
+      stores: { name: string; joinedAt: string; rewarded: boolean }[];
+      pendingMonths: number;
+      appliedMonths: number;
+      welcomeDays: number;
+      referredBy: string | null;
+    }>('/account/referrals'),
   startSubscription: (p: {
     planId: string;
     method: 'card' | 'pix';

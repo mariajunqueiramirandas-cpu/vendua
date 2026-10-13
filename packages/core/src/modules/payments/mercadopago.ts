@@ -616,6 +616,10 @@ export class MercadoPagoProvider implements PaymentProvider {
     return this.cancelPayment(this.platform(), id);
   }
 
+  async platformRefund(paymentId: string, amountCents: number | null, idempotencyKey: string) {
+    return this.refund(this.platform(), paymentId, amountCents, idempotencyKey);
+  }
+
   async createSubscription(req: SubscriptionRequest) {
     return mapSubscription(
       await this.call(

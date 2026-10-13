@@ -58,6 +58,7 @@ const AiUsagePage = lazy(() => import('@/features/ai/UsagePage.tsx'));
 const AiModelsPage = lazy(() => import('@/features/ai/ModelsPage.tsx'));
 const AiVoicePage = lazy(() => import('@/features/ai/VoicePage.tsx'));
 const BillingPlansPage = lazy(() => import('@/features/stores/PlansPage.tsx'));
+const PartnersPage = lazy(() => import('@/features/stores/PartnersPage.tsx'));
 const IncidentsPage = lazy(() => import('@/features/stores/IncidentsPage.tsx'));
 const SiteTasksPage = lazy(() => import('@/features/sites/SiteTasksPage.tsx'));
 const SiteTaskPage = lazy(() => import('@/features/sites/SiteTaskPage.tsx'));
@@ -152,6 +153,7 @@ export function AppRoutes() {
         <Route path="/agente/estudio" element={<StudioPage />} />
         <Route path="/lojas" element={<StoresPage />} />
         <Route path="/lojas/planos" element={<BillingPlansPage />} />
+        <Route path="/lojas/parceiros" element={<PartnersPage />} />
         <Route path="/lojas/incidentes" element={<IncidentsPage />} />
         <Route path="/lojas/frota" element={<FleetPage />} />
         <Route path="/lojas/sites" element={<SiteTasksPage />} />

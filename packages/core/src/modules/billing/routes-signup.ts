@@ -24,6 +24,13 @@ import {
   type CouponTerms,
 } from './coupons.ts';
 import { mountBillingDev } from './dev-routes.ts';
+import {
+  previewReferral,
+  welcomeFor,
+  recordReferralTx,
+  referralCodeOr,
+  WELCOME_DAYS,
+} from './referrals.ts';
 import { validDocument, validEmail } from './input.ts';
 import {
   heldPlans,
@@ -142,6 +149,25 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     });
   });
 
+  // who a referral link names, before the store exists (migration 0120); with the confirmed
+  // phone, whether its welcome month still holds. On the code limit: slugs are public, partner
+  // codes are not secret either, but a scan is still a scan.
+  admin.get('/signup/referral', codeLimit, async (c) => {
+    c.header('cache-control', 'no-store');
+    const code = referralCodeOr(c.req.query('code') ?? '');
+    const r = code ? await previewReferral(sql, code) : null;
+    if (!r) throw new HttpError(404, 'REFERRAL_UNKNOWN', 'no store or partner has this code');
+    const phone = readSignupToken(d.sessionSecret, c.req.query('signupToken'));
+    const plan = c.req.query('planId')
+      ? await publicPlanOr422(sql, c.req.query('planId'), null)
+      : null;
+    let welcomeDays = 0;
+    if (await welcomeFor(sql, r, phone, phone ? phoneLockKey(phone) : null))
+      welcomeDays =
+        WELCOME_DAYS + (plan && !(phone && (await phoneHadTrial(sql, phone))) ? plan.trial_days : 0);
+    return c.json({ referral: { kind: r.kind, name: r.name, welcomeDays } });
+  });
+
   admin.post('/signup/otp/start', codeLimit, async (c) => {
     const body = await bodyJson(c);
     const phone = validAdminPhone(body.phone);
@@ -190,6 +216,9 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       throw new HttpError(422, 'BAD_REQUEST', 'trial must be true or false', { field: 'trial' });
     // a signup coupon (ADR 0042): free days and/or a discount on the first paid months
     const couponCode = couponCodeOr422(body.coupon);
+    // a referral link's code (migration 0120): a store's slug or a partner's code; one that is
+    // no one's (a typo, a paused partner) is dropped, never in the way of the signup
+    const referralCode = referralCodeOr(body.referral);
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
@@ -218,10 +247,18 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         ? await previewCoupon(sql, couponCode, plan)
         : null;
     const couponDays = coupon?.freeDays ?? 0;
-    // a coupon's free days are its own free first period: the plan's trial, its one-per-phone
-    // rule and `trial` don't apply (the owner's call)
-    const trial = body.trial === true || couponDays > 0;
-    if (body.trial === true && couponDays === 0 && (manual || plan.trial_days <= 0))
+    // a store's referral gives the trial (when this phone has it still) plus a month, once per
+    // WhatsApp; a coupon's free days win over it (the referrer still gets its month)
+    const referral = !owned && referralCode ? await previewReferral(sql, referralCode) : null;
+    const welcomeDays =
+      !couponDays && !manual && (await welcomeFor(sql, referral, phone, phoneLockKey(phone)))
+        ? WELCOME_DAYS + ((await phoneHadTrial(sql, phone)) ? 0 : plan.trial_days)
+        : 0;
+    // free days (a coupon's or a referral's) are their own free first period: the plan's trial,
+    // its one-per-phone rule and `trial` don't apply (the owner's call)
+    const freeDays = couponDays || welcomeDays;
+    const trial = body.trial === true || freeDays > 0;
+    if (body.trial === true && freeDays === 0 && (manual || plan.trial_days <= 0))
       throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
         field: 'trial',
       });
@@ -246,7 +283,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     // a replay of a store already made goes through even if signup closed since
     if (!owned) await signupOpenOr503(d, 'create');
     // one trial per owner phone; a replay of this very signup finds its store first
-    if (!owned && trial && !couponDays && (await phoneHadTrial(sql, phone))) throw trialUsed();
+    if (!owned && trial && !freeDays && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
@@ -296,7 +333,22 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
           const redeemed = couponCode
             ? await redeemCouponTx(tx, tenantId, couponCode, phoneLockKey(phone), plan.id)
             : null;
-          const days = redeemed?.free_days ?? 0;
+          // under the same lock: the referral, and whether its welcome month still holds
+          const referred = referralCode
+            ? await recordReferralTx(
+                tx,
+                tenantId,
+                referralCode,
+                phoneVariants(phone),
+                phoneLockKey(phone),
+                welcomeDays,
+              )
+            : null;
+          if (welcomeDays > 0 && referred !== 'ok')
+            throw new HttpError(409, 'REFERRAL_CHANGED', 'the referral changed — try again', {
+              field: 'referral',
+            });
+          const days = redeemed?.free_days || (referred === 'ok' ? welcomeDays : 0);
           // under the phone's lock, so two signups at once can't both start a trial
           let trialEndsAt: string | null = null;
           if (trial) {
@@ -324,9 +376,11 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
                 action: 'store.signup',
                 entity: 'account',
                 entityId: tenantId,
-                summary: days
-                  ? `criou a loja no plano ${plan.name} com o cupom ${redeemed!.code} (${describeCoupon(couponTerms(redeemed!))})`
-                  : `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
+                summary: redeemed
+                  ? `criou a loja no plano ${plan.name} com o cupom ${redeemed.code} (${describeCoupon(couponTerms(redeemed))})`
+                  : days
+                    ? `criou a loja no plano ${plan.name}, com ${days} dias grátis pela indicação de ${referral?.name ?? 'uma loja'}`
+                    : `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
                 after: { planId: plan.id, trialEndsAt, coupon: redeemed?.code ?? null },
               },
             );
@@ -346,6 +400,10 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               coupon: redeemed
                 ? `${redeemed.code} (${describeCoupon(couponTerms(redeemed))})`
                 : null,
+              referral:
+                referral && referred && referred !== 'invalid' && referred !== 'self'
+                  ? `${referral.kind === 'store' ? 'loja' : 'parceiro'} ${referral.name}`
+                  : null,
             },
             { tenantId, dedupeKey: `store.created:${tenantId}` },
           );
@@ -368,7 +426,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       ownerName,
       manual,
       trial,
-      couponDays,
+      couponDays: freeDays,
       phone,
     }).catch(async (err: unknown) => {
       // the store exists but its first charge didn't go out: the team hears MP's own reason

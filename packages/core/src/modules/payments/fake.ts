@@ -352,6 +352,12 @@ export class FakeProvider implements PaymentProvider {
     return this.cancel(id, true);
   }
 
+  async platformRefund(paymentId: string, amountCents: number | null, idem: string) {
+    const p = this.payments.get(paymentId);
+    if (!p || p.token !== 'platform') throw new ProviderError('not_found', 'no such payment', 404);
+    return this.refund('platform', paymentId, amountCents, idem);
+  }
+
   async platformGetPayment(id: string) {
     const p = this.payments.get(id);
     if (!p || p.token !== 'platform') throw new ProviderError('not_found', 'no such payment', 404);
@@ -398,12 +404,32 @@ export class FakeProvider implements PaymentProvider {
     if (!s) throw new Error(`no subscription ${id}`);
     if (status === 'approved') s.status = 'authorized';
     s.nextPaymentDate = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    // an approved charge is a real payment on Venduá's account, as in MP (refundable)
+    const backing =
+      status === 'approved'
+        ? this.pay(
+            'platform',
+            {
+              amountCents: s.amountCents,
+              description: s.req?.reason ?? 'assinatura',
+              externalReference: s.externalReference,
+              idempotencyKey: `sub-charge:${this.id('K')}`,
+              expiresAt: new Date(Date.now() + 86_400_000),
+              applicationFeeCents: 0,
+            } as unknown as PixRequest,
+            'card',
+          )
+        : null;
+    if (backing) {
+      backing.status = 'approved';
+      backing.approvedAt = new Date().toISOString();
+    }
     const pay: ProviderSubscriptionPayment = {
       id: this.id('A'),
       subscriptionId: id,
       status,
       amountCents: s.amountCents,
-      paymentId: null,
+      paymentId: backing?.id ?? null,
       date: new Date().toISOString(),
     };
     this.subscriptionPayments.set(pay.id, pay);

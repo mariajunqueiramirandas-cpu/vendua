@@ -33,6 +33,7 @@ import {
 import { formatBRL, planRow, tenantPlan, type PlanRow } from './plans.ts';
 import { PACK_DAYS } from './ai-allowance.ts';
 import { periodPrice } from './coupons.ts';
+import { applyCardCreditTx, referralOnPaidTx } from './referrals.ts';
 
 // The plan's state machine (docs/roadmap.md, Phase 3). One subscriptions row per store:
 //   pending ─(first invoice paid / first card charge)→ active ─(period ended unpaid)→ past_due
@@ -1133,6 +1134,8 @@ export async function markInvoicePaid(
       await applyPendingPlan(ctx, tx, tenantId, sub.pending_plan_id!);
   }
   await recordPaid(tx, tenantId, inv, o.method ?? inv.method);
+  // a partner's commission, and the referring store's free month on the first paid month
+  await referralOnPaidTx(tx, inv);
   await emitAdminTx(tx, tenantId, 'billing', inv.id);
   return true;
 }
@@ -1282,7 +1285,14 @@ export async function recordCardCharge(
   ctx: BillingCtx,
   tx: Sql,
   tenantId: string,
-  charge: { id: string; status: 'approved' | 'rejected'; amountCents: number; date: Date },
+  charge: {
+    id: string;
+    status: 'approved' | 'rejected';
+    amountCents: number;
+    date: Date;
+    /** the Mercado Pago payment behind the charge (a free month owed refunds it) */
+    paymentId?: string | null;
+  },
   now: Date,
 ) {
   const sub = await lockSub(tx, tenantId);
@@ -1351,8 +1361,18 @@ export async function recordCardCharge(
       status = ${charge.status === 'approved' ? 'open' : 'failed'}
     where id = ${inv.id}
   `;
-  if (charge.status === 'approved')
+  if (charge.status === 'approved') {
+    // a free month owed (a store it referred paid) gives this charge back, before the
+    // commission and referral bookkeeping read what was paid
+    await applyCardCreditTx(
+      ctx,
+      tx,
+      tenantId,
+      { ...inv, amount_cents: charge.amountCents },
+      charge.paymentId ?? null,
+    );
     await markInvoicePaid(ctx, tx, tenantId, inv.id, charge.date, now);
+  }
   else {
     await emitAdminTx(tx, tenantId, 'billing', inv.id);
     const plan = await planOrThrow(tx, inv.plan_id);

@@ -3,6 +3,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { accountView } from '../modules/billing/account.ts';
+import { referralSummary } from '../modules/billing/referrals.ts';
 import { validDocument, validEmail } from '../modules/billing/input.ts';
 import { heldPlans, publicPlanOr422, requireFeature } from '../modules/billing/plans.ts';
 import {
@@ -74,6 +75,12 @@ export function mountAccount(d: AdminDeps) {
   admin.get(
     '/account',
     named('account').read('owner', (tx, t) => view(tx, t)),
+  );
+
+  // Indique e ganhe: the store's link and the stores it brought (migration 0120)
+  admin.get(
+    '/account/referrals',
+    named('referrals').read('manager', (tx, t) => referralSummary(tx, t.id)),
   );
 
   admin.post(
