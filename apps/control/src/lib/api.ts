@@ -1012,6 +1012,46 @@ export interface AiPack {
   public: boolean;
   sort: number;
 }
+/** a coupon a new owner types on signup's last step (ADR 0042) */
+export interface SignupCoupon {
+  id: string;
+  code: string;
+  note: string | null;
+  /** null = every plan */
+  planIds: string[] | null;
+  freeDays: number;
+  /** percent: 1–99; amount: cents off each discounted month */
+  discount: { kind: 'percent' | 'amount'; value: number; months: number } | null;
+  /** Core's words for what it gives ("30 dias grátis e 50% de desconto…") */
+  label: string;
+  /** null = unlimited */
+  maxUses: number | null;
+  uses: number;
+  expiresAt: string | null;
+  active: boolean;
+  createdAt: string;
+  /** the latest stores that signed up with it */
+  stores: { id: string; name: string; slug: string; at: string }[];
+}
+export interface NewSignupCoupon {
+  /** typed; omitted = generated */
+  code?: string;
+  /** generated codes only: how many, each on these terms */
+  quantity?: number;
+  prefix?: string;
+  note?: string;
+  planIds?: string[] | null;
+  freeDays?: number;
+  discount?: SignupCoupon['discount'];
+  maxUses?: number | null;
+  expiresAt?: string | null;
+}
+export interface SignupCouponPatch {
+  active?: boolean;
+  note?: string | null;
+  maxUses?: number | null;
+  expiresAt?: string | null;
+}
 export interface AiPackPatch {
   name?: string;
   priceCents?: number;
@@ -1042,6 +1082,17 @@ const fleet = {
   signupReadiness: () => req<SignupReadiness>('/signup'),
   patchAiPack: (id: string, patch: AiPackPatch) =>
     req<{ pack: AiPack }>(`/ai-packs/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  signupCoupons: () => req<{ coupons: SignupCoupon[] }>('/signup-coupons'),
+  createSignupCoupons: (body: NewSignupCoupon) =>
+    req<{ coupons: SignupCoupon[] }>('/signup-coupons', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  patchSignupCoupon: (id: string, patch: SignupCouponPatch) =>
+    req<{ coupon: SignupCoupon }>(`/signup-coupons/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),

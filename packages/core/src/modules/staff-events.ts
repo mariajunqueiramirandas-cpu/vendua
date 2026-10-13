@@ -252,6 +252,8 @@ export interface StaffEventMap {
     segment: Opt<string>;
     /** the store started on a free trial that ends then (ADR 0025) */
     trialEndsAt?: Opt<string>;
+    /** the signup coupon and what it gave, "AMIGO-7KQ2 (30 dias grátis)" (ADR 0042) */
+    coupon?: Opt<string>;
   };
   'store.onboarding': { step: OnboardingStep };
   'billing.paid': {

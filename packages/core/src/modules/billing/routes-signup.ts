@@ -14,6 +14,15 @@ import { log } from '../../platform/log.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
 import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
+import {
+  couponCodeOr422,
+  couponTerms,
+  describeCoupon,
+  previewCoupon,
+  redeemCouponTx,
+  storeCoupon,
+  type CouponTerms,
+} from './coupons.ts';
 import { mountBillingDev } from './dev-routes.ts';
 import { validDocument, validEmail } from './input.ts';
 import {
@@ -111,6 +120,28 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     return c.json(await slugStatus(sql, c.req.query('slug') ?? '', d.storeDomain));
   });
 
+  // what a coupon gives, before the store exists (ADR 0042); the per-phone rule waits for POST
+  // /signup. On the code limit: a one-time code is worth guessing.
+  admin.get('/signup/coupon', codeLimit, async (c) => {
+    c.header('cache-control', 'no-store');
+    const code = couponCodeOr422(c.req.query('code') ?? '');
+    if (!code) throw new HttpError(422, 'COUPON_INVALID', 'type the coupon', { field: 'coupon' });
+    const planId = c.req.query('planId');
+    const plan = planId ? await publicPlanOr422(sql, planId, null) : null;
+    const p = await previewCoupon(sql, code, plan);
+    return c.json({
+      coupon: {
+        code: p.code,
+        freeDays: p.freeDays,
+        discount: p.discount,
+        planIds: p.planIds,
+        label: describeCoupon(p),
+      },
+      // on that plan: each discounted month's price, computed here (clients never compute money)
+      ...(plan ? { priceCents: plan.price_cents, discountedCents: p.discountedCents } : {}),
+    });
+  });
+
   admin.post('/signup/otp/start', codeLimit, async (c) => {
     const body = await bodyJson(c);
     const phone = validAdminPhone(body.phone);
@@ -157,14 +188,8 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     // `trial: true` starts a plan's free trial (ADR 0025): no payment method asked
     if (body.trial !== undefined && typeof body.trial !== 'boolean')
       throw new HttpError(422, 'BAD_REQUEST', 'trial must be true or false', { field: 'trial' });
-    const trial = body.trial === true;
-    if (trial && (manual || plan.trial_days <= 0))
-      throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
-        field: 'trial',
-      });
-    if (!manual && !trial && body.method !== 'card' && body.method !== 'pix')
-      throw new HttpError(422, 'BAD_REQUEST', 'method must be card or pix', { field: 'method' });
-    const method: 'card' | 'pix' = manual || body.method !== 'card' ? 'pix' : 'card';
+    // a signup coupon (ADR 0042): free days and/or a discount on the first paid months
+    const couponCode = couponCodeOr422(body.coupon);
     const storeName = text(body.storeName, 'storeName', 60, 2);
     const ownerName = text(body.ownerName, 'ownerName', 80, 2);
     const email = validEmail(body.email, 'email');
@@ -183,6 +208,31 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       });
 
     let owned = await ownedStore(sql, phone, slug);
+    // a replay keeps the coupon its store redeemed (a one-time code reads as used up by now)
+    const coupon: CouponTerms | null = owned
+      ? await withTenant(sql, owned.tenant_id, async (tx) => {
+          const r = await storeCoupon(tx, owned!.tenant_id);
+          return r ? couponTerms(r) : null;
+        })
+      : couponCode
+        ? await previewCoupon(sql, couponCode, plan)
+        : null;
+    const couponDays = coupon?.freeDays ?? 0;
+    // a coupon's free days are its own free first period: the plan's trial, its one-per-phone
+    // rule and `trial` don't apply (the owner's call)
+    const trial = body.trial === true || couponDays > 0;
+    if (body.trial === true && couponDays === 0 && (manual || plan.trial_days <= 0))
+      throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
+        field: 'trial',
+      });
+    // after free days the first Pix needs Mercado Pago, which an access code means there isn't
+    if (couponDays > 0 && manual)
+      throw new HttpError(422, 'COUPON_NEEDS_BILLING', 'free days need a paid plan, not an access code', {
+        field: 'coupon',
+      });
+    if (!manual && !trial && body.method !== 'card' && body.method !== 'pix')
+      throw new HttpError(422, 'BAD_REQUEST', 'method must be card or pix', { field: 'method' });
+    const method: 'card' | 'pix' = manual || body.method !== 'card' ? 'pix' : 'card';
     // a replay or a resumed signup may only ask again for the plan the store already holds
     openOr409(
       plan,
@@ -191,7 +241,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     // a replay of a store already made goes through even if signup closed since
     if (!owned) await signupOpenOr503(d, 'create');
     // one trial per owner phone; a replay of this very signup finds its store first
-    if (!owned && trial && (await phoneHadTrial(sql, phone))) throw trialUsed();
+    if (!owned && trial && !couponDays && (await phoneHadTrial(sql, phone))) throw trialUsed();
     if (!owned) {
       if ((await slugStatus(sql, slug, d.storeDomain)).reason === 'taken')
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
@@ -236,10 +286,16 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
             update store_settings set segment = ${segment}, onboarding = '{"from":"signup"}'::jsonb
             where tenant_id = ${tenantId}
           `;
+          // under the phone's lock: the coupon's uses and this phone's one use of it; a refusal
+          // rolls the store back with it
+          const redeemed = couponCode
+            ? await redeemCouponTx(tx, tenantId, couponCode, phoneLockKey(phone), plan.id)
+            : null;
+          const days = redeemed?.free_days ?? 0;
           // under the phone's lock, so two signups at once can't both start a trial
           let trialEndsAt: string | null = null;
           if (trial) {
-            if (await phoneHadTrial(tx, phone)) throw trialUsed();
+            if (!days && (await phoneHadTrial(tx, phone))) throw trialUsed();
             const next = await startTrial(tx, tenantId, {
               plan,
               payerEmail: email,
@@ -247,6 +303,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               provider: d.provider.name,
               now: new Date(),
               phone,
+              ...(days ? { days } : {}),
             });
             trialEndsAt = next.kind === 'trial' ? next.endsAt : null;
             const owner = (
@@ -262,8 +319,10 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
                 action: 'store.signup',
                 entity: 'account',
                 entityId: tenantId,
-                summary: `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
-                after: { planId: plan.id, trialEndsAt },
+                summary: days
+                  ? `criou a loja no plano ${plan.name} com o cupom ${redeemed!.code} (${describeCoupon(couponTerms(redeemed!))})`
+                  : `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
+                after: { planId: plan.id, trialEndsAt, coupon: redeemed?.code ?? null },
               },
             );
           }
@@ -279,6 +338,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               plan: plan.name,
               segment,
               trialEndsAt,
+              coupon: redeemed ? `${redeemed.code} (${describeCoupon(couponTerms(redeemed))})` : null,
             },
             { tenantId, dedupeKey: `store.created:${tenantId}` },
           );
@@ -301,6 +361,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
       ownerName,
       manual,
       trial,
+      couponDays,
       phone,
     }).catch(async (err: unknown) => {
       // the store exists but its first charge didn't go out: the team hears MP's own reason
@@ -472,6 +533,8 @@ async function ensureFirstCharge(
     ownerName: string;
     manual: boolean;
     trial: boolean;
+    /** a signup coupon's free days, in place of the plan's trial */
+    couponDays: number;
     /** the verified owner phone */
     phone: string;
   },
@@ -506,11 +569,11 @@ async function ensureFirstCharge(
           openOr409(plan, await heldPlans(tx, owner.tenant_id));
           // a store whose first charge failed, tried again as a trial, gets the trial
           if (o.trial) {
-            if (plan.trial_days <= 0)
+            if (plan.trial_days <= 0 && !o.couponDays)
               throw new HttpError(422, 'TRIAL_UNAVAILABLE', 'this plan has no free trial', {
                 field: 'trial',
               });
-            if (await phoneHadTrial(tx, o.phone)) throw trialUsed();
+            if (!o.couponDays && (await phoneHadTrial(tx, o.phone))) throw trialUsed();
             const next = await startTrial(tx, owner.tenant_id, {
               plan,
               payerEmail: o.email,
@@ -518,16 +581,20 @@ async function ensureFirstCharge(
               provider: d.provider.name,
               now,
               phone: o.phone,
+              ...(o.couponDays ? { days: o.couponDays } : {}),
             });
             await audit(tx, owner.tenant_id, actor, {
               action: 'store.signup',
               entity: 'account',
               entityId: owner.tenant_id,
-              summary: `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
+              summary: o.couponDays
+                ? `criou a loja no plano ${plan.name}, com ${o.couponDays} dias grátis do cupom`
+                : `criou a loja no plano ${plan.name}, com ${plan.trial_days} dias de teste grátis`,
               after: { planId: plan.id, trialEndsAt: next.kind === 'trial' ? next.endsAt : null },
             });
             return next;
           }
+          const coupon = await storeCoupon(tx, owner.tenant_id);
           const next = await startSubscription(ctx, tx, owner.tenant_id, {
             plan,
             method: o.method,
@@ -541,8 +608,12 @@ async function ensureFirstCharge(
             action: 'store.signup',
             entity: 'account',
             entityId: owner.tenant_id,
-            summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})`,
-            after: { planId: o.plan.id, method: o.manual ? 'manual' : o.method },
+            summary: `criou a loja no plano ${o.plan.name} (${o.manual ? 'código de acesso, pagamento confirmado pela equipe' : o.method === 'card' ? 'cartão' : 'Pix'})${coupon ? ` com o cupom ${coupon.code} (${describeCoupon(couponTerms(coupon))})` : ''}`,
+            after: {
+              planId: o.plan.id,
+              method: o.manual ? 'manual' : o.method,
+              coupon: coupon?.code ?? null,
+            },
           });
           return next;
         }

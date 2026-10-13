@@ -18,6 +18,8 @@ export interface InvoiceRow {
   number: number;
   plan_id: string;
   amount_cents: number;
+  /** what a signup coupon took off this invoice (0118) */
+  discount_cents: number;
   period_start: Date;
   period_end: Date;
   method: BillingMethod;
@@ -82,6 +84,8 @@ export async function upsertInvoice(
     start: Date;
     planId: string;
     amountCents: number;
+    /** what a signup coupon took off (coupons.ts periodPrice); 0 when none */
+    discountCents?: number;
     method: BillingMethod;
     dueAt: Date;
     reuse?: InvoiceRow | null;
@@ -107,7 +111,8 @@ export async function upsertInvoice(
     return (
       await tx<InvoiceRow[]>`
         update invoices set
-          plan_id = ${o.planId}, amount_cents = ${o.amountCents}, method = ${o.method},
+          plan_id = ${o.planId}, amount_cents = ${o.amountCents},
+          discount_cents = ${o.discountCents ?? 0}, method = ${o.method},
           provider = ${o.provider}, status = 'open',
           period_start = ${o.start}, period_end = ${o.start}::timestamptz + interval '1 month',
           due_at = ${o.dueAt},
@@ -122,12 +127,13 @@ export async function upsertInvoice(
   }
   return (
     await tx<InvoiceRow[]>`
-      insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
-                            method, status, provider, due_at)
+      insert into invoices (tenant_id, number, plan_id, amount_cents, discount_cents, period_start,
+                            period_end, method, status, provider, due_at)
       values (${o.tenantId},
               (select coalesce(max(number), 0) + 1 from invoices where tenant_id = ${o.tenantId}),
-              ${o.planId}, ${o.amountCents}, ${o.start}, ${o.start}::timestamptz + interval '1 month',
-              ${o.method}, 'open', ${o.provider}, ${o.dueAt})
+              ${o.planId}, ${o.amountCents}, ${o.discountCents ?? 0}, ${o.start},
+              ${o.start}::timestamptz + interval '1 month', ${o.method}, 'open', ${o.provider},
+              ${o.dueAt})
       returning *
     `
   )[0]!;
@@ -318,6 +324,8 @@ export function invoiceView(
     /** a paid pack whose conversations went in (false: paid without Duá, the team refunds it) */
     aiCredited: inv.kind === 'ai_pack' ? inv.ai_credited === true : null,
     amountCents: inv.amount_cents,
+    /** a signup coupon's discount, already off amountCents */
+    discountCents: inv.discount_cents ?? 0,
     periodStart: inv.period_start,
     periodEnd: inv.period_end,
     method: inv.method,

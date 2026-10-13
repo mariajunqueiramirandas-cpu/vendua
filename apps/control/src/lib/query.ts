@@ -49,6 +49,7 @@ export const qk = {
   siteTask: (id: string) => ['site-task', id] as const,
   controlPlans: () => ['control-plans'] as const,
   aiPacks: () => ['ai-packs'] as const,
+  signupCoupons: () => ['signup-coupons'] as const,
   signupReadiness: () => ['signup-readiness'] as const,
   incidents: () => ['incidents'] as const,
   fleetStatus: () => ['fleet-status'] as const,

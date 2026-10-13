@@ -597,6 +597,7 @@ function onboarding(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
         created.data.trialEndsAt
           ? `teste grátis até ${dayMonthOf(created.data.trialEndsAt)}`
           : null,
+        created.data.coupon ? `cupom ${esc(created.data.coupon)}` : null,
       ]
         .filter(Boolean)
         .join(' · ')

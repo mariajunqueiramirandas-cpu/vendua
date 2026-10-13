@@ -15,6 +15,7 @@ import {
 } from './domains.ts';
 import { invoiceView, type InvoiceRow } from './invoices.ts';
 import { aiAllowanceTx } from './ai-allowance.ts';
+import { couponView } from './coupons.ts';
 import { publicPlans, tenantPlan } from './plans.ts';
 import { publicAiPacks, upgradeLive, type SubRow } from './subscriptions.ts';
 
@@ -129,6 +130,8 @@ export async function accountView(
           trialEndsAt: sub.trial_ends_at,
         }
       : null,
+    // the coupon the store signed up with (ADR 0042) and its discounted months left
+    coupon: await couponView(tx, t.id),
     billing: {
       available: o.provider.platformConfigured,
       publicKey: platformPublicKey(o.provider),

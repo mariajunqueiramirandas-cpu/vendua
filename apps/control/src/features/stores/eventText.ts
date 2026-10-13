@@ -137,7 +137,11 @@ export function eventText(e: StoreEvent): string | null {
     case 'whatsapp.store':
       return join(WA_STEP[s(d.step) ?? ''] ? null : s(d.step), s(d.detail));
     case 'store.created':
-      return join(SOURCE[s(d.source) ?? ''] ?? s(d.source), s(d.plan) && `plano ${s(d.plan)}`);
+      return join(
+        SOURCE[s(d.source) ?? ''] ?? s(d.source),
+        s(d.plan) && `plano ${s(d.plan)}`,
+        s(d.coupon) && `cupom ${s(d.coupon)}`,
+      );
     case 'store.onboarding':
       return ONBOARDING[s(d.step) ?? ''] ?? s(d.step);
     case 'billing.paid':

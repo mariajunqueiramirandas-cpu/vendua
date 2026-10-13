@@ -4,7 +4,9 @@ import {
   api,
   type AiPackPatch,
   type IncidentSeverity,
+  type NewSignupCoupon,
   type PlanPatch,
+  type SignupCouponPatch,
   type SiteRequestStatus,
 } from '@/lib/api.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
@@ -48,6 +50,28 @@ export function usePatchAiPack() {
     onSuccess: () => toast.success('pacote salvo'),
     onError: (e) => toast.error(`não salvou: ${errorMessage(e)}`),
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.aiPacks() }),
+  });
+}
+
+export const useSignupCoupons = () =>
+  useQuery({ queryKey: qk.signupCoupons(), queryFn: api.signupCoupons, select: (r) => r.coupons });
+
+export function usePatchSignupCoupon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: SignupCouponPatch & { id: string }) =>
+      api.patchSignupCoupon(id, patch),
+    onSuccess: () => toast.success('cupom salvo'),
+    onError: (e) => toast.error(`não salvou: ${errorMessage(e)}`),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.signupCoupons() }),
+  });
+}
+
+export function useCreateSignupCoupons() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: NewSignupCoupon) => api.createSignupCoupons(body),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.signupCoupons() }),
   });
 }
 

@@ -32,11 +32,13 @@ import {
 } from './notices.ts';
 import { formatBRL, planRow, tenantPlan, type PlanRow } from './plans.ts';
 import { PACK_DAYS } from './ai-allowance.ts';
+import { periodPrice } from './coupons.ts';
 
 // The plan's state machine (docs/roadmap.md, Phase 3). One subscriptions row per store:
 //   pending ─(first invoice paid / first card charge)→ active ─(period ended unpaid)→ past_due
 //   active|past_due ─(cancel)→ cancel_at_period_end ─(period end, jobs.ts)→ cancelled
-// Money is only ever the plan's price_cents (or what the provider says it charged).
+// Money is only ever the plan's price_cents, less a signup coupon's discount (coupons.ts
+// periodPrice), or what the provider says it charged.
 
 /** provision_store()'s pause: a self-serve store opens when its plan is paid */
 export const OPENING_MESSAGE = 'A loja abre em breve.';
@@ -253,9 +255,11 @@ export async function startTrial(
     provider: string;
     now: Date;
     phone: string;
+    /** a signup coupon's free days, in place of the plan's trial (ADR 0042) */
+    days?: number;
   },
 ): Promise<PayNext> {
-  const endsAt = new Date(o.now.getTime() + o.plan.trial_days * DAY_MS);
+  const endsAt = new Date(o.now.getTime() + (o.days ?? o.plan.trial_days) * DAY_MS);
   // trial_phone: the phone that took it keeps it taken, whatever its role in the store becomes
   await tx`
     insert into subscriptions (tenant_id, plan_id, method, status, provider, payer_email,
@@ -298,13 +302,14 @@ export async function beginPayment(
         order by number desc limit 1
       `
     )[0];
+    const start = reuse ? reuse.period_start : now;
     let inv = await upsertInvoice(tx, {
       tenantId: sub.tenant_id,
       provider: ctx.provider.name,
       drop: dropPix(ctx),
-      start: reuse ? reuse.period_start : now,
+      start,
       planId: plan.id,
-      amountCents: plan.price_cents,
+      ...(await periodPrice(tx, sub.tenant_id, plan, start)),
       method: 'pix',
       dueAt: now,
       reuse: reuse ?? null,
@@ -351,9 +356,10 @@ async function createPreapproval(
     sub.current_period_end.getTime() > now
       ? sub.current_period_end
       : undefined;
+  const { amountCents } = await periodPrice(tx, sub.tenant_id, plan, null);
   const req: SubscriptionRequest = {
     reason: plan.name,
-    amountCents: plan.price_cents,
+    amountCents,
     payerEmail,
     externalReference: sub.tenant_id,
     backUrl: `${ctx.origin}/admin/?assinatura=retorno`,
@@ -370,7 +376,7 @@ async function createPreapproval(
   )[0]?.provider_subscription_id;
   await tx`
     update subscriptions set provider_subscription_id = ${ps.id}, checkout_url = ${url},
-      provider = ${ctx.provider.name}, charge_cents = ${plan.price_cents}, updated_at = now()
+      provider = ${ctx.provider.name}, charge_cents = ${amountCents}, updated_at = now()
     where tenant_id = ${sub.tenant_id}
   `;
   // a superseded assinatura must never charge
@@ -378,9 +384,11 @@ async function createPreapproval(
   return url;
 }
 
-/** The MP assinatura charges `cents` from its next charge on; recorded so the jobs can re-sync. */
-export async function setChargeAmount(ctx: BillingCtx, tx: Sql, sub: SubRow, cents: number) {
+/** The MP assinatura charges `plan`'s price (less a coupon month left) from its next charge on;
+ *  recorded so the jobs can re-sync. */
+export async function setChargeAmount(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow) {
   if (sub.method !== 'card' || !sub.provider_subscription_id) return;
+  const cents = (await periodPrice(tx, sub.tenant_id, plan, null)).amountCents;
   await viaProvider(() =>
     ctx.provider.updateSubscription(sub.provider_subscription_id!, { amountCents: cents }),
   );
@@ -446,7 +454,7 @@ export async function ensureRenewal(
     drop: dropPix(ctx),
     start: sub.current_period_end,
     planId: plan.id,
-    amountCents: plan.price_cents,
+    ...(await periodPrice(tx, sub.tenant_id, plan, sub.current_period_end)),
     method: 'pix',
     dueAt: sub.current_period_end,
   });
@@ -558,7 +566,8 @@ async function unpaidAhead(tx: Sql, sub: SubRow) {
 /** An already-issued next invoice follows a price change (its old Pix is dropped). */
 async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow, now: Date) {
   for (const inv of await unpaidAhead(tx, sub)) {
-    if (inv.plan_id === plan.id && inv.amount_cents === plan.price_cents) continue;
+    const price = await periodPrice(tx, sub.tenant_id, plan, inv.period_start);
+    if (inv.plan_id === plan.id && inv.amount_cents === price.amountCents) continue;
     const hadPix = !!inv.pix_copy_paste;
     let next = await upsertInvoice(tx, {
       tenantId: sub.tenant_id,
@@ -566,7 +575,7 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
       drop: dropPix(ctx),
       start: inv.period_start,
       planId: plan.id,
-      amountCents: plan.price_cents,
+      ...price,
       method: inv.method,
       dueAt: inv.due_at,
       reuse: inv,
@@ -684,7 +693,7 @@ async function startUpgrade(
   // assinatura's new amount goes last: a rollback after it would leave MP charging it unseen.
   if (sub.pending_plan_id) {
     await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
-    await setChargeAmount(ctx, tx, sub, current.price_cents);
+    await setChargeAmount(ctx, tx, sub, current);
   }
 }
 
@@ -839,7 +848,7 @@ async function applyUpgrade(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceR
   )[0]!;
   try {
     // the money is in: a provider hiccup here is caught up by the jobs (syncPlanPrices)
-    await setChargeAmount(ctx, tx, after, target.price_cents);
+    await setChargeAmount(ctx, tx, after, target);
     await repriceAhead(ctx, tx, after, target, now);
   } catch (err) {
     if (!(err instanceof ProviderError || err instanceof HttpError)) throw err;
@@ -910,7 +919,7 @@ export async function changeSubscription(
     if (target.id === sub.plan_id) {
       // back to the current plan: the waiting downgrade is dropped
       await tx`update subscriptions set pending_plan_id = null, updated_at = now() where tenant_id = ${tenantId}`;
-      if (card) await setChargeAmount(ctx, tx, sub, current.price_cents);
+      if (card) await setChargeAmount(ctx, tx, sub, current);
       await repriceAhead(ctx, tx, await reload(), current, o.now);
     } else if (unpaid || !sub.current_period_end) {
       // nothing paid yet (a trial keeps running): the plan applies now and the first charge
@@ -921,7 +930,7 @@ export async function changeSubscription(
       `;
       if (sub.status !== 'pending' || (await planRow(tx, (await currentTenantPlan(tx, tenantId))!)))
         await setTenantPlan(tx, tenantId, target.id);
-      if (card) await setChargeAmount(ctx, tx, sub, target.price_cents);
+      if (card) await setChargeAmount(ctx, tx, sub, target);
       await repriceAhead(ctx, tx, await reload(), target, o.now);
     } else if (upgradeCents >= UPGRADE_MIN_CENTS) {
       await startUpgrade(ctx, tx, sub, current, target, upgradeCents, o.now);
@@ -933,7 +942,7 @@ export async function changeSubscription(
           pending_plan_at = ${sub.current_period_end}, updated_at = now()
         where tenant_id = ${tenantId}
       `;
-      if (card) await setChargeAmount(ctx, tx, sub, target.price_cents);
+      if (card) await setChargeAmount(ctx, tx, sub, target);
       await repriceAhead(ctx, tx, await reload(), target, o.now);
     }
   }
@@ -1325,9 +1334,16 @@ export async function recordCardCharge(
       });
     }
   }
+  // a charge in a coupon's discounted months uses one of them when MP took less than the price
+  const listed = await planOrThrow(tx, inv.plan_id);
+  const discountCents =
+    (await periodPrice(tx, tenantId, listed, inv.period_start)).discountCents > 0
+      ? Math.max(0, listed.price_cents - charge.amountCents)
+      : 0;
   await tx`
     update invoices set ${supersedePix(tx)}, provider_payment_id = ${charge.id}, method = 'card',
-      amount_cents = ${charge.amountCents}, pix_copy_paste = null, pix_expires_at = null,
+      amount_cents = ${charge.amountCents}, discount_cents = ${discountCents},
+      pix_copy_paste = null, pix_expires_at = null,
       status = ${charge.status === 'approved' ? 'open' : 'failed'}
     where id = ${inv.id}
   `;

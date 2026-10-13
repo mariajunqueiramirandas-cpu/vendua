@@ -14,6 +14,7 @@ import { Toaster } from '../../ui/Toast.tsx';
 import { Guide } from '../onboarding/Guide.tsx';
 import { JourneyBar } from '../onboarding/Journey.tsx';
 import { CardConfirm, CardHandoff, PixPay, Welcome } from './after.tsx';
+import { cleanCode, useSignupCoupon } from './coupon.tsx';
 import {
   afterCreate,
   clearDraft,
@@ -167,6 +168,13 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   // the plan chosen on the site (?plano=) wins; otherwise the one with the trial (said above the
   // cards), then the recommended one: one less tap
   const fromSite = useRef(new URLSearchParams(window.location.search).get('plano'));
+  // a coupon in the link (?cupom=, from a flyer or a message): the last step shows it applied
+  const couponLink = useRef(new URLSearchParams(window.location.search).get('cupom'));
+  useEffect(() => {
+    const c = couponLink.current ? cleanCode(couponLink.current).slice(0, 40) : '';
+    couponLink.current = null;
+    if (c.length >= 3 && !cur.current.created) patch({ coupon: c });
+  }, [patch]);
   useEffect(() => {
     const list = plans.data?.plans;
     if (!list?.length) return;
@@ -176,7 +184,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     const open = list.filter((p) => p.available);
     if (site && !cur.current.created && open.some((p) => p.id === site)) {
       patch({ planId: site });
-      if (window.location.search.includes('plano='))
+      if (/[?&](plano|cupom)=/.test(window.location.search))
         window.history.replaceState(null, '', '/admin/comecar');
     } else if (
       !list.some((p) => p.id === cur.current.planId) ||
@@ -214,11 +222,14 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   const props: FlowProps | null = plans.data ? { d, patch, go, notice, plans: plans.data } : null;
   // the free days this signup starts with, once the phone is known to be eligible
   const planTrial = plans.data?.plans.find((p) => p.id === d.planId)?.trialDays ?? 0;
-  const trialDays =
-    trialOf(d.created?.next) ||
-    (verified?.trialEligible && plans.data?.billing.available && !d.byCode)
-      ? planTrial
-      : 0;
+  const coupon = useSignupCoupon(d.created ? null : d.coupon, d.planId);
+  const couponDays = (d.coupon && coupon.data?.coupon.freeDays) || 0;
+  const endsAt = trialOf(d.created?.next);
+  // once created, the days left in what was granted (a coupon's or the plan's)
+  const trialDays = endsAt
+    ? Math.max(1, Math.round((Date.parse(endsAt) - Date.now()) / 86_400_000))
+    : couponDays ||
+      (verified?.trialEligible && plans.data?.billing.available && !d.byCode ? planTrial : 0);
 
   let body: React.ReactNode;
   if (step === 'pronto')
