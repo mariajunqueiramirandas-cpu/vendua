@@ -112,6 +112,8 @@ interface SavedDraft {
   done: StepId[];
   /** Kernel 1.21 — the phone the bag reminder was asked for (null = not asked) */
   reminder?: string | null;
+  /** Kernel 1.26 — "me lembre do meu pedido de sempre" ticked */
+  usual?: boolean;
 }
 
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -151,6 +153,7 @@ function readDraft(session: string | null): SavedDraft | null {
       coords: savedPin(d.coords as { lat?: number; lng?: number } | undefined),
       done: Array.isArray(d.done) ? ORDER.filter((s) => (d.done as unknown[]).includes(s)) : [],
       reminder: typeof d.reminder === 'string' ? text(d.reminder, 20) : null,
+      usual: d.usual === true,
     };
   } catch {
     return null;
@@ -353,6 +356,9 @@ export function CheckoutPage() {
       setReminder(null);
     }
   };
+  // Kernel 1.26 — "o de sempre": asked for once the order exists (Core reads its phone)
+  const [usual, setUsual] = useState(() => restored?.usual === true);
+  const usualOffered = !!store?.usualReminder && !atTable && isValidPhone(draft.phone);
   // the number fixed after ticking: the reminder follows it
   useEffect(() => {
     if (!reminder || !reminderOffered || digitsOf(reminder) === digitsOf(draft.phone)) return;
@@ -381,8 +387,9 @@ export function CheckoutPage() {
       coords,
       done: [...done],
       reminder,
+      usual,
     });
-  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done, reminder]);
+  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done, reminder, usual]);
 
   // step entries that can't be shown are skipped, never rewritten into copies of the first
   // step: a reload mid-checkout lands on the first step's entry; with the order placed (no
@@ -887,6 +894,8 @@ export function CheckoutPage() {
       });
       placed.current = true;
       clearDraft();
+      // quiet: the order is placed either way
+      if (usual && usualOffered) void api.usualReminder(order.id).catch(() => {});
       if (draft.remember && atTable)
         // the name only: the phone and addresses the device holds stay as they are
         remember({
@@ -990,6 +999,16 @@ export function CheckoutPage() {
                   onChange={(e) => void askReminder(e.target.checked)}
                 />{' '}
                 Me lembre pelo WhatsApp se eu não terminar o pedido
+              </label>
+            ) : null}
+            {step === 'dados' && usualOffered ? (
+              <label className="v-check v-reminder" data-vendua="usual-reminder">
+                <input
+                  type="checkbox"
+                  checked={usual}
+                  onChange={(e) => setUsual(e.target.checked)}
+                />{' '}
+                Me lembre do meu pedido de sempre (no máximo 1 mensagem por semana)
               </label>
             ) : null}
             {step === 'entrega' ? (

@@ -7,7 +7,7 @@ import { OPT_OUT_FOOTER } from './messages.ts';
 // store's number to narrow, paced sends; these ride the same queue behind order notices, under a
 // ceiling of their own, only while the store is open, and always say how to stop.
 
-export const PROACTIVE_KINDS = ['cart_reminder', 'store_open'] as const;
+export const PROACTIVE_KINDS = ['cart_reminder', 'store_open', 'usual_reminder'] as const;
 export type ProactiveKind = (typeof PROACTIVE_KINDS)[number];
 
 /** kinds that come from the store unasked-in-the-moment: a SAIR from their recipients counts */
@@ -17,6 +17,8 @@ export const NOTICE_KINDS: readonly string[] = ['order', ...PROACTIVE_KINDS];
 export const PROACTIVE_PER_HOUR: Record<ProactiveKind, number> = {
   cart_reminder: 20,
   store_open: 60,
+  // "o de sempre" (modules/usual-reminder.ts): few an hour, so a list never reads as a blast
+  usual_reminder: 8,
 };
 /** a store already this busy in the hour keeps the rest of the gateway's ceiling for orders */
 const BUSY_PER_HOUR = 100;

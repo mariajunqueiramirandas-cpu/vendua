@@ -1,6 +1,7 @@
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
+import { usualReminderPass } from '../modules/usual-reminder.ts';
 import { setStock } from '../modules/stock.ts';
 import { wakeStoreWaitlist } from '../modules/storefront-platform.ts';
 import { maskPhone } from '../vendedor/threads.ts';
@@ -569,6 +570,10 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     // the bag reminder a shopper asked for at checkout, an hour after they stopped
     await cartReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
+    );
+    // "o de sempre": a shopper who asked, a week or more after their last order
+    await usualReminderPass(sql, t.id).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'usual reminder pass failed'),
     );
     if (prune)
       await pruneTenant(sql, t.id).catch((err) =>

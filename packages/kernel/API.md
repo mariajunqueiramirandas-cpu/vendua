@@ -582,6 +582,26 @@ caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot th
   with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
   in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
 
+### "O de sempre" (Kernel 1.26)
+
+Additive — no storefront edit, no new runtime export. A store may remind a shopper who asked of
+their usual order from its own WhatsApp: at most once a week, a week or more after their last
+order, under a daily ceiling the merchant sets, and SAIR stops it.
+
+- `StoreProfile.usualReminder` (optional; true only while the store sends it and its WhatsApp is
+  linked).
+- Client: `api.usualReminder(orderId)` → `POST /checkout/v1/usual-reminder` with the order's own
+  credential (the session that placed it), after the order exists; Core takes the phone and name
+  from that order, never from the call. `api.cancelUsualReminder(orderId)` → `DELETE`. Both
+  resolve `{ on }`. New `ERROR_CODES` entry: `ORDER_REQUIRED` (409, no order placed by that
+  session); `REMINDER_OFF` (409) and `INVALID_PHONE` (422) as for the bag reminder.
+- Checkout's "Seus dados", with a valid phone and the profile flag, adds an unticked "Me lembre
+  do meu pedido de sempre (no máximo 1 mensagem por semana)" (`[data-vendua="usual-reminder"]`,
+  the same `.v-check.v-reminder` look). Ticked, the consent is sent once the order is placed; a
+  refusal is quiet and never touches the order.
+- The reminder itself is a link to the store with the usual bag ready (`?cart=CODE`, the shared
+  bag of 1.21): re-added at today's prices, unavailable lines reported as for any shared bag.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.

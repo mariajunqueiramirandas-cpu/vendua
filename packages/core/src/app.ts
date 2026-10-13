@@ -111,6 +111,7 @@ import { mediaProviders } from './vendedor/media.ts';
 import { hostGateway } from './agent-host/models.ts';
 import type { CopilotMediaDeps } from './admin/context.ts';
 import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
+import { mountUsualReminder, usualReminderOffered } from './modules/usual-reminder.ts';
 import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
@@ -704,13 +705,22 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder, dineIn } = await cache.read(
-      tenant.id,
-      'store',
-      () =>
-        withTenant(sql, tenant.id, async (tx) => {
-          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder, pdvPlan] =
-            await Promise.all([
+    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder, usualReminder, dineIn } =
+      await cache.read(
+        tenant.id,
+        'store',
+        () =>
+          withTenant(sql, tenant.id, async (tx) => {
+            const [
+              settings,
+              conn,
+              publicUrl,
+              loyaltyPlan,
+              chat,
+              cartReminder,
+              pdvPlan,
+              usualReminder,
+            ] = await Promise.all([
               loadSettings(tx, tenant.id),
               loadConnection(tx, tenant.id),
               storeOrigin(tx, tenant, publicStoreDomain),
@@ -718,27 +728,29 @@ export function createApp({
               webChatProfile(tx, tenant.id, ears.media),
               cartReminderOffered(tx, tenant.id),
               planHas(tx, tenant.id, 'pdv'),
+              usualReminderOffered(tx, tenant.id),
             ]);
-          return {
-            settings,
-            // orders from the tables' QR codes (ADR 0036)
-            dineIn: pdvPlan && (settings?.pdv_qr_orders ?? true),
-            online: storePaymentsPublic(
-              conn,
-              provider,
-              settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
-              readPaymentAdjustments(settings?.payment_adjustments),
-            ),
-            // online payments switch off by themselves when the token expires
-            onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
-            publicUrl,
-            loyaltyOn: !!settings?.loyalty && loyaltyPlan,
-            chat,
-            cartReminder,
-          };
-        }),
-      { deps: STORE_DEPS, until: (v) => v.onlineUntil },
-    );
+            return {
+              settings,
+              // orders from the tables' QR codes (ADR 0036)
+              dineIn: pdvPlan && (settings?.pdv_qr_orders ?? true),
+              online: storePaymentsPublic(
+                conn,
+                provider,
+                settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
+                readPaymentAdjustments(settings?.payment_adjustments),
+              ),
+              // online payments switch off by themselves when the token expires
+              onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
+              publicUrl,
+              loyaltyOn: !!settings?.loyalty && loyaltyPlan,
+              chat,
+              cartReminder,
+              usualReminder,
+            };
+          }),
+        { deps: STORE_DEPS, until: (v) => v.onlineUntil },
+      );
     const now = new Date();
     const status = currentStatus(settings, now);
     const hours = settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] };
@@ -808,6 +820,8 @@ export function createApp({
       chat,
       // Kernel 1.21: checkout may offer "me lembre pelo WhatsApp" (modules/cart-reminder.ts)
       cartReminder,
+      // Kernel 1.26: checkout may offer "me lembre do pedido de sempre" (modules/usual-reminder.ts)
+      usualReminder,
     });
   });
 
@@ -3127,6 +3141,7 @@ export function createApp({
   });
   mountWebChat({ checkout, sql, sessionSecret, idempotency, media: ears.media });
   mountCartReminder({ checkout, sql, sessionSecret, idempotency });
+  mountUsualReminder({ checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,

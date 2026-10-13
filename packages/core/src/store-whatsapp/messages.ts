@@ -36,6 +36,25 @@ const SENDABLE_STATES = new Set(['open', 'connecting', 'error']);
 /** a shopper who wrote SAIR before gets nothing until VOLTAR */
 export const OPT_OUT_FOOTER = '\n\n_Para não receber estes avisos, responda SAIR._';
 
+/** "o de sempre" (modules/usual-reminder.ts), offered under a delivered order's message */
+export const USUAL_INVITE =
+  '\n\nQuer que a gente te lembre do seu pedido de sempre? Responda LEMBRAR. É no máximo uma mensagem por semana.';
+
+/** The store sends "o de sempre" and this phone hasn't asked for it, nor been offered it lately. */
+async function usualInviteTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
+  const [r] = await tx<{ ok: boolean }[]>`
+    select coalesce((select usual_reminder and wanted and state in ('open', 'connecting', 'error')
+                     from store_whatsapp where tenant_id = ${tenantId}), false)
+      and not exists (select 1 from usual_reminders where tenant_id = ${tenantId}
+                        and phone = any(${phoneVariants(phone)}))
+      and not exists (select 1 from store_wa_messages where tenant_id = ${tenantId}
+                        and kind = 'order' and event = 'delivered'
+                        and phone = any(${phoneVariants(phone)})
+                        and created_at > now() - interval '30 days'
+                        and body like '%Responda LEMBRAR%') as ok`;
+  return !!r?.ok;
+}
+
 export interface OrderFacts {
   storeName: string;
   firstName: string;
@@ -156,6 +175,9 @@ export const optOutAck = (storeName: string) =>
 export const optInAck = (storeName: string) =>
   `Combinado! Você volta a receber os avisos dos seus pedidos da ${storeName} por aqui.`;
 
+export const usualAck = (storeName: string) =>
+  `Combinado! Uma vez por semana, no máximo, a ${storeName} te lembra do seu pedido de sempre. Para parar, responda SAIR.`;
+
 export const testMessage = (storeName: string) =>
   `Teste da Venduá ✓ O WhatsApp da ${storeName} está conectado e pronto para avisar seus clientes sobre os pedidos.`;
 
@@ -208,7 +230,7 @@ export async function contactedTx(tx: Sql, tenantId: string, phone: string): Pro
   const rows = await tx`
     select 1 from store_wa_messages
     where tenant_id = ${tenantId} and phone = any(${phoneVariants(phone)})
-      and kind in ('order', 'cart_reminder', 'store_open') and status = 'sent'
+      and kind in ('order', 'cart_reminder', 'store_open', 'usual_reminder') and status = 'sent'
     limit 1`;
   return rows.length > 0;
 }
@@ -305,8 +327,13 @@ export async function enqueueOrderMessageTx(
       const phone = facts?.phone ?? null;
       if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
       if (await optedOutTx(sp, tenantId, phone)) return false;
-      const text = renderOrderMessage(event, { ...facts, refund: extra.refund ?? null });
+      let text = renderOrderMessage(event, { ...facts, refund: extra.refund ?? null });
       if (!text) return false;
+      // a delivered order may offer "o de sempre" once, to someone who hasn't asked yet
+      if (event === 'delivered' && (await usualInviteTx(sp, tenantId, phone)))
+        text = text.includes(OPT_OUT_FOOTER)
+          ? text.replace(OPT_OUT_FOOTER, USUAL_INVITE + OPT_OUT_FOOTER)
+          : text + USUAL_INVITE;
       const key = REPEATS.has(event) ? `${event}:${extra.occurrence}` : event;
       const rows = await sp`
           insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body)

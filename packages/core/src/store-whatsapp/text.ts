@@ -71,14 +71,17 @@ const fold = (s: string) =>
 
 const OPT_OUT = new Set(['sair', 'parar', 'stop', 'descadastrar', 'cancelarmensagens']);
 const OPT_IN = new Set(['voltar', 'receber']);
+/** "o de sempre": a shopper asking to be reminded of their usual order (0122) */
+const REMIND = new Set(['lembrar', 'lembre', 'melembre', 'melembra', 'lembrete']);
 
 /** A whole message that is only a stop/start keyword. "pode parar de mandar?" is a conversation
  *  for the store, not a command — only the bare word counts. */
-export function optKeyword(text: string): 'out' | 'in' | null {
+export function optKeyword(text: string): 'out' | 'in' | 'remind' | null {
   if (text.length > 40) return null;
   const k = fold(text);
   if (OPT_OUT.has(k)) return 'out';
   if (OPT_IN.has(k)) return 'in';
+  if (REMIND.has(k)) return 'remind';
   return null;
 }
 

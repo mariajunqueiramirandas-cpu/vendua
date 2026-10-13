@@ -1058,8 +1058,11 @@ export interface WaMessage {
     /** "lembrete de sacola", once per bag a shopper asked for at checkout */
     | 'cart_reminder'
     /** "avise-me quando abrir" */
-    | 'store_open';
-  event: WaEvent | null;
+    | 'store_open'
+    /** "o pedido de sempre", at most weekly to a shopper who asked */
+    | 'usual_reminder';
+  /** 'usual' on an opt_in: the ack to a shopper's LEMBRAR */
+  event: WaEvent | 'usual' | null;
   orderId: string | null;
   orderNumber: number | null;
   status: 'pending' | 'sending' | 'sent' | 'failed' | 'expired' | 'skipped';
@@ -1100,6 +1103,17 @@ export interface Whatsapp {
     preview: string;
     /** reminders queued in the last 7 days, and how many of those bags became orders */
     week: { sent: number; ordered: number };
+  };
+  /** "O pedido de sempre" (0122): a weekly reminder to shoppers who asked for it */
+  usualReminder: {
+    on: boolean;
+    /** the store's daily ceiling, 1–200 */
+    perDay: number;
+    /** shoppers who asked (at checkout or with LEMBRAR) */
+    asked: number;
+    /** sent in the last 7 days, and how many of them ordered within 3 days */
+    week: { sent: number; ordered: number };
+    preview: string;
   };
   recent: WaMessage[];
 }
@@ -2688,6 +2702,8 @@ export const api = {
   whatsappDisconnect: () => send<Whatsapp>('POST', '/whatsapp/disconnect'),
   whatsappCartReminder: (on: boolean) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { cartReminder: on }),
+  whatsappUsualReminder: (p: { on?: boolean; perDay?: number }) =>
+    send<Whatsapp>('PATCH', '/whatsapp/settings', { usualReminder: p }),
   whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
   whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),

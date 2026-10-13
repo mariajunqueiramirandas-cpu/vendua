@@ -3,6 +3,16 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.26.0
+
+"O de sempre" — additive, no storefront edit, no new runtime export.
+
+- `StoreProfile.usualReminder`; `api.usualReminder(orderId)` / `api.cancelUsualReminder(orderId)`
+  (`/checkout/v1/usual-reminder`, the phone read from the order); `ERROR_CODES` gains
+  `ORDER_REQUIRED`.
+- Checkout: "Me lembre do meu pedido de sempre (no máximo 1 mensagem por semana)"
+  (`[data-vendua="usual-reminder"]`), sent after the order is placed.
+
 ## 1.25.0
 
 Default UI refresh, part two — visual polish in `@vendua/ui-defaults`; additive, no storefront

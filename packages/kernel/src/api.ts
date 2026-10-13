@@ -86,6 +86,9 @@ export interface StoreProfile {
   /** Kernel 1.21 — the store sends one WhatsApp reminder about a bag left full, to a shopper who
    *  ticked it at checkout (`api.cartReminder`). Absent = false. */
   cartReminder?: boolean;
+  /** Kernel 1.26 — the store reminds a shopper who asked of their usual order, at most once a
+   *  week, from its WhatsApp (`api.usualReminder`). Absent = false. */
+  usualReminder?: boolean;
   /** Kernel 1.22 — the store takes orders from its tables' QR codes (ADR 0036): its plan and its
    *  switch. Absent = false. */
   dineIn?: { enabled: boolean };
@@ -1088,6 +1091,17 @@ export function createApi(baseUrl = '') {
     return t ? { authorization: `Bearer ${t}` } : {};
   };
   const orderBearer = (id: string) => orderTokenMem.get(id) ?? readOrderTokens()[id] ?? current();
+  const usualCall = (orderId: string, method: 'POST' | 'DELETE') => {
+    const bearer = orderBearer(orderId);
+    return apiFetch<{ reminder: { on: boolean } }>(co('/usual-reminder'), {
+      method,
+      headers: {
+        ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+        'idempotency-key': idemKey(),
+      },
+      body: '{}',
+    }).then((r) => r.reminder);
+  };
   const trackTokenMem = new Map<string, string>();
   const trackBearer = (id: string) => trackTokenMem.get(id) ?? readTrackTokens()[id];
   const forgetTrack = (id: string) => (err: unknown) => {
@@ -1570,6 +1584,12 @@ export function createApi(baseUrl = '') {
         body: JSON.stringify(media),
       });
     },
+    /** Kernel 1.26 — "me lembre do meu pedido de sempre", sent after the order is placed: Core
+     *  takes the phone from that order, never from this call (only when
+     *  `StoreProfile.usualReminder`). 409 REMINDER_OFF / ORDER_REQUIRED, 422 INVALID_PHONE */
+    usualReminder: (orderId: string) => usualCall(orderId, 'POST'),
+    /** Kernel 1.26 — withdraws it */
+    cancelUsualReminder: (orderId: string) => usualCall(orderId, 'DELETE'),
     order: (id: string) => {
       const bearer = orderBearer(id);
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
@@ -1808,6 +1828,8 @@ export const ERROR_CODES = [
   // Kernel 1.21 — the bag reminder: the store doesn't offer it; the phone isn't one
   'REMINDER_OFF',
   'INVALID_PHONE',
+  // Kernel 1.26 — "o de sempre" asked before the order was placed
+  'ORDER_REQUIRED',
   // Kernel 1.22 — ordering from a table's QR code: the token is bad or replaced; the store turned
   // QR orders off; five of this table's orders still wait for the staff; the comanda changed
   // under the order (try again)

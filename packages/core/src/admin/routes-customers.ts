@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson } from '../platform/http.ts';
 import { forgetSubjectTx } from '../agent-host/forget.ts';
+import { withdrawUsualTx } from '../modules/usual-reminder.ts';
 import { loyaltyCard } from '../modules/customer.ts';
 import { jidForPhone, phoneVariants } from '../store-whatsapp/text.ts';
 import { audit } from './audit.ts';
@@ -341,6 +342,11 @@ export function mountCustomers(d: AdminDeps) {
         select name, consented_at, withdrawn_at, sent_at from cart_reminders
         where tenant_id = ${t.id} and phone = any(${phoneVariants(phone)}::text[])
       `;
+      const usualReminder = (
+        await tx`
+          select name, source, consented_at, last_sent_at from usual_reminders
+          where tenant_id = ${t.id} and phone = any(${phoneVariants(phone)}::text[])`
+      )[0];
       const notes = (
         await tx`
           select note, tags, updated_at from customer_notes where tenant_id = ${t.id} and phone = ${phone}
@@ -366,6 +372,7 @@ export function mountCustomers(d: AdminDeps) {
         waitlist,
         coupons,
         cartReminders,
+        usualReminder: usualReminder ?? null,
         notes: notes ?? null,
         importedContact: contact ?? null,
         agentMemory,
@@ -475,6 +482,7 @@ export function mountCustomers(d: AdminDeps) {
       await tx`update coupons set phone = null, active = false where tenant_id = ${t.id} and phone = ${phone}`;
       await tx`delete from customer_notes where tenant_id = ${t.id} and phone = ${phone}`;
       await tx`delete from customer_contacts where tenant_id = ${t.id} and phone = ${phone}`;
+      await withdrawUsualTx(tx, t.id, phone);
       await tx`update coupon_redemptions set phone = '' where tenant_id = ${t.id} and phone = ${phone}`;
       await audit(tx, t.id, m, {
         action: 'customer.forget',
