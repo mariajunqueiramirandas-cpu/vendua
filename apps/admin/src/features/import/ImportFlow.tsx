@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  Camera,
   CheckCircle,
   Clock,
   CreditCard,
@@ -33,6 +34,7 @@ import { Notice } from '../../ui/Notice.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
+import { PhotoImport } from './PhotoImport.tsx';
 import {
   hidesProduct,
   lostLine,
@@ -63,6 +65,7 @@ export function ImportFlow({
   hasProducts,
   onApplied,
   onSkip,
+  onPhotosDone,
   intro,
 }: {
   where: ImportWhere;
@@ -73,6 +76,8 @@ export function ImportFlow({
   onApplied: (imp: MenuImport) => void;
   /** "Começar do zero" (onboarding) */
   onSkip?: () => void;
+  /** products created from photos of the old menu (PhotoImport) */
+  onPhotosDone: () => void;
   /** title block above the paste field */
   intro?: ReactNode;
 }) {
@@ -80,6 +85,8 @@ export function ImportFlow({
   const [id, setId] = useState<string | null>(null);
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // a menu no link reads (anota.ai, iFood, paper) comes in by photos
+  const [photos, setPhotos] = useState(false);
 
   // pick up where the merchant left: an import still being read, or a preview not applied yet
   const recent = useQuery({ queryKey: qk.imports, queryFn: api.imports, staleTime: 0 });
@@ -145,6 +152,8 @@ export function ImportFlow({
   };
 
   const d = imp.data;
+  if (photos && !id)
+    return <PhotoImport onBack={() => setPhotos(false)} onDone={() => onPhotosDone()} />;
   if (id && !d)
     return imp.error ? (
       <Notice tone="danger" title="Não conseguimos abrir essa importação">
@@ -169,6 +178,10 @@ export function ImportFlow({
         busy={start.isPending}
         onSubmit={() => start.mutate(url.trim())}
         onSkip={onSkip}
+        onPhotos={() => {
+          setError(null);
+          setPhotos(true);
+        }}
       />
     );
 
@@ -249,6 +262,7 @@ function Paste({
   busy,
   onSubmit,
   onSkip,
+  onPhotos,
 }: {
   intro?: ReactNode;
   url: string;
@@ -257,6 +271,7 @@ function Paste({
   busy: boolean;
   onSubmit: () => void;
   onSkip?: (() => void) | undefined;
+  onPhotos: () => void;
 }) {
   const ok = url.trim().length >= 4;
   return (
@@ -308,6 +323,14 @@ function Paste({
       <p className="t-caption text-muted">
         Lemos lojas do {readableNames()}. Nada muda na sua loja até você tocar em “Importar”.
       </p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-sunken px-4 py-3">
+        <span className="t-body text-muted">
+          Seu cardápio está no anota.ai, no iFood ou no papel?
+        </span>
+        <Button variant="quiet" size="sm" icon={<Camera />} className="-ml-2" onClick={onPhotos}>
+          mandar fotos do cardápio
+        </Button>
+      </div>
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
         {onSkip ? (
           <Button variant="quiet" size="lg" onClick={onSkip}>

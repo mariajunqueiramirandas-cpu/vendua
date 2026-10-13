@@ -1,4 +1,4 @@
-import { MagnifyingGlass, Tag } from '@phosphor-icons/react';
+import { DownloadSimple, MagnifyingGlass, Tag } from '@phosphor-icons/react';
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -13,6 +13,8 @@ import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { usePreload } from '../../app/routes.ts';
+import { useCan } from '../../lib/session.ts';
+import { ImportCustomersSheet } from './ImportCustomers.tsx';
 
 const SORTS = ['recent', 'value', 'orders'] as const;
 type Sort = (typeof SORTS)[number];
@@ -46,6 +48,8 @@ export default function Customers() {
   const [q, setQ] = useState(() => params.get('q') ?? '');
   const [debounced, setDebounced] = useState(q.trim());
   const preload = usePreload();
+  const manager = useCan('manager');
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => {
       setDebounced(q.trim());
@@ -78,7 +82,22 @@ export default function Customers() {
   ];
   return (
     <PageBody>
-      <PageHeader title="Clientes" subtitle="Todo mundo que já pediu, pelo telefone." />
+      <PageHeader
+        title="Clientes"
+        subtitle="Todo mundo que já pediu, pelo telefone."
+        actions={
+          manager ? (
+            <Button
+              variant="secondary"
+              icon={<DownloadSimple />}
+              onClick={() => setImporting(true)}
+            >
+              importar
+            </Button>
+          ) : null
+        }
+      />
+      <ImportCustomersSheet open={importing} onOpenChange={setImporting} />
       {stats ? (
         <div className="mb-5 grid grid-cols-3 gap-3">
           <Card className="p-4">
@@ -158,10 +177,10 @@ export default function Customers() {
                   <span className="block truncate font-semibold">{c.name}</span>
                   <span className="t-caption block truncate text-muted">
                     {phone(c.phone)}
-                    <span className="max-sm:hidden"> · último pedido {ago(c.lastAt)}</span>
+                    <span className="max-sm:hidden"> · {seenLine(c.lastAt)}</span>
                   </span>
                   <span className="t-caption block truncate text-muted sm:hidden">
-                    último pedido {ago(c.lastAt)}
+                    {seenLine(c.lastAt)}
                   </span>
                   {c.tags?.length ? <TagList tags={c.tags} /> : null}
                 </span>
@@ -183,6 +202,17 @@ export default function Customers() {
               onClick={() => void list.fetchNextPage()}
             >
               carregar mais
+            </Button>
+          ) : null}
+          {/* the header's "importar" is hidden on phones */}
+          {manager && !debounced ? (
+            <Button
+              variant="quiet"
+              icon={<DownloadSimple />}
+              className="mt-3 md:hidden"
+              onClick={() => setImporting(true)}
+            >
+              importar a lista do app antigo
             </Button>
           ) : null}
         </>
@@ -211,12 +241,28 @@ export default function Customers() {
                   </Button>
                 ),
               }
-            : {})}
+            : !debounced && manager
+              ? {
+                  action: (
+                    <Button
+                      variant="secondary"
+                      icon={<DownloadSimple />}
+                      onClick={() => setImporting(true)}
+                    >
+                      trazer a lista do app antigo
+                    </Button>
+                  ),
+                }
+              : {})}
         />
       )}
     </PageBody>
   );
 }
+
+/** an imported contact (Clientes › Importar) hasn't ordered here yet */
+const seenLine = (lastAt: string | null) =>
+  lastAt ? `último pedido ${ago(lastAt)}` : 'ainda não pediu pela loja';
 
 const tagLabel = (t: string, n?: number) => (
   <span className="inline-flex items-center gap-1.5">

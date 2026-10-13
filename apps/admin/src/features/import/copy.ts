@@ -222,7 +222,7 @@ export function lostLine(l: ImportLost, platform: string | null): string {
 /** Why a link was refused, before anything was read. */
 export function startError(code: string, platform: string | null | undefined): string | null {
   if (code === 'IMPORT_BLOCKED')
-    return `O ${platformName(platform)} não deixa ninguém de fora ler o cardápio. Dá para cadastrar aqui mesmo: com foto, leva um minutinho por produto.`;
+    return `O ${platformName(platform)} não deixa ninguém de fora ler o cardápio. Mande prints dele em “mandar fotos do cardápio”, logo abaixo.`;
   if (code === 'IMPORT_UNSUPPORTED')
     return platform
       ? `Ainda não lemos cardápios do ${platformName(platform)}. Por enquanto, do ${readableNames()}.`

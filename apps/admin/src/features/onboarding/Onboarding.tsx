@@ -446,6 +446,7 @@ function Flow({
           </div>
         }
         onSkip={() => next()}
+        onPhotosDone={() => next('Cardápio dentro! Depois coloque as fotos de cada produto.')}
         onApplied={() =>
           void qc
             .fetchQuery({ queryKey: qk.store, queryFn: api.store, staleTime: 0 })

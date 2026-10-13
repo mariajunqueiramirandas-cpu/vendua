@@ -786,7 +786,10 @@ export interface Customer {
   orders: number;
   spentCents: number;
   firstAt: string;
-  lastAt: string;
+  /** null for an imported contact who hasn't ordered here yet */
+  lastAt: string | null;
+  /** came from a list the store imported (Clientes › Importar) */
+  imported?: boolean;
   /** list rows: the store's tags on this customer */
   tags?: string[];
 }
@@ -2107,6 +2110,14 @@ export interface CopilotView {
   media?: { voice: boolean; image: boolean };
 }
 
+/** a product read from a photo of the old menu, priced by Core; the owner reviews it */
+export interface PhotoMenuItem {
+  category: string | null;
+  name: string;
+  description: string | null;
+  priceCents: number;
+}
+
 /** a voice message or a photo for Duá: the bytes as base64 (no `data:` prefix), ≤ 2 MB decoded */
 export type CopilotMediaIn =
   | { kind: 'voice'; mime: string; data: string; seconds?: number; screen?: string }
@@ -2571,6 +2582,26 @@ export const api = {
     }),
   importProducts: (text: string, categoryId: string) =>
     send<{ created: number }>('POST', '/products/import', { text, categoryId }),
+  /** one photo of a menu, read by Core for review: nothing is written (≤ 2 MB decoded) */
+  importPhoto: (photo: { mime: 'image/jpeg' | 'image/png' | 'image/webp'; data: string }) =>
+    req<{ items: PhotoMenuItem[] }>('/products/import/photo', {
+      method: 'POST',
+      body: JSON.stringify(photo),
+      timeoutMs: 90_000,
+    }),
+  /** the reviewed list: categories matched by name, a new one created */
+  importItems: (items: PhotoMenuItem[]) =>
+    send<{ created: number; categories: number }>('POST', '/products/import/items', { items }),
+  customerImportPreview: (text: string) =>
+    send<{ contacts: { name: string; phone: string }[]; total: number; skipped: number }>(
+      'POST',
+      '/customers/import/preview',
+      { text },
+    ),
+  importCustomers: (text: string) =>
+    send<{ imported: number; known: number; skipped: number }>('POST', '/customers/import', {
+      text,
+    }),
   createCategory: (name: string, description?: string | null) =>
     send<{ category: Category }>('POST', '/categories', {
       name,
@@ -2694,7 +2725,7 @@ export const api = {
     if (p.offset) s.set('offset', String(p.offset));
     return get<{
       customers: Customer[];
-      stats: { customers: number; repeat: number; newThisMonth: number };
+      stats: { customers: number; repeat: number; newThisMonth: number; imported: number };
       /** the store's tags, most used first */
       tags: { tag: string; customers: number }[];
       next: number | null;

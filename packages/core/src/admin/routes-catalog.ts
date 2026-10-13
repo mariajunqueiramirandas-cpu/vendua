@@ -31,6 +31,10 @@ import {
   type AdjustReason,
 } from '../modules/stock.ts';
 import { saveKitStepsTx } from '../modules/combos.ts';
+import { MEDIA_PER_DAY, takeMediaCallTx } from '../copilot/media.ts';
+import { readMenuPhoto } from '../modules/menu-import/photo.ts';
+import { mediaUpload } from '../modules/media-upload.ts';
+import { withTenant } from '../platform/db.ts';
 import { audit } from './audit.ts';
 import {
   bool,
@@ -50,6 +54,11 @@ import { emitAdminTx } from './live.ts';
 import { storeTz } from './routes-orders.ts';
 
 const MAX_PRICE = 10_000_000;
+/** a menu photo, decoded; the admin shrinks it first (the app's 4 MiB body cap holds its base64) */
+const PHOTO_MAX = 2 * 1024 * 1024;
+const PHOTO_JSON_MAX = 3 * 1024 * 1024;
+/** one reviewed import: a few photos' worth of products */
+const MAX_IMPORT_ITEMS = 300;
 // options in one group: a pizzeria's flavour list
 const MAX_OPTIONS = 100;
 const PRICING_RULES = ['sum', 'average', 'most_expensive'] as const;
@@ -1364,6 +1373,112 @@ export function mountCatalog(d: AdminDeps) {
     const body = await bodyJson(c, 64 * 1024);
     return c.json({ items: parseMenuPaste(text(body.text, 'text', 20_000)) });
   });
+
+  // "Foto do cardápio" (modules/menu-import/photo.ts): one photo per call, read and returned for
+  // review; nothing is written but the day's media ledger, which bounds the paid calls
+  admin.post('/products/import/photo', async (c) => {
+    const m = need(c, 'manager');
+    const t = c.get('tenant');
+    const gateway = d.copilotMedia.gateway;
+    if (!gateway) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'photo reading is off here');
+    const body = await bodyJson(c, PHOTO_JSON_MAX);
+    const up = mediaUpload({ ...body, kind: 'image' }, { maxBytes: PHOTO_MAX, maxCaption: 0 });
+    await withTenant(d.sql, t.id, async (tx) => {
+      if (!(await takeMediaCallTx(tx, t.id, m.userId, 'image')))
+        throw new HttpError(429, 'RATE_LIMITED', `at most ${MEDIA_PER_DAY} photos a day`);
+    });
+    const read = await readMenuPhoto(gateway, t.id, up.bytes);
+    if (!read) throw new HttpError(422, 'IMAGE_UNREAD', 'não consegui ler a foto');
+    const items = [];
+    for (const it of read) {
+      const priceCents = parseMoney(it.price.replace(/^a partir de\s*/i, ''));
+      if (priceCents !== null && priceCents > 0)
+        items.push({
+          category: it.category,
+          name: it.name,
+          description: it.description,
+          priceCents,
+        });
+    }
+    return c.json({ items });
+  });
+
+  // the reviewed list: categories matched by name (a new one is created), products appended
+  admin.post(
+    '/products/import/items',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c, 256 * 1024);
+      if (!Array.isArray(body.items) || !body.items.length || body.items.length > MAX_IMPORT_ITEMS)
+        throw new HttpError(422, 'BAD_REQUEST', `items must hold 1–${MAX_IMPORT_ITEMS} products`, {
+          field: 'items',
+        });
+      const items = body.items.map((raw: unknown, i: number) => {
+        if (!isObj(raw))
+          throw new HttpError(422, 'BAD_REQUEST', 'bad item', { field: `items.${i}` });
+        return {
+          category: optText(raw.category, `items.${i}.category`, 60) || 'Cardápio',
+          name: text(raw.name, `items.${i}.name`, 120, 2),
+          description: optText(raw.description, `items.${i}.description`, 500) ?? null,
+          priceCents: int(raw.priceCents, `items.${i}.priceCents`, 1, MAX_PRICE),
+        };
+      });
+      const cats = await tx<{ id: string; name: string }[]>`
+        select id, name from categories where tenant_id = ${t.id}`;
+      const byName = new Map(cats.map((c) => [c.name.trim().toLowerCase(), c.id]));
+      let catSort = (
+        await tx<
+          { n: number }[]
+        >`select coalesce(max(sort), -1) + 1 as n from categories where tenant_id = ${t.id}`
+      )[0]!.n;
+      const sortOf = new Map<string, number>();
+      const createdCats: string[] = [];
+      const created: string[] = [];
+      for (const it of items) {
+        const key = it.category.trim().toLowerCase();
+        let categoryId = byName.get(key);
+        if (!categoryId) {
+          categoryId = (
+            await tx<{ id: string }[]>`
+              insert into categories (tenant_id, slug, name, sort)
+              values (${t.id}, ${await uniqueSlug(tx, 'categories', t.id, it.category)}, ${it.category}, ${catSort++})
+              returning id`
+          )[0]!.id;
+          byName.set(key, categoryId);
+          createdCats.push(it.category);
+        }
+        if (!sortOf.has(categoryId))
+          sortOf.set(
+            categoryId,
+            (
+              await tx<
+                { n: number }[]
+              >`select coalesce(max(sort), -1) + 1 as n from products where tenant_id = ${t.id} and category_id = ${categoryId}`
+            )[0]!.n,
+          );
+        const sort = sortOf.get(categoryId)!;
+        sortOf.set(categoryId, sort + 1);
+        created.push(
+          (
+            await tx<{ id: string }[]>`
+              insert into products (tenant_id, category_id, slug, name, description, base_price_cents, sort)
+              values (${t.id}, ${categoryId}, ${await uniqueSlug(tx, 'products', t.id, it.name)}, ${it.name}, ${it.description}, ${it.priceCents}, ${sort})
+              returning id`
+          )[0]!.id,
+        );
+      }
+      await audit(tx, t.id, m, {
+        action: 'product.import',
+        entity: 'product',
+        summary: `importou ${created.length} produtos de fotos do cardápio${createdCats.length ? ` (${createdCats.length} categorias novas)` : ''}`,
+        after: { items },
+      });
+      await emitAdminTx(tx, t.id, 'catalog');
+      return {
+        status: 201,
+        body: { created: created.length, categories: createdCats.length, ids: created },
+      };
+    }),
+  );
 }
 
 /** Next 00:00 in the store's timezone — when "esgotado hoje" ends. */
