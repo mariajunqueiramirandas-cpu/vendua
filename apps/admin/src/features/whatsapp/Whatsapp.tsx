@@ -308,6 +308,13 @@ function NotConnected({ data, owner }: { data: WhatsappData; owner: boolean }) {
           <p className="t-caption text-center text-muted">
             Você digita o código no WhatsApp do celular da loja.
           </p>
+          {/* the connection is an unofficial linked device (ADR 0026): say the risk before pairing */}
+          <p className="t-caption rounded-md bg-sunken px-4 py-3 text-muted">
+            Use o WhatsApp Business da loja, não o seu número pessoal. A Venduá entra como um
+            aparelho conectado, sem a API oficial do WhatsApp, e só escreve para quem fez pedido ou
+            pediu aviso. Mesmo assim, o WhatsApp pode restringir um número que recebe muitas
+            denúncias.
+          </p>
         </form>
       ) : (
         <p className="t-body rounded-md bg-sunken px-4 py-3 text-muted">
