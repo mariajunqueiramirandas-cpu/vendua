@@ -19,6 +19,7 @@ import {
 } from '../hooks.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import { closedNote } from './closed.ts';
+import { everyWeekday } from './plans.tsx';
 import { Slot } from '../slot.tsx';
 import { errorCopy, errorCode } from '../errors.ts';
 import { emit } from '../telemetry.ts';
@@ -362,6 +363,8 @@ export function CheckoutPage() {
   };
   // Kernel 1.26 — "o de sempre": asked for once the order exists (Core reads its phone)
   const [usual, setUsual] = useState(() => restored?.usual === true);
+  // Kernel 1.26 — Plano semanal: the shopper picked a plan, so the yes starts ticked
+  const [subscribe, setSubscribe] = useState(true);
   const usualOffered = !!store?.usualReminder && !atTable && isValidPhone(draft.phone);
   // the number fixed after ticking: the reminder follows it
   useEffect(() => {
@@ -891,6 +894,7 @@ export function CheckoutPage() {
         },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor && !atTable ? { scheduledFor } : {}),
+        ...(cart.plan && !atTable && subscribe ? { subscribe: true } : {}),
         // the total on the button (Core's for this method, else the cart's while that loads): Core
         // refuses (409 PRICES_CHANGED) an order whose total moved since. Not when the delivery
         // didn't sync: the cart's fee is stale
@@ -1111,6 +1115,22 @@ export function CheckoutPage() {
                     {...(store?.hours.timezone ? { timezone: store.hours.timezone } : {})}
                     {...(scheduleError ? { error: scheduleError } : {})}
                   />
+                ) : null}
+                {cart.plan && !atTable ? (
+                  <label className="v-check v-plan-consent" data-vendua="plan-subscribe">
+                    <input
+                      type="checkbox"
+                      checked={subscribe}
+                      onChange={(e) => setSubscribe(e.target.checked)}
+                    />{' '}
+                    Receber este pedido{' '}
+                    {everyWeekday(
+                      cart.plan.weekday ??
+                        (scheduledFor ? new Date(`${scheduledFor}T12:00:00Z`).getUTCDay() : null),
+                    )}{' '}
+                    (plano “{cart.plan.name}”). A loja confirma pelo WhatsApp e avisa antes de cada
+                    semana; responda PULAR para pular uma, ou CANCELAR PLANO para encerrar.
+                  </label>
                 ) : null}
                 <Slot
                   name="checkout.PaymentMethods"

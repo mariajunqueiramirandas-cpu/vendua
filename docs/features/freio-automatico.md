@@ -1,6 +1,6 @@
 # Freio automático: delivery promises from the real kitchen
 
-> Status: Proposed, not planned · Started 2026-10-07 · Kind: differentiator (not a gap in
+> Status: F0–F3 shipped (2026-10-13, migration 0125, Kernel 1.26) · Started 2026-10-07 · Kind: differentiator (not a gap in
 > [`competitor-parity.md`](../competitor-parity.md)) · Builds on:
 > [ADR 0024](../adr/0024-distance-based-delivery-pricing.md),
 > [ADR 0026](../adr/0026-store-whatsapp-gateway.md), [ADR 0029](../adr/0029-kitchen-display.md) · Related:

@@ -1066,8 +1066,9 @@ export interface WaMessage {
     | 'store_open'
     /** "o pedido de sempre", at most weekly to a shopper who asked */
     | 'usual_reminder';
-  /** 'usual' on an opt_in: the ack to a shopper's LEMBRAR */
-  event: WaEvent | 'usual' | null;
+  /** 'usual' on an opt_in: the ack to a shopper's LEMBRAR; 'plan': a weekly plan's answer or
+   *  note. On an order: 'reminder_eve' (Festa) and a plan's 'plan_confirm' / 'plan_cycle' */
+  event: WaEvent | 'usual' | 'plan' | 'reminder_eve' | 'plan_confirm' | 'plan_cycle' | null;
   orderId: string | null;
   orderNumber: number | null;
   status: 'pending' | 'sending' | 'sent' | 'failed' | 'expired' | 'skipped';
@@ -1123,7 +1124,6 @@ export interface Whatsapp {
   recent: WaMessage[];
 }
 
-/** Início › the commission own-site orders didn't pay (0123). Core does the arithmetic. */
 /** Cardápio › Festa (0126): a party kind and its per-guest rules, as Core keeps them */
 export interface PartyProfile {
   id: string;
@@ -1176,6 +1176,52 @@ export interface PartyProfileIn {
     dailyCapUnits: number | null;
     products: { productId: string; unitsPerSale: number }[];
   }[];
+}
+
+/** Cardápio › Planos (0127): a weekly basket, as Core keeps it */
+export interface ShopperPlanIn {
+  name: string;
+  description: string | null;
+  /** 0 = Sunday; null = the weekday of the shopper's first date */
+  weekday: number | null;
+  /** the week's order is placed this many days before its date */
+  leadDays: number;
+  items: { productId: string; qty: number }[];
+  active: boolean;
+}
+
+export interface ShopperPlan extends ShopperPlanIn {
+  id: string;
+  /** active and waiting for ASSINAR */
+  subscribers: number;
+}
+
+export type PlanSubscriptionState = 'pending' | 'active' | 'paused' | 'cancelled';
+
+export interface PlanSubscription {
+  id: string;
+  planId: string;
+  name: string;
+  phone: string;
+  state: PlanSubscriptionState;
+  mode: 'pickup' | 'delivery';
+  method: PayMethod;
+  weekday: number;
+  nextOn: string | null;
+  /** the last week's error code ('missed', 'opted_out', a checkout code) */
+  lastError: string | null;
+  createdAt: string;
+  /** weeks placed so far */
+  weeks: number;
+  lastOrder: { id: string; number: number; day: string } | null;
+}
+
+export interface PlansView {
+  /** the store's WhatsApp is on: without it no plan reaches the shopper */
+  offered: boolean;
+  plans: ShopperPlan[];
+  subscriptions: PlanSubscription[];
+  needsChoices: string[];
 }
 
 export interface EncomendaCapacity {
@@ -2621,6 +2667,12 @@ export const api = {
     send<PartyView & { id: string }>('POST', '/party/profiles', b),
   saveParty: (id: string, b: PartyProfileIn) => send<PartyView>('PUT', `/party/profiles/${id}`, b),
   deleteParty: (id: string) => send<PartyView>('DELETE', `/party/profiles/${id}`),
+  plans: () => get<PlansView>('/plans'),
+  createPlan: (b: ShopperPlanIn) => send<PlansView & { id: string }>('POST', '/plans', b),
+  savePlan: (id: string, b: ShopperPlanIn) => send<PlansView>('PUT', `/plans/${id}`, b),
+  deletePlan: (id: string) => send<PlansView>('DELETE', `/plans/${id}`),
+  planSubscription: (id: string, action: 'pause' | 'resume' | 'cancel') =>
+    send<PlansView>('POST', `/plans/subscriptions/${id}/${action}`),
   freio: () => get<Freio>('/freio'),
   patchFreio: (b: FreioPatch) => send<Freio>('PATCH', '/freio', b),
   freioApply: () => send<Freio>('POST', '/freio/apply'),

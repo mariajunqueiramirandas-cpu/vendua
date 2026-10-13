@@ -500,6 +500,29 @@ export interface Cart {
   /** Kernel 1.26 — the guests the cart was built for (`api.buildPartyCart`); null/absent = an
    *  ordinary cart. A party is an encomenda: `schedule.required` is true. */
   party?: { profileId: string; adults: number; children: number } | null;
+  /** Kernel 1.26 — the weekly plan the cart was built from (`api.buildPlanCart`): checkout
+   *  offers it (`CheckoutInput.subscribe`). Its first week is an encomenda, on the plan's
+   *  `weekday` when it has one. */
+  plan?: { id: string; name: string; weekday: number | null } | null;
+}
+
+/** Kernel 1.26 — Plano semanal: a fixed basket the store delivers every week. `subtotalCents`
+ *  is Core's sum at today's prices; each week's order is priced by Core when it is placed. */
+export interface ShopperPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  /** 0 = Sunday; null = the weekday of the shopper's first date */
+  weekday: number | null;
+  lines: {
+    productId: string;
+    slug: string;
+    name: string;
+    qty: number;
+    unitPriceCents: number;
+    imageUrl: string | null;
+  }[];
+  subtotalCents: number;
 }
 
 /** Kernel 1.26 — Festa calculada: one of the store's party kinds and its rules, as Core keeps
@@ -571,6 +594,9 @@ export interface CheckoutInput {
   /** Kernel 1.23 — the total the shopper saw, integer cents, as Core priced it for this payment
    *  method (never a client sum). Core answers 409 `PRICES_CHANGED` when its total differs. */
   expectedTotalCents?: number;
+  /** Kernel 1.26 — the shopper's yes to the cart's weekly plan (`Cart.plan`): the order starts
+   *  it, the store's WhatsApp confirms the number, and Core places each week from then on */
+  subscribe?: boolean;
 }
 
 export interface DeliveryZone {
@@ -1375,6 +1401,11 @@ export function createApi(baseUrl = '') {
      *  can't be sold now comes back in `report.skipped`, as for a shared bag */
     buildPartyCart: (input: PartyInput) =>
       cartPost<{ cart: Cart; quote: PartyQuote; report: ImportReport }>('/cart/party', input),
+    /** Kernel 1.26 — the store's weekly plans; [] = none, or the store can't text its shoppers */
+    plans: () => apiFetch<{ plans: ShopperPlan[] }>(sf('/plans')),
+    /** Kernel 1.26 — the session's cart becomes the plan's basket (what was in it gives way) */
+    buildPlanCart: (planId: string) =>
+      cartPost<{ cart: Cart; report: ImportReport }>('/cart/plan', { planId }),
     table: (token: string) =>
       apiFetch<{ table: TableInfo }>(sf(`/table?t=${encodeURIComponent(token.slice(0, 400))}`)),
     catalog: () =>
@@ -1823,6 +1854,8 @@ export const ERROR_CODES = [
   'INVALID_PARTY',
   'PARTY_TOO_BIG',
   'DATE_FULL',
+  'PLAN_NOT_FOUND',
+  'PLAN_NOT_ALLOWED',
   'PICKUP_UNAVAILABLE',
   'OUT_OF_ZONE',
   'INVALID_DELIVERY',

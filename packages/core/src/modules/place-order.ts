@@ -1,5 +1,7 @@
 import { assertDateRoomTx } from './encomenda-capacity.ts';
 import { orderPartyTx } from './party.ts';
+import { planToSubscribeTx, subscribeTx } from './shopper-plans.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
@@ -62,6 +64,8 @@ export async function placeOrderTx(
     threadId?: string | null;
     /** dine_in: the QR's table, its open comanda already locked (tableForToken) */
     table?: QrTable | null;
+    /** the caller sends the shopper its own message (a plan's week), not the 'placed' one */
+    quiet?: boolean;
   } = {},
 ): Promise<string> {
   // One pipelined batch. postgres.js sends a query when it is first executed, so the locks are
@@ -198,6 +202,11 @@ export async function placeOrderTx(
         )
       : 0;
   const phone = (body.customer.phone && normalizePhone(body.customer.phone)) || null;
+  // Plano semanal (0127): the shopper's yes to the cart's plan, checked before anything is written
+  const subscribe =
+    cart.plan && body.subscribe === true
+      ? await planToSubscribeTx(tx, tenantId, cart.plan, body, phone, scheduledFor)
+      : null;
 
   // coupon: re-evaluated with the phone (per-phone limits, first order, personal rewards)
   let discount = 0;
@@ -499,7 +508,17 @@ export async function placeOrderTx(
   }
   // each hook re-checks everything in a savepoint of its own; the flags only skip a store that
   // has neither, which is what their first read would have found
-  if (store?.whatsapp !== false) await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+  if (store?.whatsapp !== false && !opts.quiet)
+    await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+  if (subscribe)
+    await subscribeTx(
+      tx,
+      tenantId,
+      subscribe,
+      orderId,
+      body,
+      !!opts.provenPhone && phoneVariants(subscribe.phone).includes(opts.provenPhone),
+    );
   if (store?.printers !== false) await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
   return orderId;
 }

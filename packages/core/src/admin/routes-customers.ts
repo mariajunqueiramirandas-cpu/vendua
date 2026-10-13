@@ -347,6 +347,12 @@ export function mountCustomers(d: AdminDeps) {
           select name, source, consented_at, last_sent_at from usual_reminders
           where tenant_id = ${t.id} and phone = any(${phoneVariants(phone)}::text[])`
       )[0];
+      const plans = await tx`
+        select p.name as plan, s.state, s.name, s.delivery, s.payment, s.notes, s.weekday,
+               s.next_on, s.created_at, s.confirmed_at, s.cancelled_at
+        from plan_subscriptions s join shopper_plans p on p.id = s.plan_id
+        where s.tenant_id = ${t.id} and s.phone = any(${phoneVariants(phone)}::text[])
+        order by s.created_at`;
       const notes = (
         await tx`
           select note, tags, updated_at from customer_notes where tenant_id = ${t.id} and phone = ${phone}
@@ -373,6 +379,7 @@ export function mountCustomers(d: AdminDeps) {
         coupons,
         cartReminders,
         usualReminder: usualReminder ?? null,
+        plans,
         notes: notes ?? null,
         importedContact: contact ?? null,
         agentMemory,
@@ -483,6 +490,8 @@ export function mountCustomers(d: AdminDeps) {
       await tx`delete from customer_notes where tenant_id = ${t.id} and phone = ${phone}`;
       await tx`delete from customer_contacts where tenant_id = ${t.id} and phone = ${phone}`;
       await withdrawUsualTx(tx, t.id, phone);
+      // their weekly plans: the address, the name and the number go (the weeks' orders stay above)
+      await tx`delete from plan_subscriptions where tenant_id = ${t.id} and phone = any(${variants}::text[])`;
       await tx`update coupon_redemptions set phone = '' where tenant_id = ${t.id} and phone = ${phone}`;
       await audit(tx, t.id, m, {
         action: 'customer.forget',

@@ -1,6 +1,6 @@
 # Status do dia: the store's WhatsApp Status, ready every day
 
-> Status: Proposed, not planned · Started 2026-10-07 · Kind: differentiator (adjacent to P-018
+> Status: S0 + S1 shipped (2026-10-13, migration 0124) · Started 2026-10-07 · Kind: differentiator (adjacent to P-018
 > broadcasts in [`competitor-parity.md`](../competitor-parity.md), which it is not) · Builds on:
 > [ADR 0026](../adr/0026-store-whatsapp-gateway.md), [ADR 0018](../adr/0018-page-composition.md),
 > [ADR 0028](../adr/0028-privacy-first-platform-analytics.md)

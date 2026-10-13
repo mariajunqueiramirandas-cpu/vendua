@@ -232,11 +232,13 @@ export interface CartMutations {
   buildParty?: (
     input: PartyInput,
   ) => Promise<{ cart: Cart; quote: PartyQuote; report: ImportReport }>;
+  /** Kernel 1.26 — the cart becomes a weekly plan's basket (`api.buildPlanCart`) */
+  buildPlan?: (planId: string) => Promise<{ cart: Cart; report: ImportReport }>;
 }
 
 /** The Kernel's own cart mutations: every one, `addLine` and `setNote` included. */
 type KernelCartMutations = CartMutations &
-  Required<Pick<CartMutations, 'addLine' | 'setNote' | 'buildParty'>>;
+  Required<Pick<CartMutations, 'addLine' | 'setNote' | 'buildParty' | 'buildPlan'>>;
 
 export function useCart(): {
   /** null = no session/cart yet (or a resolved empty read). */
@@ -307,6 +309,11 @@ export function useCart(): {
         }),
       buildParty: (input) =>
         api.buildPartyCart(input).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
+      buildPlan: (planId) =>
+        api.buildPlanCart(planId).then((r) => {
           bump(r.cart);
           return r;
         }),

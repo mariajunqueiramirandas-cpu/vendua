@@ -215,4 +215,5 @@ export type {
   PartyProfile,
   PartyInput,
   PartyQuote,
+  ShopperPlan,
 } from './api.ts';

@@ -46,6 +46,8 @@ export interface CheckoutInput {
   /** the link the shopper came from (`?ref=`, a Status post or the bag card); anything that
    *  isn't one is dropped, never a 4xx */
   ref?: string | null;
+  /** Plano semanal (0127): the shopper's yes to the plan the cart was built from */
+  subscribe?: boolean;
 }
 
 export type ZoneRowLike = ZoneLike;

@@ -5,8 +5,8 @@ never need a storefront edit; a major only ships with a Contract major.
 
 ## 1.26.0
 
-"O de sempre", Freio automático, Festa calculada — additive, no storefront edit. One new
-sdk-catalog export (`partyCta`).
+"O de sempre", Freio automático, Festa calculada, Plano semanal — additive, no storefront
+edit. Two new sdk-catalog exports (`partyCta`, `plansCta`).
 
 - `StoreProfile.usualReminder`; `api.usualReminder(orderId)` / `api.cancelUsualReminder(orderId)`
   (`/checkout/v1/usual-reminder`, the phone read from the order); `ERROR_CODES` gains
@@ -24,6 +24,10 @@ sdk-catalog export (`partyCta`).
   `partyQuote` / `buildPartyCart` (and `mutations.buildParty`), `Cart.party`, types
   `PartyProfile` / `PartyInput` / `PartyQuote`; `ERROR_CODES` gains `INVALID_PARTY`,
   `PARTY_TOO_BIG`, `DATE_FULL`. A full day leaves `schedule.dates`.
+- Plano semanal: the `/planos` page, block `sdk:plans-cta`, `api.plans` / `buildPlanCart` (and
+  `mutations.buildPlan`), `Cart.plan`, `CheckoutInput.subscribe` and its checkout tick
+  (`[data-vendua="plan-subscribe"]`), type `ShopperPlan`; `ERROR_CODES` gains `PLAN_NOT_FOUND`,
+  `PLAN_NOT_ALLOWED`.
 
 ## 1.25.0
 

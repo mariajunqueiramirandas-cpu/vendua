@@ -308,13 +308,6 @@ async function orderFactsTx(
   };
 }
 
-/**
- * Queue this order step's message when the store has its WhatsApp on and this step enabled.
- * Call inside the tenant transaction that commits the step, after any Promise.all batch: it
- * runs in a savepoint and never throws, so a bug here can't block an order.
- * A step that repeats (a delay, a refund) names its `occurrence` (digits): the same one queued
- * twice is still one message.
- */
 /** Festa calculada F0: the day before an encomenda, its date and where it's picked up or goes */
 export function eveReminderText(o: OrderFacts): string | null {
   if (!o.scheduledFor) return null;
@@ -325,10 +318,55 @@ export function eveReminderText(o: OrderFacts): string | null {
 }
 
 /** Queues the D−1 message once per order (event 'reminder_eve'), on the store's linked number. */
-export async function enqueueEveReminderTx(
+export function enqueueEveReminderTx(tx: Sql, tenantId: string, orderId: string): Promise<boolean> {
+  return enqueueOrderNoteTx(tx, tenantId, orderId, 'reminder_eve', eveReminderText);
+}
+
+const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+/** "toda sexta", "todo sábado" */
+export const everyWeekday = (w: number) => `${w === 0 || w === 6 ? 'todo' : 'toda'} ${WEEKDAYS[w]}`;
+
+/** Plano semanal (0127): under the first order, the plan it starts; a typed number confirms it */
+export function planConfirmText(
+  o: OrderFacts,
+  plan: { name: string; weekday: number; nextOn: string; active: boolean },
+): string {
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const head = `${hi}Você assinou o plano semanal "${plan.name}" da ${o.storeName}: ${everyWeekday(plan.weekday)} a loja faz este pedido para você e avisa aqui antes.`;
+  const tail = plan.active
+    ? `A próxima entrega é ${ddmm(plan.nextOn)}. Para pular uma semana, responda PULAR. Para encerrar, responda CANCELAR PLANO.`
+    : 'Para confirmar, responda ASSINAR. Sem essa resposta o plano não começa (este pedido segue normal).';
+  return `${head}\n\n${tail}`;
+}
+
+/** The week's order, placed by the plan: what, when, how much, and how to skip it */
+export function planCycleText(
+  o: OrderFacts,
+  plan: { name: string; pix: boolean; missing: string[] },
+): string | null {
+  if (!o.scheduledFor) return null;
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const lines = [
+    `${hi}O pedido do seu plano "${plan.name}" desta semana está feito: #${o.number}, para ${ddmm(o.scheduledFor)}, ${brl(o.totalCents)}.`,
+    plan.missing.length ? `Fora desta vez (a loja não tem hoje): ${plan.missing.join(', ')}.` : '',
+    plan.pix ? 'O Pix está na página do pedido.' : '',
+    'Para pular esta semana, responda PULAR. Para encerrar o plano, responda CANCELAR PLANO.',
+  ].filter(Boolean);
+  const text = lines.join('\n\n');
+  return o.trackUrl ? `${text}\n\nAcompanhe o pedido: ${o.trackUrl}` : text;
+}
+
+/**
+ * A store note on one order beyond its steps (the eve reminder, a plan's messages): once per
+ * order and event, on the store's linked number, never to a number that said SAIR. Runs in a
+ * savepoint and never throws, like enqueueOrderMessageTx.
+ */
+export async function enqueueOrderNoteTx(
   tx: Sql,
   tenantId: string,
   orderId: string,
+  event: string,
+  render: (o: OrderFacts) => string | null,
 ): Promise<boolean> {
   try {
     return await (
@@ -340,21 +378,28 @@ export async function enqueueEveReminderTx(
       const phone = facts?.phone ?? null;
       if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
       if (await optedOutTx(sp, tenantId, phone)) return false;
-      const text = eveReminderText(facts);
+      const text = render(facts);
       if (!text) return false;
       const rows = await sp`
           insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body)
-          values (${tenantId}, ${orderId}, 'order', 'reminder_eve', ${phone}, ${text})
+          values (${tenantId}, ${orderId}, 'order', ${event}, ${phone}, ${text})
           on conflict (order_id, event) where order_id is not null do nothing
           returning id`;
       return rows.length > 0;
     });
   } catch (err) {
-    msgLog.error({ err, orderId }, 'eve reminder not queued');
+    msgLog.error({ err, orderId, event }, 'order note not queued');
     return false;
   }
 }
 
+/**
+ * Queue this order step's message when the store has its WhatsApp on and this step enabled.
+ * Call inside the tenant transaction that commits the step, after any Promise.all batch: it
+ * runs in a savepoint and never throws, so a bug here can't block an order.
+ * A step that repeats (a delay, a refund) names its `occurrence` (digits): the same one queued
+ * twice is still one message.
+ */
 export async function enqueueOrderMessageTx(
   tx: Sql,
   tenantId: string,

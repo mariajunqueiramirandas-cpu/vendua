@@ -73,15 +73,24 @@ const OPT_OUT = new Set(['sair', 'parar', 'stop', 'descadastrar', 'cancelarmensa
 const OPT_IN = new Set(['voltar', 'receber']);
 /** "o de sempre": a shopper asking to be reminded of their usual order (0122) */
 const REMIND = new Set(['lembrar', 'lembre', 'melembre', 'melembra', 'lembrete']);
+/** Plano semanal (0127): confirm the number, skip a week, end the plan */
+const PLAN_YES = new Set(['assinar', 'assino', 'confirmarplano']);
+const PLAN_SKIP = new Set(['pular', 'pularsemana', 'pularestasemana']);
+const PLAN_STOP = new Set(['cancelarplano', 'cancelaroplano', 'encerrarplano', 'sairdoplano']);
+
+export type OptKeyword = 'out' | 'in' | 'remind' | 'plan_yes' | 'plan_skip' | 'plan_stop';
 
 /** A whole message that is only a stop/start keyword. "pode parar de mandar?" is a conversation
  *  for the store, not a command — only the bare word counts. */
-export function optKeyword(text: string): 'out' | 'in' | 'remind' | null {
+export function optKeyword(text: string): OptKeyword | null {
   if (text.length > 40) return null;
   const k = fold(text);
   if (OPT_OUT.has(k)) return 'out';
   if (OPT_IN.has(k)) return 'in';
   if (REMIND.has(k)) return 'remind';
+  if (PLAN_YES.has(k)) return 'plan_yes';
+  if (PLAN_SKIP.has(k)) return 'plan_skip';
+  if (PLAN_STOP.has(k)) return 'plan_stop';
   return null;
 }
 

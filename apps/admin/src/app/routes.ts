@@ -43,6 +43,7 @@ export const chunks = {
   importMenu: once(() => import('../features/import/ImportPage.tsx')),
   stock: once(() => import('../features/menu/Stock.tsx')),
   festa: once(() => import('../features/menu/Festa.tsx')),
+  planos: once(() => import('../features/menu/Planos.tsx')),
   store: once(() => import('../features/store/Store.tsx')),
   payments: once(() => import('../features/payments/Payments.tsx')),
   whatsapp: once(() => import('../features/whatsapp/Whatsapp.tsx')),
@@ -110,6 +111,7 @@ export type RouteId =
   | 'importMenu'
   | 'stock'
   | 'festa'
+  | 'planos'
   | 'menu'
   | 'store'
   | 'payments'
@@ -266,6 +268,12 @@ const ROUTES: RouteDef[] = [
     match: /^\/cardapio\/festa$/,
     chunk: chunks.festa,
     data: (qc) => q(qc, qk.party, api.party),
+  },
+  {
+    id: 'planos',
+    match: /^\/cardapio\/planos$/,
+    chunk: chunks.planos,
+    data: (qc) => q(qc, qk.plans, api.plans),
   },
   {
     id: 'stock',

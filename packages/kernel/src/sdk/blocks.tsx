@@ -1,4 +1,5 @@
 import { PARTY_PATH, usePartyProfiles } from '../pages/party.tsx';
+import { PLANS_PATH, useShopperPlans } from '../pages/plans.tsx';
 import { useState } from 'react';
 import {
   useCopy,
@@ -356,6 +357,26 @@ export function PartyCta({ settings }: BlockProps<typeof S.partyCta>) {
         </p>
       ) : null}
       <KLink href={PARTY_PATH} className="v-btn v-btn-accent" data-part="cta">
+        {settings.cta}
+      </KLink>
+    </div>
+  );
+}
+
+export function PlansCta({ settings }: BlockProps<typeof S.plansCta>) {
+  const { plans } = useShopperPlans();
+  if (!plans.length) return null;
+  return (
+    <div className="v-party-cta v-plans-cta" data-part="root">
+      <p className="v-party-cta-title" data-part="title">
+        {settings.title}
+      </p>
+      {settings.text ? (
+        <p className="v-muted" data-part="text">
+          {settings.text}
+        </p>
+      ) : null}
+      <KLink href={PLANS_PATH} className="v-btn v-btn-accent" data-part="cta">
         {settings.cta}
       </KLink>
     </div>

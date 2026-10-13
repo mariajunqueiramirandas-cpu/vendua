@@ -73,6 +73,13 @@ const EVENT_LABEL = Object.fromEntries(EVENTS.map((e) => [e.id, e.label])) as Re
   string
 >;
 
+/** an order's notes beyond its steps */
+const NOTE_LABEL: Record<string, string> = {
+  reminder_eve: 'Lembrete da véspera',
+  plan_confirm: 'Plano semanal',
+  plan_cycle: 'Pedido do plano',
+};
+
 export default function Whatsapp() {
   const settling = (d: WhatsappData | undefined) =>
     !!d && (d.state === 'connecting' || d.state === 'pairing' || d.disconnecting);
@@ -875,12 +882,16 @@ function statusOf(m: WaMessage): { label: string; tone: Tone; read?: boolean } {
 function titleOf(m: WaMessage) {
   if (m.kind === 'opt_out') return 'Cliente pediu para parar';
   if (m.kind === 'opt_in')
-    return m.event === 'usual' ? 'Cliente pediu o lembrete de sempre' : 'Cliente voltou a receber';
+    return m.event === 'usual'
+      ? 'Cliente pediu o lembrete de sempre'
+      : m.event === 'plan'
+        ? 'Plano semanal'
+        : 'Cliente voltou a receber';
   if (m.kind === 'test') return 'Teste para você';
   if (m.kind === 'cart_reminder') return 'Lembrete de sacola';
   if (m.kind === 'store_open') return 'Aviso: a loja abriu';
   if (m.kind === 'usual_reminder') return 'Pedido de sempre';
-  const step = m.event && m.event !== 'usual' ? EVENT_LABEL[m.event] : 'Aviso';
+  const step = (m.event && (EVENT_LABEL[m.event as WaEvent] ?? NOTE_LABEL[m.event])) || 'Aviso';
   return m.orderNumber ? `#${m.orderNumber} · ${step}` : step;
 }
 

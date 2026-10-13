@@ -1,4 +1,6 @@
 import { eveReminderPass } from '../modules/party.ts';
+import { planCyclePass } from '../modules/shopper-plan-cycles.ts';
+import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
@@ -24,6 +26,8 @@ export interface AlertOpts {
   notify?: MerchantNotify | undefined;
   /** `https://<admin host>` for links in messages; null = no link */
   adminOrigin?: string | null | undefined;
+  /** the install's payment driver: a plan's weekly order is checked out like any other */
+  provider?: PaymentProvider | undefined;
 }
 
 type Sub = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
@@ -658,6 +662,10 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     // Festa calculada F0: tomorrow's encomendas hear from the store the day before
     await eveReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'eve reminder pass failed'),
+    );
+    // Plano semanal (0127): each subscription's week, placed while the store is open
+    await planCyclePass(sql, t.id, opts.provider).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'plan cycle pass failed'),
     );
     if (prune)
       await pruneTenant(sql, t.id).catch((err) =>

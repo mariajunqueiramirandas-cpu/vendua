@@ -27,6 +27,7 @@ const STOREFRONT_MODULES = [
   'modules/pdv/qr.ts',
   'modules/place-order.ts',
   'modules/preorder.ts',
+  'modules/shopper-plans.ts',
   'modules/stock.ts',
   'modules/storefront-platform.ts',
 ];

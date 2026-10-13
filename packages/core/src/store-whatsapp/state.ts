@@ -4,6 +4,7 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { LeaseLost, wipeAuth, type Fence } from './auth-store.ts';
 import { consentUsualTx, usualReminderOffered } from '../modules/usual-reminder.ts';
+import { planKeywordTx } from '../modules/shopper-plans.ts';
 import { enqueueTextTx, optInAck, optOutAck, optedOutTx, usualAck } from './messages.ts';
 import { NOTICE_KINDS } from './proactive.ts';
 import type { Inbound, Receipt, StateUpdate } from './session.ts';
@@ -247,6 +248,17 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
         values (${tenantId}, 'opt_in', 'usual', ${phone}, ${usualAck(name)},
                 now() + interval '30 minutes')`;
       await emitAdminTx(tx, tenantId, 'whatsapp', 'usual');
+      return;
+    }
+    if (kw === 'plan_yes' || kw === 'plan_skip' || kw === 'plan_stop') {
+      // Plano semanal (0127): a word for the number's plans; none = the store's conversation
+      if (!phone) return;
+      const answer = await planKeywordTx(tx, tenantId, phone, kw);
+      if (!answer) return;
+      await tx`
+        insert into store_wa_messages (tenant_id, kind, event, phone, body, expires_at)
+        values (${tenantId}, 'opt_in', 'plan', ${phone}, ${answer}, now() + interval '30 minutes')`;
+      await emitAdminTx(tx, tenantId, 'whatsapp', 'plan');
       return;
     }
     const added = await tx`

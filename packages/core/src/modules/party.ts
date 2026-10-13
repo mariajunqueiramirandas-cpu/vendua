@@ -304,7 +304,7 @@ export async function buildPartyCartTx(
     adults: quote.adults,
     children: quote.children,
   };
-  await tx`update carts set party = ${tx.json(party as never)}, updated_at = now()
+  await tx`update carts set party = ${tx.json(party as never)}, plan_id = null, updated_at = now()
            where tenant_id = ${tenantId} and id = ${cartId}`;
   return { quote, report };
 }

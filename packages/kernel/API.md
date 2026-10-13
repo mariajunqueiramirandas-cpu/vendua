@@ -150,6 +150,7 @@ may only use `store:` types.
 | `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                               | —                                                                                                                              |
 | `sdk:recent-order`     | block   | category `promo`; title — **Kernel 1.21**                             | —                                                                                                                              |
 | `sdk:party-cta`        | block   | category `promo`; title, text, cta — **Kernel 1.26**                  | —                                                                                                                              |
+| `sdk:plans-cta`        | block   | category `promo`; title, text, cta — **Kernel 1.26**                  | —                                                                                                                              |
 
 Kernel 1.5: `catalog.ProductCard` receives an optional `quickAdd(children)` render prop — the
 Kernel's add-to-cart button, offered only for products that can be added as-is (active, not a
@@ -643,6 +644,31 @@ Festa) gets a party calculator: guests and picks in, Core's quantities out, an o
 - New `ERROR_CODES`: `INVALID_PARTY` (422, `details.field`, `details.groupId`), `PARTY_TOO_BIG`
   (422, a line past 99 sales, `details.productId`), `DATE_FULL` (409 at checkout, the date or a
   group's pieces a day are full; `details.date`, `details.groupId`).
+
+### Plano semanal (Kernel 1.26)
+
+Additive — no storefront edit. A store with its WhatsApp connected and weekly plans set up in the
+admin (Cardápio › Planos) offers them: a shopper picks a basket, says yes at checkout, the store's
+WhatsApp confirms the number (ASSINAR), and Core places each week's order itself, `lead_days`
+before its date, priced then. PULAR skips a week, CANCELAR PLANO ends it.
+
+- `/planos` — the plans page (`data-vendua-page="plans"`): each plan's lines, its day and Core's
+  sum at today's prices, and "Quero este plano" (the bag becomes the plan, then the cart). A
+  store's own `page:planos` keeps the path, and this page isn't mounted.
+- New block `sdk:plans-cta` (category `promo`; settings `title`, `text`, `cta`; schema `plansCta`
+  in `@vendua/kernel/sdk-catalog`): a card to `/planos`, nothing while the store offers no plan.
+  No template migration places it: the merchant adds it, or shares the link.
+- Client: `api.plans()` → `GET /storefront/v1/plans` (`{ plans: ShopperPlan[] }`; `[]` when the
+  store can't text its shoppers); `api.buildPlanCart(planId)` → `POST /checkout/v1/cart/plan`
+  (`{ cart, report }`), also `useCart().mutations.buildPlan` (optional on `CartMutations`). New
+  type `ShopperPlan`.
+- `Cart.plan` (`{ id, name, weekday }`, optional): the plan's first week is an encomenda,
+  `schedule.required` is true, and a plan with a `weekday` offers only that weekday's dates.
+- `CheckoutInput.subscribe` (optional boolean): the shopper's yes to `Cart.plan`. Checkout shows
+  it ticked (`[data-vendua="plan-subscribe"]`) on the payment step; unticked, the order is just an
+  order.
+- New `ERROR_CODES`: `PLAN_NOT_FOUND` (404, the plan left or the store can't text),
+  `PLAN_NOT_ALLOWED` (422, a table order, `details.field`).
 
 ### Where an order came from: `?ref=` (Kernel 1.26)
 

@@ -4279,8 +4279,7 @@
     font-size: 0.875rem;
   }
 
-  /* sdk:recent-order — the device's last order */
-  /* Kernel 1.26 — Festa calculada: the calculator page and the home card */
+  /* Kernel 1.26 — Festa calculada: the calculator page and the home card (sdk:plans-cta too) */
   .v-party-cta {
     display: grid;
     justify-items: start;
@@ -4357,6 +4356,69 @@
   .v-party-line-why {
     font-size: 0.8125rem;
   }
+  /* Kernel 1.26 — Plano semanal: the /planos page and the checkout tick */
+  .v-plans {
+    max-width: 44rem;
+  }
+  .v-plans-intro {
+    margin: 6px 0 24px;
+  }
+  .v-plans-list {
+    display: grid;
+    gap: 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .v-plan {
+    display: grid;
+    gap: 12px;
+  }
+  .v-plan p {
+    margin: 0;
+  }
+  .v-plan-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+  }
+  .v-plan-head .v-panel-title {
+    margin: 0;
+  }
+  .v-plan-day {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--v-color-accent, #b5532a);
+  }
+  .v-plan-lines {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-wrap: anywhere;
+  }
+  .v-plan-total {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding-top: 12px;
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  }
+  .v-plan-note {
+    font-size: 0.875rem;
+  }
+  .v-plans-foot {
+    margin: 16px 0 0;
+  }
+  .v-plan-consent {
+    margin: 12px 0;
+  }
+  /* sdk:recent-order — the device's last order */
   .v-recent-order {
     display: grid;
     gap: 4px;

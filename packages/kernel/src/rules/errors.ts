@@ -31,6 +31,11 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     body: 'Escolha mais opções nesse grupo para dividir.',
   },
   DATE_FULL: { title: 'Essa data lotou', body: 'Escolha outra data.' },
+  PLAN_NOT_FOUND: { title: 'Esse plano saiu do ar', body: 'Veja os planos da loja de novo.' },
+  PLAN_NOT_ALLOWED: {
+    title: 'O plano é para entrega ou retirada',
+    body: 'Escolha entrega ou retirada para assinar.',
+  },
   PICKUP_UNAVAILABLE: { title: 'Retirada indisponível agora', body: 'Escolha entrega.' },
   EMPTY_CART: { title: 'Sua sacola está vazia' },
   CART_NOT_OPEN: { title: 'Essa sacola já virou pedido', body: 'Recarregue para começar outra.' },

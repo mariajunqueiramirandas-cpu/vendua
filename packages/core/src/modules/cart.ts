@@ -33,6 +33,7 @@ import {
 } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { datesWithRoomTx, type CartParty } from './encomenda-capacity.ts';
+import { cartPlanTx, dayOfWeek, type CartPlan } from './shopper-plan-base.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
 import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
@@ -213,6 +214,8 @@ export interface CartView {
   schedule: ScheduleView;
   /** Festa calculada (0126): the guests the cart was built for; null = an ordinary cart */
   party?: CartParty | null;
+  /** Plano semanal (0127): the plan this cart was built from — its checkout offers it */
+  plan?: CartPlan | null;
 }
 
 export interface GroupPicks {
@@ -647,6 +650,7 @@ export interface CartRow {
   coupon_code: string | null;
   /** Festa calculada (0126): the guests this cart was built for */
   party?: CartParty | null;
+  plan_id?: string | null;
 }
 
 export function loadCartRow(
@@ -657,7 +661,7 @@ export function loadCartRow(
 ): Promise<CartRow | undefined> {
   const lock = opts.forUpdate ? tx`for update` : tx``;
   return tx<CartRow[]>`
-    select id, status, delivery, delivery_route, coupon_code, party from carts
+    select id, status, delivery, delivery_route, coupon_code, party, plan_id from carts
     where tenant_id = ${tenantId} and id = ${cartId} ${lock}
   `.then((rows) => rows[0]);
 }
@@ -858,6 +862,13 @@ export async function loadCartView(
   );
   // Festa calculada (0126): a party is an encomenda; a day at its ceiling isn't offered
   if (cart.party) schedule.required = true;
+  // Plano semanal (0127): the first week is an encomenda too, on the plan's day when it has one
+  const plan = await cartPlanTx(tx, tenantId, cart.plan_id);
+  if (plan) {
+    schedule.required = true;
+    if (plan.weekday !== null)
+      schedule.dates = schedule.dates.filter((d) => dayOfWeek(d) === plan.weekday);
+  }
   if (settings?.encomenda_capacity && (schedule.required || schedule.dates.length))
     schedule.dates = await datesWithRoomTx(
       tx,
@@ -893,6 +904,7 @@ export async function loadCartView(
     coupon,
     schedule,
     party: cart.party ?? null,
+    plan,
   };
 }
 
