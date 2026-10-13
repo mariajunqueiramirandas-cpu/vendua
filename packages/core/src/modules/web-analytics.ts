@@ -393,7 +393,8 @@ export async function signupReport(sql: Sql, days: ReportDays): Promise<SignupRe
     const stepCounts = (prefix: string, steps: readonly string[]) => tx<
       { step: string; visitors: number }[]
     >`
-      select s.step, coalesce(count(distinct (e.day, e.visitor)), 0)::int as visitors
+      -- a step nobody reached joins one all-null row, and (null, null) is a value to count(distinct)
+      select s.step, count(distinct (e.day, e.visitor)) filter (where e.visitor is not null)::int as visitors
       from unnest(${steps as string[]}::text[]) with ordinality s(step, n)
       left join web_analytics_events e on e.property = 'admin' and e.day >= ${since}
         and e.path = ${prefix} || s.step

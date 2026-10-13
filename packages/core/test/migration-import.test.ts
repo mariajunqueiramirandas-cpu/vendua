@@ -178,9 +178,9 @@ describe.skipIf(!OWNER_URL)('moving in: menu photos and the customer list (db)',
       },
       { category: 'Bebidas', name: 'Guaraná 2L', description: null, priceCents: 1200 },
     ]);
-    const [{ n }] = await sql<{ n: number }[]>`
+    const [count] = await sql<{ n: number }[]>`
       select count(*)::int as n from products where tenant_id = ${tenantId}`;
-    expect(n).toBe(0);
+    expect(count?.n).toBe(0);
     // not a photo: refused before the paid call; an unreadable one is a stable 422
     const fake = await request(owner, 'POST', '/products/import/photo', {
       mime: 'image/png',
@@ -224,7 +224,7 @@ describe.skipIf(!OWNER_URL)('moving in: menu photos and the customer list (db)',
     const rows = await sql<{ name: string; cat: string; price: number; sort: number }[]>`
       select p.name, c.name as cat, p.base_price_cents as price, p.sort from products p
       join categories c on c.id = p.category_id where p.tenant_id = ${tenantId} order by c.name, p.sort`;
-    expect(rows).toEqual([
+    expect([...rows]).toEqual([
       { name: 'Guaraná 2L', cat: 'Bebidas', price: 1200, sort: 0 },
       { name: 'Água', cat: 'Bebidas', price: 400, sort: 1 },
       { name: 'Calabresa (grande)', cat: 'Pizzas', price: 5490, sort: 0 },
