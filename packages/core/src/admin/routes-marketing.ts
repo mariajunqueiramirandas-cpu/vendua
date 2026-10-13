@@ -15,6 +15,16 @@ import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { loadSettings } from './routes-store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
+import { getProductsById, storeTimezone } from '../modules/catalog.ts';
+import {
+  STATUS_PICKS,
+  parsePlanPatch,
+  prepareTodayTx,
+  savePlanTx,
+  statusCaption,
+  statusPlanTx,
+  statusViewTx,
+} from '../modules/status-do-dia.ts';
 
 async function couponsView(tx: Sql, tenantId: string) {
   const rows = await tx<
@@ -352,6 +362,92 @@ export function mountMarketing(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { announcement: promo } };
+    }),
+  );
+
+  // Status do dia (0124): the plan, today's post and what the last two weeks' posts brought
+  admin.get(
+    '/marketing/status',
+    read('manager', (tx, t) => statusViewTx(tx, t, d.storeDomain)),
+  );
+  admin.patch(
+    '/marketing/status',
+    write('manager', async (tx, t, m, c) => {
+      const patch = parsePlanPatch(await bodyJson(c, 4 * 1024));
+      const before = await statusPlanTx(tx, t.id);
+      const after = await savePlanTx(tx, t.id, patch);
+      if (before.enabled !== after.enabled)
+        await audit(tx, t.id, m, {
+          action: 'marketing.status',
+          entity: 'marketing',
+          summary: after.enabled ? 'ligou o status do dia' : 'desligou o status do dia',
+        });
+      else
+        await audit(tx, t.id, m, {
+          action: 'marketing.status',
+          entity: 'marketing',
+          summary: 'mudou o status do dia',
+        });
+      await emitAdminTx(tx, t.id, 'marketing');
+      return { status: 200, body: await statusViewTx(tx, t, d.storeDomain) };
+    }),
+  );
+  // "preparar agora": today's post without waiting for the hour
+  admin.post(
+    '/marketing/status/today',
+    write('manager', async (tx, t) => {
+      const id = await prepareTodayTx(tx, t, d.storeDomain);
+      if (!id)
+        throw new HttpError(409, 'NOTHING_TO_POST', 'no product is available to post right now');
+      await emitAdminTx(tx, t.id, 'marketing');
+      return { status: 200, body: await statusViewTx(tx, t, d.storeDomain) };
+    }),
+  );
+  admin.post(
+    '/marketing/status/:id',
+    write('manager', async (tx, t, _m, c) => {
+      const id = uuidParam(c, 'id');
+      const body = await bodyJson(c, 4 * 1024);
+      const [post] = await tx<{ ref_code: string }[]>`
+        select ref_code from status_posts where tenant_id = ${t.id} and id = ${id} for update`;
+      if (!post) throw new HttpError(404, 'NOT_FOUND', 'no such post');
+      if (body.state !== undefined) {
+        const state = oneOf(body.state, 'state', ['ready', 'shared', 'skipped'] as const);
+        await tx`
+          update status_posts set state = ${state},
+            shared_at = case when ${state} = 'shared' then coalesce(shared_at, now()) else shared_at end
+          where id = ${id}`;
+      }
+      if (body.productIds !== undefined) {
+        const ids = body.productIds;
+        if (
+          !Array.isArray(ids) ||
+          ids.length < 1 ||
+          ids.length > STATUS_PICKS ||
+          !ids.every((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x))
+        )
+          throw new HttpError(422, 'BAD_REQUEST', `productIds must be 1–${STATUS_PICKS} ids`, {
+            field: 'productIds',
+          });
+        const unique = [...new Set(ids as string[])];
+        const tz = await storeTimezone(tx, t.id);
+        const found = await getProductsById(tx, t.id, unique, { tz });
+        if (unique.some((x) => found.get(x)?.status !== 'active'))
+          throw new HttpError(409, 'NOT_AVAILABLE', 'a product is not available now', {
+            field: 'productIds',
+          });
+        const plan = await statusPlanTx(tx, t.id);
+        const origin = await storeOrigin(tx, t, d.storeDomain);
+        const caption = statusCaption(
+          plan.caption,
+          unique.map((x) => found.get(x)!.name),
+          `${origin}/?ref=${post.ref_code}`,
+        );
+        await tx`update status_posts set product_ids = ${unique}::uuid[], caption = ${caption}
+                 where id = ${id}`;
+      }
+      await emitAdminTx(tx, t.id, 'marketing');
+      return { status: 200, body: await statusViewTx(tx, t, d.storeDomain) };
     }),
   );
 

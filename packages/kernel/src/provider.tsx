@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { createApi, type StoreProfile, type VenduaApi } from './api.ts';
+import { captureLinkRef, createApi, type StoreProfile, type VenduaApi } from './api.ts';
 import { vocabularyOf } from './rules/copy.ts';
 import { plural } from './rules/format.ts';
 import {
@@ -261,6 +261,11 @@ export function VenduaProvider({
     tableTaken.add(api);
     takeTableLink(api);
   }, [api]);
+
+  // Kernel 1.26: `?ref=CODE` rides to the order (Status do dia, the bag card)
+  useEffect(() => {
+    if (globalThis.location) captureLinkRef(globalThis.location.search);
+  }, []);
 
   // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a
   // coupon — both land on /sacola with the params stripped (the URL stays shareable once)

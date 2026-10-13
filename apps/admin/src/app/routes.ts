@@ -50,6 +50,7 @@ export const chunks = {
   customer: once(() => import('../features/customers/CustomerPage.tsx')),
   marketing: once(() => import('../features/marketing/Marketing.tsx')),
   bagCard: once(() => import('../features/marketing/BagCard.tsx')),
+  statusDoDia: once(() => import('../features/marketing/StatusDoDia.tsx')),
   appearance: once(() => import('../features/appearance/Appearance.tsx')),
   reports: once(() => import('../features/reports/Reports.tsx')),
   team: once(() => import('../features/team/Team.tsx')),
@@ -116,6 +117,7 @@ export type RouteId =
   | 'customers'
   | 'marketing'
   | 'bagCard'
+  | 'statusDoDia'
   | 'appearance'
   | 'reports'
   | 'team'
@@ -321,6 +323,12 @@ const ROUTES: RouteDef[] = [
     match: /^\/marketing\/cartao$/,
     chunk: chunks.bagCard,
     data: (qc) => q(qc, qk.marketing, api.marketing),
+  },
+  {
+    id: 'statusDoDia',
+    match: /^\/marketing\/status$/,
+    chunk: chunks.statusDoDia,
+    data: (qc) => q(qc, qk.statusDoDia, api.statusDoDia),
   },
   {
     id: 'appearance',

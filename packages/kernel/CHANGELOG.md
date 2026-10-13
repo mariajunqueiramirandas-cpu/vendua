@@ -12,6 +12,8 @@ never need a storefront edit; a major only ships with a Contract major.
   `ORDER_REQUIRED`.
 - Checkout: "Me lembre do meu pedido de sempre (no máximo 1 mensagem por semana)"
   (`[data-vendua="usual-reminder"]`), sent after the order is placed.
+- `?ref=CODE` on a link is kept for the tab and sent with checkout (`ref`), so Core can tell
+  which Status do dia post or bag card an order came from.
 
 ## 1.25.0
 

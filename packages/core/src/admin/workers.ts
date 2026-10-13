@@ -2,6 +2,7 @@ import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
 import { usualReminderPass } from '../modules/usual-reminder.ts';
+import { statusDayPass } from '../modules/status-do-dia.ts';
 import { setStock } from '../modules/stock.ts';
 import { wakeStoreWaitlist } from '../modules/storefront-platform.ts';
 import { maskPhone } from '../vendedor/threads.ts';
@@ -155,6 +156,29 @@ export async function pushExhausted(sql: Sql, tenantId: string, period: string) 
     'vendedor.exhausted',
     period,
   );
+}
+
+/** One push to the store's owner and managers, once per `key` (push_deliveries dedupes it for
+ *  two days): Duá's store-manager nudges — Status do dia ready, Freio suggestions. */
+export async function pushManagers(
+  sql: Sql,
+  tenantId: string,
+  key: string,
+  message: { title: string; body: string; tag: string; url: string },
+  event: string,
+) {
+  const subs = await withTenant(sql, tenantId, async (tx) => {
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key) values (${tenantId}, ${key})
+      on conflict do nothing returning key`;
+    if (!won[0]) return null;
+    return tx<Sub[]>`
+      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+        join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
+        and coalesce((u.prefs ->> 'push')::boolean, true)`;
+  });
+  if (subs) await fanOut(sql, tenantId, subs, message, event, key);
 }
 
 async function fanOut(
@@ -571,6 +595,25 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     await cartReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
     );
+    // Status do dia: today's post prepared at the owner's hour, and a push to go post it
+    await statusDayPass(sql, t.id)
+      .then(
+        (post) =>
+          post &&
+          pushManagers(
+            sql,
+            t.id,
+            `status:${post.id}`,
+            {
+              title: 'Seu status de hoje está pronto',
+              body: `${post.products} ${post.products === 1 ? 'imagem' : 'imagens'} com o link da loja. Toque para postar.`,
+              tag: 'status-do-dia',
+              url: '/admin/marketing/status',
+            },
+            'status.ready',
+          ),
+      )
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'status do dia pass failed'));
     // "o de sempre": a shopper who asked, a week or more after their last order
     await usualReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'usual reminder pass failed'),

@@ -24,6 +24,9 @@ import { recordStaffEventTx } from './staff-events.ts';
 import { drawAddonStock, drawStock, modifierDemand, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
 
+/** a link's attribution code (`?ref=`, Status do dia and the bag card; 0124) */
+export const REF_RE = /^[a-z0-9]{6,12}$/;
+
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
 export const MAX_CHANGE_CENTS = 1_000_000;
 /** orders' money columns are int4: a cart of many priciest lines must stop at a 422 first */
@@ -374,16 +377,18 @@ export async function placeOrderTx(
       );
     (delivery as { tabId?: string | null }).tabId = tabId;
   }
+  const ref = typeof body.ref === 'string' && REF_RE.test(body.ref) ? body.ref : null;
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
-                        stock_drawn, addon_stock_drawn)
+                        stock_drawn, addon_stock_drawn, ref)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
-            ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null})
+            ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
+            ${ref})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
@@ -432,7 +437,7 @@ export async function placeOrderTx(
     tx`
       insert into analytics_events (tenant_id, name, at, session_id, props)
       values (${tenantId}, 'order_placed', now(), ${cartId},
-        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}), ...(paymentAdjustment ? { payment_adjustment: paymentAdjustment } : {}) })})
+        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}), ...(paymentAdjustment ? { payment_adjustment: paymentAdjustment } : {}), ...(ref ? { ref } : {}) })})
     `,
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),

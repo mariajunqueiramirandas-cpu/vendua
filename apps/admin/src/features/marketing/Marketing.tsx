@@ -8,6 +8,7 @@ import {
   Printer,
   QrCode,
   ShareNetwork,
+  Sparkle,
   Ticket,
   Trash,
   UsersThree,
@@ -108,7 +109,7 @@ function Share() {
     <Section
       id="compartilhar"
       title="Compartilhar a loja"
-      hint="O link, o QR code para o balcão, o cartão para a sacola dos apps e cartões para o WhatsApp."
+      hint="O link, o QR code, o cartão para a sacola dos apps, o status do dia e cartões para o WhatsApp."
     >
       <Card className="space-y-4 p-5">
         <div className="flex items-center gap-2 rounded-md bg-sunken p-2 pl-4">
@@ -140,6 +141,9 @@ function Share() {
           </Button>
           <ButtonLink to="/marketing/cartao" variant="secondary" icon={<Printer />}>
             cartão da sacola
+          </ButtonLink>
+          <ButtonLink to="/marketing/status" variant="secondary" icon={<Sparkle />}>
+            status do dia
           </ButtonLink>
         </div>
       </Card>

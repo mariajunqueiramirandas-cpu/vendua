@@ -815,6 +815,29 @@ function storageOf(kind: 'localStorage' | 'sessionStorage'): Storage | undefined
   }
 }
 
+// Kernel 1.26 — `?ref=CODE` (a Status do dia post, the bag card): kept for the tab and sent with
+// checkout, so the order knows where it came from. Anything else is ignored.
+const REF_KEY = 'vendua.ref';
+const REF_RE = /^[a-z0-9]{6,12}$/;
+/** reads `?ref=` from this page's address; internal, called once by the provider */
+export function captureLinkRef(search: string): void {
+  const ref = new URLSearchParams(search).get('ref');
+  if (!ref || !REF_RE.test(ref)) return;
+  try {
+    storageOf('sessionStorage')?.setItem(REF_KEY, ref);
+  } catch {
+    /* storage off: the order just won't carry it */
+  }
+}
+function linkRef(): string | null {
+  try {
+    const ref = storageOf('sessionStorage')?.getItem(REF_KEY) ?? null;
+    return ref && REF_RE.test(ref) ? ref : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseTokens(raw: string | null | undefined): Record<string, string> {
   try {
     const v = JSON.parse(raw ?? '{}') as unknown;
@@ -1500,7 +1523,8 @@ export function createApi(baseUrl = '') {
     async checkout(input: CheckoutInput): Promise<Order> {
       // the cart this order closes: its token is the order's tracking credential
       const sent = current();
-      const body = JSON.stringify(input);
+      const ref = linkRef();
+      const body = JSON.stringify(ref ? { ...input, ref } : input);
       const of = hashOf(`${sent ?? ''}\n${body}`);
       if (checkoutKey?.of !== of) {
         const kept = readCheckoutKey();

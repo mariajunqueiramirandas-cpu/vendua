@@ -42,6 +42,9 @@ export interface CheckoutInput {
   scheduledFor?: string;
   /** the total Core showed the shopper; a different one now → 409 PRICES_CHANGED */
   expectedTotalCents?: number | null;
+  /** the link the shopper came from (`?ref=`, a Status post or the bag card); anything that
+   *  isn't one is dropped, never a 4xx */
+  ref?: string | null;
 }
 
 export type ZoneRowLike = ZoneLike;

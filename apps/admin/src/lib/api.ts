@@ -1129,6 +1129,50 @@ export interface HomeSavings {
   since: string | null;
 }
 
+/** Marketing › Status do dia (0124): Core prepares, the owner posts from the phone. */
+export interface StatusDoDia {
+  plan: {
+    enabled: boolean;
+    /** HH:MM, the store's time */
+    postAt: string;
+    /** 0 = Sunday */
+    days: number[];
+    mode: 'auto' | 'pinned';
+    picks: string[];
+    caption: string | null;
+  };
+  store: { name: string; url: string };
+  today: {
+    id: string;
+    day: string;
+    state: StatusPostState;
+    /** the text to paste, the post's link at the end */
+    caption: string;
+    ref: string;
+    orders: number;
+    revenueCents: number;
+    products: {
+      id: string;
+      name: string;
+      /** Core's words for the price ("R$ 12,90"); the image prints them as they are */
+      priceLabel: string;
+      compareAtLabel: string | null;
+      imageUrl: string | null;
+      /** sold out or outside its hours since the post was prepared */
+      available: boolean;
+      url: string;
+    }[];
+  } | null;
+  recent: {
+    id: string;
+    day: string;
+    state: StatusPostState;
+    orders: number;
+    revenueCents: number;
+  }[];
+}
+export type StatusPostState = 'ready' | 'shared' | 'skipped';
+
 export interface Payments {
   methods: PayMethod[];
   adjustments: PaymentAdjustments;
@@ -2769,6 +2813,12 @@ export const api = {
     send<{ anonymized: number }>('POST', `/customers/${phone}/forget`, { confirm }),
 
   marketing: () => get<Marketing>('/marketing'),
+  statusDoDia: () => get<StatusDoDia>('/marketing/status'),
+  saveStatusPlan: (p: Partial<StatusDoDia['plan']>) =>
+    send<StatusDoDia>('PATCH', '/marketing/status', p),
+  prepareStatus: () => send<StatusDoDia>('POST', '/marketing/status/today'),
+  updateStatusPost: (id: string, p: { state?: StatusPostState; productIds?: string[] }) =>
+    send<StatusDoDia>('POST', `/marketing/status/${id}`, p),
   createCoupon: (c: Record<string, unknown>) => send<{ coupons: Coupon[] }>('POST', '/coupons', c),
   updateCoupon: (id: string, c: Record<string, unknown>) =>
     send<{ coupons: Coupon[] }>('PATCH', `/coupons/${id}`, c),

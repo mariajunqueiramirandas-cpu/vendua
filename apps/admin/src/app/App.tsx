@@ -42,6 +42,7 @@ const Customers = screen(chunks.customers, (m) => m.default);
 const CustomerPage = screen(chunks.customer, (m) => m.default);
 const Marketing = screen(chunks.marketing, (m) => m.default);
 const BagCard = screen(chunks.bagCard, (m) => m.default);
+const StatusDoDia = screen(chunks.statusDoDia, (m) => m.default);
 const Appearance = screen(chunks.appearance, (m) => m.default);
 const Reports = screen(chunks.reports, (m) => m.default);
 const Team = screen(chunks.team, (m) => m.default);
@@ -212,6 +213,7 @@ export default function App() {
                   <Route path="clientes/:phone" element={<CustomerPage />} />
                   <Route path="marketing" element={<Marketing />} />
                   <Route path="marketing/cartao" element={<BagCard />} />
+                  <Route path="marketing/status" element={<StatusDoDia />} />
                   <Route path="aparencia" element={<Appearance />} />
                   <Route path="relatorios" element={<Reports />} />
                   <Route path="equipe" element={<Team />} />

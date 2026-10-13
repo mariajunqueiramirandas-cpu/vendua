@@ -602,6 +602,13 @@ order, under a daily ceiling the merchant sets, and SAIR stops it.
 - The reminder itself is a link to the store with the usual bag ready (`?cart=CODE`, the shared
   bag of 1.21): re-added at today's prices, unavailable lines reported as for any shared bag.
 
+### Where an order came from: `?ref=` (Kernel 1.26)
+
+Additive — no storefront edit, no new export. A link with `?ref=CODE` (`^[a-z0-9]{6,12}$`: a
+Status do dia post, the bag card) is remembered for the tab (sessionStorage `vendua.ref`) on
+first load and sent as `ref` with `api.checkout`; Core keeps it on the order and counts each
+post's orders. Anything else in `ref` is ignored, never an error, and the address is left as it is.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
