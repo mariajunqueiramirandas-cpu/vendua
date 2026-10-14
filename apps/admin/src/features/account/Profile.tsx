@@ -19,7 +19,13 @@ import { useEffect, useState } from 'react';
 import { api, type Alerts, type Session } from '../../lib/api.ts';
 import { ago, phone, when } from '../../lib/format.ts';
 import { setSoundOn } from '../../lib/live.ts';
-import { currentSubscription, disablePush, enablePush, pushSupported } from '../../lib/push.ts';
+import {
+  currentSubscription,
+  disablePush,
+  enablePush,
+  liveSubscription,
+  pushSupported,
+} from '../../lib/push.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { can, ROLE_LABEL, useSession } from '../../lib/session.ts';
 import { chimeNewOrder, setVolume } from '../../lib/sound.ts';
@@ -54,8 +60,9 @@ export default function Profile() {
   const [push, setPush] = useState<'on' | 'off' | 'unsupported' | 'denied'>('off');
   useEffect(() => {
     if (!pushSupported()) return setPush('unsupported');
-    void currentSubscription().then((sub) =>
-      setPush(sub ? 'on' : Notification.permission === 'denied' ? 'denied' : 'off'),
+    // a subscription under an old VAPID key reads as off: turning it on re-subscribes
+    void (s.push.publicKey ? liveSubscription(s.push.publicKey) : currentSubscription()).then(
+      (sub) => setPush(sub ? 'on' : Notification.permission === 'denied' ? 'denied' : 'off'),
     );
   }, []);
   const patch = (body: Parameters<typeof api.updateMe>[0]) =>
