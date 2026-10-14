@@ -330,15 +330,25 @@ let stopSent = false;
 
 /** Aligns the sidecar with config: pushes the stored session when it runs
  *  empty (restart/redeploy), stops it when the driver is off. Never throws. */
-export function reconcileInstagram(sql: Sql, integration: IntegrationRow | null): Promise<void> {
-  const run = reconcileTail.then(() => reconcileOnce(sql, integration));
+export function reconcileInstagram(
+  sql: Sql,
+  integration: IntegrationRow | null,
+  // the minute tick passes whether this Core owns the job (job-lease.ts): every Core reads the
+  // status its sends are gated on, only the owner pushes or stops the session
+  mayMutate = true,
+): Promise<void> {
+  const run = reconcileTail.then(() => reconcileOnce(sql, integration, mayMutate));
   reconcileTail = run.catch(() => undefined);
   return run;
 }
 
-async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Promise<void> {
+async function reconcileOnce(
+  sql: Sql,
+  integration: IntegrationRow | null,
+  mayMutate: boolean,
+): Promise<void> {
   if (!sidecarActive(integration)) {
-    if (!stopSent || last.state !== 'off') {
+    if (mayMutate && (!stopSent || last.state !== 'off')) {
       // the sidecar must stop answering as the account; only a confirmed stop (or no
       // secret — nothing can hold a session) ends the retries on later ticks
       stopSent = await call(integration, 'DELETE', '/v1/session').then(
@@ -353,7 +363,7 @@ async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Prom
   try {
     let st = await call<IgStatus>(integration, 'GET', '/v1/status');
     // 'off' with no login in progress = the sidecar lost its memory; 'error' waits for staff
-    if (st.state === 'off' && !st.login) {
+    if (mayMutate && st.state === 'off' && !st.login) {
       const { session } = await loadAuth(sql, requireSecret(integration));
       if (session) {
         st = await call<IgStatus>(integration, 'PUT', '/v1/session', {
@@ -385,9 +395,7 @@ export function startInstagramReconcile(sql: Sql): () => void {
     if (tickInFlight) return;
     tickInFlight = true;
     void ownsJob(sql, 'instagram.reconcile', 180_000)
-      .then(async (mine) => {
-        if (mine) await reconcileInstagram(sql, await getIntegration(sql, 'instagram'));
-      })
+      .then(async (mine) => reconcileInstagram(sql, await getIntegration(sql, 'instagram'), mine))
       .catch((e) => igLog.error({ err: e }, 'instagram reconcile failed'))
       .finally(() => {
         tickInFlight = false;
