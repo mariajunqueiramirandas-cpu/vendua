@@ -30,12 +30,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     steps?: number;
     costCents?: number;
   }) => {
+    // a second back: the DB clock's microseconds would put a row seeded in the window's last
+    // millisecond past its JS-clock end
     await sql`
       insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, status, started_at,
-                             steps, acted, cost_cents)
+                             finished_at, steps, acted, cost_cents)
       values (gen_random_uuid(), gen_random_uuid(), 'crm', ${opts.kind}, 'staff',
-              ${opts.leadId ?? null}, ${opts.status ?? 'done'}, now(), ${opts.steps ?? 0},
-              ${opts.acted ?? false}, ${opts.costCents ?? 0})`;
+              ${opts.leadId ?? null}, ${opts.status ?? 'done'}, now() - interval '1 second',
+              now() - interval '1 second', ${opts.steps ?? 0}, ${opts.acted ?? false},
+              ${opts.costCents ?? 0})`;
   };
 
   /** the CRM agent's agenda: timer rows of the lead actors */
