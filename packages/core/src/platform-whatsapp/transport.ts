@@ -1,5 +1,5 @@
 // Which process holds Venduá's own WhatsApp number (docs/features/dua-no-whatsapp.md §4.4):
-// 'socket' is the CRM's Baileys socket inside Core (agent/channels/whatsapp.ts), 'gateway' is a
+// 'socket' is the CRM's Baileys socket inside Core (crm/channels/whatsapp.ts), 'gateway' is a
 // platform session on the wa-gateway process. The flip is the cutover; going back is a re-pair.
 export type PlatformTransport = 'socket' | 'gateway';
 

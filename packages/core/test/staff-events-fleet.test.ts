@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import type { MerchantNotify } from '../src/admin/context.ts';
-import { checkWhatsAppOutage, ensureSocket, logoutWa } from '../src/agent/channels/whatsapp.ts';
+import { checkWhatsAppOutage, ensureSocket, logoutWa } from '../src/crm/channels/whatsapp.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { fleetDeps, type FleetDeps } from '../src/modules/fleet/deps.ts';
 import { ackIncident, openIncidentTx } from '../src/modules/fleet/incidents.ts';

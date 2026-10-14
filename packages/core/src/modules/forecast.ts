@@ -78,7 +78,7 @@ export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
   const cost = (
     await tx<{ cost_cents: number }[]>`
       select coalesce(sum(cost_cents), 0)::int as cost_cents
-      from agent_runs where created_at > now() - interval '30 days'
+      from crm_turns where finished_at > now() - interval '30 days'
     `
   )[0]!.cost_cents;
   const row = (

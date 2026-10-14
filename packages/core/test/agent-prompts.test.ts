@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { buildSystemPrompt } from '../src/agent/prompts.ts';
-import { messageStyleIssues, normalizeMessageBody } from '../src/agent/style.ts';
+import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
+import { messageStyleIssues, normalizeMessageBody } from '../src/crm/style.ts';
 import {
   fitTranscript,
   leadCard,
   nameIsContact,
   nowLine,
   renderTranscript,
-} from '../src/agent/context-render.ts';
-import { extractText } from '../src/agent/channels/whatsapp.ts';
+} from '../src/agent-host/agents/crm/context-render.ts';
+import { extractText } from '../src/crm/channels/whatsapp.ts';
 import { DEFAULT_PITCH } from '../src/modules/integrations.ts';
 import { anthropicCostUsd } from '../src/agent/llm.ts';
 

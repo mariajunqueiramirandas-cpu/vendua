@@ -773,7 +773,7 @@ async function queueMeetingMessage(
   },
 ): Promise<{ queued: boolean; reason?: string | undefined }> {
   const { composeMessage } = await import('./threads.ts');
-  const { dispatchMessage } = await import('../agent/send.ts');
+  const { dispatchMessage } = await import('../crm/send.ts');
   const prior = await controlTx(
     sql,
     async (tx) =>
@@ -1284,9 +1284,9 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
 /** send due reminders; skipped (marker stays null, `blocked` = retry later) when the guardrail says no/draft or no channel is reachable */
 export async function sendMeetingReminders(sql: Sql): Promise<{ sent: number; blocked: boolean }> {
   const { composeMessageTx } = await import('./threads.ts');
-  const { resolveChannelTx, checkSendAllowedTx } = await import('../agent/guardrails.ts');
+  const { resolveChannelTx, checkSendAllowedTx } = await import('../crm/guardrails.ts');
   const { DEFAULT_GUARDRAILS, getSettingTx } = await import('./integrations.ts');
-  const { dispatchMessage } = await import('../agent/send.ts');
+  const { dispatchMessage } = await import('../crm/send.ts');
 
   let sent = 0;
   let blocked = false;

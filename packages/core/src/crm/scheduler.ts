@@ -14,28 +14,18 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { nextReminderAtTx, sendMeetingReminders, syncMeetingEffects } from '../modules/meetings.ts';
 import { log } from '../platform/log.ts';
-import { serveOrphan, sweepOrphanInbox } from './dispatch.ts';
+import { sweepBriefs, sweepStrategist } from './board.ts';
+import { adoptLegacy } from './legacy.ts';
 import { agentSettingTx } from './policy.ts';
-import {
-  drain,
-  drainsSettled,
-  flagCappedLeads,
-  RUN_LEASE_MIN,
-  stopClaims,
-  sweepBriefs,
-  sweepStrategist,
-  takeClaimContention,
-} from './runner.ts';
 import { anchorTx } from './schedule-anchors.ts';
-import { fireDueWakeups, nextWakeupAtTx } from './wakeups.ts';
 
-// The scheduler (ADR 0017): nothing polls. Every piece of future work has a due time in
-// the database; each loop sleeps until its earliest one, and Postgres notifications
-// (migration 0048 triggers, delivered on commit) wake it the moment something changes.
-// Two loops that never wait on each other (ADR 0016): the work loop runs agent runs
-// (minutes each), the job loop runs the routines (seconds each). A reconcile pass every
-// RECONCILE_MS is the safety net for a change nobody notified — when it finds work, that
-// is a missed event and it says so in the log.
+// The CRM's routines (ADR 0017): nothing polls. Each routine has a due time in the database;
+// the loop sleeps until the earliest one, and Postgres notifications (migration 0048 triggers,
+// delivered on commit) wake it the moment something changes. A reconcile pass every RECONCILE_MS
+// is the safety net for a change nobody notified: when it finds work, that is a missed event and
+// it says so in the log. The CRM agents' own work runs on Agent Runtime v3 (ADR 0030): its
+// mailbox, timers and scheduler (agent-host/scheduler.ts); these routines only file the board's
+// daily and weekly work into it.
 
 const agentLog = log.child({ mod: 'scheduler' });
 
@@ -43,12 +33,8 @@ export const CHANNEL = 'vendua_agent';
 export const RECONCILE_MS = 10 * 60_000;
 /** notifications arrive in bursts (one per row) — one pass serves the burst */
 const DEBOUNCE_MS = 250;
-/** a due row skipped only because a lock was busy — look again shortly */
-const CONTENDED_RETRY_MS = 2_000;
 /** a reminder held by quiet hours / no reachable channel / a failed send */
 const BLOCKED_REMINDER_RETRY_MS = 5 * 60_000;
-/** past this many named leads one full scan is cheaper than serving them one by one */
-const MAX_DIRTY_LEADS = 500;
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /** a notification: the table that changed and the lead it concerns (null = workspace-wide) */
@@ -85,18 +71,6 @@ const WEEKDAY = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 's
 
 export const JOBS: readonly ScheduledJob[] = [
   {
-    name: 'agenda',
-    label: 'agenda — retornos, follow-ups e datas da equipe',
-    cadence: async () => 'na hora de cada retorno',
-    nextAt: nextWakeupAtTx,
-    // a new/moved date, or a lead / preset / cap change that frees a parked one
-    wakesOn: on('agent_wakeups', 'leads', 'control_settings'),
-    run: async (sql) => {
-      const r = await fireDueWakeups(sql);
-      return { n: r.queued, retryInMs: r.contended ? CONTENDED_RETRY_MS : undefined };
-    },
-  },
-  {
     name: 'meeting-reminders',
     label: 'lembretes de reunião (24h e 1h antes)',
     cadence: async () => '24h e 1h antes de cada call',
@@ -120,11 +94,8 @@ export const JOBS: readonly ScheduledJob[] = [
     cadence: async (tx) => `todo dia às ${hh((await agentSettingTx(tx)).schedule.discoveryHour)}`,
     nextAt: async (tx) =>
       (await anchorTx(tx, { hour: (await agentSettingTx(tx)).schedule.discoveryHour })).next,
-    // a new/re-armed brief runs right away; one skipped for a run still going fires when it ends
-    wakesOn: (ev) =>
-      ev.t === 'control_settings' ||
-      ev.t === 'discovery_briefs' ||
-      (ev.t === 'agent_runs' && ev.l === null),
+    // a new/re-armed brief runs right away
+    wakesOn: on('control_settings', 'discovery_briefs'),
     enabled: async (tx) => {
       const a = await agentSettingTx(tx);
       return a.level !== 'off' && a.jobs.discovery;
@@ -158,14 +129,6 @@ export const JOBS: readonly ScheduledJob[] = [
     run: sweepPipelineSnapshots,
   },
   {
-    name: 'cost-caps',
-    label: 'teto de custo por lead',
-    // crossings are flagged where spend lands (finish/claim); this catches a lowered cap
-    cadence: async () => 'quando o teto muda',
-    wakesOn: on('control_settings'),
-    run: flagCappedLeads,
-  },
-  {
     name: 'discord',
     label: 'avisos da equipe no Discord',
     cadence: async () => 'na hora de cada evento',
@@ -184,22 +147,14 @@ export const JOBS: readonly ScheduledJob[] = [
     enabled: discordEnabledTx,
     run: sweepDiscordDigest,
   },
+  {
+    name: 'legacy-adopt',
+    label: 'migração — trabalho pendente do agente antigo para o runtime v3',
+    cadence: async () => 'no boot e na reconciliação',
+    reconcileOnly: true,
+    run: adoptLegacy,
+  },
 ];
-
-/** the work loop, recorded alongside the jobs so a stuck queue shows up the same way */
-export const QUEUE_JOB = { name: 'queue', label: 'fila do agente (runs)' } as const;
-
-/** tables whose changes can make a run claimable or leave mail without a run */
-const WORK_TABLES = new Set([
-  'agent_runs',
-  'agent_inbox',
-  'leads',
-  'lead_threads',
-  'lead_messages',
-  'control_settings',
-]);
-/** of those, the ones naming a lead whose pending mail may now need a run */
-const ORPHAN_TABLES = new Set(['agent_runs', 'agent_inbox', 'leads', 'lead_threads']);
 
 const asCount = (r: Outcome): number =>
   typeof r === 'number' ? r : typeof r === 'boolean' ? (r ? 1 : 0) : r ? r.n : 0;
@@ -250,8 +205,7 @@ async function staffJobEventTx(
   error: string | null,
 ): Promise<void> {
   if (!failingSince) return;
-  const label =
-    JOBS.find((j) => j.name === name)?.label ?? (name === QUEUE_JOB.name ? QUEUE_JOB.label : name);
+  const label = JOBS.find((j) => j.name === name)?.label ?? name;
   const episode = `job.failing:${name}:${new Date(failingSince).getTime()}`;
   if (error !== null) {
     if (Date.now() - new Date(failingSince).getTime() < FAILING_ALERT_MS) return;
@@ -295,36 +249,6 @@ async function execJob(sql: Sql, job: Pick<ScheduledJob, 'name' | 'run'>): Promi
 /** Run one job isolated — its failure is recorded and logged, never thrown. */
 export async function runJob(sql: Sql, job: Pick<ScheduledJob, 'name' | 'run'>): Promise<boolean> {
   return (await execJob(sql, job)).ok;
-}
-
-/** Earliest time the work loop has something to do by the clock alone: a scheduled run,
- *  a lease running out, a send stuck in flight, a queued send past its inline grace.
- *  Due-now rows that can't run (a paused lead, a cap) aren't counted — the change that
- *  frees them notifies. */
-export async function nextWorkAt(sql: Sql): Promise<Date | null> {
-  const [row] = await controlTx(
-    sql,
-    (tx) => tx<{ at: Date | null }[]>`
-      select least(
-        (select min(run_at) from agent_runs where status = 'queued' and run_at > now()),
-        (select min(coalesce(alive_at, started_at)) from agent_runs
-         where status = 'running'
-           and coalesce(alive_at, started_at) > now() - make_interval(mins => ${RUN_LEASE_MIN}))
-          + make_interval(mins => ${RUN_LEASE_MIN}),
-        (select min(updated_at) from lead_messages m
-         where m.status = 'sending' and m.updated_at > now() - make_interval(mins => ${RUN_LEASE_MIN})
-           and not exists (
-             select 1 from platform_wa_outbox o
-             where o.purpose = 'crm' and o.ref = m.id::text and o.settled_at is null
-               and o.expires_at > now()))
-          + make_interval(mins => ${RUN_LEASE_MIN}),
-        (select min(created_at) from lead_messages
-         where status = 'queued' and created_at > now() - interval '20 seconds')
-          + interval '20 seconds'
-      ) as at
-    `,
-  );
-  return row?.at ? new Date(row.at) : null;
 }
 
 /** A loop that sleeps until a due time or a poke — never on a fixed tick. */
@@ -389,13 +313,7 @@ class Loop {
 interface SchedulerState {
   sql: Sql;
   jobList: readonly ScheduledJob[];
-  work: Loop;
   jobs: Loop;
-  /** leads a notification named since the last work pass */
-  dirtyLeads: Set<string>;
-  /** a workspace-wide change or a reconcile — scan every lead's mail */
-  fullScan: boolean;
-  reconcileScan: boolean;
   /** jobs an event (or boot/reconnect) asked to run */
   dirtyJobs: Set<string>;
   /** jobs only the reconcile asked to run — work found there is a missed event */
@@ -411,17 +329,6 @@ interface SchedulerState {
 let state: SchedulerState | null = null;
 
 function onEvent(s: SchedulerState, ev: WakeEvent) {
-  if (WORK_TABLES.has(ev.t)) {
-    if (ev.t === 'control_settings') s.fullScan = true;
-    else if (ev.l && ORPHAN_TABLES.has(ev.t)) {
-      s.dirtyLeads.add(ev.l);
-      if (s.dirtyLeads.size > MAX_DIRTY_LEADS) {
-        s.dirtyLeads.clear();
-        s.fullScan = true;
-      }
-    }
-    s.work.poke();
-  }
   let jobs = false;
   for (const j of s.jobList) {
     if (!j.reconcileOnly && j.wakesOn?.(ev)) {
@@ -434,40 +341,8 @@ function onEvent(s: SchedulerState, ev: WakeEvent) {
 
 /** boot, a reconnected listener (notifications may have been lost) — everything, now */
 function wakeAll(s: SchedulerState) {
-  s.fullScan = true;
   for (const j of s.jobList) s.dirtyJobs.add(j.name);
-  s.work.poke(0);
   s.jobs.poke(0);
-}
-
-async function workPass(s: SchedulerState): Promise<Date | null> {
-  const sql = s.sql;
-  const leads = [...s.dirtyLeads];
-  const full = s.fullScan;
-  const reconcile = s.reconcileScan;
-  s.dirtyLeads.clear();
-  s.fullScan = s.reconcileScan = false;
-  let ran = 0;
-  const ok = await runJob(sql, {
-    name: QUEUE_JOB.name,
-    run: async () => {
-      if (full || reconcile) {
-        const served = await sweepOrphanInbox(sql, 500, { inspect: 5000 });
-        if (reconcile && !full && !leads.length && served) {
-          agentLog.warn({ served }, 'reconcile found orphaned mail — a change went un-notified');
-        }
-      } else {
-        for (const l of leads) await serveOrphan(sql, l);
-      }
-      ran = await drain(sql, 20, { orphans: false });
-      return ran;
-    },
-  });
-  if (!ok) return new Date(Date.now() + 30_000);
-  // runs take minutes — whatever changed meanwhile is already in the dirty set
-  if (ran >= 20) return new Date();
-  if (takeClaimContention()) return new Date(Date.now() + CONTENDED_RETRY_MS);
-  return nextWorkAt(sql);
 }
 
 const failBackoff = (streak: number) => Math.min(30_000 * 2 ** (streak - 1), RECONCILE_MS);
@@ -543,9 +418,7 @@ async function jobPass(s: SchedulerState): Promise<Date | null> {
 function scheduleReconcile(s: SchedulerState) {
   s.reconcileTimer = setTimeout(() => {
     if (s.stopped) return;
-    s.reconcileScan = true;
     for (const j of s.jobList) s.reconcileJobs.add(j.name);
-    s.work.poke(0);
     s.jobs.poke(0);
     scheduleReconcile(s);
   }, RECONCILE_MS);
@@ -582,18 +455,13 @@ async function listen(s: SchedulerState): Promise<void> {
   }
 }
 
-/** `only` narrows what runs (tests): a subset of the jobs, and/or no work loop. */
-export function startScheduler(sql: Sql, only?: { jobs?: string[]; work?: boolean }): void {
+/** `only` narrows what runs (tests): a subset of the jobs. */
+export function startScheduler(sql: Sql, only?: { jobs?: string[] }): void {
   if (state) return;
-  stopClaims(false);
   const s: SchedulerState = {
     sql,
     jobList: only?.jobs ? JOBS.filter((j) => only.jobs!.includes(j.name)) : JOBS,
-    work: null as unknown as Loop,
     jobs: null as unknown as Loop,
-    dirtyLeads: new Set(),
-    fullScan: false,
-    reconcileScan: false,
     dirtyJobs: new Set(),
     reconcileJobs: new Set(),
     jobNext: new Map(),
@@ -602,30 +470,22 @@ export function startScheduler(sql: Sql, only?: { jobs?: string[]; work?: boolea
     unlisten: null,
     stopped: false,
   };
-  s.work = new Loop('work', () => workPass(s));
-  if (only?.work === false) s.work.stop();
   s.jobs = new Loop('jobs', () => jobPass(s));
   state = s;
   scheduleReconcile(s);
   void listen(s);
 }
 
-/** Stop both loops: no new claims, let the run in hand and the job pass finish (bounded).
- *  A run still going at the deadline is recovered by the lease after restart. */
+/** Stop the loop and let the pass in hand finish (bounded). */
 export async function stopScheduler(graceMs = 25_000): Promise<void> {
-  stopClaims(true);
   const s = state;
   state = null;
   if (!s) return;
   s.stopped = true;
-  s.work.stop();
   s.jobs.stop();
   if (s.reconcileTimer) clearTimeout(s.reconcileTimer);
   await s.unlisten?.().catch(() => {});
-  // the scheduler's own passes plus every drain kicked from HTTP or an inbound message
-  const inFlight = [s.work.running, s.jobs.running, drainsSettled()].filter(
-    Boolean,
-  ) as Promise<unknown>[];
+  const inFlight = [s.jobs.running].filter(Boolean) as Promise<unknown>[];
   await Promise.race([
     Promise.allSettled(inFlight),
     new Promise((r) => setTimeout(r, graceMs).unref?.()),
@@ -666,23 +526,19 @@ const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
 
 /** GET /agent/routines — every routine with its schedule and last recorded run */
 export async function listRoutines(sql: Sql): Promise<Routine[]> {
-  const queueNext = await nextWorkAt(sql);
   return controlTx(sql, async (tx) => {
     const rows = await tx<JobRow[]>`select * from scheduled_jobs`;
     const byName = new Map(rows.map((r) => [r.name, r]));
     const out: Routine[] = [];
-    const entries: { name: string; label: string; job?: ScheduledJob }[] = [
-      { name: QUEUE_JOB.name, label: QUEUE_JOB.label },
-      ...JOBS.map((j) => ({ name: j.name, label: j.label, job: j })),
-    ];
-    for (const { name, label, job } of entries) {
+    for (const job of JOBS) {
+      const { name, label } = job;
       const r = byName.get(name);
       out.push({
         name,
         label,
-        cadence: job ? await job.cadence(tx) : 'assim que chega trabalho',
-        enabled: job?.enabled ? await job.enabled(tx) : true,
-        nextAt: job ? (job.nextAt ? iso(await job.nextAt(tx)) : null) : iso(queueNext),
+        cadence: await job.cadence(tx),
+        enabled: job.enabled ? await job.enabled(tx) : true,
+        nextAt: job.nextAt ? iso(await job.nextAt(tx)) : null,
         lastStartedAt: iso(r?.last_started_at ?? null),
         lastFinishedAt: iso(r?.last_finished_at ?? null),
         lastOk: r?.last_ok ?? null,

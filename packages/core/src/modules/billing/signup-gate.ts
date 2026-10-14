@@ -1,4 +1,4 @@
-import { whatsappReadyTx } from '../../agent/guardrails.ts';
+import { whatsappReadyTx } from '../../crm/guardrails.ts';
 import type { Sql } from '../../platform/db.ts';
 import { controlTx } from '../control.ts';
 import { getIntegrationTx, getSettingTx, integrationJson } from '../integrations.ts';

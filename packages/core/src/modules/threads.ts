@@ -12,7 +12,7 @@ import {
 import { recordStaffEventTx } from './staff-events.ts';
 
 // Unified inbox: one thread per (lead, channel); owns persistence + the
-// draft→approve→dispatch lifecycle — provider sends live in agent/channels.
+// draft→approve→dispatch lifecycle — provider sends live in crm/channels.
 
 export const CHANNELS = ['email', 'whatsapp', 'instagram', 'manual'] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -510,7 +510,7 @@ export async function addInboundMessage(
     if (direction === 'in' && !input.historical) {
       // A reply retires the agent's own pending follow-ups (the reply run re-commits what's
       // still wanted); callbacks the lead asked for and staff dates are promises and stay.
-      const { retireWakeupsOnInboundTx } = await import('../agent/wakeups.ts');
+      const { retireWakeupsOnInboundTx } = await import('../crm/agenda.ts');
       await retireWakeupsOnInboundTx(tx, leadId);
       const who = { leadId, leadName: lead.name, business: lead.business_name };
       if (leadCreated) {
@@ -553,7 +553,7 @@ export async function addInboundMessage(
   return result;
 }
 
-/** 'draft' when approval is required, 'queued' when it can ship. Dispatch is in agent/send.ts. */
+/** 'draft' when approval is required, 'queued' when it can ship. Dispatch is in crm/send.ts. */
 export async function composeMessage(
   sql: Sql,
   input: {
@@ -673,7 +673,6 @@ export async function approveMessage(
     message: ReturnType<typeof messageJson>;
     stale?: boolean;
     runId?: string;
-    retired?: string[];
   }>
 > {
   let capFlagged = false;
@@ -681,22 +680,10 @@ export async function approveMessage(
     message: ReturnType<typeof messageJson>;
     stale?: boolean;
     runId?: string;
-    retired?: string[];
   }>(sql, idemKey, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
     if (staleDays > 0) {
-      // capfin BEFORE the draft row lock — the inbound gate takes capfin first; the
-      // reverse order here is the AB-BA deadlock the capfin-first rule prevents.
-      const leadRow = await tx<{ lead_id: string }[]>`
-        select t.lead_id from lead_messages m
-        join lead_threads t on t.id = m.thread_id
-        where m.id = ${messageId}
-      `;
-      if (leadRow[0]) {
-        const { capLockTx } = await import('../agent/runner.ts');
-        await capLockTx(tx, leadRow[0].lead_id);
-      }
       // A stale AGENT draft never ships — supersede and enqueue a draftOnly regen
       // (staff drafts exempt). The exists() mirrors claimRun's lead gate: an unrunnable
       // lead falls through to a normal approve. The cap is skipped — a capped lead is
@@ -726,61 +713,25 @@ export async function approveMessage(
             select lead_id from lead_threads where id = ${stale[0].thread_id}
           `
         )[0]!;
-        // Dedupe on the same regen intent only — a generic outreach run lacks draftOnly,
-        // so for it the regen mails as an 'event' inbox item handled in-context instead.
-        const active = await tx<{ id: string; src: 'run' | 'mail' }[]>`
-          select 'run' as src, id::text as id, created_at from agent_runs
-          where lead_id = ${thread.lead_id} and kind = 'outreach'
-            and status in ('queued', 'running')
-            and source = 'regenerate'
-            and params->>'src' = ${messageId}
-          union all
-          select 'mail' as src, id::text, created_at from agent_inbox
-          where lead_id = ${thread.lead_id} and consumed_at is null
-            and source = 'regenerate'
-            and payload->>'src' = ${messageId}
-          order by created_at limit 1
-        `;
-        // runId is only ever an agent_runs id — an undrained inbox item has no run to point the UI at.
-        let queued = false;
+        // a capped lead's regen would never run: the expired text stays a draft, refused below
+        const { leadOverCostCapTx } = await import('../crm/turns.ts');
+        const capped = await leadOverCostCapTx(tx, thread.lead_id);
         let runId: string | null = null;
-        const cap: { flagged?: boolean; retired?: string[] } = {};
-        if (active[0]) {
-          // A queued regen is reusable only while it can still claim — if the lead
-          // crossed the cap after queueing, claimRun parks it forever; refuse instead.
-          const { leadUnderCostCapTx } = await import('../agent/runner.ts');
-          const verdict = await leadUnderCostCapTx(tx, thread.lead_id);
-          cap.flagged = verdict === 'flagged';
-          queued = verdict === 'under';
-          runId = queued && active[0].src === 'run' ? active[0].id : null;
-        } else {
-          const { requestAgentTx } = await import('../agent/dispatch.ts');
+        if (!capped) {
+          const { requestLeadTx } = await import('../crm/dispatch.ts');
           const focus = `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`;
-          const d = await requestAgentTx(tx, {
-            kind: 'outreach',
-            source: 'regenerate',
+          // one regen per expired draft, however often staff taps approve
+          const d = await requestLeadTx(tx, {
             leadId: thread.lead_id,
-            threadId: stale[0].thread_id,
-            text: focus,
-            params: { draftOnly: true, src: messageId, focus },
-            ref: { src: messageId },
+            kind: 'staff.regenerate',
+            source: 'regenerate',
+            dedupeKey: `crm:regenerate:${messageId}`,
+            payload: { draftOnly: true, src: messageId, focus, threadId: stale[0].thread_id },
           });
-          runId = d.runId;
-          cap.flagged = d.capFlagged;
-          cap.retired = d.retired;
-          if (runId) {
-            queued = true;
-            // insertRun may return an already-active run's id — report it only when that
-            // run is draftOnly and can actually drain this item; a generic run would finish
-            // without recomposing and the item waits for the orphan sweep's draftOnly run.
-            const drains = await tx<{ id: string }[]>`
-              select id from agent_runs
-              where id = ${runId}
-                and coalesce(params->>'draftOnly', 'false') = 'true'
-            `;
-            if (!drains.length) runId = null;
-          }
+          runId = d.mailboxId;
         }
+        const queued = !capped;
+        const cap = { flagged: capped };
         if (!queued) {
           // The cap refused the regen and the expired text must not send — keep it
           // a draft and refuse the approve; staff rewrites or rejects it.
@@ -822,7 +773,6 @@ export async function approveMessage(
               message: messageJson(stale[0]),
               stale: true,
               ...(runId ? { runId } : {}),
-              ...(cap.retired?.length ? { retired: cap.retired } : {}),
             },
           };
         }
@@ -839,7 +789,7 @@ export async function approveMessage(
       `
     )[0];
     if (igDraft) {
-      const { instagramColdCapTx } = await import('../agent/guardrails.ts');
+      const { instagramColdCapTx } = await import('../crm/guardrails.ts');
       const refused = await instagramColdCapTx(
         tx,
         { ...DEFAULT_GUARDRAILS, ...g },
@@ -873,7 +823,6 @@ export async function approveMessage(
     emitControlEvent('draft.change', res.body.message.threadId);
     emitControlEvent('thread.message', res.body.message.threadId);
     if (res.body.runId) emitControlEvent('run.update', res.body.runId);
-    for (const r of res.body.retired ?? []) emitControlEvent('run.update', r);
     if (res.body.stale || capFlagged) emitControlEvent('lead.change');
   }
   return res;
@@ -886,17 +835,6 @@ export async function rejectMessage(
   rejectedBy: string | null = null,
 ): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
-    // capfin before the reject (same ordering as approveMessage): a reject committing
-    // between the finish gate's liveness read and 'done' flip would strand a finished run.
-    const leadRow = await tx<{ lead_id: string }[]>`
-      select t.lead_id from lead_messages m
-      join lead_threads t on t.id = m.thread_id
-      where m.id = ${messageId}
-    `;
-    if (leadRow[0]) {
-      const { capLockTx } = await import('../agent/runner.ts');
-      await capLockTx(tx, leadRow[0].lead_id);
-    }
     const rows = await tx<MessageRow[]>`
       update lead_messages set status = 'rejected', updated_at = now()
       where id = ${messageId} and status = 'draft'
@@ -939,6 +877,8 @@ export async function setThreadAgent(
         update leads set agent_paused_at = null, updated_at = now()
         where id = ${rows[0].lead_id} and agent_paused_at is not null
       `;
+      const { reserveUnansweredTx } = await import('../crm/inbound.ts');
+      await reserveUnansweredTx(tx, rows[0].lead_id);
     }
     return { status: 200, body: { thread: threadJson(rows[0]!) } };
   });

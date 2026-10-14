@@ -82,11 +82,10 @@ export function mountDiscord(o: {
   app: Hono<{ Variables: { tenant: Tenant } }>;
   sql: Sql;
   controlGate: (c: Context) => void;
-  kickDrain: () => void;
   /** tests swap Discord's network */
   fetch?: DiscordFetch | undefined;
 }) {
-  const { app, sql, controlGate, kickDrain } = o;
+  const { app, sql, controlGate } = o;
 
   const idemKey = (c: Context, scope: string) => {
     const key = c.req.header('idempotency-key');
@@ -138,7 +137,7 @@ export function mountDiscord(o: {
     const body = parseJsonObject(raw) as unknown as Interaction;
     if (typeof body.type !== 'number' || typeof body.id !== 'string')
       throw new HttpError(400, 'BAD_REQUEST', 'not an interaction');
-    return c.json(await handleInteraction(sql, ctx, body, { kickDrain }));
+    return c.json(await handleInteraction(sql, ctx, body, {}));
   });
 
   app.get('/control/v1/discord', async (c) => {

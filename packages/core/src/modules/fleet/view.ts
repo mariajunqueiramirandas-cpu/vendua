@@ -128,7 +128,7 @@ const listSql = (tx: Sql, where: ReturnType<Sql>) => tx<ListRow[]>`
 `;
 
 export async function listStorefrontsTx(tx: Sql) {
-  const rows = await listSql(tx, tx`order by t.created_at desc limit 1000`);
+  const rows = await listSql(tx, tx`where t.status <> 'platform' order by t.created_at desc limit 1000`);
   return rows.map(storefrontJson);
 }
 
@@ -213,7 +213,7 @@ export async function fleetStatusTx(tx: Sql, probes: boolean) {
       }[]
     >`
       select
-        (select count(*)::int from tenants) as stores,
+        (select count(*)::int from tenants where status <> 'platform') as stores,
         (select count(*)::int from storefront_ops where live_release_id is not null) as live,
         (select count(*)::int from storefront_ops where release_policy = 'pinned') as pinned,
         (select count(*)::int from storefront_ops where loader_state = 'maintenance') as maintenance,

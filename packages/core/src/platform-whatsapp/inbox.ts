@@ -1,4 +1,4 @@
-import { ingestInbound } from '../agent/inbound.ts';
+import { ingestInbound } from '../crm/inbound.ts';
 import { controlTx } from '../modules/control.ts';
 import { adoptLidMappings } from '../modules/threads.ts';
 import type { Sql } from '../platform/db.ts';
@@ -6,14 +6,14 @@ import { log } from '../platform/log.ts';
 import { AlreadyConsumed, membershipsOf, routeToDua, type DuaDeps, type InboxRow } from './dua.ts';
 import { refreshPlatformSession } from './session.ts';
 import { VENDUA_SESSION } from './transport.ts';
-import type { InboundMedia } from '../agent/channels/whatsapp.ts';
+import type { InboundMedia } from '../crm/channels/whatsapp.ts';
 import { MAX_AUDIO_SECONDS, MAX_IMAGE_BYTES, MAX_MEDIA_BYTES } from '../store-whatsapp/content.ts';
 import { AUDIO_NOT_FETCHED } from './dua-text.ts';
 
 // Core's side of platform_wa_inbox: what reaches Venduá's number, from the gateway (or, before the
 // cutover, merchant messages from Core's own socket). One number serves everyone, so each message
 // is routed by its sender: merchant phones to Duá, everyone else (and all history) to the CRM's
-// ingestInbound, unchanged — still the only path into requestAgentTx for the CRM agent.
+// ingestInbound, unchanged — still the only path into requestLeadTx for the CRM agent.
 
 const inboxLog = log.child({ mod: 'platform-wa-inbox' });
 
@@ -176,7 +176,7 @@ export function startPlatformInbox(d: InboxDeps, o: { tickMs?: number } = {}) {
 
 /**
  * Before the cutover, Core's own socket hands over merchant messages here instead of dropping
- * them (agent/inbound.ts still drops any that reach it). False: not a merchant, the CRM's.
+ * them (crm/inbound.ts still drops any that reach it). False: not a merchant, the CRM's.
  */
 export async function socketMessageToInbox(
   sql: Sql,

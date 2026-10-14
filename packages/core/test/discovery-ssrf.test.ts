@@ -5,7 +5,7 @@ import {
   mapPointerName,
   resolveMapPointer,
   setDnsLookupForTest,
-} from '../src/agent/channels/discovery.ts';
+} from '../src/crm/channels/discovery.ts';
 
 // M6: map pointers are fetched in-process — host checks are exact, and every hop's
 // resolved addresses are checked, not just the hostname string.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { renderReplyEmail } from '../src/agent/channels/email-template.ts';
+import { renderReplyEmail } from '../src/crm/channels/email-template.ts';
 
 describe('renderReplyEmail', () => {
   test('escapes html in the body', () => {

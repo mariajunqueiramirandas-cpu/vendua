@@ -1,4 +1,4 @@
-import { finalizeSentTx } from '../agent/send.ts';
+import { finalizeSentTx } from '../crm/send.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { markMessageFailed, type Channel } from '../modules/threads.ts';
@@ -6,7 +6,7 @@ import type { Sql } from '../platform/db.ts';
 import { UUID_RE } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 
-// A CRM send on the gateway is an outbox row written with the message's claim (agent/send.ts);
+// A CRM send on the gateway is an outbox row written with the message's claim (crm/send.ts);
 // this finishes it when the gateway settles the row: the same finalize as an inline send for
 // `sent`, the message failed for `failed`/`expired`. settled_at is claimed in the same tx as the
 // finalize, so each row is finished exactly once.
@@ -16,7 +16,7 @@ const SWEEP_MS = 30_000;
 const BATCH = 50;
 // a row whose settle keeps failing waits longer each time (30 s doubling, up to an hour), so it
 // can't hold back the rows behind it; then it's given up, and the stranded-send sweep
-// (agent/runner.ts) fails its message
+// (crm/outbox.ts) fails its message
 const MAX_SETTLE_ATTEMPTS = 10;
 
 /** Settles what is due now; returns how many rows it finished. */

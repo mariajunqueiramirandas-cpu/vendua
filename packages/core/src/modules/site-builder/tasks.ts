@@ -5,7 +5,7 @@ import { recordStaffEventTx } from '../staff-events.ts';
 import type { DesignSpec } from './spec.ts';
 
 // A site task: one build of a store's site request, from the owner applying Duá's card to the
-// site live. requestSiteTaskTx is the only insert (one producer, like requestAgentTx); the
+// site live. requestSiteTaskTx is the only insert (one producer, like the CRM agents' requestLeadTx); the
 // fleet loop (jobs.ts) and GitHub's webhook (routes.ts) move it; staff approve it in the CRM.
 
 export type SiteTaskKind = 'generate' | 'revision';

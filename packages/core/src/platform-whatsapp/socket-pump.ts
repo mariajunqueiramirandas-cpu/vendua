@@ -1,4 +1,4 @@
-import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
+import { sendWhatsApp } from '../crm/channels/whatsapp.ts';
 import { controlTx } from '../modules/control.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import type { Sql } from '../platform/db.ts';

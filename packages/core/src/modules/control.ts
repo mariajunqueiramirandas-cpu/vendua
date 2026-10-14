@@ -1,12 +1,27 @@
-import type { Sql } from '../platform/db.ts';
+import { beginTracked, inheritCommitHooks, type Sql } from '../platform/db.ts';
 
-// sets the vendua.control GUC — RLS policies on CRM tables require it
+// sets the vendua.control GUC — RLS policies on CRM tables require it. Inside a transaction (an
+// Agent Runtime step's fenced tx: the CRM agent runs under the platform tenant) it is a savepoint
+// that restores the scope it found, so the CRM work commits with the step and nothing leaks.
 export function controlTx<T>(sql: Sql, work: (tx: Sql) => Promise<T>): Promise<T> {
-  return sql.begin(async (t) => {
-    const tx = t as unknown as Sql;
+  const inner = sql as unknown as {
+    begin?: unknown;
+    savepoint?: (fn: (sp: Sql) => Promise<T>) => Promise<T>;
+  };
+  if (typeof inner.begin !== 'function' && typeof inner.savepoint === 'function')
+    return inner.savepoint(async (sp) => {
+      inheritCommitHooks(sql, sp);
+      const [row] = await sp<{ prev: string | null }[]>`
+        select current_setting('vendua.control', true) as prev`;
+      await sp`select set_config('vendua.control', '1', true)`;
+      const out = await work(sp);
+      if (row?.prev !== '1') await sp`select set_config('vendua.control', ${row?.prev ?? ''}, true)`;
+      return out;
+    });
+  return beginTracked(sql, async (tx) => {
     await tx`select set_config('vendua.control', '1', true)`;
     return work(tx);
-  }) as Promise<T>;
+  });
 }
 
 export interface ClaimResult<T> {

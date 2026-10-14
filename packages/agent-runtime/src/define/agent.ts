@@ -40,6 +40,8 @@ export interface LoadCtx<H = unknown> {
   tenantId: string;
   subject: SubjectRef;
   state: Readonly<ConversationState>;
+  /** The mailbox rows that started this turn (the state is folded only up to the last turn). */
+  batch: readonly { kind: string; source: string; payload: Json }[];
 }
 
 export interface MemoryKeyPolicy {
@@ -62,6 +64,13 @@ export interface AgentDefinition<H = any> {
   lane: Lane;
   /** The transport replies go out through. */
   transport: string;
+  /**
+   * false: no `reply` tool. The agent reaches people only through its own tools, and its plain
+   * text goes to the transport as a note (an agent whose transport delivers nothing).
+   */
+  replies?: false;
+  /** Narrows the state's tools for one step (a tool whose provider this tenant lacks). */
+  offers?: (tool: string, state: ConversationState) => boolean;
   models: {
     default: Tier;
     escalate?: readonly Escalation[];

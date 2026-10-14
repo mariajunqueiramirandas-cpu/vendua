@@ -52,8 +52,10 @@ export const seller = defineAgent({
 ```
 
 Replies go through the built-in `reply` tool; amounts, times and products are cited as `{{id}}`
-and rendered from the ledger. The subject (tenant, conversation) comes from `ctx`, never from the
-model's arguments.
+and rendered from the ledger. An agent with `replies: false` has no `reply` tool: it reaches people
+only through its own tools, and its plain text reaches the transport as a note (the CRM's agents).
+`offers(tool, state)` narrows a state's tools for one step (a tool whose provider the tenant lacks).
+The subject (tenant, conversation) comes from `ctx`, never from the model's arguments.
 
 ## Testing
 

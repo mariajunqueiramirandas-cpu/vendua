@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { dispatchMessage } from '../src/agent/send.ts';
+import { dispatchMessage } from '../src/crm/send.ts';
 import { claimRun, drain, flagCappedLeads, insertRun, runOnce } from '../src/agent/runner.ts';
 import { enqueueInboxTx } from '../src/agent/inbox.ts';
 import { sweepOrphanInbox } from '../src/agent/dispatch.ts';

@@ -7,8 +7,8 @@ import {
   waIdentity,
   waStatus,
   whatsappRegistered,
-} from '../src/agent/channels/whatsapp.ts';
-import { dispatchMessage } from '../src/agent/send.ts';
+} from '../src/crm/channels/whatsapp.ts';
+import { dispatchMessage } from '../src/crm/send.ts';
 import { whatsappOtpSender } from '../src/admin/auth.ts';
 import { platformNotify } from '../src/admin/notify.ts';
 import { startSignupOtp } from '../src/modules/billing/signup.ts';

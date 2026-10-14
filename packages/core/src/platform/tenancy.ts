@@ -2,6 +2,9 @@ import type { Sql } from './db.ts';
 import { log } from './log.ts';
 import { slugFromStoreHost } from './store-origin.ts';
 
+/** Venduá's own tenant (migration 0129): owns the CRM agent's runtime rows; never a store. */
+export const PLATFORM_TENANT_ID = '00000000-0000-4000-8000-000000000001';
+
 export interface Tenant {
   id: string;
   slug: string;
@@ -73,7 +76,7 @@ export class TenantResolver {
     const rows = await this.sql<Tenant[]>`
       select t.id, t.slug, t.name, t.status
       from domains d join tenants t on t.id = d.tenant_id
-      where d.host in (${host}, ${hostname})
+      where d.host in (${host}, ${hostname}) and t.status <> 'platform'
       order by (d.host = ${host}) desc
       limit 1
     `;
@@ -101,7 +104,7 @@ export class TenantResolver {
 
   async resolveBySlug(slug: string): Promise<Tenant | null> {
     const rows = await this.sql<Tenant[]>`
-      select id, slug, name, status from tenants where slug = ${slug} limit 1
+      select id, slug, name, status from tenants where slug = ${slug} and status <> 'platform' limit 1
     `;
     return rows[0] ?? null;
   }

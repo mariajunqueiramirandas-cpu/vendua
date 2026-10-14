@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { ingestInbound } from '../src/agent/inbound.ts';
-import { dispatchMessage } from '../src/agent/send.ts';
+import { ingestInbound } from '../src/crm/inbound.ts';
+import { dispatchMessage } from '../src/crm/send.ts';
 import { claimRun } from '../src/agent/runner.ts';
 import { scheduleWakeupTx } from '../src/agent/wakeups.ts';
 import { executeTool, type ToolContext } from '../src/agent/tools.ts';

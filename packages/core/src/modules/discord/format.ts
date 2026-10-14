@@ -65,7 +65,7 @@ const USD = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' 
 const INT = new Intl.NumberFormat('pt-BR');
 
 export const brl = (cents: number) => BRL.format(cents / 100);
-/** agent_runs.cost_cents is metered in USD (model/tool pricing) — never BRL */
+/** crm_turns.cost_cents is metered in USD (model/tool pricing) — never BRL */
 export const usd = (cents: number) => USD.format(cents / 100);
 export const int = (n: number) => INT.format(n);
 

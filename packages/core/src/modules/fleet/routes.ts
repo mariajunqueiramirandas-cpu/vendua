@@ -112,14 +112,14 @@ export function mountFleet(o: {
       let tenant = (
         await tx<Tenant[]>`
           select t.id, t.slug, t.name, t.status from domains dm join tenants t on t.id = dm.tenant_id
-          where dm.host in (${host}, ${hostname}) order by (dm.host = ${host}) desc limit 1
+          where dm.host in (${host}, ${hostname}) and t.status <> 'platform' order by (dm.host = ${host}) desc limit 1
         `
       )[0];
       if (!tenant) {
         const slug = slugFromStoreHost(hostname, d.storeDomain);
         if (slug && !RESERVED_SLUGS.has(slug))
           tenant = (
-            await tx<Tenant[]>`select id, slug, name, status from tenants where slug = ${slug}`
+            await tx<Tenant[]>`select id, slug, name, status from tenants where slug = ${slug} and status <> 'platform'`
           )[0];
       }
       if (!tenant) {

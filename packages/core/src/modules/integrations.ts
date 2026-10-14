@@ -4,7 +4,7 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
-import { JOB_KINDS } from '../agent/tool-meta.ts';
+import { JOB_KINDS } from '../crm/jobs.ts';
 import { normalizeStaff } from './staff-config.ts';
 import { validateDiscordConfig, validateDiscordSetting } from './discord/config.ts';
 import { validateMediaRoutes } from '../vendedor/media.ts';
@@ -893,6 +893,11 @@ export async function putSetting(
       insert into control_settings (key, value) values (${key}, ${tx.json(value as never)})
       on conflict (key) do update set value = excluded.value
     `;
+    // replies back on (or a raised cost cap): what leads wrote meanwhile gets its answer
+    if (key === 'agent' || key === 'guardrails') {
+      const { reserveUnansweredTx } = await import('../crm/inbound.ts');
+      await reserveUnansweredTx(tx, null);
+    }
     return { status: 200, body: { key, value } };
   });
   // meeting window changes alter the availability grid

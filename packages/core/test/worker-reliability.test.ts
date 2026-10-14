@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { startAdminSweeper, sweepAdmin } from '../src/admin/workers.ts';
 import { AdminHub } from '../src/admin/live.ts';
-import { startInstagramReconcile } from '../src/agent/channels/instagram.ts';
+import { startInstagramReconcile } from '../src/crm/channels/instagram.ts';
 import type { Sql } from '../src/platform/db.ts';
 
 // Fake postgres.js handles — enough surface for the worker loops, no database.

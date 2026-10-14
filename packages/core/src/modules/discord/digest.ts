@@ -1,5 +1,5 @@
 import type { Sql } from '../../platform/db.ts';
-import { anchorTx } from '../../agent/schedule-anchors.ts';
+import { anchorTx } from '../../crm/schedule-anchors.ts';
 import { controlTx } from '../control.ts';
 import { getIntegrationTx, getSettingTx } from '../integrations.ts';
 import { recordStaffEvent, type DailyDigest } from '../staff-events.ts';
@@ -55,7 +55,7 @@ export async function digestReportTx(tx: Sql, date: string): Promise<DigestRepor
       ),
       tx<{ runs: number; cost_cents: number }[]>`
         select count(*)::int as runs, coalesce(sum(cost_cents), 0)::int as cost_cents
-        from agent_runs where created_at > now() - interval '24 hours'
+        from crm_turns where finished_at > now() - interval '24 hours'
       `.then((r) => r[0]!),
       one(
         tx<{ n: number }[]>`
@@ -88,7 +88,7 @@ export async function computeDigest(sql: Sql, date: string): Promise<DailyDigest
     const [failedRuns, milestones, orders, top, cancelled, firstOrders, stores, paid, problems] =
       await Promise.all([
         one(tx<N[]>`
-          select count(*)::int as n from agent_runs
+          select count(*)::int as n from crm_turns
           where status = 'failed' and finished_at > now() - interval '24 hours'
         `),
         one(tx<N[]>`

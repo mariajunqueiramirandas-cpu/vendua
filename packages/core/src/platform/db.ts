@@ -33,6 +33,39 @@ export async function warmPool(sql: Sql, n = poolMax): Promise<void> {
   await Promise.all(Array.from({ length: n }, () => sql`select 1`.catch(() => undefined)));
 }
 
+const commitHooks = new WeakMap<object, (() => void)[]>();
+
+/** Runs `fn` once the withTenant transaction `tx` commits (in-process hints such as the CRM's
+ *  SSE events, which must not announce a write that rolls back). Outside one, it runs now. */
+export function afterCommit(tx: Sql, fn: () => void): void {
+  const hooks = commitHooks.get(tx);
+  if (hooks) hooks.push(fn);
+  else fn();
+}
+
+/** A savepoint (`child`) of a tracked transaction hands its after-commit work to the parent. */
+export function inheritCommitHooks(parent: Sql, child: Sql): void {
+  const hooks = commitHooks.get(parent);
+  if (hooks) commitHooks.set(child, hooks);
+}
+
+/** `sql.begin` whose `afterCommit` callbacks run once it commits. */
+export async function beginTracked<T>(sql: Sql, fn: (tx: Sql) => Promise<T>): Promise<T> {
+  const hooks: (() => void)[] = [];
+  const out = await sql.begin(async (tx) => {
+    commitHooks.set(tx, hooks);
+    return fn(tx as unknown as Sql) as Promise<T extends readonly unknown[] ? never : T>;
+  });
+  for (const h of hooks) {
+    try {
+      h();
+    } catch (err) {
+      dbLog.error({ err }, 'after-commit hook failed');
+    }
+  }
+  return out as T;
+}
+
 // runs `fn` in a tx with the tenant GUC SET LOCAL — RLS context can't leak
 // across requests on a pooled connection
 export async function withTenant<T>(
@@ -40,7 +73,7 @@ export async function withTenant<T>(
   tenantId: string,
   fn: (tx: Sql) => Promise<T>,
 ): Promise<T> {
-  return sql.begin(async (tx) => {
+  return beginTracked(sql, async (tx) => {
     // .execute() sends it now, without waiting: the connection is FIFO, so the handler's
     // first query is already ordered behind it — one round trip saved per transaction
     const set = tx`select set_config('vendua.tenant_id', ${tenantId}, true)`.execute();
@@ -52,8 +85,8 @@ export async function withTenant<T>(
       throw err;
     }
     await set;
-    return out as T extends readonly unknown[] ? never : Awaited<T>;
-  }) as Promise<T>;
+    return out;
+  });
 }
 
 /**

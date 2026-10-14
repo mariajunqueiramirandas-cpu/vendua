@@ -1,4 +1,4 @@
-import { sendEmail } from '../agent/channels/email.ts';
+import { sendEmail } from '../crm/channels/email.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { waitForSent } from '../platform-whatsapp/outbox.ts';
 import { sendPlatformText } from '../platform-whatsapp/send.ts';

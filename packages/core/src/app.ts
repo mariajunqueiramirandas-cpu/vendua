@@ -1,11 +1,21 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { planHas } from './modules/billing/plans.ts';
 import { signupReadiness, type SignupReadiness } from './modules/billing/signup-gate.ts';
-import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
-import { JOB_KINDS, type JobKind } from './agent/tool-meta.ts';
-import { requestAgentTx } from './agent/dispatch.ts';
-import { listRoutines } from './agent/scheduler.ts';
-import { cancelWakeup, listWakeups } from './agent/wakeups.ts';
+import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './crm/policy.ts';
+import { JOB_KINDS } from './crm/policy.ts';
+import type { JsonObject } from '@vendua/agent-runtime';
+import {
+  CRM_DISCOVERY_ID,
+  CRM_STRATEGIST_ID,
+  HUNT_SUBJECT,
+  requestBoardTx,
+  requestLeadTx,
+  REVIEW_ID,
+  REVIEW_SUBJECT,
+} from './crm/dispatch.ts';
+import { listRoutines } from './crm/scheduler.ts';
+import { leadOverCostCapTx } from './crm/turns.ts';
+import { cancelWakeup, dropLeadMailTx, listWakeups } from './crm/agenda.ts';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { Hono, type Context } from 'hono';
@@ -215,9 +225,8 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { capLockTx, drain, flagCappedLeads, releaseInboxTx } from './agent/runner.ts';
-import { ingestInbound } from './agent/inbound.ts';
-import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
+import { ingestInbound } from './crm/inbound.ts';
+import { ingestResendEvent, svixHeaders, svixVerified } from './crm/channels/email-inbound.ts';
 import { LOADER_JS } from '@vendua/loader';
 import { currentTemplatesTx, currentTokensTx, opsTx } from './modules/storefront-platform.ts';
 import { mountStorefrontPlatform } from './modules/storefront-routes.ts';
@@ -451,22 +460,9 @@ async function testIntegration(
   const integration = await getIntegration(sql, kind);
   const probe = async (): Promise<{ ok: boolean; detail: string }> => {
     if (!integration) return { ok: false, detail: 'nenhum driver ativo para este tipo' };
-    if (kind === 'llm') {
-      if (integration.driver === 'mock') {
-        return { ok: true, detail: 'driver mock — respostas roteirizadas' };
-      }
-      const { providerFor } = await import('./agent/llm.ts');
-      const p = providerFor(integration);
-      const r = await timed(
-        p.chat({
-          system: 'Responda apenas com a palavra: ok',
-          messages: [{ role: 'user', content: 'teste' }],
-          tools: [],
-        }),
-        p.name,
-      );
-      return { ok: true, detail: `${p.name} respondeu — ${r.tokensIn + r.tokensOut} tokens` };
-    }
+    // the CRM's agents run on Agent Runtime v3 and its model routes (agent_runtime.routes)
+    if (kind === 'llm')
+      return { ok: false, detail: 'aposentada: o agente usa as rotas de modelo do runtime v3' };
     if (kind === 'email') {
       if (integration.driver === 'log') {
         return { ok: true, detail: 'driver log — imprime no console' };
@@ -503,7 +499,7 @@ async function testIntegration(
           return { ok: true, detail: 'aguardando o código de pareamento' };
         return { ok: false, detail: `gateway ${row.state}${row.detail ? ` (${row.detail})` : ''}` };
       }
-      const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
+      const { ensureSocket, waStatus } = await import('./crm/channels/whatsapp.ts');
       const s = await timed(ensureSocket(sql, integration), 'socket baileys');
       if (!s) return { ok: false, detail: 'socket não subiu' };
       const st = waStatus();
@@ -512,14 +508,14 @@ async function testIntegration(
       return { ok: false, detail: `socket ${st}` };
     }
     if (kind === 'instagram') {
-      const { testInstagram } = await import('./agent/channels/instagram.ts');
+      const { testInstagram } = await import('./crm/channels/instagram.ts');
       return await timed(testInstagram(integration), 'ig-sidecar');
     }
     if (kind === 'discovery') {
       if (integration.driver === 'mock') {
         return { ok: true, detail: 'driver mock — prospects enlatados' };
       }
-      const { discoveryFor } = await import('./agent/channels/discovery.ts');
+      const { discoveryFor } = await import('./crm/channels/discovery.ts');
       const d = await discoveryFor(sql);
       const r = await timed(d.search('padaria', 'teste de conectividade'), 'tinyfish');
       return { ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` };
@@ -609,13 +605,6 @@ export function createApp({
   const orderHub = new OrderHub(sql);
   const liveHub = adminHub ?? new AdminHub(sql);
   const presence = new PresenceTracker(sql);
-  const kickDrain =
-    autoDrain === false
-      ? () => {}
-      : () =>
-          void drain(sql, 20, { orphans: false }).catch((e) =>
-            agentLog.error({ err: e }, 'drain failed'),
-          );
   const publicStoreDomain = storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
   const adminDomain = (adminHost ?? process.env.VENDUA_ADMIN_HOST)?.trim().toLowerCase();
   const resolver = new TenantResolver(
@@ -1528,38 +1517,28 @@ export function createApp({
       });
     }
     // automation:false skips the run — the staff-managed equivalent of a CSV import.
-    const res = await claimControl<{ lead: Lead; runId?: string; retired?: string[] }>(
+    const res = await claimControl<{ lead: Lead; runId?: string }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
-        // Lead + run share one claim — a retry replays instead of duplicating.
+        // Lead + first contact share one claim — a retry replays instead of duplicating.
         const created = await insertLeadTx(tx, leadInsert(body));
-        if (
-          created.body.lead.agentMode !== 'off' &&
-          body.automation !== false &&
-          (await automationAllowedTx(tx, 'outreach')).ok
-        ) {
-          // Send policy is read live at send time, not stamped here — a change between create and claim must take effect.
+        if (created.body.lead.agentMode !== 'off' && body.automation !== false) {
+          // Send policy is read live at send time, not stamped here — a change between create and the turn must take effect.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
-          const d = await requestAgentTx(tx, {
-            kind: 'outreach',
-            source: 'first_contact',
+          // the producer files it only while the policy allows outreach
+          const d = await requestLeadTx(tx, {
             leadId: created.body.lead.id,
-            text: 'lead criado pela equipe — primeiro contato',
-            params: { focus: 'primeiro contato — lead recém-criado pela equipe' },
+            kind: 'lead.first_contact',
+            source: 'first_contact',
+            dedupeKey: `crm:first_contact:${created.body.lead.id}`,
+            payload: { focus: 'primeiro contato — lead recém-criado pela equipe' },
             ...(delay > 0 ? { at: new Date(Date.now() + delay * 60_000) } : {}),
           });
-          const runId = d.runId;
-          const cap = { retired: d.retired };
           return {
             status: created.status,
-            // null when the cost cap refused the run — the card's flag is the explanation.
-            body: {
-              ...created.body,
-              ...(runId ? { runId } : {}),
-              ...(cap.retired?.length ? { retired: cap.retired } : {}),
-            },
+            body: { ...created.body, ...(d.mailboxId ? { runId: d.mailboxId } : {}) },
           };
         }
         return created;
@@ -1569,9 +1548,7 @@ export function createApp({
     if (!res.replayed) {
       emitControlEvent('lead.change', res.body.lead.id);
       if (res.body.runId) emitControlEvent('run.update', res.body.runId);
-      for (const r of res.body.retired ?? []) emitControlEvent('run.update', r);
     }
-    if (res.body.runId) kickDrain();
     return c.json(res.body, res.status as 200);
   });
 
@@ -1675,11 +1652,8 @@ export function createApp({
       if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
       if (rows[0]) {
         transitioned = true;
-        // Opt-out never lifts — the claim gate can never pick up queued runs, so cancel them.
-        await tx`
-          update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
-          where lead_id = ${id} and status = 'queued'
-        `;
+        // opt-out never lifts: what still waits for this lead's agent goes
+        await dropLeadMailTx(tx, id);
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
@@ -1851,7 +1825,7 @@ export function createApp({
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (wantSend) {
       // dispatchMessage no-ops unless the row is still 'queued' — safe on replay.
-      const { dispatchMessage } = await import('./agent/send.ts');
+      const { dispatchMessage } = await import('./crm/send.ts');
       const sent = await dispatchMessage(sql, res.body.message.id);
       return c.json({ ...res.body, sent });
     }
@@ -1869,12 +1843,9 @@ export function createApp({
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     // A refusal's message stayed 'draft' — dispatching would hide it behind a fake success.
     if (res.status !== 200) return c.json(res.body, res.status as 422);
-    // Stale draft superseded in-claim — kick drain so the regen recomposes promptly.
-    if (res.body.stale) {
-      kickDrain();
-      return c.json(res.body);
-    }
-    const { dispatchMessage } = await import('./agent/send.ts');
+    // stale draft superseded in-claim: its regen is already in the lead's mailbox
+    if (res.body.stale) return c.json(res.body);
+    const { dispatchMessage } = await import('./crm/send.ts');
     const sent = await dispatchMessage(sql, res.body.message.id);
     return c.json({ ...res.body, sent });
   });
@@ -1909,7 +1880,7 @@ export function createApp({
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (kind === 'instagram') {
       // a disable/switch stops the sidecar session now; an enable pushes the stored one
-      const { reconcileInstagram } = await import('./agent/channels/instagram.ts');
+      const { reconcileInstagram } = await import('./crm/channels/instagram.ts');
       void getIntegration(sql, 'instagram').then((i) => reconcileInstagram(sql, i));
     }
     const { platformTransport, VENDUA_SESSION } = await import('./platform-whatsapp/transport.ts');
@@ -1925,7 +1896,7 @@ export function createApp({
     }
     if (kind === 'whatsapp' && platformTransport() === 'socket') {
       // A disable/switch must close the old Baileys session now, not lazily.
-      const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
+      const { ensureSocket } = await import('./crm/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
         .then((i) => ensureSocket(sql, i))
         .catch((e) => waLog.error({ err: e }, 'socket reconcile failed'));
@@ -1964,7 +1935,6 @@ export function createApp({
     const res = await putSetting(sql, key, value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     // A lowered cap strands over-cap leads (queued runs park silently) — flag them now; deduped.
-    if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
     return c.json(res.body);
   });
 
@@ -2172,175 +2142,40 @@ export function createApp({
 
   app.get('/control/v1/agent/runs', async (c) => {
     controlGate(c);
-    const kind = c.req.query('kind');
-    const status = c.req.query('status');
-    const leadId = c.req.query('lead_id');
-    if (leadId && !UUID_RE.test(leadId)) {
-      throw new HttpError(400, 'BAD_REQUEST', 'lead_id must be a uuid');
-    }
-    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 200);
-    const params: unknown[] = [];
-    const p = (v: unknown) => {
-      params.push(v);
-      return `$${params.length}`;
-    };
-    const scheduled = c.req.query('scheduled') === '1';
-    // Cursors carry timestamptz::text so microseconds survive (JS Date truncates to ms); the key pins the view.
-    const cursor = c.req.query('cursor');
-    const TS_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
-    // Calendar sanity too — a loose regex passes values that 500 the timestamptz cast.
-    const tsOk = (ts: string) => {
-      const m = TS_RE.exec(ts);
-      if (!m) return false;
-      const [y, mo, d, h, mi, s, oh] = m.slice(1).map(Number) as [
-        number,
-        number,
-        number,
-        number,
-        number,
-        number,
-        number,
-      ];
-      const days = [
-        31,
-        y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-      ];
-      return (
-        mo >= 1 &&
-        mo <= 12 &&
-        d >= 1 &&
-        d <= days[mo - 1]! &&
-        h <= 23 &&
-        mi <= 59 &&
-        s <= 59 &&
-        oh <= 15
-      );
-    };
-    let cursorCond = 'true';
-    if (cursor) {
-      const sep = cursor.indexOf('|');
-      const key = sep > 0 ? cursor.slice(0, cursor.indexOf(':')) : '';
-      const ts = sep > 0 ? cursor.slice(cursor.indexOf(':') + 1, sep) : '';
-      const id = sep > 0 ? cursor.slice(sep + 1) : '';
-      const want = scheduled ? 'run_at' : 'created_at';
-      if (key !== want || !tsOk(ts) || !UUID_RE.test(id)) {
-        throw new HttpError(400, 'BAD_REQUEST', `cursor must be "${want}:<ts>|<run uuid>"`);
-      }
-      // Bind text + cast server-side — an inferred param goes through JS Date and loses µs.
-      cursorCond = scheduled
-        ? `(r.run_at > ${p(ts)}::text::timestamptz or (r.run_at = ${p(ts)}::text::timestamptz and r.id > ${p(id)}::uuid))`
-        : `(r.created_at < ${p(ts)}::text::timestamptz or (r.created_at = ${p(ts)}::text::timestamptz and r.id < ${p(id)}::uuid))`;
-    }
-    const where = [
-      kind ? `kind = ${p(kind)}` : 'true',
-      status ? `status = ${p(status)}` : 'true',
-      leadId ? `r.lead_id = ${p(leadId)}` : 'true',
-      scheduled ? 'r.run_at is not null' : 'true',
-      cursorCond,
-    ];
-    const order = scheduled ? 'r.run_at asc, r.id asc' : 'r.created_at desc, r.id desc';
-    const rows = await controlTx(sql, (tx) =>
-      tx.unsafe(
-        `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
-                r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at, r.run_at,
-                r.source, r.promised,
-                r.created_at::text as created_at_ts, r.run_at::text as run_at_ts,
-                l.name as lead_name, t.agent_enabled as thread_agent_enabled
-         from agent_runs r
-         left join leads l on l.id = r.lead_id
-         left join lead_threads t on t.id = r.thread_id
-         where ${where.join(' and ')}
-         order by ${order} limit ${p(limit)}`,
-        params as never[],
-      ),
+    const { listRuns } = await import('./crm/runs.ts');
+    return c.json(
+      await listRuns(sql, {
+        kind: c.req.query('kind'),
+        status: c.req.query('status'),
+        leadId: c.req.query('lead_id'),
+        limit: Number(c.req.query('limit') ?? 50) || 50,
+        scheduled: c.req.query('scheduled') === '1',
+        cursor: c.req.query('cursor'),
+      }),
     );
-    const last = rows[rows.length - 1] as
-      { id: string; created_at_ts: string; run_at_ts: string | null } | undefined;
-    const nextCursor =
-      rows.length === limit && last
-        ? `${scheduled ? 'run_at' : 'created_at'}:${(scheduled ? last.run_at_ts : last.created_at_ts) ?? last.created_at_ts}|${last.id}`
-        : undefined;
-    return c.json({ runs: rows, ...(nextCursor ? { nextCursor } : {}) });
   });
 
   app.get('/control/v1/agent/runs/:id', async (c) => {
     controlGate(c);
-    const id = uuidParam(c, 'id');
-    const rows = await controlTx(
-      sql,
-      (tx) =>
-        tx`select r.*, l.name as lead_name from agent_runs r left join leads l on l.id = r.lead_id where r.id = ${id}`,
-    );
-    if (!rows[0]) throw new HttpError(404, 'RUN_NOT_FOUND', 'run not found');
-    return c.json({ run: rows[0] });
+    const { getRun } = await import('./crm/runs.ts');
+    return c.json({ run: await getRun(sql, uuidParam(c, 'id')) });
   });
 
-  // Cooperative cancel — the worker's next journal write fails the claim fence and unwinds.
+  // Work that hasn't started leaves the lead's mailbox; a turn in progress runs to its end.
   app.post('/control/v1/agent/runs/:id/cancel', async (c) => {
     controlGate(c);
     const id = uuidParam(c, 'id');
-    let transitioned = false;
+    const { cancelRun } = await import('./crm/runs.ts');
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      const rows = await tx<
-        { thread_id: string | null; params: { channel?: unknown; draftOnly?: unknown } | null }[]
-      >`
-        update agent_runs set status = 'canceled', finished_at = now(), error = 'cancelado'
-        where id = ${id} and status in ('queued', 'running')
-        returning id, params, thread_id
-      `;
-      if (!rows[0]) {
-        const cur = (
-          await tx<{ status: string }[]>`select status from agent_runs where id = ${id}`
-        )[0];
-        if (!cur) throw new HttpError(404, 'RUN_NOT_FOUND', 'run not found');
-        // already terminal — report it, don't error (cancel is idempotent)
-        return { status: 200, body: { ok: true, status: cur.status } };
-      }
-      // Release consumed mail back to pending so the sweep respawns a run (event=true — cancel isn't a failure signal).
-      await releaseInboxTx(tx, id, true);
-      // Tombstone the forRunId items that asked for this run or they'd respawn it — scoped to what
-      // the run could serve (draftOnly + effective channel + thread), so merely-associated mail survives.
-      const runChan = isSendChannel(rows[0].params?.channel) ? rows[0].params.channel : '';
-      const runThread = rows[0].thread_id ?? '';
-      const effChan =
-        runChan ||
-        (runThread
-          ? ((
-              await tx<{ c: string }[]>`
-              select channel::text as c from lead_threads where id = ${runThread}::uuid
-            `
-            )[0]?.c ?? '')
-          : '');
-      const runDraftOnly = rows[0].params?.draftOnly === true;
-      await tx`
-        update agent_inbox set consumed_at = now()
-        where payload->>'forRunId' = ${id} and consumed_at is null
-          and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
-          and coalesce(
-               payload->'params'->>'channel',
-               (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
-               ${effChan}
-             ) = ${effChan}
-          and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
-      `;
-      transitioned = true;
-      return { status: 200, body: { ok: true, status: 'canceled' } };
+      const out = await cancelRun(tx, id);
+      return { status: 200, body: { ok: true as const, status: out.status, leadId: out.leadId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed && transitioned) {
+    if (!res.replayed && res.body.status === 'canceled') {
       emitControlEvent('run.update', id);
+      if (res.body.leadId) emitControlEvent('lead.change', res.body.leadId);
     }
-    return c.json(res.body);
+    return c.json({ ok: true, status: res.body.status });
   });
 
   // The one staff entry point (ADR 0016): "agent, do <kind> for these leads / the board".
@@ -2391,18 +2226,16 @@ export function createApp({
       ...(body.draftOnly === true ? { draftOnly: true } : {}),
       ...(goal ? { goal } : {}),
     };
-    // params lands verbatim in agent_runs.params and the inbox payload — bound it.
-    if (JSON.stringify(params).length > 16_384)
-      throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
-    const text =
-      (goal ? `a equipe definiu a meta '${goal}'` : `a equipe pediu '${kind}'`) +
-      (typeof params.focus === 'string' ? ` — ${params.focus}` : '');
+    // params lands verbatim in the mailbox payload (≤32 KB) and crm_turns.params — bound it.
+    if (JSON.stringify(params).length > 6_000)
+      throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 6 KB');
+    const text = goal ? `a equipe definiu a meta '${goal}'` : null;
     type Out = {
       runId?: string;
       runs: { leadId: string | null; runId: string; startAt: string | null }[];
       skipped: { leadId: string; code: string; reason: string }[];
     };
-    const events: { retired: string[]; capFlagged: boolean } = { retired: [], capFlagged: false };
+    let capFlagged = false;
     const res = await claimControl<Out>(sql, requireIdemKey(c), async (tx) => {
       const out: Out = { runs: [], skipped: [] };
       let leadIds = [...new Set(rawIds as string[])];
@@ -2421,23 +2254,24 @@ export function createApp({
         leadIds = [th.lead_id];
       }
       const single = leadIds.length === 1;
+      const payload = { ...params, kind, ...(text ? { text } : {}) } as JsonObject;
       if (!leadIds.length) {
-        const d = await requestAgentTx(tx, {
-          kind: kind as JobKind,
+        // the board: a hunt is its own discovery actor; the review is the strategist's one actor
+        if (kind !== 'discovery' && kind !== 'strategist')
+          throw new HttpError(422, 'BAD_REQUEST', `${kind} requests take leads`);
+        const d = await requestBoardTx(tx, {
+          agent: kind === 'discovery' ? CRM_DISCOVERY_ID : CRM_STRATEGIST_ID,
+          subject:
+            kind === 'discovery'
+              ? { kind: HUNT_SUBJECT, id: randomUUID() }
+              : { kind: REVIEW_SUBJECT, id: REVIEW_ID },
+          kind: 'staff.request',
           source: 'staff',
-          text,
-          params,
+          dedupeKey: `crm:staff:${randomUUID()}`,
+          payload,
         });
-        events.retired.push(...d.retired);
-        if (d.runId)
-          out.runs.push({
-            leadId: null,
-            runId: d.runId,
-            startAt: d.startAt?.toISOString() ?? null,
-          });
+        if (d.mailboxId) out.runs.push({ leadId: null, runId: d.mailboxId, startAt: null });
       }
-      // capfins first, in sorted order — request order could AB-BA another batch (capLockTx)
-      for (const id of [...leadIds].sort()) await capLockTx(tx, id);
       for (const id of leadIds) {
         const lead = (
           await tx<
@@ -2452,7 +2286,7 @@ export function createApp({
             where id = ${id} for update
           `
         )[0];
-        // mirror the claim gate's suppression — a suppressed run would park 'queued' forever
+        // a suppressed lead's turn would stay silent: say so instead of filing it
         const suppressed = !lead
           ? null
           : lead.archived_at
@@ -2474,18 +2308,9 @@ export function createApp({
           });
           continue;
         }
-        const d = await requestAgentTx(tx, {
-          kind: kind as JobKind,
-          source: 'staff',
-          leadId: id,
-          threadId,
-          text,
-          params,
-        });
-        events.retired.push(...d.retired);
-        if (d.capFlagged) events.capFlagged = true;
-        if (!d.runId) {
-          // the request stays filed; the cap flag (and its [humano] task) is the explanation
+        if (await leadOverCostCapTx(tx, id)) {
+          // the cap flag (and its [humano] task) is the explanation
+          capFlagged = true;
           out.skipped.push({
             leadId: id,
             code: 'LEAD_COST_CAP',
@@ -2493,10 +2318,22 @@ export function createApp({
           });
           continue;
         }
+        const d = await requestLeadTx(tx, {
+          leadId: id,
+          kind: 'staff.request',
+          source: 'staff',
+          dedupeKey: `crm:staff:${randomUUID()}`,
+          payload: { ...payload, ...(threadId ? { threadId } : {}) },
+        });
         // the goal sticks only once the lead is actually served
         if (goal)
           await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
-        out.runs.push({ leadId: id, runId: d.runId, startAt: d.startAt?.toISOString() ?? null });
+        if (d.mailboxId)
+          out.runs.push({
+            leadId: id,
+            runId: d.mailboxId,
+            startAt: d.deliverAt?.toISOString() ?? null,
+          });
       }
       if (out.runs[0]) out.runId = out.runs[0].runId;
       // Return 422, don't throw — the committed claim keeps the cap flag and replays idempotently.
@@ -2517,12 +2354,10 @@ export function createApp({
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) {
       for (const r of res.body.runs ?? []) emitControlEvent('run.update', r.runId);
-      for (const r of events.retired) emitControlEvent('run.update', r);
       // cap refusals wrote flag+task; goals changed the card — lead.change refreshes both
-      if (events.capFlagged || res.status === 422 || (goal && res.body.runs?.length))
+      if (capFlagged || res.status === 422 || (goal && res.body.runs?.length))
         emitControlEvent('lead.change');
     }
-    if (res.body.runs?.length) kickDrain();
     return c.json(res.body, res.status as 201);
   });
 
@@ -2774,7 +2609,7 @@ export function createApp({
           { value: { qr: string | null } | null }[]
         >`select value from control_settings where key = 'wa_qr'`,
     );
-    const { waStatus, waIdentity } = await import('./agent/channels/whatsapp.ts');
+    const { waStatus, waIdentity } = await import('./crm/channels/whatsapp.ts');
     return c.json({
       qr: rows[0]?.value?.qr ?? null,
       status: waStatus(),
@@ -2791,7 +2626,7 @@ export function createApp({
     // Claimed so a retry replays the issued code; failures throw for a genuinely fresh retry.
     const res = await claimControl(sql, requireIdemKey(c), async () => {
       // on the gateway, pairCode asks the session row for a code and waits for it
-      const { pairCode } = await import('./agent/channels/whatsapp.ts');
+      const { pairCode } = await import('./crm/channels/whatsapp.ts');
       try {
         return { status: 200, body: { code: await pairCode(sql, phone) } };
       } catch (e) {
@@ -2817,7 +2652,7 @@ export function createApp({
           where name = ${VENDUA_SESSION}`;
         return { status: 200, body: { ok: true } };
       }
-      const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
+      const { logoutWa, ensureSocket } = await import('./crm/channels/whatsapp.ts');
       const integration = await getIntegration(sql, 'whatsapp');
       const accountId = (integration?.config.accountId as string) ?? 'default';
       await logoutWa(sql, accountId);
@@ -2836,7 +2671,7 @@ export function createApp({
   // re-sending a one-time code; only responses are stored, never the password.
   app.get('/control/v1/ig/status', async (c) => {
     controlGate(c);
-    const { igStatus } = await import('./agent/channels/instagram.ts');
+    const { igStatus } = await import('./crm/channels/instagram.ts');
     return c.json(igStatus());
   });
 
@@ -2851,7 +2686,7 @@ export function createApp({
 
   app.post('/control/v1/ig/login/start', async (c) => {
     controlGate(c);
-    const { igLoginStart } = await import('./agent/channels/instagram.ts');
+    const { igLoginStart } = await import('./crm/channels/instagram.ts');
     return igClaim(c, async () => ({ step: await igLoginStart(sql) }));
   });
 
@@ -2875,7 +2710,7 @@ export function createApp({
       }
       input[k] = v;
     }
-    const { igLoginSubmit } = await import('./agent/channels/instagram.ts');
+    const { igLoginSubmit } = await import('./crm/channels/instagram.ts');
     return igClaim(c, async () => ({ step: await igLoginSubmit(sql, input) }));
   });
 
@@ -2883,13 +2718,13 @@ export function createApp({
     controlGate(c);
     const body = await bodyJson(c);
     const cookies = str(body.cookies, 'cookies', 64_000);
-    const { igLoginCookies } = await import('./agent/channels/instagram.ts');
+    const { igLoginCookies } = await import('./crm/channels/instagram.ts');
     return igClaim(c, async () => ({ step: await igLoginCookies(sql, cookies) }));
   });
 
   app.post('/control/v1/ig/login/cancel', async (c) => {
     controlGate(c);
-    const { igLoginCancel } = await import('./agent/channels/instagram.ts');
+    const { igLoginCancel } = await import('./crm/channels/instagram.ts');
     return igClaim(c, async () => {
       await igLoginCancel(sql);
       return { ok: true };
@@ -2898,7 +2733,7 @@ export function createApp({
 
   app.post('/control/v1/ig/logout', async (c) => {
     controlGate(c);
-    const { igLogout } = await import('./agent/channels/instagram.ts');
+    const { igLogout } = await import('./crm/channels/instagram.ts');
     return igClaim(c, async () => {
       await igLogout(sql);
       return { ok: true };
@@ -2909,7 +2744,7 @@ export function createApp({
   // with the sidecar secret; a uniform 404 for anything unsigned hides the route.
   let igEventBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/ig/events', async (c) => {
-    const ig = await import('./agent/channels/instagram.ts');
+    const ig = await import('./crm/channels/instagram.ts');
     const integration = await getIntegration(sql, 'instagram');
     // getIntegration only returns the enabled row — spelled out so a disabled driver
     // visibly drops even correctly signed events
@@ -3206,7 +3041,7 @@ export function createApp({
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
   });
   mountImportsControl({ app, sql, controlGate });
-  mountDiscord({ app, sql, controlGate, kickDrain, fetch: discordFetch });
+  mountDiscord({ app, sql, controlGate, fetch: discordFetch });
   const fleetD =
     fleet ??
     fleetDeps(sql, {

@@ -5,6 +5,7 @@ import type { Sql } from '../platform/db.ts';
 import { COPILOT_AGENT_ID } from './agents/copilot/shared.ts';
 import { ONBOARDING_AGENT_ID } from './agents/vendedor-onboarding/index.ts';
 import { dispatchTx } from './dispatch.ts';
+import { isCrmTurn } from '../crm/turns.ts';
 
 export const QA_RUBRIC = `- Respondeu ao que o cliente perguntou, sem enrolar.
 - Todo valor, prazo e produto veio do sistema (nada inventado).
@@ -85,9 +86,10 @@ export function hostOnlineQa(
     if (
       end.agentId === agent.def.id ||
       // the rubric scores a seller with shoppers; Copilot and the onboarding interview talk to
-      // the store's own people
+      // the store's own people, and the CRM's agents sell Venduá through their own tools
       end.agentId === COPILOT_AGENT_ID ||
       end.agentId === ONBOARDING_AGENT_ID ||
+      isCrmTurn(end) ||
       !end.state.repliedSinceLastInput ||
       !agent.qa.shouldSample(end.actorId)
     )

@@ -7,9 +7,9 @@ import {
   type ToolContext,
   type ToolGate,
 } from '../src/agent/tools.ts';
-import { buildSystemPrompt } from '../src/agent/prompts.ts';
+import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
 import { DEFAULT_PITCH, type Pitch } from '../src/modules/integrations.ts';
-import { MonidBudget } from '../src/agent/channels/monid.ts';
+import { MonidBudget } from '../src/crm/channels/monid.ts';
 
 // book/plan never touch sql; monid tools hit fetch — stub it per test.
 const ctx = (): ToolContext => ({

@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { parseMenuPaste, parseMoney } from '../src/admin/routes-catalog.ts';
 import { sweepAdmin } from '../src/admin/workers.ts';
-import { ingestInbound } from '../src/agent/inbound.ts';
+import { ingestInbound } from '../src/crm/inbound.ts';
 import { sessionAlive } from '../src/admin/auth.ts';
 import { MEDIA_QUOTA_BYTES } from '../src/admin/media.ts';
 import { encryptPayload } from '../src/admin/webpush.ts';

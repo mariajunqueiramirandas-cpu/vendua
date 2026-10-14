@@ -196,7 +196,7 @@ export function mountControlBilling(o: {
             where tenant_id = t.id and status in ('open', 'failed') and kind <> 'ai_pack'
             order by period_start, number limit 1
           ) inv on true
-        where ${only}::uuid is null or t.id = ${only}
+        where (${only}::uuid is null or t.id = ${only}) and t.status <> 'platform'
         order by t.created_at desc
         limit 2000
       `;

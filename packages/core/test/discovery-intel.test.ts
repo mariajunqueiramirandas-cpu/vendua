@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { insertRun, sweepBriefs, sweepStrategist } from '../src/agent/runner.ts';
 import { toolGate, executeTool, toolsFor, type ToolContext } from '../src/agent/tools.ts';
-import { buildSystemPrompt } from '../src/agent/prompts.ts';
+import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
 import { DEFAULT_GUARDRAILS, DEFAULT_PITCH, validateSetting } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, leadInsert, leadPatch } from '../src/modules/leads.ts';

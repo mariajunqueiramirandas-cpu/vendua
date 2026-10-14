@@ -196,7 +196,7 @@ export async function searchStores(sql: Sql, q: string, limit = 10): Promise<Sto
   const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   return sql<StoreHit[]>`
     select id, name, slug from tenants
-    where ${q ? sql`(name ilike ${like} or slug ilike ${like})` : sql`true`}
+    where status <> 'platform' and ${q ? sql`(name ilike ${like} or slug ilike ${like})` : sql`true`}
     order by created_at desc limit ${limit}
   `;
 }
@@ -251,7 +251,7 @@ export async function leadSnapshot(sql: Sql, leadId: string): Promise<LeadSnapsh
     if (!l) return null;
     const [cost, tasks, meeting, threads, last] = await Promise.all([
       tx<Row[]>`
-        select coalesce(sum(cost_cents), 0)::int as c from agent_runs where lead_id = ${leadId}
+        select coalesce(sum(cost_cents), 0)::int as c from crm_turns where lead_id = ${leadId}
       `,
       tx<Row[]>`
         select count(*)::int as n from lead_tasks

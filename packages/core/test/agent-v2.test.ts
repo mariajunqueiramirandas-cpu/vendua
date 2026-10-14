@@ -14,7 +14,7 @@ import {
   JOB_KINDS,
   READ_TOOLS,
   TOOL_META,
-} from '../src/agent/tool-meta.ts';
+} from '../src/crm/policy.ts';
 import { JOBS, jobTools } from '../src/agent/jobs.ts';
 import {
   automationAllowedTx,
@@ -25,7 +25,7 @@ import {
   normalizeAgent,
   parked,
   parkPolicyTx,
-} from '../src/agent/policy.ts';
+} from '../src/crm/policy.ts';
 import { validateSetting } from '../src/modules/integrations.ts';
 import {
   parseWakeupAt,

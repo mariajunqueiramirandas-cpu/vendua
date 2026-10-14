@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { enqueueRun, runOnce } from '../src/agent/runner.ts';
-import { sendableNowTx } from '../src/agent/guardrails.ts';
+import { sendableNowTx } from '../src/crm/guardrails.ts';
 import { setTestProvider } from '../src/agent/llm.ts';
 import { scriptedProvider } from '../src/agent/scripted-provider.ts';
 import { controlTx } from '../src/modules/control.ts';

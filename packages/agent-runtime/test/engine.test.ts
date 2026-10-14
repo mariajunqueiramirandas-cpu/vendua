@@ -63,6 +63,62 @@ describe('a turn', () => {
   });
 });
 
+describe('agents without replies', () => {
+  test('replies: false offers no reply tool; plain text is a note to the transport', async () => {
+    const { store, runtime, clock, say, adapter } = setup([{ text: 'Nada a fazer aqui.' }], {
+      replies: false,
+      guards: {},
+    });
+    const { actorId } = await say('oi');
+    await drive(runtime, clock);
+    expect(adapter.requests[0]!.tools.map((t) => t.name)).not.toContain('reply');
+    expect(store.outbox.map((m) => m.text)).toEqual(['Nada a fazer aqui.']);
+    expect(types(store, actorId)).toContain('turn.ended');
+  });
+
+  test('a reply call is refused like any tool the agent lacks', async () => {
+    const { store, runtime, clock, say } = setup([reply('Oi!'), { text: 'ok' }], {
+      replies: false,
+      guards: {},
+    });
+    const { actorId } = await say('oi');
+    await drive(runtime, clock);
+    expect(store.outbox.map((m) => m.text)).toEqual(['ok']);
+    expect(store.log(actorId).some((e) => e.type === 'message.sent' && e.payload !== null)).toBe(
+      true,
+    );
+  });
+
+  test('offers narrows the tools the model sees', async () => {
+    const { runtime, clock, say, adapter } = setup([reply('Oi')], {
+      offers: (tool) => tool !== 'add_item',
+    });
+    await say('oi');
+    await drive(runtime, clock);
+    const names = adapter.requests[0]!.tools.map((t) => t.name);
+    expect(names).toContain('reply');
+    expect(names).toContain('quote');
+    expect(names).not.toContain('add_item');
+  });
+});
+
+describe('context load', () => {
+  test('the subject loader sees the batch that starts the turn', async () => {
+    const seen: string[][] = [];
+    const { runtime, clock, say } = setup([reply('Oi')], {
+      load: {
+        subject: async ({ batch }) => {
+          seen.push(batch.map((b) => `${b.kind}:${b.source}`));
+          return null;
+        },
+      },
+    });
+    await say('oi');
+    await drive(runtime, clock);
+    expect(seen[0]).toEqual(['message.inbound:test']);
+  });
+});
+
 describe('grounding', () => {
   test('a typed amount is blocked; a cited one is rendered from the ledger', async () => {
     const { store, runtime, clock, say } = setup([
