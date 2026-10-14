@@ -72,8 +72,11 @@ export function useKeyboard() {
     const realign = () => {
       clearTimeout(settle);
       settle = window.setTimeout(() => {
-        if (!field() && vv.scale <= 1.01 && vv.offsetTop > 1)
-          scrollTo(scrollX, scrollY + vv.offsetTop);
+        if (field() || vv.scale > 1.01 || vv.offsetTop <= 1) return;
+        const y = scrollY;
+        scrollTo(scrollX, y + vv.offsetTop);
+        // at the end of the page there is no room below: any scroll lets iOS let go of it
+        if (scrollY === y) scrollTo(scrollX, y - 1);
       }, 350);
     };
 

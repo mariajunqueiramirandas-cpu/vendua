@@ -99,12 +99,16 @@ export function Sheet({
   useEffect(() => (open && !desktop ? dimStatusBar() : undefined), [open, desktop]);
   return (
     // repositionInputs off: vaul's iOS keyboard handling fights ui/keyboard.ts; the sheet rides
-    // above the keyboard on --kb instead and fits in what it leaves visible (--vvh)
+    // above the keyboard on --kb instead and fits in what it leaves visible (--vvh).
+    // noBodyStyles: in a Safari tab vaul pins <body> (position: fixed), so the page can't scroll
+    // and iOS pans the visual viewport to reach a field instead, which iOS 26 can leave panned
+    // once the keyboard is gone; the installed app never had it (vaul skips it standalone)
     <Drawer.Root
       open={open}
       onOpenChange={onOpenChange}
       direction={desktop ? 'right' : 'bottom'}
       repositionInputs={false}
+      noBodyStyles
     >
       <Drawer.Portal>
         {/* keep in step with SCRIM in lib/theme.ts (the dimmed status bar) */}
