@@ -262,7 +262,10 @@ describe('store chat (Kernel 1.18)', () => {
 
   test('a reply that lands while closed shows as unread', async () => {
     CHAT_POLL_MS.pending = 150;
-    fakeCore();
+    const f = fakeCore();
+    // the reply lands only once the chat is closed: on a loaded runner a poll can beat the close
+    const reply = f.reply;
+    f.reply = null;
     m = await mount({ path: '/', session: 'tok' });
     await click($('[data-vendua="chat"] [data-part="launcher"]'));
     await type($<HTMLTextAreaElement>('textarea[name="chat-message"]')!, 'oi');
@@ -271,6 +274,7 @@ describe('store chat (Kernel 1.18)', () => {
       ($('[data-vendua="chat"] [data-part="close"]') as HTMLElement).click();
     });
     expect($('[data-vendua="chat"] [data-part="unread"]')).toBeNull();
+    f.reply = reply;
     await until(() => !!$('[data-vendua="chat"] [data-part="unread"]'));
     expect($('[data-vendua="chat"] [data-part="unread"]')!.textContent).toBe('1');
     expect($('[data-vendua="chat"] [data-part="launcher"]')!.getAttribute('aria-label')).toContain(
