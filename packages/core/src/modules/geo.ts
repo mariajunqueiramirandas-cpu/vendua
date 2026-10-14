@@ -142,8 +142,11 @@ export interface RouteQuote {
   seconds: number | null;
 }
 
-/** Roads are longer than the straight line; used only while no route could be had. */
-export const DETOUR_FACTOR = 1.3;
+/** Roads are longer than the straight line; used only while no route could be had. 1.5 rather
+ *  than the typical ~1.3: measured road/straight ratios from Rio and São Paulo were 1.2–1.5 where
+ *  the route was clean, and an estimate must never undercharge or admit an address the road
+ *  would refuse (a 1.3 factor priced Ipanema 13% short and accepted Niterói that ORS refuses). */
+export const DETOUR_FACTOR = 1.5;
 /** Urban courier speed for an estimated leg's travel time. */
 const ESTIMATE_KMH = 25;
 export const DISTANCE_ZONE_ID = 'distance';
