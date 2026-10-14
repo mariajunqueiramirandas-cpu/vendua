@@ -104,10 +104,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('checkout races (db)', () => {
     const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => checkout(auth, i)));
     expect(codes(rs)).toEqual([201, ...Array(9).fill('CART_NOT_OPEN')]);
     const cartId = auth.authorization.split('.')[1]!;
-    const [{ n }] = await sql<{ n: number }[]>`
+    const [row] = await sql<{ n: number }[]>`
       select count(*)::int n from orders where tenant_id = ${tenantId} and cart_id = ${cartId}
     `;
-    expect(n).toBe(1);
+    expect(row!.n).toBe(1);
   });
 
   test('one cart, ten checkouts at once with one key: one order, nine replays of it', async () => {
@@ -144,11 +144,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('checkout races (db)', () => {
     const carts = await Promise.all(Array.from({ length: 6 }, () => cartWith(1, 'duas')));
     const rs = await Promise.all(carts.map((a, i) => checkout(a, 200 + i)));
     expect(codes(rs)).toEqual([201, 201, ...Array(4).fill('COUPON_EXHAUSTED')]);
-    const [{ n }] = await sql<{ n: number }[]>`
+    const [row] = await sql<{ n: number }[]>`
       select count(*)::int n from coupon_redemptions r join coupons c on c.id = r.coupon_id
       where c.tenant_id = ${tenantId} and c.code = 'DUAS'
     `;
-    expect(n).toBe(2);
+    expect(row!.n).toBe(2);
   });
 
   test('twenty adds to one cart at once all land', async () => {

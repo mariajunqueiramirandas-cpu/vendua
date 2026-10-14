@@ -21,24 +21,24 @@ export interface PoolTimeouts {
   idleInTxMs: number;
 }
 
-const envMs = (name: string, fallback: number) => {
-  const v = Number(process.env[name]);
-  return Number.isInteger(v) && v >= 0 ? v : fallback;
+const envMs = (raw: string | undefined, fallback: number) => {
+  const v = Number(raw);
+  return raw && Number.isInteger(v) && v >= 0 ? v : fallback;
 };
 
 /** The request pool: a request that waits 10s on a lock is better answered 503 and retried. */
 export const requestTimeouts: PoolTimeouts = {
-  statementMs: envMs('DB_STATEMENT_TIMEOUT_MS', 30_000),
-  lockMs: envMs('DB_LOCK_TIMEOUT_MS', 10_000),
-  idleInTxMs: envMs('DB_IDLE_IN_TX_TIMEOUT_MS', 60_000),
+  statementMs: envMs(process.env.DB_STATEMENT_TIMEOUT_MS, 30_000),
+  lockMs: envMs(process.env.DB_LOCK_TIMEOUT_MS, 10_000),
+  idleInTxMs: envMs(process.env.DB_IDLE_IN_TX_TIMEOUT_MS, 60_000),
 };
 
 /** The jobs pool: an agent activation keeps its transaction through tool calls, and a CRM run's
  *  lease is 10 min, so idle-in-transaction stays above that. */
 export const jobsTimeouts: PoolTimeouts = {
-  statementMs: envMs('DB_JOBS_STATEMENT_TIMEOUT_MS', 120_000),
-  lockMs: envMs('DB_JOBS_LOCK_TIMEOUT_MS', 30_000),
-  idleInTxMs: envMs('DB_JOBS_IDLE_IN_TX_TIMEOUT_MS', 15 * 60_000),
+  statementMs: envMs(process.env.DB_JOBS_STATEMENT_TIMEOUT_MS, 120_000),
+  lockMs: envMs(process.env.DB_JOBS_LOCK_TIMEOUT_MS, 30_000),
+  idleInTxMs: envMs(process.env.DB_JOBS_IDLE_IN_TX_TIMEOUT_MS, 15 * 60_000),
 };
 
 export function createSql(url: string, max = poolMax, timeouts?: PoolTimeouts): Sql {
