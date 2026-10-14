@@ -469,15 +469,15 @@ export const campaignPlanTool = defineTool<{ content: string }, Sql>({
 });
 
 /** Compact ledger render: echoed by book/plan and shown on every step of a discovery turn. */
+const BOOK_CHANNELS = ['whatsapp', 'phone', 'instagram', 'email', 'site'] as const;
+
 export function bookDigest(book: readonly BookEntry[]): string {
   if (!book.length) return '(livro vazio)';
   return book
     .slice(0, 20)
     .map((e) => {
-      const ch = Object.entries(e.channels)
-        .filter(([, v]) => v)
-        .map(([k]) => k)
-        .join('+');
+      // a fixed order: the digest is in every step's context, and jsonb reorders keys
+      const ch = BOOK_CHANNELS.filter((k) => e.channels[k]).join('+');
       const mark = e.status === 'dead' ? '✗' : e.status === 'resolved' ? '✓' : '·';
       return `${mark} ${e.name}${e.city ? ` (${e.city})` : ''} — tentou: ${e.tried.join(',') || 'nada'} — canais: ${ch || 'nenhum'}${e.note ? ` — ${e.note}` : ''}`;
     })
@@ -505,7 +505,7 @@ interface BookInput {
 export const bookTool = defineTool<BookInput, Sql>({
   name: 'book',
   description:
-    "Your prospect ledger: working memory. 'upsert' the moment a prospect enters the radar, BEFORE the next move on it: name, channels found (whatsapp/phone/instagram/email/site with values), the move tags already spent (tried: 'maps','ig','hub','serp','dir'), status open|resolved|dead, and a short note. 'list' dumps it. The ledger is shown back to you every step: dead must be earned with spent moves.",
+    "Your prospect ledger: working memory. 'upsert' the moment a prospect enters the radar, BEFORE the next move on it: name, channels found (whatsapp/phone/instagram/email/site with values), the move tags already spent (tried: short tags such as 'maps', 'ig', 'hub', 'dir'), status open|resolved|dead, and a short note. 'list' dumps it. The ledger is shown back to you every step: dead must be earned with spent moves.",
   effect: 'write',
   input: s.object({
     action: s.enum(['upsert', 'list']),

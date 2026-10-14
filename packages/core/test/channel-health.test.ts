@@ -1,13 +1,16 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import { crmBench, type ToolOutcome } from './crm-harness.ts';
 import { channelHealth, recordBlockedSendTx } from '../src/modules/channel-health.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { upsertIntegration } from '../src/modules/integrations.ts';
 import { insertLeadTx, segmentStats } from '../src/modules/leads.ts';
-import { executeTool, type ToolContext } from '../src/agent/tools.ts';
-import { migrate } from '../src/platform/db.ts';
+import { migrate, type Sql } from '../src/platform/db.ts';
 
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
+const dataOf = <T>(o: ToolOutcome | undefined): T => (o as { data: T }).data;
+
 describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
 
@@ -63,30 +66,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
     // one send, no failures → no alert from a single quiet channel
     expect(em.alert).toBe(before.em.alert);
   });
+});
 
-  test('send_message under quiet hours writes a blocked activity', async () => {
-    await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    const ctx = (leadId: string): ToolContext => ({
-      sql,
-      runId: '00000000-0000-4000-8000-000000000001',
-      runKind: 'reply',
-      leadId,
-      threadId: null,
-      step: 0,
-      claimToken: null,
-      pageCache: new Map(),
-      briefName: null,
-      leadCap: 20,
-      channelOverride: null,
-      book: new Map(),
-      plan: null,
-      monid: null,
-      seenContacts: new Set(),
-      pageReads: 0,
-      draftOnly: false,
-    });
-    // quiet window centered on now (guardrails tz) — deterministic regardless
-    // of when the suite runs ('00:00–23:59' would leave a one-minute hole)
+describe.skipIf(!process.env.TEST_DATABASE_URL)('send_message on Runtime v3 (db)', () => {
+  const b = crmBench('channel-health');
+  const { sql } = b;
+
+  beforeAll(b.setup);
+  afterAll(b.teardown);
+  beforeEach(() => b.mine.clear());
+
+  /** A quiet window centered on now (guardrails tz) — deterministic regardless of when the
+   *  suite runs ('00:00–23:59' would leave a one-minute hole) */
+  const quietWindow = () => {
     const h =
       Number(
         new Intl.DateTimeFormat('en-US', {
@@ -96,134 +88,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
         }).format(new Date()),
       ) % 24;
     const hh = (n: number) => String(n).padStart(2, '0');
-    const quietStart = `${hh((h + 23) % 24)}:00`;
-    const quietEnd = `${hh((h + 1) % 24)}:59`;
-    const prev = await controlTx(sql, async (tx) => {
-      const cur = (
-        await tx<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
-      )[0]?.value;
-      await tx`
-        insert into control_integrations (kind, driver, enabled)
-        values ('email', 'log', true)
-        on conflict (kind, driver) do update set enabled = true
-      `;
-      await tx`
-        insert into control_settings (key, value)
-        values ('guardrails',
-                ${tx.json({ quietStart, quietEnd } as never)})
-        on conflict (key) do update set value = excluded.value
-      `;
-      // autopilot: first contact isn't draft-forced, so quiet hours decide
-      await tx`
-        insert into control_settings (key, value) values ('agent', ${tx.json({ level: 'autopilot' } as never)})
-        on conflict (key) do update set value = excluded.value
-      `;
-      return cur ?? null;
+    return { quietStart: `${hh((h + 23) % 24)}:00`, quietEnd: `${hh((h + 1) % 24)}:59` };
+  };
+
+  /** Email goes out through the log driver, so a lead with an address can be reached by it. */
+  const emailLive = () =>
+    upsertIntegration(
+      sql as unknown as Sql,
+      { kind: 'email', driver: 'log', enabled: true },
+      b.key(),
+    );
+
+  test('send_message under quiet hours writes a blocked activity', async () => {
+    await emailLive();
+    // autopilot: first contact isn't draft-forced, so quiet hours decide
+    await b.settings('autopilot', { quietHoursEnabled: true, ...quietWindow() });
+    const lead = await b.lead({ whatsapp: null, email: 'quiet@test.dev' });
+    const { outcomes } = await b.runTools([['send_message', { body: 'oi' }]], {
+      leadId: lead.id,
+      kind: 'reply',
     });
-    try {
-      const lead = await controlTx(sql, (tx) =>
-        insertLeadTx(tx, { name: 'Quiet Lead', email: 'quiet@test.dev', agent_mode: 'auto' }),
-      );
-      const leadId = lead.body.lead.id;
-      const out = (await executeTool(ctx(leadId), `qh-${leadId}`, 'send_message', {
-        leadId,
-        body: 'oi',
-      })) as { blocked: boolean; reason?: string };
-      expect(out.blocked).toBe(true);
-      expect(out.reason).toBe('quiet hours');
-      const acts = await controlTx(
-        sql,
-        (tx) =>
-          tx<{ kind: string; meta: { channel: string; reason: string } }[]>`
-            select kind, meta from lead_activities where lead_id = ${leadId} and kind = 'blocked'
-          `,
-      );
-      expect(acts.length).toBe(1);
-      expect(acts[0]!.meta).toEqual({ channel: 'email', reason: 'quiet hours' });
-    } finally {
-      await controlTx(sql, async (tx) => {
-        await tx`delete from control_settings where key = 'agent'`;
-        if (prev === null) await tx`delete from control_settings where key = 'guardrails'`;
-        else
-          await tx`update control_settings set value = ${tx.json(prev as never)} where key = 'guardrails'`;
-      });
-    }
+    const out = dataOf<{ blocked: boolean; reason?: string }>(outcomes[0]);
+    expect(out.blocked).toBe(true);
+    expect(out.reason).toBe('quiet hours');
+    const acts = await sql<{ kind: string; meta: { channel: string; reason: string } }[]>`
+      select kind, meta from lead_activities where lead_id = ${lead.id} and kind = 'blocked'`;
+    expect(acts.length).toBe(1);
+    expect(acts[0]!.meta).toEqual({ channel: 'email', reason: 'quiet hours' });
   });
 
   test('send_message with draftOnly composes a draft even under quiet hours', async () => {
-    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    await emailLive();
+    await b.settings('autopilot', { quietHoursEnabled: true, ...quietWindow() });
     // drafts never leave the building, so draft-only runs skip delivery gates
     // (quiet hours/caps apply at the approval click)
-    const ctx = (leadId: string): ToolContext => ({
-      sql,
-      runId: '00000000-0000-4000-8000-000000000002',
-      runKind: 'outreach',
-      leadId,
-      threadId: null,
-      step: 0,
-      claimToken: null,
-      pageCache: new Map(),
-      briefName: null,
-      leadCap: 20,
-      channelOverride: null,
-      book: new Map(),
-      plan: null,
-      monid: null,
-      seenContacts: new Set(),
-      pageReads: 0,
-      draftOnly: true,
+    const lead = await b.lead({ whatsapp: null, email: 'quiet-draft@test.dev' });
+    const { outcomes } = await b.runTools([['send_message', { body: 'oi' }]], {
+      leadId: lead.id,
+      kind: 'outreach',
+      payload: { draftOnly: true },
     });
-    const h =
-      Number(
-        new Intl.DateTimeFormat('en-US', {
-          timeZone: 'America/Sao_Paulo',
-          hour: '2-digit',
-          hour12: false,
-        }).format(new Date()),
-      ) % 24;
-    const hh = (n: number) => String(n).padStart(2, '0');
-    const prev = await controlTx(sql, async (tx) => {
-      const cur = (
-        await tx<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
-      )[0]?.value;
-      await tx`
-        insert into control_integrations (kind, driver, enabled)
-        values ('email', 'log', true)
-        on conflict (kind, driver) do update set enabled = true
-      `;
-      await tx`
-        insert into control_settings (key, value)
-        values ('guardrails',
-                ${tx.json({ quietStart: `${hh((h + 23) % 24)}:00`, quietEnd: `${hh((h + 1) % 24)}:59` } as never)})
-        on conflict (key) do update set value = excluded.value
-      `;
-      return cur ?? null;
-    });
-    try {
-      const lead = await controlTx(sql, (tx) =>
-        insertLeadTx(tx, { name: 'Quiet Draft Lead', email: 'quiet-draft@test.dev' }),
-      );
-      const leadId = lead.body.lead.id;
-      const out = (await executeTool(ctx(leadId), `qhd-${leadId}`, 'send_message', {
-        leadId,
-        body: 'oi',
-      })) as { message: { status: string } };
-      expect(out.message.status).toBe('draft');
-      const acts = await controlTx(
-        sql,
-        (tx) =>
-          tx<{ kind: string }[]>`
-            select kind from lead_activities where lead_id = ${leadId} and kind = 'blocked'
-          `,
-      );
-      expect(acts.length).toBe(0);
-    } finally {
-      await controlTx(sql, async (tx) => {
-        if (prev === null) await tx`delete from control_settings where key = 'guardrails'`;
-        else
-          await tx`update control_settings set value = ${tx.json(prev as never)} where key = 'guardrails'`;
-      });
-    }
+    expect(dataOf<{ message: { status: string } }>(outcomes[0]).message.status).toBe('draft');
+    const acts = await sql<{ kind: string }[]>`
+      select kind from lead_activities where lead_id = ${lead.id} and kind = 'blocked'`;
+    expect(acts.length).toBe(0);
   });
 });
 
@@ -238,14 +146,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
     const seg = `cpl-seg-${Date.now()}`;
     const lead = await controlTx(sql, async (tx) => {
       const l = await insertLeadTx(tx, { name: 'CPL Lead', segment: seg });
-      // lead-bound run spend + a discovery run attributed via params.segment
+      // lead-bound turn spend + a discovery turn attributed via params.segment
       await tx`
-        insert into agent_runs (kind, lead_id, status, cost_cents)
-        values ('reply', ${l.body.lead.id}, 'done', 300)
+        insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, status,
+          started_at, cost_cents)
+        values (${crypto.randomUUID()}, ${crypto.randomUUID()}, 'crm', 'reply', 'whatsapp',
+          ${l.body.lead.id}, 'done', now(), 300)
       `;
       await tx`
-        insert into agent_runs (kind, params, status, cost_cents)
-        values ('discovery', ${tx.json({ segment: seg } as never)}, 'done', 700)
+        insert into crm_turns (turn_id, actor_id, agent_id, kind, source, status, started_at,
+          cost_cents, params)
+        values (${crypto.randomUUID()}, ${crypto.randomUUID()}, 'crm-discovery', 'discovery',
+          'staff:ops', 'done', now(), 700, ${tx.json({ segment: seg } as never)})
       `;
       // A replied lead outranks every unreplied segment in the top-12
       // rollup (order: replied desc, leads desc) — a 1-lead segment

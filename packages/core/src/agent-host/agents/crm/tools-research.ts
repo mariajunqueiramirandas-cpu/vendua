@@ -17,6 +17,7 @@ import {
   type ReadPagesResult,
 } from '../../../crm/channels/discovery.ts';
 import { MonidBudget, monidRun } from '../../../crm/channels/monid.ts';
+import { workspaceOf } from './availability.ts';
 import { counters, str, turn, type Ctx } from './shared.ts';
 
 // Prospect research, the same for every CRM agent that is offered it. These are `read` tools:
@@ -382,7 +383,7 @@ export const mapsLookupTool = defineTool<
 export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
   name: 'instagram_profile',
   description:
-    "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers and any public contact fields, with the bio parsed into contacts. The fix for profiles that render as shells in read_pages.",
+    "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers and any public contact fields, with the bio parsed into contacts. The fix for profiles that render as shells when the page itself is read.",
   effect: 'read',
   input: s.object({
     handle: s.string({ min: 1, max: 100 }).describe('instagram @handle (with or without @)'),
@@ -429,12 +430,13 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
       if (v) (/@/.test(v) ? found.emails : found.phones).push(v);
     }
     const next: string[] = [];
-    // every state that offers the paid lookups offers read_pages too
-    if (extIsHub)
+    // the hints name read_pages only where it is offered
+    const canRead = !workspaceOf(ctx.state.context.tenant)?.disabled.read_pages;
+    if (canRead && extIsHub)
       next.push(
         `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
       );
-    else if (externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+    else if (canRead && externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
     if (found.phoneHints.length && !found.phones.length)
       next.push(
         `phoneHints ${found.phoneHints.join(', ')} sem DDD — serp "${handle} ${found.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
@@ -463,7 +465,7 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
 export const serpTool = defineTool<{ query: string }, Sql>({
   name: 'serp',
   description:
-    "One Google SERP via monid (~$0.001): the cheap follow-up round for a named prospect ('<nome> <cidade>' telefone/whatsapp). Snippets arrive phone-parsed; the result that names the prospect (even a directory: cylex, apontador, guia local) is worth a read_pages.",
+    "One Google SERP via monid (~$0.001): the cheap follow-up round for a named prospect ('<nome> <cidade>' telefone/whatsapp). Snippets arrive phone-parsed; the result that names the prospect (even a directory: cylex, apontador, guia local) is worth reading in full.",
   effect: 'read',
   input: s.object({ query: s.string({ min: 1, max: 300 }) }),
   async run(ctx: Ctx, input) {
@@ -498,9 +500,11 @@ export const serpTool = defineTool<{ query: string }, Sql>({
       newContacts: contacts.length,
       spentUsd: res.spentUsd,
       capUsd: res.capUsd,
-      next: [
-        'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
-      ],
+      next: workspaceOf(ctx.state.context.tenant)?.disabled.read_pages
+        ? []
+        : [
+            'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
+          ],
       monidUsd: res.costUsd,
       contacts,
     } as unknown as Json;
