@@ -38,7 +38,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: billing and signu
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,

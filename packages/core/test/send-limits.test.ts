@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { checkSendAllowedTx, sendWindowOpenAtTx } from '../src/agent/guardrails.ts';
-import { explainAutonomyTx } from '../src/agent/policy.ts';
+import { checkSendAllowedTx, sendWindowOpenAtTx } from '../src/crm/guardrails.ts';
+import { explainAutonomyTx } from '../src/crm/policy.ts';
 import { controlTx } from '../src/modules/control.ts';
 import {
   DEFAULT_GUARDRAILS,

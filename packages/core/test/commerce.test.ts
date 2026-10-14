@@ -13,7 +13,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async (cep) => {
       cepCalls.push(cep);
       if (cep === '00000000') return null;

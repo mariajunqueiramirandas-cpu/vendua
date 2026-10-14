@@ -345,7 +345,7 @@ export class Runtime<H = unknown> {
       for (const m of batch)
         if (m.kind === 'runtime.handback')
           events.push({ type: 'handoff.ended', payload: { source: m.source } });
-      events.push(...(await this.contextLoad(tx, agent, actor, state)));
+      events.push(...(await this.contextLoad(tx, agent, actor, state, items)));
     }
     const appended = await tx.append(turnId, events, agent.version);
     for (const e of appended) this.applyFolded(agent, state, e);
@@ -469,6 +469,7 @@ export class Runtime<H = unknown> {
     agent: Agent<H>,
     actor: ActorRow,
     state: ConversationState,
+    batch: readonly BatchItem[],
   ): Promise<NewEvent[]> {
     const def = agent.def;
     const lctx: LoadCtx<H> = {
@@ -476,6 +477,7 @@ export class Runtime<H = unknown> {
       tenantId: actor.tenantId,
       subject: actor.subject,
       state,
+      batch: batch.map((b) => ({ kind: b.kind, source: b.source, payload: b.payload })),
     };
     const payload: JsonObject = {};
     if (def.load?.tenant) {
@@ -638,18 +640,19 @@ export class Runtime<H = unknown> {
     for (const t of def.tools)
       if (
         (chartTools === '*' || chartTools.includes(t.name)) &&
-        (!t.states || t.states.includes(run.state.chart.state))
+        (!t.states || t.states.includes(run.state.chart.state)) &&
+        (!def.offers || def.offers(t.name, run.state))
       )
         pool.set(t.name, t);
     for (const t of skillTools) pool.set(t.name, t);
-    const out: ToolDefinition[] = [replyTool, ...pool.values()];
+    const out: ToolDefinition[] = [...(def.replies === false ? [] : [replyTool]), ...pool.values()];
     const ls = loadSkillTool(run.agent);
     if (ls) out.push(ls);
     return out;
   }
 
   private toolByName(run: TurnRun<H>, name: string): ToolDefinition | undefined {
-    if (name === 'reply') return replyTool;
+    if (name === 'reply') return run.agent.def.replies === false ? undefined : replyTool;
     if (name === 'load_skill') return loadSkillTool(run.agent) ?? undefined;
     return (
       run.agent.def.tools.find((t) => t.name === name) ??

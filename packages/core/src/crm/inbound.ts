@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import {
@@ -9,15 +10,10 @@ import {
 } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
-import { capLockTx, drain, releaseInboxTx } from './runner.ts';
-import { requestAgentTx } from './dispatch.ts';
-import { retireWakeupsOnInboundTx } from './wakeups.ts';
-import { RETIRED_BY_INBOUND } from './sources.ts';
-import { log } from '../platform/log.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 import { isMerchantPhone } from '../admin/phones.ts';
-
-const agentLog = log.child({ mod: 'agent' });
+import { reserveParkedFollowupsTx, retireWakeupsOnInboundTx } from './agenda.ts';
+import { CRM_AGENT_ID, LEAD_SUBJECT, requestLeadTx } from './dispatch.ts';
 
 type ReplyGate = {
   agent_enabled: boolean;
@@ -26,8 +22,11 @@ type ReplyGate = {
   archived_at: string | null;
 };
 
-// shared inbound path. Opt-out intent is the reply run's call via the `unsubscribe`
+// shared inbound path. Opt-out intent is the reply turn's call via the `unsubscribe`
 // tool — a bare "sair"/"cancelar" can be normal speech, so nothing is decided by regex.
+
+/** The agent's own unanswered outreach: what a fresh inbound makes obsolete. */
+export const OWN_OUTREACH_KINDS = ['timer.followup', 'lead.first_contact'];
 
 export type IngestResult = InboundResult | { ignored: string };
 
@@ -107,14 +106,11 @@ export async function ingestInbound(
     emitControlEvent('thread.message', res.threadId);
     if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
   }
-  // gate check + run insert in one tx: `for update of l, t` serializes with the
-  // suppression writers so a suppression committed mid-flight is seen here
+  // gate check + mailbox row in one tx: `for update of l, t` serializes with the suppression
+  // writers so a suppression committed mid-flight is seen here
   const supersededThreads: string[] = [];
-  const canceledRunIds: string[] = [];
-  const { runId, capFlagged, retired, startAt } = await controlTx(sql, async (tx) => {
-    // 'capfin' advisory first: serializes this gate against claims and cap
-    // evaluators; must precede the l,t lock to avoid a lock-order cycle. See capLockTx.
-    await capLockTx(tx, res.leadId);
+  const dedupeKey = `crm:inbound:${res.messageId}`;
+  await controlTx(sql, async (tx) => {
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
@@ -122,7 +118,7 @@ export async function ingestInbound(
       for update of l, t
     `;
     // A provider retry of a recorded message has no side effects again — unless the attempt
-    // that recorded it died before this tx: no inbox item names it and nothing came after it.
+    // that recorded it died before this tx: its mailbox row is missing and nothing came after it.
     if (res.alreadySeen) {
       const lost = await tx`
         select 1 from lead_messages m
@@ -132,24 +128,23 @@ export async function ingestInbound(
             select 1 from lead_messages n
             where n.thread_id = m.thread_id and n.id <> m.id and n.created_at >= m.created_at
           )
-          and not exists (
-            select 1 from agent_inbox i
-            where i.lead_id = ${res.leadId} and i.payload->>'messageId' = ${res.messageId}
-          )
+          and not exists (select 1 from agent_mailbox b where b.dedupe_key = ${dedupeKey})
       `;
-      if (!lost.length) return { runId: null, capFlagged: false, retired: [], startAt: null };
+      if (!lost.length) return;
     }
-    // retire the agent's own unanswered outreach drafts — obsolete once the lead writes;
-    // promises and staff asks survive, running runs untouched
+    // retire the agent's own unanswered outreach drafts — obsolete once the lead writes; drafts
+    // of promises and staff asks survive (a turn's batch says what it answered)
     const drafts = await tx<{ id: string; thread_id: string }[]>`
       update lead_messages m
       set status = 'rejected', error = 'lead respondeu', updated_at = now()
-      where m.status = 'draft'
-        and m.agent_run_id in (
-          select r.id from agent_runs r
-          where r.lead_id = ${res.leadId} and r.kind = 'outreach'
-            and r.source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not r.promised
-        )
+      where m.status = 'draft' and m.author = 'agent' and m.agent_run_id is not null
+        and m.thread_id in (select id from lead_threads where lead_id = ${res.leadId})
+        and exists (
+          select 1 from agent_mailbox b where b.consumed_by_turn = m.agent_run_id
+            and b.kind = any(${OWN_OUTREACH_KINDS}))
+        and not exists (
+          select 1 from agent_mailbox b where b.consumed_by_turn = m.agent_run_id
+            and b.kind <> all(${OWN_OUTREACH_KINDS}))
       returning m.id, m.thread_id
     `;
     supersededThreads.push(...drafts.map((d) => d.thread_id));
@@ -160,83 +155,85 @@ export async function ingestInbound(
         by: null,
       });
     }
-    // queued auto outreach retires too — it can't serve the mail and would fire
-    // a "reopening"; the 'queued' predicate keeps its row locks behind the l,t lock
-    const canceled = await tx<{ id: string }[]>`
-      update agent_runs
-      set status = 'canceled', error = 'lead respondeu', finished_at = now()
-      where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
-        and source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not promised
-      returning id
-    `;
-    canceledRunIds.push(...canceled.map((c) => c.id));
-    // release mail consumed in the dead attempts, then tombstone the same class of pending
-    // outreach requests — promised callbacks stay
-    for (const rid of canceledRunIds) await releaseInboxTx(tx, rid, true);
+    // a pending first contact can't serve the mail and would fire a "reopening"
     await tx`
-      update agent_inbox
-      set consumed_at = now(), consumed_by_run = null
-      where lead_id = ${res.leadId} and consumed_at is null
-        and payload->>'requestedKind' = 'outreach'
-        and source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not promised
+      delete from agent_mailbox m using agent_actors a
+      where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
+        and a.subject_id = ${res.leadId} and m.kind = 'lead.first_contact'
+        and m.consumed_by_turn is null
     `;
     await retireWakeupsOnInboundTx(tx, res.leadId);
     const gate = gateRows[0];
-
     if (
       !gate ||
       !gate.agent_enabled ||
       gate.agent_mode === 'off' ||
       gate.unsubscribed_at ||
       gate.archived_at
-    ) {
-      return { runId: null, capFlagged: false, retired: [], startAt: null };
-    }
-    // a preset/job switched off doesn't drop the request: the run parks at claim and the
-    // lead is answered once replies are back on
-    // an active run drains the item between steps (burst coalescing); a channel mismatch
-    // defers to a sweep-spawned run pinned to this channel. The dispatcher carries the
-    // reply delay — and quiet hours, when the answer would go out live — into the start.
-    const d = await requestAgentTx(tx, {
-      kind: 'reply',
-      source: 'inbound',
+    )
+      return;
+    // a preset/job switched off or a paused agent files nothing now: the message is served when
+    // the agent is back (reserveUnansweredTx); quiet hours move the
+    // answer to the window's end when it would go out live; a burst coalesces in the actor's
+    // quiet window and a turn already running is preempted at its next step
+    await requestLeadTx(tx, {
       leadId: res.leadId,
-      threadId: res.threadId,
-      text: `mensagem do lead [${input.channel}]: ${input.body.slice(0, 400)}`,
-      params: { channel: input.channel },
-      ref: { messageId: res.messageId },
-      // a capped lead's message waits for budget — raising the cap answers it
-      holdIfRefused: true,
+      kind: 'message.inbound',
+      source: input.channel,
+      dedupeKey,
+      payload: {
+        messageId: res.messageId,
+        threadId: res.threadId,
+        channel: input.channel,
+      },
       ...(inboundReplyDelayMin > 0
         ? { at: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
         : {}),
     });
-    return { runId: d.runId, capFlagged: d.capFlagged, retired: d.retired, startAt: d.startAt };
   });
   for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
-  for (const id of [...canceledRunIds, ...retired]) emitControlEvent('run.update', id);
-  if (capFlagged) emitControlEvent('lead.change');
-  if (runId) {
-    // slide the parked reply's quiet period to its start — outside the l,t tx
-    // because claimRun locks run→thread while the gate holds thread→run
-    if (startAt && startAt.getTime() > Date.now()) {
-      const due = startAt;
-      await controlTx(sql, async (tx) => {
-        await tx`
-          update agent_runs
-          set run_at = case
-            when kind = 'reply' then greatest(run_at, ${due})
-            else least(run_at, ${due})
-          end
-          where id = ${runId} and status = 'queued' and run_at > now()
-        `;
-      });
-    }
-    emitControlEvent('run.update', runId);
-    // run it from this process now — the scheduler's notification may land on another worker
-    void drain(sql, 20, { orphans: false }).catch((e) =>
-      agentLog.error({ err: e }, 'drain failed'),
-    );
-  }
+  emitControlEvent('run.update', res.leadId);
   return res;
+}
+
+/**
+ * The agent is back (unpaused, switched on, a thread re-enabled, replies on again): each lead's
+ * latest message still unanswered becomes the turn it would have been. The dedupe key is
+ * ingestInbound's, so a message already served never runs twice. Runs in the transaction that
+ * re-enabled the agent.
+ */
+export async function reserveUnansweredTx(tx: Sql, leadId: string | null): Promise<number> {
+  const rows = await tx<{ lead_id: string; id: string; thread_id: string; channel: Channel }[]>`
+    select distinct on (t.lead_id) t.lead_id, m.id, m.thread_id, t.channel
+    from lead_messages m
+    join lead_threads t on t.id = m.thread_id
+    join leads l on l.id = t.lead_id
+    where (${leadId}::uuid is null or t.lead_id = ${leadId}::uuid)
+      and m.direction = 'in' and not m.historical and m.created_at > now() - interval '3 days'
+      and t.agent_enabled and l.agent_mode <> 'off' and l.agent_paused_at is null
+      and l.unsubscribed_at is null and l.archived_at is null
+      and not exists (
+        select 1 from lead_messages o join lead_threads o2 on o2.id = o.thread_id
+        where o2.lead_id = t.lead_id and o.direction = 'out' and o.created_at > m.created_at)
+    order by t.lead_id, m.created_at desc
+    limit 200`;
+  let n = 0;
+  for (const r of rows) {
+    const out = await requestLeadTx(tx, {
+      leadId: r.lead_id,
+      kind: 'message.inbound',
+      source: r.channel,
+      dedupeKey: `crm:inbound:${r.id}`,
+      payload: { messageId: r.id, threadId: r.thread_id, channel: r.channel },
+    });
+    if (out.mailboxId) n++;
+  }
+  return n;
+}
+
+/** Automation back on for a lead (or for all): what waited on it runs. Unanswered messages
+ *  first, so a lead who wrote meanwhile gets an answer rather than the old follow-up. */
+export async function reserveParkedTx(tx: Sql, leadId: string | null): Promise<void> {
+  await reserveUnansweredTx(tx, leadId);
+  await reserveParkedFollowupsTx(tx, leadId);
 }

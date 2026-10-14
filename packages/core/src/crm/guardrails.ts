@@ -11,7 +11,7 @@ import { igState } from './channels/instagram.ts';
 import { agentSettingTx, draftDecision } from './policy.ts';
 
 /**
- * Hard outbound rules enforced in code in the runner path, never in the
+ * Hard outbound rules enforced in code in the send tools, never in the
  * prompt. Ordering matters — the first false answer wins.
  */
 

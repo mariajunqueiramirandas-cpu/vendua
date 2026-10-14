@@ -24,7 +24,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront read cache (db)', ()
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     readCache: cache,
@@ -234,7 +233,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront read cache (db)', ()
       sql,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
       cepLookup: async () => null,
       storeDomain: 'vendua.test',
     });

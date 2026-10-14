@@ -1,4 +1,5 @@
 import type { HostHooks } from '@vendua/agent-runtime';
+import { crmTurnEnded, crmTurnFailed, isCrmTurn } from '../crm/turns.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import type { Sql } from '../platform/db.ts';
 import { vendedorTurnEnded } from '../vendedor/turn-hook.ts';
@@ -12,6 +13,8 @@ export interface HookOpts {
 export function hostHooks(o: HookOpts = {}): HostHooks<Sql> {
   return {
     async turnFailed(tx, f) {
+      // Venduá's own CRM agents: a failed run for the CRM team, not a store incident
+      if (isCrmTurn(f)) return crmTurnFailed(tx, f);
       const [store] = await tx.host<
         { name: string }[]
       >`select name from tenants where id = ${f.tenantId}`;
@@ -33,6 +36,7 @@ export function hostHooks(o: HookOpts = {}): HostHooks<Sql> {
     },
     async turnEnded(tx, end) {
       await vendedorTurnEnded(tx, end);
+      await crmTurnEnded(tx, end);
       await o.qa?.(tx, end);
     },
   };

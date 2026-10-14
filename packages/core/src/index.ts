@@ -12,8 +12,9 @@ import {
 } from './platform/db.ts';
 import { releaseJobs } from './platform/job-lease.ts';
 import { join } from 'node:path';
-import { ingestInbound } from './agent/inbound.ts';
-import { startScheduler, stopScheduler } from './agent/scheduler.ts';
+import { ingestInbound } from './crm/inbound.ts';
+import { startScheduler, stopScheduler } from './crm/scheduler.ts';
+import { startCrmOutbox } from './crm/outbox.ts';
 import { startAgentRuntime } from './agent-host/scheduler.ts';
 import { hostGateway } from './agent-host/models.ts';
 import { configureVendedor } from './vendedor/deps.ts';
@@ -24,13 +25,13 @@ import {
   onHistoryMessage,
   onInboundMessage,
   onLidMapping,
-} from './agent/channels/whatsapp.ts';
+} from './crm/channels/whatsapp.ts';
 import { adoptLidMappings } from './modules/threads.ts';
 import { socketMessageToInbox, startPlatformInbox } from './platform-whatsapp/inbox.ts';
 import { startCrmSettle } from './platform-whatsapp/crm-settle.ts';
 import { startSocketPump } from './platform-whatsapp/socket-pump.ts';
 import { platformTransport } from './platform-whatsapp/transport.ts';
-import { startInstagramReconcile } from './agent/channels/instagram.ts';
+import { startInstagramReconcile } from './crm/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
 import { platformNotify } from './admin/notify.ts';
@@ -170,7 +171,7 @@ const stopAdminSweeper = startAdminSweeper(jobsSql, {
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET || sessionSecret);
 
-// Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
+// The CRM's routines (meetings, Discord, the board's daily and weekly work; woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
 startScheduler(jobsSql);
 // Agent Runtime v3 (ADR 0030) with the Vendedor (ADR 0031): its tools reach checkout and
@@ -250,6 +251,8 @@ const socketPump = waTransport === 'socket' ? startSocketPump(jobsSql) : null;
 // CRM sends finish (lead state, cadence) when their outbox row settles; in socket mode too, for
 // rows queued before a rollback that the socket pump then sends
 const stopCrmSettle = startCrmSettle(jobsSql);
+// the CRM agents' sends: a queued lead message goes out once the turn's step commits
+const stopCrmOutbox = startCrmOutbox(jobsSql);
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
 const stopInstagramReconcile = startInstagramReconcile(jobsSql);
 
@@ -320,6 +323,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     void platformInbox.stop();
     void socketPump?.stop();
     void stopCrmSettle();
+    void stopCrmOutbox();
     readCache.stop();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close
@@ -327,8 +331,8 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       server.stop(),
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
-    // budget under the stack's stop_grace_period (45s): 20s for work in hand (a CRM run still
-    // going is handed back, not left to its 10-min lease), 5s to close the pools
+    // budget under the stack's stop_grace_period (45s): 20s for turns in hand to finish, 5s to
+    // close the pools
     void Promise.all([drained, stopScheduler(20_000), agentRuntime.stop(20_000), stopVendedor()])
       // the next Core takes the single-owner jobs on its next tick, not after their lease lapses
       .then(() => releaseJobs(jobsSql).catch(() => undefined))

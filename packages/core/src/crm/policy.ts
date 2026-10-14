@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import {
   DEFAULT_GUARDRAILS,
   DEFAULT_AGENT_RULES,
@@ -9,13 +10,15 @@ import {
   phoneIsIgnored,
   type Guardrails,
 } from '../modules/integrations.ts';
-import type { JobKind } from './tool-meta.ts';
 import { channelAvailabilityTx } from './guardrails.ts';
-import { isAutomated, type Provenance } from './sources.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 
 // The one agent setting (`agent`): autonomy preset × automatic jobs × staff instructions,
-// consulted by claimRun / checkSendAllowedTx / every enqueue gate.
+// consulted by the CRM producers (crm/dispatch.ts), every turn's subject load and
+// checkSendAllowedTx.
+
+import { type JobKind } from './jobs.ts';
+export { JOB_KINDS, type JobKind } from './jobs.ts';
 
 export type AutonomyLevel = 'off' | 'copilot' | 'supervised' | 'autopilot';
 export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = [
@@ -111,26 +114,6 @@ export async function automationAllowedTx(tx: Sql, kind: JobKind): Promise<Autom
   return { ok: true };
 }
 
-export interface ParkPolicy {
-  autoOff: boolean;
-  /** kinds whose automation parks (job switched off) */
-  offJobs: JobKind[];
-}
-
-export async function parkPolicyTx(tx: Sql): Promise<ParkPolicy> {
-  const a = await agentSettingTx(tx);
-  return { autoOff: a.level === 'off', offJobs: AGENT_JOBS.filter((k) => !a.jobs[k]) };
-}
-
-/** automated work of a kind the preset/jobs switched off parks; staff asks and promises always run */
-export function parked(
-  p: ParkPolicy,
-  kind: string,
-  prov: Pick<Provenance, 'source' | 'promised'>,
-): boolean {
-  return isAutomated(prov) && (p.autoOff || (p.offJobs as string[]).includes(kind));
-}
-
 // copilot/off force drafts; supervised drafts first contact; autopilot sends within guardrails.
 export function draftDecision(input: {
   level: AutonomyLevel;
@@ -182,7 +165,7 @@ export async function explainAutonomyTx(
     >`
       select l.agent_mode, l.archived_at, l.unsubscribed_at, l.agent_paused_at,
         l.whatsapp, l.phone, l.email, l.email_bounced_at,
-        coalesce((select sum(r.cost_cents) from agent_runs r where r.lead_id = l.id), 0)::int as spent,
+        coalesce((select sum(r.cost_cents) from crm_turns r where r.lead_id = l.id), 0)::int as spent,
         (select count(*) from lead_messages m join lead_threads t on t.id = m.thread_id
           where t.lead_id = l.id
             and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered')))::int as prior_out,
@@ -268,24 +251,25 @@ export async function discoveryBudgetTx(
   const row = (
     await tx<{ spent: number; open: number; est: number }[]>`
       select
-        coalesce((select sum(cost_cents) from agent_runs
-          where kind = 'discovery' and created_at > now() - interval '7 days'), 0)::int as spent,
-        ((select count(*) from agent_runs
-           where kind = 'discovery' and status in ('queued', 'running'))
+        coalesce((select sum(cost_cents) from crm_turns
+          where kind = 'discovery' and finished_at > now() - interval '7 days'), 0)::int as spent,
+        -- discovery work waiting in a mailbox, plus strategist briefs that never ran
+        ((select count(*) from agent_mailbox m join agent_actors a on a.id = m.actor_id
+           where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = 'crm-discovery' and m.consumed_by_turn is null)
          + (select count(*) from discovery_briefs d
             where d.created_by = 'strategist' and d.enabled
               and d.created_at > now() - interval '7 days'
               and (${excl}::uuid is null or d.id <> ${excl}::uuid)
+              and not exists (select 1 from crm_turns r where r.brief_id = d.id)
               and not exists (
-                select 1 from agent_runs r
-                where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
-                  and r.params->>'briefId' = d.id::text
-              )))::int as open,
+                select 1 from agent_mailbox m join agent_actors a on a.id = m.actor_id
+                where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = 'crm-discovery' and a.subject_id = d.id::text
+                  and m.consumed_by_turn is null)))::int as open,
         -- exclude zero-cost runs: they'd deflate the unit estimate to 0
         coalesce((select avg(c)::int from (
-          select cost_cents as c from agent_runs
+          select cost_cents as c from crm_turns
           where kind = 'discovery' and status = 'done' and cost_cents > 0
-          order by created_at desc limit 20) t), 50)::int as est
+          order by finished_at desc limit 20) t), 50)::int as est
     `
   )[0]!;
   return { capCents: Math.round(weeklyDiscoveryUsd * 100), ...row };

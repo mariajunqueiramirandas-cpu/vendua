@@ -3,20 +3,20 @@ import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { ingestInbound } from '../src/agent/inbound.ts';
-import { dispatchMessage } from '../src/agent/send.ts';
+import { ingestInbound } from '../src/crm/inbound.ts';
+import { dispatchMessage } from '../src/crm/send.ts';
 import {
   channelAvailabilityTx,
   instagramColdCapTx,
   resolveChannelTx,
-} from '../src/agent/guardrails.ts';
+} from '../src/crm/guardrails.ts';
 import {
   igEventSignatureOk,
   igStatus,
   parseIgEvent,
   seal,
   unseal,
-} from '../src/agent/channels/instagram.ts';
+} from '../src/crm/channels/instagram.ts';
 import { approveMessage, composeMessageTx, instagramHandle } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
@@ -447,7 +447,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
       sql,
       sessionSecret: 's',
       controlSecret: 'ctl-secret',
-      autoDrain: false,
     });
     const post = (body: unknown, opts: { sign?: boolean; ts?: number } = {}) => {
       const raw = JSON.stringify(body);

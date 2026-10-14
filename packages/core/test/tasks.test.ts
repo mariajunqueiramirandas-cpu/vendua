@@ -9,7 +9,7 @@ import { migrate } from '../src/platform/db.ts';
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('tasks (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
   let migrated = false;
   const setup = async () => {
     if (!migrated) {

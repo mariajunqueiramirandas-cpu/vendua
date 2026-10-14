@@ -117,7 +117,6 @@ describe.skipIf(!OWNER_URL)('site builder (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     storeDomain: 'vendua.test',
     notify,
     fleet: d,

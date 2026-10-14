@@ -1,6 +1,5 @@
 import type { DispatchInput, DispatchResult } from '@vendua/agent-runtime';
 import type { Sql } from '../platform/db.ts';
-import { laneOf } from './registry.ts';
 
 const KIND = /^[a-z][a-z0-9_]*\.[a-z0-9_.]+$/;
 const SUBJECT_KIND = /^[a-z][a-z0-9_]{0,40}$/;
@@ -29,6 +28,8 @@ export async function dispatchTx(tx: Sql, input: DispatchInput): Promise<Dispatc
   // Postgres bounds the payload in bytes, not characters
   if (Buffer.byteLength(JSON.stringify(payload)) > MAX_PAYLOAD)
     throw new Error('mailbox payload too large');
+  // loaded here, not at import: the registry loads every agent, and agents' tools dispatch
+  const { laneOf } = await import('./registry.ts');
   const lane = laneOf(actor.agentId);
 
   // do nothing on conflict rather than upsert: no row lock taken here (the wake trigger's update

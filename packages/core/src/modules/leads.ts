@@ -768,7 +768,7 @@ export async function insertLeadTx(
   `;
   // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
   if (nextAt) {
-    const { setNextActionTx } = await import('../agent/wakeups.ts');
+    const { setNextActionTx } = await import('../crm/agenda.ts');
     await setNextActionTx(tx, rows[0]!.id, nextAt as string, nextActionBy);
     rows = await tx<LeadRow[]>`select * from leads where id = ${rows[0]!.id}`;
   }
@@ -855,23 +855,31 @@ export async function updateLeadTx(
     };
     delete set.next_action_at;
     delete set.next_action_source;
-    // agenda first: every agenda writer locks wakeup:advisory → wakeup rows → the lead row
-    // (scheduleWakeupTx, the wakeup sweep) — updating the lead first would invert that
-    const { setNextActionTx } = await import('../agent/wakeups.ts');
+    // agenda first: every agenda writer takes the lead's agenda lock before the lead row
+    // (crm/agenda.ts) — updating the lead first would invert that
+    const { setNextActionTx } = await import('../crm/agenda.ts');
     await setNextActionTx(tx, id, nextAction.at, nextAction.who);
   }
   // a live store's owner is a customer now, not a prospect: the sales agent stops and its
   // own follow-ups go (staff can turn it back on); same agenda-first lock order as above
   if (set.state === 'live' && cur.state !== 'live') {
     if (!('agent_mode' in set)) set.agent_mode = 'off';
-    const { cancelAgentWakeupsTx } = await import('../agent/wakeups.ts');
-    await cancelAgentWakeupsTx(tx, id, 'loja no ar');
+    const { cancelAgentWakeupsTx } = await import('../crm/agenda.ts');
+    await cancelAgentWakeupsTx(tx, id);
   }
   const rows = Object.keys(set).length
     ? await tx<LeadRow[]>`
         update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
       `
     : await tx<LeadRow[]>`update leads set updated_at = now() where id = ${id} returning *`;
+  // the agent is back on this lead: what it wrote meanwhile gets its answer
+  if (
+    (cur.agent_paused_at && 'agent_paused_at' in set && set.agent_paused_at === null) ||
+    (cur.agent_mode === 'off' && typeof set.agent_mode === 'string' && set.agent_mode !== 'off')
+  ) {
+    const { reserveParkedTx } = await import('../crm/inbound.ts');
+    await reserveParkedTx(tx, id);
+  }
   if (typeof set.state === 'string' && set.state !== cur.state) {
     // value_cents stamps the post-update deal value at the transition
     await tx`
@@ -1040,11 +1048,9 @@ export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
     const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
     if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (!rows[0]) return false;
-    // queued runs on an opted-out lead can never claim — cancel them
-    await tx`
-      update agent_runs set status = 'canceled', error = 'descadastrado', finished_at = now()
-      where lead_id = ${id} and status = 'queued'
-    `;
+    // opt-out never lifts: what still waits for this lead's agent goes
+    const { dropLeadMailTx } = await import('../crm/agenda.ts');
+    await dropLeadMailTx(tx, id);
     await tx`
       insert into lead_activities (lead_id, kind, body, created_by)
       values (${id}, 'system', 'Descadastrado — sem novos envios', 'system')
@@ -1151,7 +1157,7 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
         select count(*)::int as runs,
                coalesce(sum(tokens_in + tokens_out), 0)::int as tokens,
                coalesce(sum(cost_cents), 0)::int as cost_cents
-        from agent_runs where created_at > now() - interval '30 days'
+        from crm_turns where finished_at > now() - interval '30 days'
       `
     )[0]!;
 
@@ -1221,8 +1227,8 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
     const costs = await tx<{ segment: string; cost_cents: number }[]>`
       select coalesce(nullif(l.segment, ''), '—') as segment,
              coalesce(sum(r.cost_cents), 0)::int as cost_cents
-      from agent_runs r join leads l on l.id = r.lead_id
-      where r.created_at > now() - interval '30 days'
+      from crm_turns r join leads l on l.id = r.lead_id
+      where r.finished_at > now() - interval '30 days'
         and l.archived_at is null
       group by 1
     `;
@@ -1231,9 +1237,9 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
     const discovery = await tx<{ segment: string | null; cost_cents: number }[]>`
       select nullif(r.params->>'segment', '') as segment,
              coalesce(sum(r.cost_cents), 0)::int as cost_cents
-      from agent_runs r
+      from crm_turns r
       where r.kind = 'discovery' and r.lead_id is null
-        and r.created_at > now() - interval '30 days'
+        and r.finished_at > now() - interval '30 days'
       group by 1
     `;
     const costBy = new Map(costs.map((c) => [c.segment, c.cost_cents]));

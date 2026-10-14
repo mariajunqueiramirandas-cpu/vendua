@@ -1,6 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { join } from 'node:path';
-import postgres from 'postgres';
+import { describe, expect, test } from 'bun:test';
 import {
   createGateway,
   ProviderError,
@@ -11,21 +9,11 @@ import {
 } from '@vendua/agent-runtime';
 import { anthropicAdapter, anthropicBody } from '../src/agent-host/anthropic.ts';
 import { THINKING_HEADROOM } from '../src/platform/anthropic.ts';
-import {
-  anthropicCostUsd,
-  LlmRefusalError,
-  providerFor,
-  setTestProvider,
-} from '../src/agent/llm.ts';
-import { drainsSettled, enqueueRun, runOnce } from '../src/agent/runner.ts';
-import { controlTx } from '../src/modules/control.ts';
-import { insertLeadTx } from '../src/modules/leads.ts';
-import { migrate } from '../src/platform/db.ts';
-import { upsertIntegration, type IntegrationRow } from '../src/modules/integrations.ts';
+import { upsertIntegration } from '../src/modules/integrations.ts';
 import type { Sql } from '../src/platform/db.ts';
 
-// Both Anthropic drivers on the official SDK: the runtime's adapter (agent-host) and the CRM
-// agent's `llm.ts` driver. No network: every fetch here is a stub.
+// The Anthropic adapter on the official SDK (agent-host), and the llm config the CRM saves for it.
+// No network: every fetch here is a stub.
 
 type Call = { url: string; headers: Headers; body: any };
 
@@ -352,132 +340,6 @@ describe('agent-host anthropic adapter', () => {
   });
 });
 
-describe('CRM anthropic driver', () => {
-  const realFetch = globalThis.fetch;
-  const KEY = 'VENDUA_TEST_ANTHROPIC_KEY';
-  afterEach(() => {
-    globalThis.fetch = realFetch;
-    delete process.env[KEY];
-  });
-
-  const integration = (config: Record<string, unknown>): IntegrationRow => ({
-    id: 'i1',
-    kind: 'llm',
-    driver: 'anthropic',
-    enabled: true,
-    config,
-    secret_ref: KEY,
-    created_at: '',
-    updated_at: '',
-  });
-
-  test('request shape, tool calls, cached usage and cost', async () => {
-    process.env[KEY] = 'sk-ant-crm';
-    const { fetch, calls } = fakeFetch({
-      json: message({
-        model: 'claude-opus-5',
-        content: [
-          { type: 'text', text: 'Vou anotar.' },
-          { type: 'tool_use', id: 'tu_9', name: 'note', input: { text: 'x' } },
-        ],
-        stop_reason: 'tool_use',
-        usage: {
-          input_tokens: 100,
-          output_tokens: 10,
-          cache_read_input_tokens: 1000,
-          cache_creation_input_tokens: 0,
-        },
-      }),
-    });
-    globalThis.fetch = fetch as typeof globalThis.fetch;
-    // a stored model from before the lock is ignored
-    const provider = providerFor(integration({ model: 'claude-opus-5' }));
-    expect(provider.name).toBe('anthropic:claude-haiku-5-5');
-    const res = await provider.chat({
-      system: 'Você é o SDR.',
-      messages: [
-        { role: 'user', content: 'oi' },
-        {
-          role: 'assistant',
-          content: '',
-          toolCalls: [{ id: 'tu_0', name: 'note', args: { text: 'a' } }],
-        },
-        { role: 'tool', toolCallId: 'tu_0', name: 'note', content: 'ok' },
-      ],
-      tools: [{ name: 'note', description: 'anota', parameters: { type: 'object' } }],
-    });
-    const { url, headers, body } = calls[0]!;
-    expect(url).toBe('https://api.anthropic.com/v1/messages');
-    expect(headers.get('x-api-key')).toBe('sk-ant-crm');
-    expect(body).toMatchObject({
-      model: 'claude-haiku-5-5',
-      max_tokens: 16_000 + THINKING_HEADROOM.medium,
-      output_config: { effort: 'medium' },
-      cache_control: { type: 'ephemeral' },
-      system: [{ type: 'text', text: 'Você é o SDR.', cache_control: { type: 'ephemeral' } }],
-      messages: [
-        { role: 'user', content: 'oi' },
-        {
-          role: 'assistant',
-          content: [{ type: 'tool_use', id: 'tu_0', name: 'note', input: { text: 'a' } }],
-        },
-        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu_0', content: 'ok' }] },
-      ],
-      tools: [{ name: 'note', description: 'anota', input_schema: { type: 'object' } }],
-    });
-    expect(res).toMatchObject({
-      text: 'Vou anotar.',
-      toolCalls: [{ id: 'tu_9', name: 'note', args: { text: 'x' } }],
-      tokensIn: 1100,
-      tokensOut: 10,
-    });
-    // $0.10/M input, a tenth for cache reads, $0.50/M output
-    expect(res.costUsd).toBeCloseTo((100 * 0.1 + 1000 * 0.01 + 10 * 0.5) / 1_000_000, 12);
-  });
-
-  test('config.effort picks the effort; anything else falls back to medium', async () => {
-    process.env[KEY] = 'sk-ant-crm';
-    const { fetch, calls } = fakeFetch({ json: message() });
-    globalThis.fetch = fetch as typeof globalThis.fetch;
-    const chat = { system: 's', messages: [{ role: 'user' as const, content: 'oi' }], tools: [] };
-    await providerFor(integration({ effort: 'xhigh' })).chat(chat);
-    await providerFor(integration({ effort: 'turbo' })).chat(chat);
-    // the reply keeps its 16K on top of the effort's thinking room
-    expect(calls.map((c) => [c.body.output_config, c.body.max_tokens])).toEqual([
-      [{ effort: 'xhigh' }, 16_000 + THINKING_HEADROOM.xhigh],
-      [{ effort: 'medium' }, 16_000 + THINKING_HEADROOM.medium],
-    ]);
-  });
-
-  test('cost: Haiku 5.5 bills a prompt over 100K tokens at the long card', () => {
-    const u = (input: number) => ({ input, cacheRead: 0, cacheWrite: 0, output: 1_000 });
-    expect(anthropicCostUsd('claude-haiku-5-5', u(100_000))).toBeCloseTo(
-      (100_000 * 0.1 + 1_000 * 0.5) / 1e6,
-      12,
-    );
-    expect(anthropicCostUsd('claude-haiku-5-5', u(100_001))).toBeCloseTo(
-      (100_001 * 0.5 + 1_000 * 2.5) / 1e6,
-      12,
-    );
-  });
-
-  test('a refusal fails the call instead of reading as an empty reply', async () => {
-    process.env[KEY] = 'sk-ant-crm';
-    const { fetch } = fakeFetch({
-      json: message({ content: [], stop_reason: 'refusal', stop_details: null }),
-    });
-    globalThis.fetch = fetch as typeof globalThis.fetch;
-    const err = await providerFor(integration({}))
-      .chat({ system: 's', messages: [], tools: [] })
-      .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(LlmRefusalError);
-    expect((err as LlmRefusalError).message).toBe('anthropic refusal');
-    // the declined call was billed: the run's ledger takes it (runner modelTurn)
-    expect((err as LlmRefusalError).billed).toMatchObject({ tokensIn: 10, tokensOut: 5 });
-    expect((err as LlmRefusalError).billed.costUsd).toBeCloseTo((10 * 0.1 + 5 * 0.5) / 1e6, 12);
-  });
-});
-
 describe('anthropic integration config', () => {
   // both checks run before the claim, so no database is reached
   const save = (config: Record<string, unknown>) =>
@@ -490,44 +352,5 @@ describe('anthropic integration config', () => {
     expect(await save({ model: 'claude-opus-5-5' })).toEqual([422, 'config.model']);
     expect(await save({ effort: 'turbo' })).toEqual([422, 'config.effort']);
     expect(await save({ effort: 3 })).toEqual([422, 'config.effort']);
-  });
-});
-
-describe.skipIf(!process.env.TEST_DATABASE_URL)('CRM refusal (db)', () => {
-  const sql = postgres(process.env.TEST_DATABASE_URL!);
-
-  test("a refused model call fails the run and its bill lands on the run's cost", async () => {
-    await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Recusa Lead' }));
-    await sql`delete from agent_runs where status = 'queued'`;
-    const runId = (await enqueueRun(sql, { kind: 'triage', leadId: lead.body.lead.id }))!;
-    setTestProvider({
-      name: 'anthropic:claude-haiku-5-5',
-      chat: async () => {
-        throw new LlmRefusalError('anthropic refusal (cyber)', {
-          tokensIn: 20_000,
-          tokensOut: 40,
-          costUsd: 0.02,
-        });
-      },
-    });
-    try {
-      // another file's app may drain the queue in the background and claim this run first:
-      // whoever runs it uses the same provider, so the row is what's asserted, not the claim
-      await drainsSettled();
-      await runOnce(sql);
-      await drainsSettled();
-    } finally {
-      setTestProvider(null);
-    }
-    const [run] = await sql<
-      { status: string; error: string; cost_cents: number; tokens_in: number }[]
-    >`select status, error, cost_cents, tokens_in from agent_runs where id = ${runId}`;
-    expect(run).toMatchObject({
-      status: 'failed',
-      error: 'anthropic refusal (cyber)',
-      cost_cents: 2,
-      tokens_in: 20_000,
-    });
   });
 });

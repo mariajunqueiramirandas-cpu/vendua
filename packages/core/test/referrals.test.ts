@@ -29,7 +29,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     paymentProvider: fake,

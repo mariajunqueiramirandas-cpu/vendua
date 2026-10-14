@@ -200,14 +200,6 @@ export async function rememberTx(
     throw bad('source', 'must be agent|staff|debrief');
   }
   const sourceRunId = checkSourceRunId(input.sourceRunId);
-  if (sourceRunId) {
-    const run = await tx<{ id: string }[]>`select id from agent_runs where id = ${sourceRunId}`;
-    if (!run.length) {
-      throw new HttpError(422, 'SOURCE_RUN_NOT_FOUND', 'sourceRunId has no agent_runs row', {
-        field: 'sourceRunId',
-      });
-    }
-  }
   // serialize writers so concurrent remembers can't each keep an over-cap set
   await tx`select pg_advisory_xact_lock(hashtext('vendua.agent_memory'))`;
   // clock_timestamp(): a tx-start stamp could sort the new row behind the
@@ -369,14 +361,6 @@ export async function upsertLeadFactTx(
     throw bad('confidence', 'must be a number in [0, 1]');
   }
   const sourceRunId = checkSourceRunId(input.sourceRunId);
-  if (sourceRunId) {
-    const run = await tx<{ id: string }[]>`select id from agent_runs where id = ${sourceRunId}`;
-    if (!run.length) {
-      throw new HttpError(422, 'SOURCE_RUN_NOT_FOUND', 'sourceRunId has no agent_runs row', {
-        field: 'sourceRunId',
-      });
-    }
-  }
   const rows = await tx<LeadFactRow[]>`
     insert into lead_facts (lead_id, key, value, confidence, source, source_run_id)
     values (${leadId}, ${key}, ${input.value}, ${confidence}, ${input.source}, ${sourceRunId})

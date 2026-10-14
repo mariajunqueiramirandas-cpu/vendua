@@ -1,4 +1,4 @@
-import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
+import { sendWhatsApp } from '../crm/channels/whatsapp.ts';
 import type { IntegrationRow } from '../modules/integrations.ts';
 import type { Sql } from '../platform/db.ts';
 import { enqueuePlatformWa, type OutboxPurpose } from './outbox.ts';

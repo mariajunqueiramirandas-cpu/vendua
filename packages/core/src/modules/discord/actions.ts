@@ -31,7 +31,6 @@ export interface Click {
 
 export interface ActionDeps {
   /** a superseded stale draft queues a regen run — kick the drain like the CRM route */
-  kickDrain: () => void;
 }
 
 const REASONS: Record<string, string> = {
@@ -71,10 +70,8 @@ export async function runAction(
       if (res.status !== 200) {
         const err = (res.body as unknown as { error?: { code?: string; message?: string } }).error;
         return say(REASONS[err?.code ?? ''] ?? err?.message ?? 'o CRM recusou a aprovação');
-      }
-      if (res.body.stale) deps.kickDrain();
-      else {
-        const { dispatchMessage } = await import('../../agent/send.ts');
+      } else {
+        const { dispatchMessage } = await import('../../crm/send.ts');
         // the send can take seconds (WhatsApp, email): answer Discord now, send right after
         void dispatchMessage(c.sql, res.body.message.id).catch((e) =>
           alog.error({ err: e, message: id }, 'discord-approved send failed'),

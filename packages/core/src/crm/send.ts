@@ -373,8 +373,8 @@ export async function finalizeSentTx(
       `
     ).length;
     if (days > 0 && eligible) {
-      const { scheduleCadenceTx } = await import('./wakeups.ts');
-      await scheduleCadenceTx(tx, f.leadId, days, null);
+      const { scheduleCadenceTx } = await import('./agenda.ts');
+      await scheduleCadenceTx(tx, f.leadId, days);
     }
   }
   // replay provider_events parked before the pmid existed so the message

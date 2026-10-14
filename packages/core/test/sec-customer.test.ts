@@ -8,7 +8,7 @@ import { migrate } from '../src/platform/db.ts';
 // M8 public limiters honour VENDUA_PROXY_HOPS, stale cart prices refresh at checkout.
 describe.skipIf(!process.env.TEST_DATABASE_URL)('customer / storefront security (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
   const nonce = crypto.randomUUID().slice(0, 8);
   const slug = `sc-${nonce}`;
   const host = `${slug}.localhost`;
@@ -268,7 +268,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('customer / storefront security 
     const prev = { trust: process.env.VENDUA_TRUST_PROXY, hops: process.env.VENDUA_PROXY_HOPS };
     process.env.VENDUA_TRUST_PROXY = '1';
     process.env.VENDUA_PROXY_HOPS = '1';
-    const proxied = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+    const proxied = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
     process.env.VENDUA_TRUST_PROXY = prev.trust;
     process.env.VENDUA_PROXY_HOPS = prev.hops;
     if (prev.trust === undefined) delete process.env.VENDUA_TRUST_PROXY;

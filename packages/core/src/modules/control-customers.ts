@@ -242,7 +242,7 @@ export async function customerRowsTx(
       left join probe on probe.tenant_id = t.id
       left join inc on inc.tenant_id = t.id
       left join hosts h on h.tenant_id = t.id
-    where ${only}::uuid is null or t.id = ${only}
+    where (${only}::uuid is null or t.id = ${only}) and t.status <> 'platform'
     order by t.created_at desc, t.id
     limit ${o.uncapped ? null : LIST_CAP}
   `;
@@ -611,8 +611,8 @@ export async function searchStoresTx(tx: Sql, q: string, limit: number): Promise
       (select d.host from domains d where d.tenant_id = t.id
         order by d.is_primary desc, length(d.host), d.host limit 1) as host
     from tenants t
-    where t.name ilike ${like} or t.slug ilike ${like}
-       or exists (select 1 from domains d where d.tenant_id = t.id and d.host ilike ${like})
+    where t.status <> 'platform' and (t.name ilike ${like} or t.slug ilike ${like}
+       or exists (select 1 from domains d where d.tenant_id = t.id and d.host ilike ${like}))
     order by lower(t.slug) = lower(${q}) desc, t.name ilike ${prefix} desc, lower(t.name), t.id
     limit ${limit}
   `;

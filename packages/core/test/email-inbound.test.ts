@@ -6,7 +6,7 @@ import {
   ingestResendEvent,
   senderAuthenticated,
   svixVerified,
-} from '../src/agent/channels/email-inbound.ts';
+} from '../src/crm/channels/email-inbound.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, leadInsert } from '../src/modules/leads.ts';
 import { UNVERIFIED_EMAIL_SOURCE } from '../src/modules/threads.ts';

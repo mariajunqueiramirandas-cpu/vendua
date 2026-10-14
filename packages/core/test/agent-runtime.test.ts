@@ -581,7 +581,6 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
       sql: app,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
     });
     const pin = await http.request(
       `/control/v1/agent-runtime/stores/00000000-0000-4000-8000-000000000000/pins/rt_stale`,
@@ -619,7 +618,6 @@ describe.skipIf(!OWNER_URL)('agent runtime v3 on Postgres', () => {
       sql: app,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
     });
     const ok = await http.request(`/control/v1/agent-runtime/actors/${actor!.id}`, {
       headers: { 'x-vendua-control': 'ctl' },

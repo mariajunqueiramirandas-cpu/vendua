@@ -85,7 +85,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce ops (db)', () => {
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {

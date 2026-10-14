@@ -1,6 +1,7 @@
 # ADR 0030: Agent Runtime v3, durable actors on Postgres
 
-- Status: Accepted; built 2026-10-03 (migration step 1, without the Vendedor itself: ADR 0031)
+- Status: Accepted; built 2026-10-03 (migration step 1, without the Vendedor itself: ADR 0031);
+  steps 2–4 built 2026-10-14 (the CRM agents on v3; the old tables drop in a later migration)
 - Date: 2026-10-03
 
 ## Context
@@ -125,6 +126,42 @@ Step 1's runtime and host, before any agent is registered. Each decision lives i
 The turn inspector's API is `GET /control/v1/agent-runtime/actors/:id`; its CRM screen is not
 built yet.
 
+### Steps 2–4: the CRM agents
+
+Built together on 2026-10-14 rather than job by job; the old runner (`src/agent/`) is deleted.
+
+- **Tenancy.** Open decision 2 went to a reserved platform tenant (`0131_platform_tenant.sql`,
+  `PLATFORM_TENANT_ID`, status `platform`): no slug a resolver accepts, skipped by every store
+  list. CRM tables stay control-scoped; the runtime's rows are this tenant's.
+- **Three agents** in `agent-host/agents/crm/`: `crm` (one actor per lead; statechart states
+  `triage`, `reply`, `outreach` by the mailbox kind that woke it), `crm-discovery` (one actor per
+  brief or per staff hunt) and `crm-strategist` (one actor, `review:weekly`). They reach people
+  only through tools (`replies: false`, a runtime option added for them) and their transport,
+  `crm-log`, delivers nothing. `offers` (also new) hides a tool whose provider isn't configured.
+- **Producers.** `requestLeadTx` and `requestBoardTx` (`crm/dispatch.ts`) decide parking and
+  smart start, then call `dispatchTx`. Inbound mail, staff requests, regeneration, site leads,
+  discovery's first contacts, the board's daily and weekly sweeps (`crm/board.ts`) and the
+  agenda (`crm/agenda.ts`: a date is a `timer.followup` or `timer.callback` row) all go through
+  them. `requestAgentTx`, the run queue, the inbox and the wakeup sweeper are gone.
+- **Projection.** `crm_turns` (`0132_crm_turns.sql`), written by the host's turn hooks
+  (`crm/turns.ts`), replaces `agent_runs` for the activity list (`crm/runs.ts`, which also lists
+  waiting mailbox rows), metrics, Discord reports, forecasts and the lead cost cap. A turn
+  failing past its retries is `agent.run_failed` (not `agent.turn_failed`) plus a `[humano]`
+  task when a lead waits.
+- **Outbox.** Queued lead messages are delivered by `crm/outbox.ts` (LISTEN plus a sweep), no
+  longer by the runner.
+- **Cutover.** `crm/legacy.ts` (`legacy-adopt` routine) turns pending wakeups, unread inbox
+  items and queued runs into mailbox rows, and copies runs the old Core finished during the
+  deploy's overlap. A later migration drops `agent_runs`, `agent_inbox`, `agent_wakeups`,
+  `agent_run_steps`, `leads.agent_plan` and the 0048 notify triggers, with `legacy.ts`
+  (ADR 0041: once no running Core reads them).
+- **Behaviour changes.** A running turn can't be canceled (409 `RUN_RUNNING`); waiting work can.
+  A board request without leads is only a discovery hunt or the weekly review. The `llm`
+  integration is retired: the agents use the runtime's model routes. Discovery may change only
+  the leads it created or merged in that turn. History copied from `agent_runs` has no steps.
+- **Sims.** `bun run sims:crm` (`crm/sims/`) plays the old negotiation scenarios against the v3
+  agent on live models.
+
 ## Consequences
 
 - The hard problems the CRM agent solved one incident at a time become properties of the
@@ -163,8 +200,7 @@ built yet.
 
 1. Own engine or DBOS. The own engine is built and passes the turn contract on the in-memory and
    Postgres ports; the DBOS spike remains the plan B if it fails in production.
-2. CRM tenancy for the port: a reserved platform tenant or control-scoped variants of the three
-   tables.
+2. ~~CRM tenancy for the port.~~ Taken 2026-10-14: a reserved platform tenant (see As built).
 3. The schema library behind Standard Schema. The runtime ships a small built-in `s`; any
    Standard Schema library works with an explicit `jsonSchema`.
 4. The trace backend for the OpenTelemetry export. Adapters exist (`otelTelemetry`,

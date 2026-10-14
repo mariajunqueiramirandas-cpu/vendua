@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { insertRun } from '../src/agent/runner.ts';
 import {
   appendDebriefTx,
   leadFactsTx,
@@ -17,7 +16,7 @@ import { migrate } from '../src/platform/db.ts';
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
   const nonce = crypto.randomUUID().slice(0, 8);
   // Memory content carries the nonce so assertions ignore rows from other runs.
   const nm = (s: string) => `zzm-${nonce}-${s}`;
@@ -50,11 +49,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     controlTx(sql, (tx) => insertLeadTx(tx, { name: `Mem ${nonce} ${crypto.randomUUID()}` })).then(
       (r) => r.body.lead.id,
     );
-  const mkRun = () =>
-    controlTx(sql, (tx) => insertRun(tx, { source: 'staff', kind: 'discovery' })).then((id) => {
-      if (!id) throw new Error('insertRun refused');
-      return id;
-    });
+  // memory names the turn that wrote it (crm_turns.turn_id), a row of its own
+  const mkTurn = () =>
+    controlTx(
+      sql,
+      (tx) => tx<{ turn_id: string }[]>`
+        insert into crm_turns (turn_id, actor_id, agent_id, kind, source, status, started_at)
+        values (gen_random_uuid(), gen_random_uuid(), 'crm-discovery', 'discovery', 'staff', 'done', now())
+        returning turn_id
+      `,
+    ).then((rows) => rows[0]!.turn_id);
 
   type MemRow = {
     id: string;
@@ -245,7 +249,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       rememberTx(tx, { scope: 'segment', segment: 'pudim', content: nm('dupe'), source: 'agent' }),
     );
     expect(otherScope.item.id).not.toBe(first.item.id); // dedupe key includes scope+segment
-    const runId = await mkRun();
+    const runId = await mkTurn();
     const withRun = await controlTx(sql, (tx) =>
       rememberTx(tx, {
         scope: 'workspace',
@@ -260,10 +264,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
         scope: 'workspace',
         content: nm('badr'),
         source: 'agent',
-        sourceRunId: crypto.randomUUID(), // no such agent_runs row
+        sourceRunId: 'not-a-uuid',
       }),
     );
-    expect((await catchErr(badRun))?.status).toBe(422);
+    expect((await catchErr(badRun))?.status).toBe(400);
+    // a turn id needs no row of its own: the FK to agent_runs is gone (0132)
+    const unknownTurn = crypto.randomUUID();
+    const kept = await controlTx(sql, (tx) =>
+      rememberTx(tx, {
+        scope: 'workspace',
+        content: nm('unknown-turn'),
+        source: 'agent',
+        sourceRunId: unknownTurn,
+      }),
+    );
+    expect(kept.item.sourceRunId).toBe(unknownTurn);
   });
 
   test('learnings cap 200: evicts oldest unpinned, keeps pinned', async () => {
@@ -412,21 +427,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     await setup();
     await sql`delete from agent_memory_items`;
     const content = nm('run x: 5 leads');
-    const runId = await mkRun();
-    await controlTx(sql, (tx) => appendDebriefTx(tx, { content, sourceRunId: runId ?? null }));
+    const runId = await mkTurn();
+    await controlTx(sql, (tx) => appendDebriefTx(tx, { content, sourceRunId: runId }));
     // Age it out of the latest-8 window with 8 fresher debriefs.
     await sql`update agent_memory_items set created_at = created_at - interval '1 day'`;
     for (let i = 0; i < 8; i++) {
       await controlTx(sql, (tx) =>
-        appendDebriefTx(tx, { content: nm(`run ${i}: 0 leads`), sourceRunId: runId ?? null }),
+        appendDebriefTx(tx, { content: nm(`run ${i}: 0 leads`), sourceRunId: runId }),
       );
     }
     const before = await controlTx(sql, (tx) => memoryForRunTx(tx));
     expect(before).not.toContain(content);
     // A new run producing the same summary restamps it: feed + source_run_id.
-    const runId2 = await mkRun();
+    const runId2 = await mkTurn();
     const { item } = await controlTx(sql, (tx) =>
-      appendDebriefTx(tx, { content, sourceRunId: runId2 ?? null }),
+      appendDebriefTx(tx, { content, sourceRunId: runId2 }),
     );
     const after = await controlTx(sql, (tx) => memoryForRunTx(tx));
     expect(after).toContain(content);

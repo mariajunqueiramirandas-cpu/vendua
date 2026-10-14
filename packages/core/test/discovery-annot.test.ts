@@ -10,8 +10,8 @@ import {
   navLinks,
   pageKey,
   phoneFromText,
-} from '../src/agent/channels/discovery.ts';
-import type { DiscoveryResult } from '../src/agent/channels/discovery.ts';
+} from '../src/crm/channels/discovery.ts';
+import type { DiscoveryResult } from '../src/crm/channels/discovery.ts';
 
 const r = (url: string, title = 'x', snippet = ''): DiscoveryResult['results'][number] => ({
   title,

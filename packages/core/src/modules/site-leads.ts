@@ -1,6 +1,5 @@
 import type { Hono } from 'hono';
-import { requestAgentTx } from '../agent/dispatch.ts';
-import { automationAllowedTx } from '../agent/policy.ts';
+import { requestLeadTx } from '../crm/dispatch.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -13,7 +12,7 @@ import { recordStaffEventTx } from './staff-events.ts';
 // "Quer ajuda para começar?" on the marketing site: a shop owner leaves a name and a WhatsApp and
 // asks to be called. It becomes a CRM lead (source 'site'), the team hears, and, when the agent's
 // policy allows outreach, the sales agent makes the first contact through its one producer
-// (requestAgentTx) inside the same transaction. The visitor asked for it: this is the only
+// (requestLeadTx → dispatchTx) inside the same transaction. The visitor asked for it: this is the only
 // reason the agent writes first here. Public, through the site's own nginx; rate limited per IP,
 // a honeypot field, and idempotent by its natural key (a WhatsApp already in the CRM gets a note
 // on its lead, never a second lead).
@@ -105,18 +104,19 @@ export function mountSiteLeads(o: {
         channel: 'site',
         excerpt: message ?? 'pediu contato pelo site',
       });
-      // a draft-mode lead gets the agent's draft for staff to send; auto sends live
-      if ((await automationAllowedTx(tx, 'outreach')).ok)
-        await requestAgentTx(tx, {
-          kind: 'outreach',
-          source: 'first_contact',
-          leadId: lead.id,
-          text: `pediu contato pelo formulário do site${message ? `: ${message}` : ''}`,
-          params: {
-            focus:
-              'a pessoa pediu pelo site para ser chamada no WhatsApp: apresente-se, responda ao que ela escreveu e ajude a criar a loja',
-          },
-        });
+      // a draft-mode lead gets the agent's draft for staff to send; auto sends live. The
+      // producer files it only while the policy allows outreach; what the visitor wrote is in
+      // the note above, which the agent reads as data
+      await requestLeadTx(tx, {
+        leadId: lead.id,
+        kind: 'lead.first_contact',
+        source: 'site',
+        dedupeKey: `crm:first_contact:${lead.id}`,
+        payload: {
+          focus:
+            'a pessoa pediu pelo site para ser chamada no WhatsApp: apresente-se, responda ao que ela escreveu e ajude a criar a loja',
+        },
+      });
       return lead.id;
     });
     emitControlEvent('lead.change', leadId);

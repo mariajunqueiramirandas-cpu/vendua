@@ -61,7 +61,7 @@ export const RESERVED_SLUGS = new Set([
   'cadastro',
   'static',
   'cdn',
-  // the storefront edge, Core, and the agents' mail domain (auto.<domain>, agent/channels/email.ts)
+  // the storefront edge, Core, and the agents' mail domain (auto.<domain>, crm/channels/email.ts)
   'edge',
   'core',
   'auto',

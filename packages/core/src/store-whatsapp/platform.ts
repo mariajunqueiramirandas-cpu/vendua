@@ -6,7 +6,7 @@ import {
   lidPnPair,
   resolveDmJid,
   type LidMapping,
-} from '../agent/channels/whatsapp.ts';
+} from '../crm/channels/whatsapp.ts';
 import { controlTx } from '../modules/control.ts';
 import type { Sql } from '../platform/db.ts';
 import { log as rootLog } from '../platform/log.ts';
@@ -458,7 +458,7 @@ export class PlatformGateway {
     for (const p of fresh) o.lids.add(`${p.lid}|${p.pn}`);
   }
 
-  /** A sync chunk, read as Core's socket read it (agent/channels/whatsapp.ts): LID pairs first,
+  /** A sync chunk, read as Core's socket read it (crm/channels/whatsapp.ts): LID pairs first,
    *  so Core re-keys LID leads before this chunk's messages arrive by number. */
   private async history(
     name: string,

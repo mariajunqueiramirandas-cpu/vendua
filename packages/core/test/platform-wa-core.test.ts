@@ -7,8 +7,8 @@ import {
   waIdentity,
   waStatus,
   whatsappRegistered,
-} from '../src/agent/channels/whatsapp.ts';
-import { dispatchMessage } from '../src/agent/send.ts';
+} from '../src/crm/channels/whatsapp.ts';
+import { dispatchMessage } from '../src/crm/send.ts';
 import { whatsappOtpSender } from '../src/admin/auth.ts';
 import { platformNotify } from '../src/admin/notify.ts';
 import { startSignupOtp } from '../src/modules/billing/signup.ts';
@@ -33,7 +33,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       sql,
       sessionSecret: 's',
       controlSecret: 'ctl-secret',
-      autoDrain: false,
     });
     const nonce = crypto.randomUUID().slice(0, 8);
     const phone11 = () => `219${crypto.randomUUID().replace(/\D/g, '').padEnd(8, '7').slice(0, 8)}`;

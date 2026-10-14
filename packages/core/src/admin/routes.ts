@@ -94,7 +94,7 @@ import {
 import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
-import { waIdentity } from '../agent/channels/whatsapp.ts';
+import { waIdentity } from '../crm/channels/whatsapp.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 
 export interface MountAdminOpts {

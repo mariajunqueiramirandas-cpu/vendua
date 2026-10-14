@@ -68,7 +68,6 @@ describe.skipIf(!OWNER_URL)('who Duá answers on Postgres', () => {
     sql: app,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
   });

@@ -7,6 +7,7 @@ import { controlTx } from '../../modules/control.ts';
 import { emitControlEvent } from '../../modules/control-events.ts';
 import { recordStaffEventTx } from '../../modules/staff-events.ts';
 import type { InboundResult } from '../../modules/threads.ts';
+import { dropLeadMailTx } from '../agenda.ts';
 import { ingestInbound } from '../inbound.ts';
 
 // Resend inbound webhook: verifies svix signatures (Resend can't set custom
@@ -274,11 +275,8 @@ export async function applyDeliveryEventTx(
         returning id, name, business_name
       `;
       if (upd[0]) {
-        // Opt-out never lifts — cancel the lead's queued runs.
-        await tx`
-          update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
-          where lead_id = ${leadId} and status = 'queued'
-        `;
+        // Opt-out never lifts — what waits for the lead's agent goes.
+        await dropLeadMailTx(tx, leadId);
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Reclamação de spam (${type}) — descadastrado`}, 'system')

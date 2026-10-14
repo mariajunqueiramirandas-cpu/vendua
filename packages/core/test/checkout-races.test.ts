@@ -12,7 +12,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('checkout races (db)', () => {
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
   });
   const nonce = crypto.randomUUID().slice(0, 8);

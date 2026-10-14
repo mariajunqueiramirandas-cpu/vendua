@@ -1,36 +1,30 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { ingestResendEvent } from '../src/agent/channels/email-inbound.ts';
-import { ingestInbound } from '../src/agent/inbound.ts';
-import { setTestProvider } from '../src/agent/llm.ts';
-import { drain, enqueueRun, runOnce } from '../src/agent/runner.ts';
-import { executeTool, type ToolContext } from '../src/agent/tools.ts';
+import { ingestResendEvent } from '../src/crm/channels/email-inbound.ts';
+import { requestLeadTx } from '../src/crm/dispatch.ts';
+import { ingestInbound } from '../src/crm/inbound.ts';
 import { completeTask } from '../src/modules/activities.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { availableSlots, bookMeeting, cancelByLead } from '../src/modules/meetings.ts';
 import { addInboundMessage, approveMessage, rejectMessage } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
+import { call, crmBench, OWNER_URL, say } from './crm-harness.ts';
 
 // ADR 0023 — the CRM and the sales agent record staff events in the same tx as the change.
-describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent (db)', () => {
+describe.skipIf(!OWNER_URL)('staff events: CRM + sales agent (db)', () => {
+  const b = crmBench('staff-events');
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
   // TEST_APP_DATABASE_URL runs the code paths as vendua_app under RLS, as prod does
   const appSql = process.env.TEST_APP_DATABASE_URL
     ? postgres(process.env.TEST_APP_DATABASE_URL, { onnotice: () => {} })
     : sql;
-  const app = createApp({
-    sql: appSql,
-    sessionSecret: 's',
-    controlSecret: 'ctl-ev',
-    autoDrain: false,
-  });
+  const app = createApp({ sql: appSql, sessionSecret: 's', controlSecret: 'ctl-ev' });
   const uniq = crypto.randomUUID().slice(0, 8);
   const leads: string[] = [];
-  const runs: string[] = [];
   let idem = 0;
   let prevGuardrails: unknown = null;
 
@@ -54,35 +48,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
     return id;
   };
 
-  const ctxFor = (leadId: string, over: Partial<ToolContext> = {}): ToolContext => ({
-    sql: appSql,
-    runId: crypto.randomUUID(),
-    runKind: 'reply',
-    leadId,
-    threadId: null,
-    step: 0,
-    claimToken: null,
-    pageCache: new Map(),
-    briefName: null,
-    leadCap: 20,
-    channelOverride: null,
-    book: new Map(),
-    plan: null,
-    monid: null,
-    seenContacts: new Set(),
-    pageReads: 0,
-    draftOnly: false,
-    ...over,
-  });
-
-  const draft = async (ctx: ToolContext, body: string) => {
-    const out = (await executeTool(ctx, `d-${++idem}`, 'draft_message', {
-      leadId: ctx.leadId,
-      channel: 'manual',
-      body,
-    })) as { message?: { id: string }; thread?: { id: string } };
-    expect(out.message?.id).toBeTruthy();
-    return { messageId: out.message!.id, threadId: out.thread!.id };
+  // the agent's own draft: a lead turn writes it, as it does on the wire
+  const draft = async (leadId: string, body: string) => {
+    const { outcomes } = await b.runTools([['draft_message', { channel: 'manual', body }]], {
+      leadId,
+      kind: 'reply',
+    });
+    const out = outcomes[0] as {
+      ok?: boolean;
+      data?: { message?: { id: string }; thread?: { id: string } };
+    };
+    expect(out.ok).toBe(true);
+    return { messageId: out.data!.message!.id, threadId: out.data!.thread!.id };
   };
 
   const control = async (method: string, path: string, body?: unknown, key?: string) => {
@@ -103,8 +80,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
     on conflict (key) do update set value = excluded.value
   `;
 
+  beforeEach(() => b.mine.clear());
   beforeAll(async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    await b.setup();
     prevGuardrails =
       (
         await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
@@ -117,15 +96,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
     await sql`
       delete from staff_events
       where data->>'leadId' = any(${leads})
-         or data->>'runId' = any(${runs})
          or data->>'messageId' in (
            select m.id::text from lead_messages m join lead_threads t on t.id = m.thread_id
            where t.lead_id = any(${leads}::uuid[]))
     `;
     await sql`delete from meetings where lead_id = any(${leads}::uuid[])`;
-    await sql`delete from agent_runs where id = any(${runs}::uuid[]) or lead_id = any(${leads}::uuid[])`;
     await sql`delete from leads where id = any(${leads}::uuid[])`;
     await sql`delete from provider_events where provider_id = ${`cmp-${uniq}`}`;
+    // the bench writes the agent and guardrails settings: restore ours after it
+    await b.teardown();
     if (prevGuardrails === null) await sql`delete from control_settings where key = 'guardrails'`;
     else await setGuardrails(prevGuardrails as Record<string, unknown>);
     if (appSql !== sql) await appSql.end();
@@ -204,10 +183,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
 
   test('draft.pending for agent drafts only; approve and reject close the card', async () => {
     const leadId = await mkLead({ name: `Rascunho ${uniq}`, business_name: 'Padaria Sol' });
-    const a = await draft(
-      ctxFor(leadId),
-      'oi, vi a padaria de vocês, posso te contar como funciona?',
-    );
+    const a = await draft(leadId, 'oi, vi a padaria de vocês, posso te contar como funciona?');
     const pending = await events('draft.pending', 'messageId', a.messageId);
     expect(pending).toHaveLength(1);
     expect(pending[0]!).toMatchObject({ tenant_id: null, anchor: `draft:${a.messageId}` });
@@ -231,15 +207,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
     expect(approved[0]!).toMatchObject({ tenant_id: null, anchor: `draft:${a.messageId}` });
     expect(approved[0]!.data).toEqual({ messageId: a.messageId, outcome: 'approved', by: 'Maria' });
 
-    const b = await draft(ctxFor(leadId), 'oi de novo, ficou alguma dúvida?');
-    await rejectMessage(appSql, b.messageId, `reject-${uniq}`, 'João');
-    expect((await events('draft.resolved', 'messageId', b.messageId))[0]!.data).toEqual({
-      messageId: b.messageId,
+    const second = await draft(leadId, 'oi de novo, ficou alguma dúvida?');
+    await rejectMessage(appSql, second.messageId, `reject-${uniq}`, 'João');
+    expect((await events('draft.resolved', 'messageId', second.messageId))[0]!.data).toEqual({
+      messageId: second.messageId,
       outcome: 'rejected',
       by: 'João',
     });
     // the CRM has no per-person identity: its route passes 'staff' (the card reads "no CRM")
-    const c = await draft(ctxFor(leadId), 'posso te ligar amanhã?');
+    const c = await draft(leadId, 'posso te ligar amanhã?');
     expect((await control('POST', `/control/v1/messages/${c.messageId}/reject`)).status).toBe(200);
     expect((await events('draft.resolved', 'messageId', c.messageId))[0]!.data).toMatchObject({
       outcome: 'rejected',
@@ -259,7 +235,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
 
   test('draft.resolved superseded: an expired draft regenerates, a lead reply retires it', async () => {
     const leadId = await mkLead({ name: `Expira ${uniq}`, agent_mode: 'auto' });
-    const old = await draft(ctxFor(leadId), 'oi, tudo certo por aí?');
+    const old = await draft(leadId, 'oi, tudo certo por aí?');
     await sql`update lead_messages set created_at = now() - interval '30 days' where id = ${old.messageId}`;
     const res = await approveMessage(appSql, old.messageId, 'Maria', `stale-${uniq}`);
     expect(res.body.stale).toBe(true);
@@ -274,19 +250,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
       name: `Responde ${uniq}`,
       whatsapp: `+${digits}`,
       whatsapp_verified: true,
-      agent_mode: 'off',
+      agent_mode: 'auto',
     });
-    const outreach = (await enqueueRun(sql, {
-      kind: 'outreach',
-      leadId: replier,
-      source: 'first_contact',
-    }))!;
-    runs.push(outreach);
-    await sql`update agent_runs set status = 'done', finished_at = now() where id = ${outreach}`;
-    const pendingDraft = await draft(
-      ctxFor(replier, { runId: outreach, runKind: 'outreach' }),
-      'oi, vi vocês no instagram e queria conversar',
+    // the first contact drafts; only a draft of that turn is retired by the lead's reply. The
+    // expired draft's regeneration is still queued: settle must not run it on this turn's script
+    b.mine.clear();
+    b.mine.add(replier);
+    await controlTx(appSql, (tx) =>
+      requestLeadTx(tx, {
+        leadId: replier,
+        kind: 'lead.first_contact',
+        source: 'first_contact',
+        dedupeKey: `crm:first_contact:${replier}`,
+      }),
     );
+    const { rt } = b.runtime([
+      call('draft_message', {
+        channel: 'manual',
+        body: 'oi, vi vocês no instagram e queria conversar',
+      }),
+      say('ok'),
+    ]);
+    await b.settle(rt);
+    const [first] = await b.outbound(replier);
+    expect(first!.status).toBe('draft');
+    const pendingDraft = { messageId: first!.id };
     await ingestInbound(appSql, {
       channel: 'whatsapp',
       from: `${digits}@s.whatsapp.net`,
@@ -312,10 +300,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
     const [thread] = await sql<{ id: string }[]>`
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
-    const ctx = ctxFor(leadId, { threadId: thread!.id });
     const reason = 'quer negociar desconto, precisa de alguém da equipe';
-    await executeTool(ctx, 'h1', 'request_human', { leadId, reason });
-    await executeTool(ctx, 'h1', 'request_human', { leadId, reason }); // replayed claim
+    const handed = await b.runTools([['request_human', { reason }]], {
+      leadId,
+      kind: 'reply',
+      payload: { threadId: thread!.id },
+    });
+    expect(handed.outcomes[0]).toMatchObject({ name: 'request_human', ok: true });
     const [task] = await sql<{ id: string }[]>`
       select id from lead_tasks where lead_id = ${leadId} and title like '[humano]%'
     `;
@@ -338,10 +329,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
 
     // an unbound run hands the whole lead over
     const unbound = await mkLead({ name: `Humano2 ${uniq}` });
-    await executeTool(ctxFor(unbound), 'h2', 'request_human', {
-      leadId: unbound,
-      reason: 'travou',
-    });
+    await b.runTools([['request_human', { reason: 'travou' }]], { leadId: unbound, kind: 'reply' });
     expect((await events('handoff.requested', 'leadId', unbound))[0]!.data).toMatchObject({
       channel: null,
       threadId: null,
@@ -412,10 +400,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
 
   test('lead.unsubscribed: by the agent and by a spam complaint, once', async () => {
     const leadId = await mkLead({ name: `Sair ${uniq}`, business_name: 'Bar do Zé' });
-    const ctx = ctxFor(leadId);
-    await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para não receber mais' });
-    await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para não receber mais' });
-    await executeTool(ctx, 'u2', 'unsubscribe', { leadId, reason: 'de novo' });
+    await b.runTools(
+      [
+        ['unsubscribe', { reason: 'pediu para não receber mais' }],
+        ['unsubscribe', { reason: 'de novo' }],
+      ],
+      { leadId, kind: 'reply' },
+    );
+    // a later turn for an opted-out lead is parked: it files nothing and says nothing
+    await b.runTools([['unsubscribe', { reason: 'de novo' }]], { leadId, kind: 'reply' });
     const byAgent = await events('lead.unsubscribed', 'leadId', leadId);
     expect(byAgent).toHaveLength(1);
     expect(byAgent[0]!).toMatchObject({ tenant_id: null, anchor: null });
@@ -581,79 +574,55 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
     ]);
   });
 
-  test('agent.run_failed: a run that throws, and one that kept dying, each once', async () => {
-    const leadId = await mkLead({ name: `Falha ${uniq}`, agent_mode: 'auto' });
-    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
-    runs.push(runId);
-    // claimed ahead of whatever else is queued in this database
-    await sql`update agent_runs set priority = -100 where id = ${runId}`;
-    setTestProvider({
-      name: 'boom',
-      chat: async () => {
-        throw new Error('provedor de LLM fora do ar');
-      },
-    });
-    try {
-      expect(await runOnce(appSql)).toBe(true);
-    } finally {
-      setTestProvider(null);
+  test('agent.run_failed: a turn that keeps failing is reported once', async () => {
+    await b.settings('autopilot');
+    const l = await b.lead({ name: `Falha ${uniq}` });
+    leads.push(l.id);
+    await b.inbound(l.whatsapp!);
+    const { rt } = b.runtime(() => ({ error: { status: 400, message: 'bad request' } }));
+    // the store claims on the database clock: bring each retry's backoff forward
+    for (let i = 0; i < 6; i++) {
+      await b.settle(rt);
+      await sql`
+        update agent_actors set next_wake_at = now()
+        where subject_id = ${l.id} and next_wake_at is not null`;
     }
-    const [run] = await sql<{ status: string; error: string }[]>`
-      select status, error from agent_runs where id = ${runId}
-    `;
-    expect(run!.status).toBe('failed');
-    expect(run!.error).toContain('provedor de LLM fora do ar');
-    const failed = await events('agent.run_failed', 'runId', runId);
+    const [t] = await b.turns(l.id);
+    expect(t).toMatchObject({ status: 'failed', kind: 'reply' });
+    const failed = await events('agent.run_failed', 'runId', t!.turn_id);
     expect(failed).toHaveLength(1);
     expect(failed[0]!).toMatchObject({
       tenant_id: null,
       anchor: null,
-      dedupe_key: `run:${runId}:failed`,
+      dedupe_key: `run:${t!.turn_id}:failed`,
       severity: 'warning',
     });
-    expect(failed[0]!.data).toEqual({
-      runId,
+    expect(failed[0]!.data).toMatchObject({
+      runId: t!.turn_id,
       job: 'reply',
-      leadId,
+      leadId: l.id,
       leadName: `Falha ${uniq}`,
-      error: run!.error,
-      attempts: 1,
     });
-
-    // a board-scoped run whose worker kept dying lands failed at the attempt cap
-    const dead = (await enqueueRun(sql, { kind: 'outreach' }))!;
-    runs.push(dead);
-    const stale = new Date(Date.now() - 11 * 60_000);
-    await sql`
-      update agent_runs set status = 'running', claim_token = 'stale', started_at = ${stale},
-        alive_at = ${stale}, max_attempts = 1
-      where id = ${dead}
-    `;
-    await drain(appSql, 0, { orphans: false });
-    await drain(appSql, 0, { orphans: false });
-    const terminal = await events('agent.run_failed', 'runId', dead);
-    expect(terminal).toHaveLength(1);
-    expect(terminal[0]!.data).toEqual({
-      runId: dead,
-      job: 'outreach',
-      leadId: null,
-      leadName: null,
-      error: 'attempt cap reached — run kept dying mid-execution',
-      attempts: 1,
-    });
+    expect(String(failed[0]!.data.error)).toMatch(/gave up after \d+ attempts/);
   });
 
   test('agent.cost_cap: once per lead and cap level', async () => {
     const leadId = await mkLead({ name: `Teto ${uniq}`, agent_mode: 'auto' });
-    const spent = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    runs.push(spent);
     await sql`
-      update agent_runs set status = 'done', finished_at = now(), cost_cents = 50 where id = ${spent}
-    `;
+      insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, status, started_at, cost_cents)
+      values (gen_random_uuid(), gen_random_uuid(), 'crm', 'reply', 'whatsapp', ${leadId}, 'done', now(), 50)`;
     try {
       await setGuardrails({ leadLifetimeCostCapUsd: 0.1 });
-      expect(await enqueueRun(appSql, { kind: 'outreach', leadId })).toBeNull();
-      expect(await enqueueRun(appSql, { kind: 'outreach', leadId })).toBeNull();
+      // a capped lead's turn makes no model call
+      const first = await b.runTools([], { leadId, kind: 'reply' });
+      expect(first.requests).toBe(0);
+      const second = await b.runTools([], { leadId, kind: 'reply' });
+      expect(second.requests).toBe(0);
+      // the two capped turns (the seeded row came first) say why they ran no model call
+      expect((await b.turns(leadId)).slice(-2).map((t) => t.error?.includes('custo'))).toEqual([
+        true,
+        true,
+      ]);
       let rows = await events('agent.cost_cap', 'leadId', leadId);
       expect(rows).toHaveLength(1);
       expect(rows[0]!).toMatchObject({
@@ -669,7 +638,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: CRM + sales agent
       });
       // a raised cap that is still crossed flags again, at the new level
       await setGuardrails({ leadLifetimeCostCapUsd: 0.2 });
-      expect(await enqueueRun(appSql, { kind: 'outreach', leadId })).toBeNull();
+      expect((await b.runTools([], { leadId, kind: 'reply' })).requests).toBe(0);
       rows = await events('agent.cost_cap', 'leadId', leadId);
       expect(rows.map((r) => r.data.capCents)).toEqual([10, 20]);
     } finally {

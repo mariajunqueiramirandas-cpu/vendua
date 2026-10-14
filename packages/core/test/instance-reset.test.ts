@@ -53,7 +53,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instance reset (db)', () => {
   };
 
   const restarts: number[] = [];
-  const deps = { sql, sessionSecret: 'x'.repeat(32), controlSecret: 'ctl', autoDrain: false };
+  const deps = { sql, sessionSecret: 'x'.repeat(32), controlSecret: 'ctl' };
   const on = createApp({ ...deps, allowReset: true, onResetRequested: () => restarts.push(1) });
   const off = createApp(deps);
   const call = async (

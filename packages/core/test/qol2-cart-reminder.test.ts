@@ -104,7 +104,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('bag reminder (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     otpSender: async (phone, text) => {
       codes.set(phone, /(\d{6})/.exec(text)![1]!);

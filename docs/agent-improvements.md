@@ -1,6 +1,7 @@
 # Agent improvements backlog
 
-Working list of improvements to the agent engine (`packages/core/src/agent/`),
+Working list of improvements to the agent engine (`packages/core/src/agent/`, since 2026-10-14
+the CRM agents on Agent Runtime v3, ADR 0030),
 collected from a competitive review of Explee's AutoGTM and a walkthrough of
 our own worker. Ordered by theme; each item names the code it touches.
 Last reviewed 2026-09-26: every numbered item is shipped; the open follow-ups

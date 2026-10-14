@@ -81,7 +81,6 @@ describe.skipIf(!OWNER_URL)('moving in: menu photos and the customer list (db)',
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {

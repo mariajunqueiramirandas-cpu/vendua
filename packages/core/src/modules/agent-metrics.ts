@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
-import { ACTION_TOOLS } from '../agent/tool-meta.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
+import { CRM_AGENT_ID } from '../crm/dispatch.ts';
 import { controlTx } from './control.ts';
 
 // Ops readout behind GET /control/v1/agent/metrics (ADR 0014).
@@ -7,19 +8,16 @@ import { controlTx } from './control.ts';
 export type MetricsKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 const KINDS: MetricsKind[] = ['triage', 'reply', 'outreach', 'discovery', 'strategist'];
 
-// "acted" = an ACTION_TOOLS journal result with no error / blocked / ignored.
-const ACTION_TOOL_NAMES = [...ACTION_TOOLS];
-
 export interface KindMetrics {
   kind: MetricsKind;
-  /** Runs created in the window, by terminal status. */
+  /** Turns finished in the window, by status (a turn is never canceled: canceled stays 0). */
   runs: number;
   done: number;
   failed: number;
   canceled: number;
-  /** Share of done runs whose journal holds a clean action tool result. */
+  /** Share of done turns where a lead-facing action landed. */
   actedRate: number;
-  /** Average journal length of done runs (model + tool + nudge entries). */
+  /** Average model calls per done turn. */
   avgSteps: number;
   costUsd: number;
   avgCostUsd: number;
@@ -33,9 +31,8 @@ export interface AgentMetrics {
   /** Leads the agent actually reached (sent/delivered) vs leads that wrote
    *  back in the same window. */
   replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
-  /** Live backlog of pending wakeups + how many fired; null while the
-   *  agent_wakeups table isn't deployed. */
-  wakeups: { pending: number; fired: number } | null;
+  /** The agenda: timers waiting for a lead's agent, and how many came due in the window. */
+  wakeups: { pending: number; fired: number };
 }
 
 export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics> {
@@ -59,22 +56,12 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
         count(*)::int as runs,
         count(*) filter (where status = 'done')::int as done,
         count(*) filter (where status = 'failed')::int as failed,
-        count(*) filter (where status = 'canceled')::int as canceled,
-        count(*) filter (
-          where status = 'done' and exists (
-            select 1 from jsonb_array_elements(steps) e
-            where e->>'type' = 'tool'
-              and e->>'name' = any(${ACTION_TOOL_NAMES})
-              and e->>'out' is not null
-              and e->'out'->>'error' is null
-              and coalesce(e->'out'->>'blocked', '') <> 'true'
-              and coalesce(e->'out'->>'ignored', '') <> 'true'
-          )
-        )::int as acted,
-        avg(jsonb_array_length(steps)) filter (where status = 'done')::float8 as avg_steps,
+        0 as canceled,
+        count(*) filter (where status = 'done' and acted)::int as acted,
+        avg(steps) filter (where status = 'done')::float8 as avg_steps,
         coalesce(sum(cost_cents), 0)::int as cost_cents
-      from agent_runs
-      where created_at >= ${from} and created_at <= ${to}
+      from crm_turns
+      where finished_at >= ${from} and finished_at <= ${to}
       group by kind
     `;
     const byKind = new Map(kindRows.map((r) => [r.kind, r]));
@@ -131,21 +118,13 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
       `
     )[0]!;
 
-    // agent_wakeups may not exist yet — report absence, not error.
-    const hasWakeups =
-      (await tx<{ r: string | null }[]>`select to_regclass('agent_wakeups') as r`)[0]!.r !== null;
-    const wakeups = hasWakeups
-      ? (
-          await tx<{ pending: number; fired: number }[]>`
-        select count(*) filter (where status = 'pending')::int as pending,
-              count(*) filter (
-                -- fired_at is the immutable flip stamp (updated_at moves on cancel)
-                where status = 'fired' and w.fired_at >= ${from} and w.fired_at <= ${to}
-              )::int as fired
-            from agent_wakeups w
-          `
-        )[0]!
-      : null;
+    const [wakeups] = await tx<{ pending: number; fired: number }[]>`
+      select count(*) filter (where m.consumed_by_turn is null)::int as pending,
+        count(*) filter (
+          where m.consumed_by_turn is not null and m.deliver_at >= ${from} and m.deliver_at <= ${to}
+        )::int as fired
+      from agent_mailbox m join agent_actors a on a.id = m.actor_id
+      where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and m.kind like 'timer.%'`;
 
     return {
       window: { from: from.toISOString(), to: to.toISOString() },
@@ -177,7 +156,7 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
         leadsReplied: replies.leads_replied,
         replyRate: replies.leads_contacted ? replies.leads_replied / replies.leads_contacted : 0,
       },
-      wakeups: wakeups ? { pending: wakeups.pending, fired: wakeups.fired } : null,
+      wakeups: { pending: wakeups?.pending ?? 0, fired: wakeups?.fired ?? 0 },
     };
   });
 }

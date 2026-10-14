@@ -375,7 +375,7 @@ oversized store fails the import.
 - **Storefronts and the Kernel:** untouched. The import writes the rows the admin writes, and
   stores read them through the Kernel as always.
 - **Agent runs:** none. A future screenshot/PDF fallback would be requested through
-  `requestAgentTx`.
+  `dispatchTx`.
 
 ## 5. Mapping onto Venduá today
 

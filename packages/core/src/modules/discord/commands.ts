@@ -274,7 +274,7 @@ async function hoje(c: CommandCtx): Promise<InteractionResponse> {
       tx<{ n: number; cents: number; failed: number }[]>`
           select count(*)::int as n, coalesce(sum(cost_cents), 0)::int as cents,
                  count(*) filter (where status = 'failed')::int as failed
-          from agent_runs where created_at >= ${start}
+          from crm_turns where finished_at >= ${start}
         `,
       tx<{ starts_at: Date; name: string }[]>`
           select m.starts_at, l.name from meetings m join leads l on l.id = m.lead_id

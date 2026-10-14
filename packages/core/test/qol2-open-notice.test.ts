@@ -12,7 +12,7 @@ import { outboxPass } from '../src/vendedor/sweeper.ts';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('store-open notice (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
   const nonce = crypto.randomUUID().slice(0, 8);
   const stamp = String(Date.now()).slice(-6);
   const ids: string[] = [];

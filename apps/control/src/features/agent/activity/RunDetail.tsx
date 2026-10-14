@@ -57,7 +57,8 @@ export function RunDetail({
     return <EmptyState icon={SearchX} title="run não encontrado" hint={`id ${shortId(id)}`} />;
   if (!run) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
-  const active = isActive(run.status) && !canceled.has(run.id);
+  // a turn already running finishes; only waiting work cancels
+  const active = run.status === 'queued' && !canceled.has(run.id);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">

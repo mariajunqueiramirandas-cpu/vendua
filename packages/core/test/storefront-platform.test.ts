@@ -15,7 +15,7 @@ import {
 // DB-backed — opt-in via TEST_DATABASE_URL.
 describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
   const nonce = crypto.randomUUID().slice(0, 8);
   const slug = `sp-${nonce}`;
   const host = `${slug}.localhost`;

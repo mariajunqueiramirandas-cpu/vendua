@@ -1,14 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { enqueueRun, runOnce } from '../src/agent/runner.ts';
-import { sendableNowTx } from '../src/agent/guardrails.ts';
-import { setTestProvider } from '../src/agent/llm.ts';
-import { scriptedProvider } from '../src/agent/scripted-provider.ts';
+import { sendableNowTx } from '../src/crm/guardrails.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { DEFAULT_GUARDRAILS, type Guardrails } from '../src/modules/integrations.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
+import { crmBench } from './crm-harness.ts';
 
 // The live half of the tool gate: what a lead can be reached on, re-asked every turn.
 describe.skipIf(!process.env.TEST_DATABASE_URL)('tool gate (db)', () => {
@@ -65,6 +63,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('tool gate (db)', () => {
     }
   };
 
+  const b = crmBench('tool-gate');
+  beforeAll(b.setup);
+  afterAll(b.teardown);
+
   test('sendableNowTx asks what send_message/draft_message would', async () => {
     await migrate(sql, MIGRATIONS);
     await withIntegration('whatsapp', 'log', async () => {
@@ -103,95 +105,65 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('tool gate (db)', () => {
     });
   });
 
+  // v3: send_message is offered on every reply turn while a send channel is connected, so the
+  // gate moved into the call: a send to a lead with no channel comes back blocked, not unoffered.
   test('reply run: send_message appears the turn research adds a channel', async () => {
-    await migrate(sql, MIGRATIONS);
-    await withNeverQuiet(() =>
-      withIntegration('whatsapp', 'log', async () => {
-        const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gate Grows' }));
-        const leadId = lead.body.lead.id;
-        const wa = phone();
-        const provider = scriptedProvider([
-          { toolCalls: [{ name: 'update_lead', args: { id: leadId, whatsapp: wa } }] },
-          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá!' } }] },
-          { text: 'fim' },
-        ]);
-        setTestProvider(provider);
-        try {
-          await sql`delete from agent_runs where status = 'queued'`;
-          const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
-          expect(await runOnce(sql)).toBe(true);
+    await withIntegration('whatsapp', 'log', async () => {
+      // autopilot, so a live send goes out rather than being held as a first-contact draft
+      await b.settings('autopilot', { quietStart: '00:00', quietEnd: '00:00' });
+      const lead = await b.lead({ name: 'Gate Grows', whatsapp: null });
+      const wa = b.phone();
+      // turn 1: no channel on the lead — the send is refused, nothing queues
+      const first = await b.runTools([['send_message', { body: 'olá!' }]], {
+        leadId: lead.id,
+        kind: 'reply',
+      });
+      expect(first.outcomes[0]).toMatchObject({
+        name: 'send_message',
+        ok: true,
+        data: { blocked: true },
+      });
+      expect(await b.outbound(lead.id)).toHaveLength(0);
 
-          const names = (i: number) => provider.requests[i]!.tools.map((t) => t.name);
-          const draftEnum = (i: number) =>
-            (
-              provider.requests[i]!.tools.find((t) => t.name === 'draft_message')!.parameters as {
-                properties: { channel: { enum: string[] } };
-              }
-            ).properties.channel.enum;
-          // turn 1: no channel on the lead — no send, drafts only by hand
-          expect(names(0)).not.toContain('send_message');
-          expect(draftEnum(0)).toEqual(['manual']);
-          // turn 2: the whatsapp update_lead just wrote is live
-          expect(names(1)).toContain('send_message');
-          expect(draftEnum(1)).toContain('whatsapp');
-
-          const run = (
-            await sql<
-              {
-                status: string;
-                steps: {
-                  type?: string;
-                  name?: string;
-                  content?: string;
-                  out?: { error?: string };
-                }[];
-              }[]
-            >`
-              select status, steps from agent_runs where id = ${runId}
-            `
-          )[0]!;
-          expect(run.status).toBe('done');
-          const contact = run.steps.filter((s) => s.type === 'contact').map((s) => s.content);
-          expect(contact).toHaveLength(2);
-          expect(contact[0]).toStartWith('ENVIO BLOQUEADO');
-          expect(contact[0]).toContain("rascunho só com channel 'manual'");
-          expect(contact[1]).toStartWith('CONTATO LIBERADO');
-          const send = run.steps.find((s) => s.name === 'send_message')!;
-          expect(send.out?.error ?? '').not.toMatch(/TOOL_DISABLED/);
-        } finally {
-          setTestProvider(null);
-        }
-      }),
-    );
+      // turn 2: the whatsapp the lead just gave is live, so the same send goes out
+      const second = await b.runTools(
+        [
+          ['update_lead', { whatsapp: wa }],
+          ['send_message', { body: 'olá!' }],
+        ],
+        { leadId: lead.id, kind: 'reply' },
+      );
+      expect(second.outcomes[1]).toMatchObject({
+        name: 'send_message',
+        ok: true,
+        data: { channel: 'whatsapp', draftFallback: false },
+      });
+      expect((await b.outbound(lead.id)).map((m) => m.status)).toEqual(['queued']);
+    });
   });
 
-  test('discovery with no research tool fails up front — no model call', async () => {
-    await migrate(sql, MIGRATIONS);
+  test('discovery with no research tool parks up front — no model call', async () => {
     const monid = process.env.MONID_API_KEY;
     delete process.env.MONID_API_KEY;
     const disc = await sql<{ driver: string; enabled: boolean }[]>`
       select driver, enabled from control_integrations where kind = 'discovery'
     `;
     await sql`update control_integrations set enabled = false where kind = 'discovery'`;
-    const provider = scriptedProvider([{ text: 'nunca chamado' }]);
-    setTestProvider(provider);
     try {
       // a real LLM driver — discovery's mock pages would be fabricated prospects for it
       await withIntegration('llm', 'anthropic', async () => {
-        await sql`delete from agent_runs where status = 'queued'`;
-        const runId = (await enqueueRun(sql, { kind: 'discovery' }))!;
-        expect(await runOnce(sql)).toBe(true);
-        const run = (
-          await sql<{ status: string; error: string | null }[]>`
-            select status, error from agent_runs where id = ${runId}
-          `
-        )[0]!;
-        expect(run.status).toBe('failed');
-        expect(run.error).toContain('discovery sem ferramenta de pesquisa');
-        expect(provider.turns).toBe(0);
+        const query = `sem pesquisa ${crypto.randomUUID()}`;
+        const { outcomes, requests } = await b.runTools([['web_search', { query: 'doceria' }]], {
+          kind: 'discovery',
+          payload: { query },
+        });
+        expect(requests).toBe(0);
+        expect(outcomes).toHaveLength(0);
+        const [t] = await sql<{ error: string | null }[]>`
+          select error from crm_turns where params->>'query' = ${query}`;
+        expect(t!.error).toContain('discovery sem ferramenta de pesquisa');
       });
     } finally {
-      setTestProvider(null);
       for (const d of disc) {
         await sql`update control_integrations set enabled = ${d.enabled}
           where kind = 'discovery' and driver = ${d.driver}`;

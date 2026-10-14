@@ -31,7 +31,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
   });
@@ -211,7 +210,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
       sql: appSql,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
       cepLookup: async () => null,
       storeDomain: 'vendua.test',
       duaMedia: { media, gateway: null },

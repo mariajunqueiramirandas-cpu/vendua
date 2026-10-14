@@ -6,7 +6,7 @@ import { DataList, type Column } from '@/components/DataList.tsx';
 import { EmptyState, ErrorState } from '@/components/common.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Tooltip } from '@/components/ui/controls.tsx';
-import { isActive, useCanceledRuns, useCancelRun, useRunList } from './queries.ts';
+import { useCanceledRuns, useCancelRun, useRunList } from './queries.ts';
 import {
   PausedChip,
   RunKind,
@@ -65,7 +65,7 @@ export function RunList({
   const cancel = useCancelRun();
   const canceled = useCanceledRuns();
   const runs = q.data?.pages.flatMap((p) => p.runs) ?? [];
-  const canCancel = (r: AgentRun) => isActive(r.status) && !canceled.has(r.id);
+  const canCancel = (r: AgentRun) => r.status === 'queued' && !canceled.has(r.id);
 
   const cancelBtn = (r: AgentRun) =>
     canCancel(r) ? (

@@ -10,7 +10,6 @@ const app = createApp({
   sql: postgres('postgres://localhost:1/vendua'),
   sessionSecret: 's',
   controlSecret: 'ctl-secret',
-  autoDrain: false,
 });
 const authed = { 'x-vendua-control': 'ctl-secret' };
 

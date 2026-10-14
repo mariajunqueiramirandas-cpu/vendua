@@ -1,19 +1,27 @@
 import { describe, expect, test } from 'bun:test';
-import { buildSystemPrompt } from '../src/agent/prompts.ts';
-import { messageStyleIssues, normalizeMessageBody } from '../src/agent/style.ts';
+import { CRM_STATES } from '../src/agent-host/agents/crm/index.ts';
+import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
+import { messageStyleIssues, normalizeMessageBody } from '../src/crm/style.ts';
 import {
   fitTranscript,
   leadCard,
   nameIsContact,
   nowLine,
   renderTranscript,
-} from '../src/agent/context-render.ts';
-import { extractText } from '../src/agent/channels/whatsapp.ts';
+} from '../src/agent-host/agents/crm/context-render.ts';
+import { extractText } from '../src/crm/channels/whatsapp.ts';
 import { DEFAULT_PITCH } from '../src/modules/integrations.ts';
-import { anthropicCostUsd } from '../src/agent/llm.ts';
 
-const reply = (extra: Parameters<typeof buildSystemPrompt>[4] = {}) =>
-  buildSystemPrompt('reply', DEFAULT_PITCH, '', { facts: [] }, extra);
+// what each lead job is offered with every provider configured
+const TOOLS = {
+  reply: new Set(CRM_STATES.reply),
+  outreach: new Set(CRM_STATES.outreach),
+};
+
+type Opts = Parameters<typeof buildSystemPrompt>[4];
+const prompt = (kind: 'reply' | 'outreach', extra: Partial<Opts> = {}) =>
+  buildSystemPrompt(kind, DEFAULT_PITCH, '', { facts: [] }, { tools: TOOLS[kind], ...extra });
+const reply = (extra: Partial<Opts> = {}) => prompt('reply', extra);
 
 // the example lines the prompts quote, by label
 const examples = (prompt: string, label: 'Bom' | 'Ruim') =>
@@ -56,7 +64,7 @@ describe('message style check', () => {
   });
 
   test("every 'Bom' example the prompts teach passes the check", () => {
-    const outreach = buildSystemPrompt('outreach', DEFAULT_PITCH, '', { facts: [] });
+    const outreach = prompt('outreach');
     const good = [...examples(reply(), 'Bom'), ...examples(outreach, 'Bom')];
     expect(good.length).toBeGreaterThanOrEqual(4);
     for (const g of good)
@@ -217,22 +225,5 @@ describe('context budgets', () => {
     expect(out).toContain('m2 ');
     expect(out).toMatch(/\[… \d+ mensagens do meio fora do contexto/);
     expect(out.endsWith('última\ncom duas linhas')).toBe(true);
-  });
-
-  test('anthropic cost prices cache reads at a tenth', () => {
-    const full = anthropicCostUsd('claude-opus-5', {
-      input: 100_000,
-      cacheRead: 0,
-      cacheWrite: 0,
-      output: 0,
-    });
-    const cached = anthropicCostUsd('claude-opus-5', {
-      input: 0,
-      cacheRead: 100_000,
-      cacheWrite: 0,
-      output: 0,
-    });
-    expect(full).toBeCloseTo(0.5, 6);
-    expect(cached).toBeCloseTo(0.05, 6);
   });
 });

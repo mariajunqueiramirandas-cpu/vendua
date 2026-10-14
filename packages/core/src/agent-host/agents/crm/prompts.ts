@@ -1,6 +1,5 @@
-import type { Pitch } from '../modules/integrations.ts';
-import type { AgentGoal } from '../modules/leads.ts';
-import { TOOL_META, toolAvailable } from './tool-meta.ts';
+import type { Pitch } from '../../../modules/integrations.ts';
+import type { AgentGoal } from '../../../modules/leads.ts';
 
 const SEND_ORDER = ['whatsapp', 'instagram', 'email'] as const;
 
@@ -39,14 +38,13 @@ export function buildSystemPrompt(
     /** discovery: score gate for auto-contact — mirrors the create_lead
      *  guardrail so the model knows what its fitScore decides. */
     autoContact?: { enabled: boolean; minScore: number };
-    /** the toolset this run is offered — every tool the prompt names must be in it
-     *  (default: the kind's full registry set) */
-    tools?: ReadonlySet<string>;
+    /** the toolset this turn is offered — every tool the prompt names must be in it */
+    tools: ReadonlySet<string>;
     /** send channels connected in this install (default: all) */
     channels?: readonly string[];
-  } = {},
+  },
 ): string {
-  const tools = opts.tools ?? new Set(Object.keys(TOOL_META).filter((n) => toolAvailable(kind, n)));
+  const tools = opts.tools;
   const has = (t: string) => tools.has(t);
   const chans = SEND_ORDER.filter((c) => (opts.channels ?? SEND_ORDER).includes(c));
   const leadKind = kind === 'triage' || kind === 'reply' || kind === 'outreach';
@@ -522,7 +520,7 @@ ${ladder}`,
 create_lead só depois de pesquisado: findings (2-4 linhas: o que vende, sinais de porte e canal, origem de cada contato) + ≥1 canal real + fitScore 0-10/fitReason + intentScore 0-10/intentReason + sources. fitScore é aderência ao público; intentScore é intenção de compra, lida nos sinais que a pesquisa já mostrou: whatsapp ativo vendendo SEM link próprio de pedidos (só iFood ou só zap), reviews recentes pedindo cardápio ou link de pedido, vagas e sinais de crescimento; 0 = só existe, 10 = pedindo solução. O findings é o que o vendedor lê antes da primeira mensagem: registre o detalhe específico que vira gancho (nota no Maps, produto carro-chefe, reclamação de taxa, bio sem link).
 duplicate → o dedupe interno é ÚLTIMO recurso: se voltou duplicate:true seu filtro falhou, registre no book o que o search_leads não pegou. Canal na mão → UMA rodada de dossiê (dono, porte, produtos); mais que isso é tese.`,
     `## REFLEXÃO
-Passos seguidos sem progresso → o harness devolve plano + livro + tentativas e pergunta o próximo movimento. Progresso conta: lead criado ou mesclado, canal NOVO no book, contato novo via enrichment. Reler url, re-upsertar o que já está, re-buscar o que já tem: não conta.`,
+Todo passo mostra no fim do contexto o PLANO, o LIVRO e quantos leads você já criou da META: leia antes de cada movimento. Passos seguidos sem progresso → volte ao plano e escolha outro ângulo. Progresso conta: lead criado ou mesclado, canal NOVO no book, contato novo via enrichment. Reler url, re-upsertar o que já está, re-buscar o que já tem: não conta.`,
     `## Anti-padrões
 Reler url já lida (cache), raiz de facebook (login wall; instagram não é), parar no @ quando a bio não foi lida, criar lead com phone celular e whatsapp vazio (o whatsapp estava na sua mão), book abandonado, marcar dead sem tried, create_lead sem findings ou canal (rejeitado), prospect investigado sem passar no search_leads, lead de canal único quando a página tinha mais, e NUNCA invente dígitos: só o que a fonte imprime.${has('remember') ? ' Aprendeu algo reaproveitável (query que rendeu, fonte que resolve, sabor fraco) → remember; o debrief do fim da run vira doutrina da próxima.' : ''}`,
     `## META

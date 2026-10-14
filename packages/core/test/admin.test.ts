@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { parseMenuPaste, parseMoney } from '../src/admin/routes-catalog.ts';
 import { sweepAdmin } from '../src/admin/workers.ts';
-import { ingestInbound } from '../src/agent/inbound.ts';
+import { ingestInbound } from '../src/crm/inbound.ts';
 import { sessionAlive } from '../src/admin/auth.ts';
 import { MEDIA_QUOTA_BYTES } from '../src/admin/media.ts';
 import { encryptPayload } from '../src/admin/webpush.ts';
@@ -59,7 +59,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {
@@ -224,7 +223,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       sql: appSql,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
       cepLookup: async () => null,
       adminHost: 'Painel.Example.com',
     });

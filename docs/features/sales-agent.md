@@ -15,7 +15,7 @@ benchmark's next steps ("turn the P-017 shopper agent into a design, with money 
 code") and the design behind the unchecked list in [`whatsapp-bot.md`](whatsapp-bot.md).
 
 It is not the merchant copilot (Domínio §4.3 A–C, an assistant for the merchant inside the
-admin) and not the sales agent that sells Venduá to leads (`src/agent/`, platform number). It
+admin) and not the sales agent that sells Venduá to leads (`src/crm/` and `agent-host/agents/crm/`, platform number). It
 is the first agent on a new runtime that will replace that agent's engine. Paths are under `packages/core/` unless they start with `apps/` or
 `docs/`.
 
@@ -412,7 +412,7 @@ on an extraction of today's runner. What that gives this design:
 
 **Media becomes text before the model sees it.** Today's engine takes only strings
 (`AgentMessage.content`, `llm.ts:18`), and the sales agent receives audio only as the tag
-`[áudio]` (`src/agent/channels/whatsapp.ts:740`). An ingest step in Core turns each inbound into
+`[áudio]` (`src/crm/channels/whatsapp.ts`). An ingest step in Core turns each inbound into
 text first, so the loop works with a text-only model and evals stay cheap; the runtime's message
 model also carries image and audio parts for models that take them:
 
@@ -551,7 +551,7 @@ cart_edit / reorder ─▶ quote (Core) ─▶ send_card(summary) ─▶ shopper
 ### 4.8 The verifier
 
 Pure functions under `src/agent/verify/`, unit-tested, run on every `reply` before it is
-queued. Today the sales agent's price rule is prompt plus judge (`src/agent/prompts.ts:105`);
+queued. Today the sales agent's price rule is prompt plus judge (`src/agent-host/agents/crm/prompts.ts`);
 this is the code version, and the sales agent can adopt it later.
 
 - **The ledger.** Every figure Core returns to the thread is recorded with its source: catalog
