@@ -1,5 +1,5 @@
 import { needsChoices } from '../modules/party.ts';
-import { plansOfferedTx, type PlanLine, type PlanRow } from '../modules/shopper-plans.ts';
+import { planBlockTx, type PlanLine, type PlanRow } from '../modules/shopper-plans.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import { audit } from './audit.ts';
@@ -98,11 +98,18 @@ interface SubView {
   lastError: string | null;
   createdAt: string;
   weeks: number;
-  lastOrder: { id: string; number: number; day: string } | null;
+  lastOrder: {
+    id: string;
+    number: number;
+    day: string;
+    totalCents: number;
+    state: string;
+    paid: boolean;
+  } | null;
 }
 
 async function view(tx: Sql, tenantId: string) {
-  const [plans, subs, offered, asks] = await Promise.all([
+  const [plans, subs, blocked, asks] = await Promise.all([
     tx<(PlanRow & { live: number })[]>`
       select p.id, p.name, p.description, p.weekday, p.lead_days, p.items, p.active, p.sort,
              (select count(*)::int from plan_subscriptions s
@@ -116,7 +123,9 @@ async function view(tx: Sql, tenantId: string) {
              s.created_at as "createdAt",
              (select count(*)::int from plan_cycles c
               where c.subscription_id = s.id and c.state = 'placed') as weeks,
-             (select json_build_object('id', o.id, 'number', o.number, 'day', c.day)
+             (select json_build_object('id', o.id, 'number', o.number, 'day', c.day,
+                                       'totalCents', o.total_cents, 'state', o.state,
+                                       'paid', o.payment ->> 'status' = 'paid')
               from plan_cycles c join orders o on o.tenant_id = c.tenant_id and o.id = c.order_id
               where c.subscription_id = s.id order by c.day desc limit 1) as "lastOrder"
       from plan_subscriptions s
@@ -124,14 +133,15 @@ async function view(tx: Sql, tenantId: string) {
         and (s.state <> 'cancelled' or s.cancelled_at > now() - interval '30 days')
       order by (s.state = 'cancelled'), s.next_on nulls last, s.created_at desc
       limit 300`,
-    plansOfferedTx(tx, tenantId),
+    planBlockTx(tx, tenantId),
     tx<{ id: string }[]>`
       select p.id from products p
       where p.tenant_id = ${tenantId} and p.status <> 'archived' and ${needsChoices(tx)}`,
   ]);
   return {
-    // without the store's WhatsApp no plan is offered: the shopper would never hear of a week
-    offered,
+    // a week is a Pix the store's WhatsApp sends: without either, no plan reaches the shopper
+    offered: blocked === null,
+    blocked,
     plans: plans.map((p) => ({
       id: p.id,
       name: p.name,

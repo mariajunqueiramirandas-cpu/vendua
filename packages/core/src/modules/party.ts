@@ -354,6 +354,8 @@ export async function eveReminderPass(sql: Sql, tenantId: string, now = new Date
         and (${now}::timestamptz at time zone tz.z)::time >= ${EVE_FROM}::time
         and o.scheduled_for = (${now}::timestamptz at time zone tz.z)::date + 1
         and o.state not in ('cancelled', 'refunded', 'delivered')
+        -- an unpaid plan week hears the Pix reminder instead (shopper-plan-cycles.ts)
+        and not (o.source = 'plan' and coalesce(o.payment ->> 'status', 'pending') = 'pending')
         and o.placed_at < ${now}::timestamptz - interval '12 hours'
         and not exists (select 1 from store_wa_messages m
                         where m.order_id = o.id and m.event = 'reminder_eve')

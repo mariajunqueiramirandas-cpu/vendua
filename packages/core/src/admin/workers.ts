@@ -1,5 +1,5 @@
 import { eveReminderPass } from '../modules/party.ts';
-import { planCyclePass } from '../modules/shopper-plan-cycles.ts';
+import { planCyclePass, planPaymentPass } from '../modules/shopper-plan-cycles.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
@@ -667,6 +667,19 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     await planCyclePass(sql, t.id, opts.provider).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'plan cycle pass failed'),
     );
+    // ...and a week whose Pix hasn't landed by the day before: the shopper and the store hear it
+    await planPaymentPass(sql, t.id)
+      .then(async (pushes) => {
+        for (const p of pushes)
+          await pushManagers(
+            sql,
+            t.id,
+            p.key,
+            { title: p.title, body: p.body, tag: p.key, url: '/admin/pedidos/agendados' },
+            'plan.pix',
+          );
+      })
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'plan payment pass failed'));
     if (prune)
       await pruneTenant(sql, t.id).catch((err) =>
         workLog.warn({ err, tenantId: t.id }, 'retention prune failed'),

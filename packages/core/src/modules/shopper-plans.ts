@@ -8,6 +8,8 @@ import { phoneVariants } from '../store-whatsapp/text.ts';
 import { assertCartOpen, loadCartView } from './cart.ts';
 import { importLines, type ImportReport } from './cart-share.ts';
 import { getProductsById } from './catalog.ts';
+import { offeredMethods } from './payment-adjustments.ts';
+import { onlineOffer } from './payments/store-payments.ts';
 import type { CheckoutInput } from './checkout.ts';
 import { transitionOrder } from './orders.ts';
 import { addDays, dayOfWeek, type CartPlan } from './shopper-plan-base.ts';
@@ -56,10 +58,27 @@ export interface ShopperPlan {
 
 const ddmm = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
 
-/** The store can text: a plan is offered only then. */
+/**
+ * Why the store can't offer plans now, or null when it can. Each week is paid by Pix, by hand,
+ * and the store's WhatsApp carries the code and the reminders: a store needs both — its own Pix
+ * key (the code goes in the message) or Mercado Pago (the order page makes the Pix).
+ */
+export async function planBlockTx(tx: Sql, tenantId: string): Promise<'whatsapp' | 'pix' | null> {
+  const [s] = await tx<{ wa: boolean; key: boolean; methods: string[] | null }[]>`
+    select exists (select 1 from store_whatsapp w where w.tenant_id = ${tenantId} and w.wanted) as wa,
+           (st.pix_key is not null and st.pix_key_type is not null) as key,
+           st.payment_methods as methods
+    from store_settings st where st.tenant_id = ${tenantId}`;
+  if (!s?.wa) return 'whatsapp';
+  if (!offeredMethods(s.methods ? { payment_methods: s.methods } : null).includes('pix'))
+    return 'pix';
+  if (!s.key && !(await onlineOffer(tx, tenantId)).online) return 'pix';
+  return null;
+}
+
+/** The store can text and take Pix: a plan is offered only then. */
 export async function plansOfferedTx(tx: Sql, tenantId: string): Promise<boolean> {
-  const [r] = await tx`select 1 from store_whatsapp where tenant_id = ${tenantId} and wanted`;
-  return !!r;
+  return (await planBlockTx(tx, tenantId)) === null;
 }
 
 export async function shopperPlansTx(tx: Sql, tenantId: string): Promise<ShopperPlan[]> {
@@ -164,6 +183,12 @@ export async function planToSubscribeTx(
   if (!scheduledFor)
     throw new HttpError(422, 'SCHEDULE_REQUIRED', 'a plan starts on a date', {
       field: 'scheduledFor',
+    });
+  // every week is a Pix the shopper pays from the store's message
+  if (body.payment.method !== 'pix')
+    throw new HttpError(422, 'PAYMENT_NOT_ALLOWED', 'a plan is paid by Pix', {
+      field: 'payment.method',
+      allowed: ['pix'],
     });
   if (!(await plansOfferedTx(tx, tenantId)))
     throw new HttpError(404, 'PLAN_NOT_FOUND', 'this plan is not offered');

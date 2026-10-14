@@ -1128,8 +1128,9 @@ export function CheckoutPage() {
                       cart.plan.weekday ??
                         (scheduledFor ? new Date(`${scheduledFor}T12:00:00Z`).getUTCDay() : null),
                     )}{' '}
-                    (plano “{cart.plan.name}”). A loja confirma pelo WhatsApp e avisa antes de cada
-                    semana; responda PULAR para pular uma, ou CANCELAR PLANO para encerrar.
+                    (plano “{cart.plan.name}”). A loja confirma pelo WhatsApp e manda o pedido com o
+                    Pix antes de cada semana; responda PULAR para pular uma, ou CANCELAR PLANO para
+                    encerrar.
                   </label>
                 ) : null}
                 <Slot

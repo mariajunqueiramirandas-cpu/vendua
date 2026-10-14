@@ -866,6 +866,8 @@ export async function loadCartView(
   const plan = await cartPlanTx(tx, tenantId, cart.plan_id);
   if (plan) {
     schedule.required = true;
+    // each week is a Pix the shopper pays from the store's message, the first one too
+    schedule.paymentMethods = ['pix'];
     if (plan.weekday !== null)
       schedule.dates = schedule.dates.filter((d) => dayOfWeek(d) === plan.weekday);
   }

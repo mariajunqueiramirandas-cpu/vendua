@@ -73,6 +73,10 @@ export interface OrderFacts {
   refund?: { cents: number; full: boolean; online: boolean } | null;
   /** the order's status-only page on the store's site (`/pedido/<id>?t=vot.…`) */
   trackUrl?: string | null;
+  /** where the order came from (orders.source): a weekly plan's orders say more about the Pix */
+  source?: string;
+  /** how it's paid: a Pix by hand carries its copia-e-cola code (the store's own key) */
+  pay?: { method: string; online: boolean; paid: boolean; copyPaste: string | null };
 }
 
 interface OrderLinks {
@@ -274,13 +278,20 @@ async function orderFactsTx(
         slug: string;
         placed_at: Date;
         tz: string | null;
+        source: string;
+        payment: {
+          method?: string;
+          online?: boolean;
+          status?: string;
+          pix?: { copyPaste?: string } | null;
+        } | null;
       }[]
     >`
       select o.number, o.customer ->> 'name' as name, o.customer_phone as phone,
              o.delivery ->> 'mode' as mode, o.total_cents as total,
              o.delivery ->> 'promisedFrom' as "from", o.delivery ->> 'promisedTo' as "to",
              o.scheduled_for::text as scheduled_for, t.name as store_name, t.slug, o.placed_at,
-             s.hours ->> 'timezone' as tz
+             s.hours ->> 'timezone' as tz, o.source, o.payment
       from orders o
         join tenants t on t.id = o.tenant_id
         left join store_settings s on s.tenant_id = o.tenant_id
@@ -304,6 +315,13 @@ async function orderFactsTx(
     trackUrl: links
       ? `${await storeOrigin(tx, { id: tenantId, slug: row.slug }, links.storeDomain)}/pedido/${orderId}?t=${links.token(tenantId, orderId, row.placed_at)}`
       : null,
+    source: row.source,
+    pay: {
+      method: row.payment?.method ?? '',
+      online: row.payment?.online === true,
+      paid: row.payment?.status === 'paid',
+      copyPaste: row.payment?.pix?.copyPaste ?? null,
+    },
     phone: row.phone,
   };
 }
@@ -339,21 +357,52 @@ export function planConfirmText(
   return `${head}\n\n${tail}`;
 }
 
-/** The week's order, placed by the plan: what, when, how much, and how to skip it */
+/** How the shopper pays a plan's week: the code in the next message, or the order page. */
+function planPayLine(o: OrderFacts, again: boolean): string {
+  if (o.pay?.online)
+    return `Pague o Pix pela página do pedido${o.trackUrl ? ' (o link abaixo)' : ''}: a confirmação chega aqui sozinha.`;
+  if (o.pay?.copyPaste)
+    return `O código Pix copia e cola vem ${again ? 'de novo ' : ''}na próxima mensagem. Depois de pagar, mande o comprovante aqui.`;
+  return 'Responda esta mensagem para combinar o Pix com a loja.';
+}
+
+/** The week's order, placed by the plan: what, when, how much, how to pay and how to skip it */
 export function planCycleText(
   o: OrderFacts,
-  plan: { name: string; pix: boolean; missing: string[] },
+  plan: { name: string; missing: string[] },
 ): string | null {
   if (!o.scheduledFor) return null;
   const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
   const lines = [
-    `${hi}O pedido do seu plano "${plan.name}" desta semana está feito: #${o.number}, para ${ddmm(o.scheduledFor)}, ${brl(o.totalCents)}.`,
+    `${hi}O pedido do seu plano "${plan.name}" desta semana está feito: #${o.number}, para ${ddmm(o.scheduledFor)}. Total: ${brl(o.totalCents)}, por Pix.`,
     plan.missing.length ? `Fora desta vez (a loja não tem hoje): ${plan.missing.join(', ')}.` : '',
-    plan.pix ? 'O Pix está na página do pedido.' : '',
+    planPayLine(o, false),
     'Para pular esta semana, responda PULAR. Para encerrar o plano, responda CANCELAR PLANO.',
   ].filter(Boolean);
   const text = lines.join('\n\n');
   return o.trackUrl ? `${text}\n\nAcompanhe o pedido: ${o.trackUrl}` : text;
+}
+
+/** The week's Pix, still unpaid as the date comes: the total, the date and the code again */
+export function planPixReminderText(
+  o: OrderFacts,
+  plan: { name: string },
+  today: string,
+): string | null {
+  if (!o.scheduledFor || o.pay?.paid) return null;
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const when = o.scheduledFor === today ? 'hoje' : `amanhã (${ddmm(o.scheduledFor)})`;
+  const text = [
+    `${hi}O Pix do pedido #${o.number} do seu plano "${plan.name}" (${brl(o.totalCents)}) ainda não chegou para a ${o.storeName}. A entrega é ${when}.`,
+    planPayLine(o, true),
+    'Se não quiser esta semana, responda PULAR.',
+  ].join('\n\n');
+  return o.pay?.online && o.trackUrl ? `${text}\n\nPagar: ${o.trackUrl}` : text;
+}
+
+/** The copia-e-cola code alone, so a long press copies just it (the store's own Pix key) */
+export function planPixCode(o: OrderFacts): string | null {
+  return !o.pay?.online && !o.pay?.paid ? (o.pay?.copyPaste ?? null) : null;
 }
 
 /**
@@ -367,6 +416,8 @@ export async function enqueueOrderNoteTx(
   orderId: string,
   event: string,
   render: (o: OrderFacts) => string | null,
+  /** queued after this tx's other messages (a Pix code under its message) */
+  opts: { after?: boolean } = {},
 ): Promise<boolean> {
   try {
     return await (
@@ -381,8 +432,9 @@ export async function enqueueOrderNoteTx(
       const text = render(facts);
       if (!text) return false;
       const rows = await sp`
-          insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body)
-          values (${tenantId}, ${orderId}, 'order', ${event}, ${phone}, ${text})
+          insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body, created_at)
+          values (${tenantId}, ${orderId}, 'order', ${event}, ${phone}, ${text},
+                  ${opts.after ? sp`clock_timestamp()` : sp`now()`})
           on conflict (order_id, event) where order_id is not null do nothing
           returning id`;
       return rows.length > 0;
@@ -418,8 +470,11 @@ export async function enqueueOrderMessageTx(
     ).savepoint(async (sp) => {
       if (REPEATS.has(event) && !/^\d{1,20}$/.test(extra.occurrence ?? '')) return false;
       const wa = await sendingTx(sp, tenantId);
-      if (!wa || !wa.events.includes(event)) return false;
+      // a weekly plan's Pix is paid from these messages: its "pago" is always said
+      const enabled = !!wa && wa.events.includes(event);
+      if (!wa || (!enabled && event !== 'paid')) return false;
       const facts = await orderFactsTx(sp, tenantId, orderId);
+      if (!enabled && facts?.source !== 'plan') return false;
       const phone = facts?.phone ?? null;
       if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
       if (await optedOutTx(sp, tenantId, phone)) return false;

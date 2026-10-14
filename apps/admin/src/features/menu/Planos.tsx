@@ -6,6 +6,7 @@ import {
   Pause,
   Play,
   Plus,
+  QrCode,
   Trash,
   X,
 } from '@phosphor-icons/react';
@@ -19,7 +20,7 @@ import {
   type ShopperPlan,
   type ShopperPlanIn,
 } from '../../lib/api.ts';
-import { num, phone, plural, WEEKDAYS, WEEKDAYS_LONG } from '../../lib/format.ts';
+import { money, num, phone, plural, WEEKDAYS, WEEKDAYS_LONG } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink, IconButton } from '../../ui/Button.tsx';
@@ -116,7 +117,7 @@ export default function Planos() {
         <RowsSkeleton rows={3} />
       ) : (
         <div className="space-y-8">
-          {!data.offered ? (
+          {data.blocked === 'whatsapp' ? (
             <Notice
               tone="warning"
               title="Conecte o WhatsApp da loja"
@@ -128,9 +129,29 @@ export default function Planos() {
               }
             >
               Os planos só aparecem na loja com o WhatsApp conectado: é por ele que o cliente
-              confirma, recebe cada pedido e pula uma semana.
+              confirma, recebe o Pix de cada semana e pula uma semana.
             </Notice>
-          ) : null}
+          ) : data.blocked === 'pix' ? (
+            <Notice
+              tone="warning"
+              title="Cadastre a chave Pix da loja"
+              icon={<QrCode />}
+              action={
+                <ButtonLink to="/pagamentos" size="sm" variant="secondary">
+                  pagamentos
+                </ButtonLink>
+              }
+            >
+              Cada semana é paga por Pix. Com a chave da loja, o código vai na mensagem do WhatsApp;
+              com o Mercado Pago conectado, o Pix se confirma sozinho.
+            </Notice>
+          ) : (
+            <p className="t-caption text-muted">
+              Cada semana é paga por Pix: o código vai pelo WhatsApp com o pedido, e um lembrete sai
+              na véspera se o dinheiro não chegou. Sem Mercado Pago, abra o pedido e marque como
+              pago quando o Pix cair: o cliente recebe a confirmação.
+            </p>
+          )}
           {plans.length === 0 ? (
             <DuaNote pose="avatar-feliz" title="Crie o primeiro plano">
               Uma cesta de hortifruti, o pão da semana, as marmitas de segunda: escolha os produtos
@@ -276,12 +297,22 @@ function Subscribers({
                 {sub.state === 'active' && sub.nextOn ? `Próxima: ${ddmm(sub.nextOn)}. ` : ''}
                 {sub.weeks ? `${plural(sub.weeks, 'semana feita', 'semanas feitas')}. ` : ''}
                 {sub.lastOrder ? (
-                  <Link
-                    to={`/pedidos/${sub.lastOrder.id}`}
-                    className="underline underline-offset-2"
-                  >
-                    pedido #{num(sub.lastOrder.number)}
-                  </Link>
+                  <>
+                    <Link
+                      to={`/pedidos/${sub.lastOrder.id}`}
+                      className="underline underline-offset-2"
+                    >
+                      pedido #{num(sub.lastOrder.number)}
+                    </Link>{' '}
+                    ({ddmm(sub.lastOrder.day)}, {money(sub.lastOrder.totalCents)}):{' '}
+                    {sub.lastOrder.state === 'cancelled' ? (
+                      'pulado'
+                    ) : sub.lastOrder.paid ? (
+                      <span className="font-semibold text-success">Pix recebido</span>
+                    ) : (
+                      <span className="font-semibold text-warning">Pix pendente</span>
+                    )}
+                  </>
                 ) : null}
               </p>
               {sub.lastError && sub.state !== 'cancelled' ? (

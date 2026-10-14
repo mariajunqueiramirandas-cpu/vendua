@@ -59,8 +59,8 @@ export function PlansPage() {
             ))}
           </ul>
           <p className="v-muted v-plan-note v-plans-foot">
-            O total de cada semana sai com os preços do dia, mais a entrega. Você escolhe a primeira
-            data e o pagamento ao finalizar.
+            O total de cada semana sai com os preços do dia, mais a entrega, e é pago por Pix: o
+            código chega pelo WhatsApp com o pedido. Você escolhe a primeira data ao finalizar.
           </p>
         </>
       )}

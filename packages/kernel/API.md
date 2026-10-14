@@ -659,11 +659,14 @@ before its date, priced then. PULAR skips a week, CANCELAR PLANO ends it.
   in `@vendua/kernel/sdk-catalog`): a card to `/planos`, nothing while the store offers no plan.
   No template migration places it: the merchant adds it, or shares the link.
 - Client: `api.plans()` → `GET /storefront/v1/plans` (`{ plans: ShopperPlan[] }`; `[]` when the
-  store can't text its shoppers); `api.buildPlanCart(planId)` → `POST /checkout/v1/cart/plan`
+  store can't text its shoppers or take Pix); `api.buildPlanCart(planId)` → `POST /checkout/v1/cart/plan`
   (`{ cart, report }`), also `useCart().mutations.buildPlan` (optional on `CartMutations`). New
   type `ShopperPlan`.
 - `Cart.plan` (`{ id, name, weekday }`, optional): the plan's first week is an encomenda,
-  `schedule.required` is true, and a plan with a `weekday` offers only that weekday's dates.
+  `schedule.required` is true, and a plan with a `weekday` offers only that weekday's dates. A
+  plan is paid by Pix, week by week: `schedule.paymentMethods` is `['pix']`, and checkout refuses
+  another method with `PAYMENT_NOT_ALLOWED` (422, `details.allowed`). Each week's Pix code goes
+  out in the store's WhatsApp with the order (or the order page, with Mercado Pago).
 - `CheckoutInput.subscribe` (optional boolean): the shopper's yes to `Cart.plan`. Checkout shows
   it ticked (`[data-vendua="plan-subscribe"]`) on the payment step; unticked, the order is just an
   order.

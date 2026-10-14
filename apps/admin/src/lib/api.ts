@@ -1213,12 +1213,22 @@ export interface PlanSubscription {
   createdAt: string;
   /** weeks placed so far */
   weeks: number;
-  lastOrder: { id: string; number: number; day: string } | null;
+  /** the latest week placed: its Pix paid yet? */
+  lastOrder: {
+    id: string;
+    number: number;
+    day: string;
+    totalCents: number;
+    state: OrderState;
+    paid: boolean;
+  } | null;
 }
 
 export interface PlansView {
   /** the store's WhatsApp is on: without it no plan reaches the shopper */
   offered: boolean;
+  /** why no plan reaches the shopper: no WhatsApp, or no way to take a Pix (own key or Mercado Pago) */
+  blocked: 'whatsapp' | 'pix' | null;
   plans: ShopperPlan[];
   subscriptions: PlanSubscription[];
   needsChoices: string[];

@@ -27,7 +27,7 @@ edit. Two new sdk-catalog exports (`partyCta`, `plansCta`).
 - Plano semanal: the `/planos` page, block `sdk:plans-cta`, `api.plans` / `buildPlanCart` (and
   `mutations.buildPlan`), `Cart.plan`, `CheckoutInput.subscribe` and its checkout tick
   (`[data-vendua="plan-subscribe"]`), type `ShopperPlan`; `ERROR_CODES` gains `PLAN_NOT_FOUND`,
-  `PLAN_NOT_ALLOWED`.
+  `PLAN_NOT_ALLOWED`. A plan cart takes only Pix (`schedule.paymentMethods: ['pix']`).
 
 ## 1.25.0
 

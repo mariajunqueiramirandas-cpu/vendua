@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { parsePlan } from '../src/admin/routes-plans.ts';
 import { createApp } from '../src/app.ts';
-import { planCyclePass } from '../src/modules/shopper-plan-cycles.ts';
+import { planCyclePass, planPaymentPass } from '../src/modules/shopper-plan-cycles.ts';
+import { enqueueOrderMessageTx } from '../src/store-whatsapp/messages.ts';
 import { addDays, dayOfWeek } from '../src/modules/shopper-plan-base.ts';
-import { migrate } from '../src/platform/db.ts';
+import { migrate, withTenant } from '../src/platform/db.ts';
 import { handleInbound } from '../src/store-whatsapp/state.ts';
 import { optKeyword } from '../src/store-whatsapp/text.ts';
 
@@ -88,7 +89,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     return { status: res.status, body: (await res.json()) as any };
   };
 
-  const store = async (opts: { whatsapp?: boolean; weekday?: number | null } = {}) => {
+  const store = async (
+    opts: { whatsapp?: boolean; weekday?: number | null; pixKey?: boolean } = {},
+  ) => {
     const slug = `pl-${nonce}-${++n}`;
     const [t] = await sql<{ id: string }[]>`
       insert into tenants (slug, name) values (${slug}, ${'Hortifruti ' + n}) returning id`;
@@ -97,9 +100,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     await sql`insert into domains (host, tenant_id) values (${host}, ${t!.id})`;
     await sql`
       insert into store_settings (tenant_id, hours, prep_time_minutes, min_order_cents, currency,
-                                  vocabulary, preorder_payment_methods)
+                                  vocabulary, preorder_payment_methods, pix_key, pix_key_type,
+                                  pix_beneficiary, pix_city)
       values (${t!.id}, ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })},
-              25, 0, 'BRL', ${sql.json({})}, ${sql.json(['cash', 'pix'])})`;
+              25, 0, 'BRL', ${sql.json({})}, ${sql.json(['cash', 'pix'])},
+              ${opts.pixKey === false ? null : 'horta@exemplo.com'},
+              ${opts.pixKey === false ? null : 'email'}, 'Hortifruti', 'Saquarema')`;
     if (opts.whatsapp !== false)
       await sql`insert into store_whatsapp (tenant_id, wanted, state) values (${t!.id}, true, 'open')`;
     const [cat] = await sql<{ id: string }[]>`
@@ -143,7 +149,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
       {
         customer: { name: 'Bia Souza', phone: PHONE },
         delivery: { mode: 'pickup' },
-        payment: { method: 'cash' },
+        payment: { method: 'pix' },
         scheduledFor: day,
         subscribe: true,
       },
@@ -240,7 +246,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
       {
         customer: { name: 'Bia Souza', phone: PHONE },
         delivery: { mode: 'pickup' },
-        payment: { method: 'cash' },
+        payment: { method: 'pix' },
         scheduledFor: b.body.cart.schedule.dates[0],
       },
       auth,
@@ -265,9 +271,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     expect(o).toMatchObject({ source: 'plan', day: next, total: 2 * 450 + 890 });
     const msgs = await sql<{ event: string; body: string }[]>`
       select event, body from store_wa_messages where order_id = ${o!.id}`;
-    // the plan's own message, not the 'placed' one
-    expect(msgs.map((x) => x.event)).toEqual(['plan_cycle']);
-    expect(msgs[0]!.body).toContain('responda PULAR');
+    // the plan's own message, then its Pix code alone; not the 'placed' one
+    expect(msgs.map((x) => x.event).sort()).toEqual(['plan_cycle', 'plan_pix']);
+    const [first, code] = await sql<{ event: string; body: string }[]>`
+      select event, body from store_wa_messages where order_id = ${o!.id} order by created_at`;
+    expect(first!.event).toBe('plan_cycle');
+    expect(first!.body).toContain('Total: R$');
+    expect(first!.body).toContain('copia e cola vem na próxima mensagem');
+    expect(first!.body).toContain('responda PULAR');
+    expect(code!.body.startsWith('000201')).toBe(true);
     const [sub] = await sql<{ next_on: string }[]>`
       select next_on::text as next_on from plan_subscriptions where tenant_id = ${s.id}`;
     expect(sub!.next_on).toBe(addDays(next, 7));
@@ -347,5 +359,59 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     const after =
       await sql`select 1 from store_wa_messages where tenant_id = ${s.id} and kind = 'opt_in'`;
     expect(after.length).toBe(before.length);
+  });
+
+  test('a plan is paid by Pix: another method is refused, a store without Pix offers none', async () => {
+    const s = await store();
+    const auth = await session(s.host);
+    const b = await call(s.host, 'POST', '/checkout/v1/cart/plan', { planId: s.planId }, auth);
+    expect(b.body.cart.schedule.paymentMethods).toEqual(['pix']);
+    const cash = await call(
+      s.host,
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Bia Souza', phone: PHONE },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'cash' },
+        scheduledFor: b.body.cart.schedule.dates[0],
+        subscribe: true,
+      },
+      auth,
+    );
+    expect([cash.status, cash.body.error.code]).toEqual([422, 'PAYMENT_NOT_ALLOWED']);
+
+    const noKey = await store({ pixKey: false });
+    expect((await call(noKey.host, 'GET', '/storefront/v1/plans')).body.plans).toEqual([]);
+  });
+
+  test('an unpaid week: one reminder with the code again the day before, one push; paid is always said', async () => {
+    const s = await store();
+    const { day } = await subscribe(s);
+    await say(s.id, 'ASSINAR');
+    const next = addDays(day, 7);
+    expect(await planCyclePass(sql, s.id, undefined, noon(next, -2))).toBe(1);
+    const [o] = await sql<{ id: string; number: number }[]>`
+      select id, number from orders where tenant_id = ${s.id} and source = 'plan'`;
+    // the day it was placed: too soon
+    expect(await planPaymentPass(sql, s.id, noon(next, -2))).toEqual([]);
+    const pushes = await planPaymentPass(sql, s.id, noon(next, -1));
+    expect(pushes.map((p) => p.key)).toEqual([`planpix:${o!.id}`]);
+    expect(pushes[0]!.body).toContain('entrega amanhã');
+    expect(await planPaymentPass(sql, s.id, noon(next, -1))).toEqual([]);
+    const notes = await sql<{ event: string; body: string }[]>`
+      select event, body from store_wa_messages where order_id = ${o!.id} order by created_at`;
+    const reminder = notes.find((n) => n.event === 'plan_pix_reminder')!;
+    expect(reminder.body).toContain(`O Pix do pedido #${o!.number}`);
+    expect(reminder.body).toContain('A entrega é amanhã');
+    expect(notes.find((n) => n.event === 'plan_pix_again')!.body.startsWith('000201')).toBe(true);
+
+    // the store never turned its "pago" notice on: a plan's week says it anyway
+    await sql`update store_whatsapp set events = '{}' where tenant_id = ${s.id}`;
+    await sql`update orders set payment = payment || '{"status":"paid"}' where id = ${o!.id}`;
+    await withTenant(sql, s.id, (tx) => enqueueOrderMessageTx(tx, s.id, o!.id, 'paid'));
+    const [paid] = await sql<{ body: string }[]>`
+      select body from store_wa_messages where order_id = ${o!.id} and event = 'paid'`;
+    expect(paid!.body).toContain('Pagamento do pedido');
   });
 });

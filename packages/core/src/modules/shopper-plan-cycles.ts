@@ -2,7 +2,13 @@ import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
-import { enqueueOrderNoteTx, optedOutTx, planCycleText } from '../store-whatsapp/messages.ts';
+import {
+  enqueueOrderNoteTx,
+  optedOutTx,
+  planCycleText,
+  planPixCode,
+  planPixReminderText,
+} from '../store-whatsapp/messages.ts';
 import { loadStoreSettings } from './cart.ts';
 import { importLines } from './cart-share.ts';
 import { createCartTx } from './cart-ops.ts';
@@ -140,9 +146,11 @@ async function placeCycleTx(
   await tx`update plan_subscriptions set next_on = ${addDays(s.next_on, 7)}, last_error = null
            where tenant_id = ${tenantId} and id = ${s.id}`;
   await emitAdminTx(tx, tenantId, 'catalog', 'plans');
-  await enqueueOrderNoteTx(tx, tenantId, orderId, 'plan_cycle', (o) =>
-    planCycleText(o, { name: s.plan_name, pix: s.payment.method === 'pix', missing }),
+  const told = await enqueueOrderNoteTx(tx, tenantId, orderId, 'plan_cycle', (o) =>
+    planCycleText(o, { name: s.plan_name, missing }),
   );
+  if (told)
+    await enqueueOrderNoteTx(tx, tenantId, orderId, 'plan_pix', planPixCode, { after: true });
   return true;
 }
 
@@ -236,3 +244,69 @@ export async function planCyclePass(
   }
   return placed;
 }
+
+/** a week's order placed less than this ago isn't reminded yet: its message just went out */
+const REMIND_AFTER = '6 hours';
+
+export interface PlanPush {
+  key: string;
+  title: string;
+  body: string;
+}
+
+/**
+ * The weeks whose Pix hasn't landed as their date comes (from 09:00 the day before): the shopper
+ * gets one reminder with the code again, and the store one push, so it decides before it bakes.
+ * Nothing is cancelled here: an unpaid week is the store's call (or the shopper's PULAR).
+ */
+export async function planPaymentPass(
+  sql: Sql,
+  tenantId: string,
+  now = new Date(),
+): Promise<PlanPush[]> {
+  return withTenant(sql, tenantId, async (tx) => {
+    const due = await tx<
+      { id: string; number: number; total: number; day: string; today: string; plan: string }[]
+    >`
+      with local as (
+        select (${now}::timestamptz at time zone z)::date as today,
+               (${now}::timestamptz at time zone z)::time as t
+        from (select coalesce(hours ->> 'timezone', 'America/Sao_Paulo') as z
+              from store_settings where tenant_id = ${tenantId}) tz
+      )
+      select o.id, o.number, o.total_cents as total, o.scheduled_for::text as day,
+             local.today::text as today, p.name as plan
+      from orders o
+        join plan_cycles c on c.tenant_id = o.tenant_id and c.order_id = o.id
+        join plan_subscriptions s on s.id = c.subscription_id
+        join shopper_plans p on p.id = s.plan_id,
+        local
+      where o.tenant_id = ${tenantId} and o.source = 'plan'
+        and o.state not in ('cancelled', 'refunded', 'delivered')
+        and coalesce(o.payment ->> 'status', 'pending') = 'pending'
+        and o.placed_at < ${now}::timestamptz - ${REMIND_AFTER}::interval
+        and local.t >= '09:00' and o.scheduled_for between local.today and local.today + 1
+        and not exists (select 1 from store_wa_messages m
+                        where m.order_id = o.id and m.event = 'plan_pix_reminder')
+      order by o.scheduled_for, o.number limit 50`;
+    const pushes: PlanPush[] = [];
+    for (const o of due) {
+      const told = await enqueueOrderNoteTx(tx, tenantId, o.id, 'plan_pix_reminder', (f) =>
+        planPixReminderText(f, { name: o.plan }, o.today),
+      );
+      if (told)
+        await enqueueOrderNoteTx(tx, tenantId, o.id, 'plan_pix_again', planPixCode, {
+          after: true,
+        });
+      pushes.push({
+        key: `planpix:${o.id}`,
+        title: `Pix do plano não chegou: #${o.number}`,
+        body: `${brl(o.total)}, entrega ${o.day === o.today ? 'hoje' : 'amanhã'}.${told ? ' O cliente foi lembrado pelo WhatsApp.' : ''} Toque para ver o pedido.`,
+      });
+    }
+    return pushes;
+  });
+}
+
+const brl = (cents: number) =>
+  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
