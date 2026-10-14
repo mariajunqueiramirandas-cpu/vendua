@@ -492,7 +492,7 @@ export interface Cart {
         zoneId?: string | null;
         zoneName?: string | null;
         distanceKm?: number | null;
-        /** Kernel 1.15 — distance pricing: a road route, or 'estimate' (straight line × 1.3) */
+        /** Kernel 1.15 — distance pricing: a road route, or 'estimate' (straight line × 1.5) */
         distanceSource?: 'route' | 'estimate' | null;
         etaMin?: number | null;
         etaMax?: number | null;
@@ -641,7 +641,7 @@ export interface QuoteResult {
   freeDeliveryOverCents?: number | null;
   /** Kernel 1.12 — the matched zone's kind (a polygon match has `distanceKm: null`) */
   zoneKind?: DeliveryZone['kind'];
-  /** Kernel 1.15 — distance pricing: a road route, or 'estimate' (straight line × 1.3) */
+  /** Kernel 1.15 — distance pricing: a road route, or 'estimate' (straight line × 1.5) */
   distanceSource?: 'route' | 'estimate' | null;
   /** Kernel 1.12 — with a cart session: its totals delivered here (and paid with
    *  `paymentMethod`, when sent) */

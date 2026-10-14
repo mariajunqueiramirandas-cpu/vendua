@@ -24,8 +24,8 @@ export const EXAMPLE: Knobs = {
   freeOverCents: 12_000,
 };
 
-/** geo.ts DETOUR_FACTOR: the straight line × 1.3 while no road route could be had */
-export const DETOUR_FACTOR = 1.3;
+/** geo.ts DETOUR_FACTOR: the straight line × 1.5 while no road route could be had */
+export const DETOUR_FACTOR = 1.5;
 /** geo.ts ESTIMATE_KMH: an estimated leg's drive time */
 export const ESTIMATE_KMH = 25;
 /** cart.ts: the store's prep time when it never set one */

@@ -267,7 +267,7 @@ state? })` → `GET /storefront/v1/geocode` (`{ point: GeoPoint | null }`), quot
   one. A new street, number or CEP drops the pin. "Lembrar meus dados" keeps the pin
   (`CustomerProfile.address.lat/lng`), so a returning shopper confirms nothing.
 - `QuoteResult.distanceSource` and `Cart.delivery.distanceSource`: `'route'` (a road route) or
-  `'estimate'` (straight line × 1.3, while no route could be had); `zoneKind`/`DeliveryZone.kind`
+  `'estimate'` (straight line × 1.5, while no route could be had); `zoneKind`/`DeliveryZone.kind`
   may be `'distance'` (a quote only — never in the zone list).
 
 ### Closed hours take only encomendas (Kernel 1.16)

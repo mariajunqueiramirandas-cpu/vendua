@@ -15,7 +15,7 @@
   import { sim } from './state.svelte';
 
   // The three distances for each sample door, and which one Core charges: the road route when the
-  // routing service answered, else the straight line × 1,3, marked as an estimate (geo.ts
+  // routing service answered, else the straight line × 1,5, marked as an estimate (geo.ts
   // priceByDistance). The estimate's time is the store's prep plus the drive at 25 km/h.
   let routed = $state(true);
 
@@ -64,7 +64,7 @@
         </div>
         <p class="nums tnum">
           <span>linha reta {km1(r.straight)} km</span>
-          <span class:on={!routed}>× 1,3 = {km1(r.estimate)} km</span>
+          <span class:on={!routed}>× 1,5 = {km1(r.estimate)} km</span>
           <span class:on={routed}>caminho {km1(r.road)} km</span>
         </p>
         <p class="charged">
