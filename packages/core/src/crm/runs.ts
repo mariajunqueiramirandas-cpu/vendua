@@ -46,6 +46,10 @@ const RUNS = `
   from agent_mailbox m join agent_actors a on a.id = m.actor_id
   where ${CRM_MAIL} and m.consumed_by_turn is null`;
 
+/** a payload's threadId as a uuid, or null: it is text in the mailbox */
+const THREAD = `case when r.thread_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  then r.thread_id::uuid end`;
+
 const TS_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
 
 // calendar sanity too: a loose regex passes values that 500 the timestamptz cast
@@ -123,14 +127,14 @@ export async function listRuns(
   const order = scheduled ? 'r.run_at asc, r.id asc' : 'r.created_at desc, r.id desc';
   const rows = await controlTx(sql, (tx) =>
     tx.unsafe(
-      `select r.id, r.kind, r.status, r.lead_id, r.thread_id::uuid as thread_id, r.tokens_in,
+      `select r.id, r.kind, r.status, r.lead_id, ${THREAD} as thread_id, r.tokens_in,
               r.tokens_out, r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at,
               r.run_at, r.source, r.promised,
               r.created_at::text as created_at_ts, r.run_at::text as run_at_ts,
               l.name as lead_name, th.agent_enabled as thread_agent_enabled
        from (${RUNS}) r
        left join leads l on l.id = r.lead_id
-       left join lead_threads th on th.id = (case when r.thread_id ~* '^[0-9a-f-]{36}$' then r.thread_id::uuid end)
+       left join lead_threads th on th.id = ${THREAD}
        where ${where.join(' and ')}
        order by ${order} limit ${p(limit)}`,
       params as never[],

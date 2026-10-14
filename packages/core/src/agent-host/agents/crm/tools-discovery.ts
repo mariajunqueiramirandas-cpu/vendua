@@ -1,4 +1,5 @@
 import { defineTool, s, ToolError, type Json, type ToolResult } from '@vendua/agent-runtime';
+import { PLATFORM_TENANT_ID } from '../../../platform/tenancy.ts';
 import type { Sql } from '../../../platform/db.ts';
 import { getLeadDetail, insertLeadTx, leadInsert, listLeads } from '../../../modules/leads.ts';
 import {
@@ -11,6 +12,7 @@ import { instagramHandle } from '../../../modules/threads.ts';
 import { contactFromUrl, isBrMobilePhone, phoneFromText } from '../../../crm/channels/discovery.ts';
 import { whatsappRegistered } from '../../../crm/channels/whatsapp.ts';
 import { instagramReadyTx, whatsappReadyTx } from '../../../crm/guardrails.ts';
+import { parseWakeupAt } from '../../../crm/agenda.ts';
 import { requestLeadTx } from '../../../crm/dispatch.ts';
 import { LEAD_FIELDS } from './fields.ts';
 import { addNoteAs, updateLeadAs } from './tools-lead.ts';
@@ -203,7 +205,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
   run: (ctx: Ctx, input): Promise<ToolResult> =>
     refusals(async (): Promise<ToolResult> => {
       const t = turn(ctx.state);
-      const { findings: rawFindings, sources: rawSources, nextActionAt: _n, ...fields } = input;
+      const { findings: rawFindings, sources: rawSources, ...fields } = input;
       const payload: Record<string, unknown> = { ...fields };
       for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
       const findings = rawFindings.trim();
@@ -233,6 +235,11 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
       if (!tags.includes('descoberto')) tags.push('descoberto');
       payload.tags = tags;
       const row = leadInsert(payload);
+      // a date set here is the agent's own plan (insertLeadTx books it), with the agent's floor
+      if (typeof row.next_action_at === 'string') {
+        const at = parseWakeupAt(row.next_action_at, ctx.now.getTime());
+        if (typeof at === 'string') throw new ToolError(`nextActionAt: ${at}`);
+      }
       row.whatsapp_verified = Boolean(row.whatsapp) && !whatsappDerived;
 
       const out = await crm(ctx, async (tx) => {
@@ -269,15 +276,16 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           if (igReady && typeof ig === 'string' && instagramHandle(ig)) return 'instagram';
           return null;
         };
-        /** a first contact waits on nothing already in flight: pending outreach mail, or any
-         *  outbound row (a failed send may still have reached the wire) */
+        /** a first contact waits on nothing already in flight: pending outreach mail, any
+         *  outbound row (a failed send may still have reached the wire), or a lead who already
+         *  wrote (their reply turn is the contact) */
         const outreachActive = async (leadId: string) => {
           const [hit] = await tx`
             select 1 from lead_messages m join lead_threads th on th.id = m.thread_id
-            where th.lead_id = ${leadId} and m.direction = 'out'
+            where th.lead_id = ${leadId} and m.direction in ('out', 'in')
             union all
             select 1 from agent_mailbox mb join agent_actors a on a.id = mb.actor_id
-            where a.agent_id = 'crm' and a.subject_kind = 'lead' and a.subject_id = ${leadId}
+            where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = 'crm' and a.subject_kind = 'lead' and a.subject_id = ${leadId}
               and mb.consumed_by_turn is null
               and mb.kind in ('lead.first_contact', 'timer.followup')
             limit 1`;

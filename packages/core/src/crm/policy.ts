@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import {
   DEFAULT_GUARDRAILS,
   DEFAULT_AGENT_RULES,
@@ -254,7 +255,7 @@ export async function discoveryBudgetTx(
           where kind = 'discovery' and finished_at > now() - interval '7 days'), 0)::int as spent,
         -- discovery work waiting in a mailbox, plus strategist briefs that never ran
         ((select count(*) from agent_mailbox m join agent_actors a on a.id = m.actor_id
-           where a.agent_id = 'crm-discovery' and m.consumed_by_turn is null)
+           where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = 'crm-discovery' and m.consumed_by_turn is null)
          + (select count(*) from discovery_briefs d
             where d.created_by = 'strategist' and d.enabled
               and d.created_at > now() - interval '7 days'
@@ -262,7 +263,7 @@ export async function discoveryBudgetTx(
               and not exists (select 1 from crm_turns r where r.brief_id = d.id)
               and not exists (
                 select 1 from agent_mailbox m join agent_actors a on a.id = m.actor_id
-                where a.agent_id = 'crm-discovery' and a.subject_id = d.id::text
+                where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = 'crm-discovery' and a.subject_id = d.id::text
                   and m.consumed_by_turn is null)))::int as open,
         -- exclude zero-cost runs: they'd deflate the unit estimate to 0
         coalesce((select avg(c)::int from (

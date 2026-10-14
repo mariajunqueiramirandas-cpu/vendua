@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import {
@@ -11,7 +12,7 @@ import { addInboundMessage, type Channel, type InboundResult } from '../modules/
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 import { isMerchantPhone } from '../admin/phones.ts';
-import { retireWakeupsOnInboundTx } from './agenda.ts';
+import { reserveParkedFollowupsTx, retireWakeupsOnInboundTx } from './agenda.ts';
 import { CRM_AGENT_ID, LEAD_SUBJECT, requestLeadTx } from './dispatch.ts';
 
 type ReplyGate = {
@@ -157,7 +158,7 @@ export async function ingestInbound(
     // a pending first contact can't serve the mail and would fire a "reopening"
     await tx`
       delete from agent_mailbox m using agent_actors a
-      where a.id = m.actor_id and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
+      where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
         and a.subject_id = ${res.leadId} and m.kind = 'lead.first_contact'
         and m.consumed_by_turn is null
     `;
@@ -228,4 +229,11 @@ export async function reserveUnansweredTx(tx: Sql, leadId: string | null): Promi
     if (out.mailboxId) n++;
   }
   return n;
+}
+
+/** Automation back on for a lead (or for all): what waited on it runs. Unanswered messages
+ *  first, so a lead who wrote meanwhile gets an answer rather than the old follow-up. */
+export async function reserveParkedTx(tx: Sql, leadId: string | null): Promise<void> {
+  await reserveUnansweredTx(tx, leadId);
+  await reserveParkedFollowupsTx(tx, leadId);
 }

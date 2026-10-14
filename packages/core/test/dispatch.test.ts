@@ -1,31 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
+import type { JsonObject } from '@vendua/agent-runtime';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { requestAgentTx, smartStartTx } from '../src/agent/dispatch.ts';
-import { claimRun, sweepBriefs, sweepStrategist } from '../src/agent/runner.ts';
+import { sweepBriefs, sweepStrategist } from '../src/crm/board.ts';
+import { scheduleTimerTx } from '../src/crm/agenda.ts';
+import { requestLeadTx, type LeadMailKind } from '../src/crm/dispatch.ts';
 import { anchorTx } from '../src/crm/schedule-anchors.ts';
 import { listRoutines, runJob } from '../src/crm/scheduler.ts';
-import { provenance, SOURCE_PRIORITY, TRIGGER_SOURCES } from '../src/agent/sources.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
-
-describe('trigger sources — pure', () => {
-  test('every source has a priority; a waiting customer outranks everything', () => {
-    for (const s of TRIGGER_SOURCES) expect(typeof SOURCE_PRIORITY[s]).toBe('number');
-    const min = Math.min(...Object.values(SOURCE_PRIORITY));
-    expect(SOURCE_PRIORITY.inbound).toBe(min);
-    expect(SOURCE_PRIORITY.callback).toBeLessThan(SOURCE_PRIORITY.followup);
-    expect(SOURCE_PRIORITY.staff).toBeLessThan(SOURCE_PRIORITY.brief);
-  });
-
-  test('callbacks are promises by default, nothing else is', () => {
-    expect(provenance('callback').promised).toBe(true);
-    expect(provenance('followup').promised).toBe(false);
-    expect(provenance('staff').promised).toBe(false);
-  });
-});
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
@@ -77,6 +62,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
   const localHour = async (tz: string) =>
     (await sql<{ h: number }[]>`select extract(hour from now() at time zone ${tz})::int as h`)[0]!
       .h;
+  /** the local weekday right now in the workspace timezone, 0 = Sunday */
+  const localWeekday = async (tz: string) =>
+    (await sql<{ d: number }[]>`select extract(dow from now() at time zone ${tz})::int as d`)[0]!.d;
 
   test('anchors: the latest occurrence is past, the next one is one period later, at the hour', async () => {
     await migrate(sql, MIGRATIONS);
@@ -122,36 +110,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
                 on conflict (kind, driver) do update set enabled = true`;
       const leadId = await mkLead({ email: `smart-${nonce}@example.com` });
       const noChannel = await mkLead();
-      expect(
-        await controlTx(sql, (tx) =>
-          smartStartTx(tx, { kind: 'reply', leadId: noChannel }, provenance('inbound')),
-        ),
-      ).toBeNull();
-      const start = (source: 'inbound' | 'staff' | 'followup', params = {}) =>
+      const file = (lead: string, kind: LeadMailKind, source: string, payload: JsonObject = {}) =>
         controlTx(sql, (tx) =>
-          smartStartTx(tx, { kind: 'reply', leadId, params }, provenance(source)),
+          requestLeadTx(tx, {
+            leadId: lead,
+            kind,
+            source,
+            dedupeKey: `dsp-${nonce}-${crypto.randomUUID()}`,
+            payload,
+          }),
         );
-      const deferred = await start('inbound');
-      expect(deferred).not.toBeNull();
+      expect((await file(noChannel, 'message.inbound', 'whatsapp')).deliverAt).toBeNull();
+      const deferred = await file(leadId, 'message.inbound', 'whatsapp');
+      expect(deferred.deliverAt).not.toBeNull();
       // quiet ends at the top of hour h+2 — between 1 and 2 hours from now
-      const wait = deferred!.getTime() - Date.now();
+      const wait = deferred.deliverAt!.getTime() - Date.now();
       expect(wait).toBeGreaterThan(60 * 60_000 - 5_000);
       expect(wait).toBeLessThanOrEqual(2 * 60 * 60_000);
-      expect(await start('staff')).toBeNull();
+      // the mailbox row waits for the same window
+      const [row] = await sql<{ deliver_at: Date }[]>`
+        select deliver_at from agent_mailbox where id = ${deferred.mailboxId}`;
+      expect(row!.deliver_at.getTime()).toBe(deferred.deliverAt!.getTime());
+      expect(
+        (await file(leadId, 'staff.request', 'staff', { kind: 'reply' })).deliverAt,
+      ).toBeNull();
       // pinned to an undeliverable channel (no whatsapp here) — nothing to wait for
-      expect(await start('inbound', { channel: 'whatsapp' })).toBeNull();
-      expect(await start('inbound', { channel: 'email' })).not.toBeNull();
-      expect(await start('followup', { draftOnly: true })).toBeNull();
+      expect(
+        (await file(leadId, 'message.inbound', 'whatsapp', { channel: 'whatsapp' })).deliverAt,
+      ).toBeNull();
+      expect(
+        (await file(leadId, 'message.inbound', 'whatsapp', { channel: 'email' })).deliverAt,
+      ).not.toBeNull();
+      expect(
+        (await file(leadId, 'timer.followup', 'agent', { draftOnly: true })).deliverAt,
+      ).toBeNull();
       // copilot drafts everything — nothing to wait for
       await setSetting('agent', { level: 'copilot' });
-      expect(await start('inbound')).toBeNull();
+      expect((await file(leadId, 'message.inbound', 'whatsapp')).deliverAt).toBeNull();
       // supervised drafts a first contact — it runs now; with history it waits
       await setSetting('agent', { level: 'supervised' });
-      expect(await start('followup')).toBeNull();
+      expect((await file(leadId, 'timer.followup', 'agent')).deliverAt).toBeNull();
       // outside quiet hours nothing moves
       await setSetting('guardrails', { timezone: tz, quietStart: '00:00', quietEnd: '00:00' });
       await setSetting('agent', { level: 'autopilot' });
-      expect(await start('inbound')).toBeNull();
+      expect((await file(leadId, 'message.inbound', 'whatsapp')).deliverAt).toBeNull();
     } finally {
       await restore('agent', priorAgent);
       await restore('guardrails', priorGr);
@@ -160,27 +162,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
                   where kind = 'email' and driver = 'log'`;
       else await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
     }
-  });
-
-  test('claim order: a waiting customer beats an older discovery brief', async () => {
-    await migrate(sql, MIGRATIONS);
-    await sql`delete from agent_runs where status = 'queued'`;
-    const leadId = await mkLead();
-    const ids = await controlTx(sql, async (tx) => {
-      const brief = await requestAgentTx(tx, {
-        kind: 'discovery',
-        source: 'brief',
-        params: { query: 'q' },
-      });
-      const reply = await requestAgentTx(tx, { kind: 'reply', source: 'inbound', leadId });
-      return { brief: brief.runId!, reply: reply.runId! };
-    });
-    // the brief is older — age alone would pick it; the reply must be claimable now
-    await sql`update agent_runs set created_at = now() - interval '1 hour' where id = ${ids.brief}`;
-    await sql`update agent_runs set run_at = null where id = ${ids.reply}`;
-    const first = await claimRun(sql);
-    expect(first?.id).toBe(ids.reply);
-    await sql`update agent_runs set status = 'canceled' where id in ${sql([ids.brief, ids.reply])}`;
   });
 
   test('POST /agent/requests: board, single lead, bulk — one endpoint', async () => {
@@ -192,15 +173,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
     );
     expect(board.status).toBe(201);
     const b = (await board.json()) as { runId: string };
-    const [row] = await sql<
-      { source: string; lead_id: string | null; params: { query?: string } }[]
-    >`
-      select source, lead_id, params from agent_runs where id = ${b.runId}
+    const [row] = await sql<{ agent_id: string; source: string; payload: { query?: string } }[]>`
+      select a.agent_id, m.source, m.payload from agent_mailbox m
+      join agent_actors a on a.id = m.actor_id where m.id = ${b.runId}
     `;
-    expect(row!.source).toBe('staff');
-    expect(row!.lead_id).toBeNull();
-    expect(row!.params.query).toBe('docerias fortaleza');
+    expect(row).toMatchObject({ agent_id: 'crm-discovery', source: 'staff' });
+    expect(row!.payload.query).toBe('docerias fortaleza');
     const leadId = await mkLead();
+    // a board request names no lead, so only discovery and the strategist may ask for it
+    const boardOutreach = await post(
+      '/control/v1/agent/requests',
+      { kind: 'outreach' },
+      'board-out',
+    );
+    expect(boardOutreach.status).toBe(422);
     const noLeadStrategist = await post(
       '/control/v1/agent/requests',
       { kind: 'strategist', leadIds: [leadId] },
@@ -217,12 +203,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
     expect(one.status).toBe(201);
     const o = (await one.json()) as { runId: string; runs: unknown[] };
     expect(o.runs).toHaveLength(1);
-    const [mail] = await sql<{ source: string; payload: { text?: string; forRunId?: string } }[]>`
-      select source, payload from agent_inbox where lead_id = ${leadId} and consumed_at is null
+    const [mail] = await sql<{ source: string; kind: string; payload: { focus?: string } }[]>`
+      select source, kind, payload from agent_mailbox where id = ${o.runId}
     `;
-    expect(mail!.source).toBe('staff');
-    expect(mail!.payload.text).toContain('mandar a proposta');
-    expect(mail!.payload.forRunId).toBe(o.runId);
+    expect(mail).toMatchObject({ source: 'staff', kind: 'staff.request' });
+    expect(mail!.payload.focus).toContain('mandar a proposta');
     const offLead = await mkLead({ agent_mode: 'off' });
     const bulk = await post(
       '/control/v1/agent/requests',
@@ -234,86 +219,88 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
       runs: { leadId: string }[];
       skipped: { leadId: string; code: string; reason: string }[];
     };
-    // the live lead's ask delivers into its existing run; the off lead is reported
     expect(bb.runs.map((r) => r.leadId)).toEqual([leadId]);
     expect(bb.skipped).toEqual([{ leadId: offLead, code: 'LEAD_SUPPRESSED', reason: 'agent off' }]);
-    await sql`update agent_runs set status = 'canceled' where id = ${b.runId} or lead_id = ${leadId}`;
   });
 
   test('PATCH nextActionAt writes the agenda: staff date replaces the agent plan, clear cancels', async () => {
     await migrate(sql, MIGRATIONS);
     const leadId = await mkLead();
-    await sql`
-      insert into agent_wakeups (lead_id, at, focus, created_by)
-      values (${leadId}, now() + interval '3 days', 'plano do agente', 'agent')
+    await controlTx(sql, (tx) =>
+      scheduleTimerTx(tx, {
+        leadId,
+        at: new Date(Date.now() + 3 * 86_400_000),
+        focus: 'plano do agente',
+        requested: false,
+        by: 'agent',
+      }),
+    );
+    const timers = () => sql<{ payload: { by?: string } }[]>`
+      select m.payload from agent_mailbox m join agent_actors a on a.id = m.actor_id
+      where a.subject_id = ${leadId} and m.kind like 'timer.%' and m.consumed_by_turn is null
     `;
     const at = new Date(Date.now() + 86_400_000).toISOString();
     const res = await patch(`/control/v1/leads/${leadId}`, { nextActionAt: at }, 'patch-set');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { lead: { nextActionAt: string | null } };
     expect(Date.parse(body.lead.nextActionAt!)).toBe(Date.parse(at));
-    const pending = await sql<{ created_by: string; focus: string }[]>`
-      select created_by, focus from agent_wakeups where lead_id = ${leadId} and status = 'pending'
-    `;
-    expect(pending.map((p) => p.created_by)).toEqual(['staff']);
+    expect((await timers()).map((p) => p.payload.by)).toEqual(['staff']);
     const cleared = await patch(`/control/v1/leads/${leadId}`, { nextActionAt: null }, 'patch-clr');
     expect(cleared.status).toBe(200);
     const after = (await cleared.json()) as { lead: { nextActionAt: string | null } };
     expect(after.lead.nextActionAt).toBeNull();
-    const left = await sql`
-      select 1 from agent_wakeups where lead_id = ${leadId} and status = 'pending'
-    `;
-    expect(left).toHaveLength(0);
+    expect(await timers()).toHaveLength(0);
   });
 
   test('briefs run once per daily anchor; the weekly review once per weekly anchor', async () => {
     await migrate(sql, MIGRATIONS);
     const priorAgent = await getSetting('agent');
     const enabled = await sql<{ id: string }[]>`select id from discovery_briefs where enabled`;
+    let due: { id: string } | undefined;
+    let done: { id: string } | undefined;
     try {
       await sql`update discovery_briefs set enabled = false where enabled`;
-      await sql`delete from agent_runs where status = 'queued' and kind in ('discovery', 'strategist')`;
       const tz =
         ((await getSetting('guardrails')) as { timezone?: string } | undefined)?.timezone ??
         'America/Sao_Paulo';
       const h = await localHour(tz);
+      const dow = await localWeekday(tz);
       await setSetting('agent', {
         level: 'supervised',
-        schedule: { discoveryHour: h, weeklyDay: 1, weeklyHour: 8 },
+        schedule: { discoveryHour: h, weeklyDay: dow, weeklyHour: h },
       });
       const anchor = (await controlTx(sql, (tx) => anchorTx(tx, { hour: h }))).last;
-      const [due] = await sql<{ id: string }[]>`
+      [due] = await sql<{ id: string }[]>`
         insert into discovery_briefs (name, query, enabled, last_run_at)
         values (${`due ${nonce}`}, 'q due', true, ${new Date(anchor.getTime() - 60_000)})
         returning id
       `;
-      const [done] = await sql<{ id: string }[]>`
+      [done] = await sql<{ id: string }[]>`
         insert into discovery_briefs (name, query, enabled, last_run_at)
         values (${`done ${nonce}`}, 'q done', true, ${new Date(anchor.getTime() + 1_000)})
         returning id
       `;
-      await sweepBriefs(sql);
-      const runs = await sql<{ brief: string; source: string }[]>`
-        select params->>'briefId' as brief, source from agent_runs
-        where kind = 'discovery' and status = 'queued'
-          and params->>'briefId' in ${sql([due!.id, done!.id])}
+      const briefRuns = () => sql<{ brief: string; source: string }[]>`
+        select a.subject_id as brief, m.source from agent_mailbox m
+        join agent_actors a on a.id = m.actor_id
+        where a.agent_id = 'crm-discovery' and m.kind = 'timer.daily'
+          and a.subject_id in ${sql([due!.id, done!.id])}
       `;
-      expect([...runs]).toEqual([{ brief: due!.id, source: 'brief' }]);
+      await sweepBriefs(sql);
+      expect([...(await briefRuns())]).toEqual([{ brief: due!.id, source: 'schedule' }]);
+      // the brief ran at this anchor: a second pass files nothing new for it
+      await sweepBriefs(sql);
+      expect(await briefRuns()).toHaveLength(1);
+
       // the weekly review fires once, then waits for the next anchor
-      await sql`delete from agent_runs where kind = 'strategist' and lead_id is null
-                and created_at >= now() - interval '8 days'`;
-      // no model configured → no review; one set up before the anchor → it fires
-      expect(await sweepStrategist(sql)).toBe(false);
-      await sql`insert into control_integrations (kind, driver, enabled, updated_at)
-                values ('llm', 'mock', true, now() - interval '30 days')
-                on conflict (kind, driver) do update set enabled = true, updated_at = excluded.updated_at`;
+      const weekAnchor = (await controlTx(sql, (tx) => anchorTx(tx, { hour: h, weekday: dow })))
+        .last;
+      await sql`delete from agent_mailbox where dedupe_key = ${`crm:weekly:${weekAnchor.toISOString()}`}`;
       expect(await sweepStrategist(sql)).toBe(true);
       expect(await sweepStrategist(sql)).toBe(false);
-      await sql`delete from discovery_briefs where id in ${sql([due!.id, done!.id])}`;
     } finally {
-      await sql`delete from control_integrations where kind = 'llm' and driver = 'mock'`;
-      await sql`update agent_runs set status = 'canceled'
-                where status = 'queued' and kind in ('discovery', 'strategist')`;
+      const made = [due?.id, done?.id].filter((id): id is string => !!id);
+      if (made.length) await sql`delete from discovery_briefs where id in ${sql(made)}`;
       if (enabled.length)
         await sql`update discovery_briefs set enabled = true where id in ${sql(enabled.map((e) => e.id))}`;
       await restore('agent', priorAgent);
@@ -348,14 +335,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
     await sql`delete from scheduled_jobs where name = ${name}`;
     const routines = await listRoutines(sql);
     const names = routines.map((r) => r.name);
-    for (const n of [
-      'queue',
-      'agenda',
-      'briefs',
-      'weekly-review',
-      'discord-digest',
-      'pipeline-snapshot',
-    ])
+    for (const n of ['briefs', 'weekly-review', 'discord-digest', 'pipeline-snapshot'])
       expect(names).toContain(n);
     const briefs = routines.find((r) => r.name === 'briefs')!;
     expect(briefs.cadence).toMatch(/^todo dia às \d\d:00$/);

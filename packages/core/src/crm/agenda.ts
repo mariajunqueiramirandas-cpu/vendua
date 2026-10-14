@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { CRM_AGENT_ID, LEAD_SUBJECT, requestLeadTx } from './dispatch.ts';
 
 // The agenda (ADR 0016, on Agent Runtime v3): every future touch on a lead is a timer row in the
@@ -67,7 +68,7 @@ const TIMER_SELECT = (tx: Sql) => tx`
   from agent_mailbox m
   join agent_actors a on a.id = m.actor_id
   left join leads l on l.id::text = a.subject_id
-  where a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
+  where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
     and m.kind = any(${TIMER_KINDS})`;
 
 /** strict ISO datetime with explicit offset — date-only/bare forms resolve as guesses */
@@ -98,7 +99,7 @@ async function dropTimersTx(
   const rows = await tx<{ id: string; payload: TimerRow['payload'] }[]>`
     select m.id, m.payload from agent_mailbox m
     join agent_actors a on a.id = m.actor_id
-    where a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
+    where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
       and a.subject_id = ${leadId} and m.kind = any(${TIMER_KINDS})
       and m.consumed_by_turn is null
     for update of m skip locked`;
@@ -120,7 +121,7 @@ export async function syncNextActionTx(tx: Sql, leadId: string): Promise<void> {
              when (m.payload->>'requested')::boolean then 'requested' else 'auto' end
       from agent_mailbox m
       join agent_actors a on a.id = m.actor_id
-      where a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
+      where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
         and a.subject_id = ${leadId} and m.kind = any(${TIMER_KINDS})
         and m.consumed_by_turn is null
       order by m.deliver_at limit 1
@@ -299,9 +300,57 @@ export async function dropLeadMailTx(tx: Sql, leadId: string): Promise<number> {
   await lockLead(tx, leadId);
   const rows = await tx<{ id: string }[]>`
     delete from agent_mailbox m using agent_actors a
-    where a.id = m.actor_id and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
+    where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
       and a.subject_id = ${leadId} and m.consumed_by_turn is null
     returning m.id`;
   if (rows.length) await syncNextActionTx(tx, leadId);
   return rows.length;
+}
+
+/** The agent's own follow-ups that came due while automation was off for them (their turn ran
+ *  parked, made no model call and left no date behind): with automation back on, each lead's
+ *  latest one is filed again, now. requestLeadTx re-checks the gates, so a lead still parked gets
+ *  nothing. A cost-capped lead stays out: raising the cap is not "automation back on". */
+export async function reserveParkedFollowupsTx(tx: Sql, leadId: string | null): Promise<number> {
+  const rows = await tx<{ turn_id: string; lead_id: string; focus: string | null }[]>`
+    select r.turn_id, r.lead_id, r.focus from (
+      select distinct on (t.lead_id) t.turn_id, t.lead_id, t.params->>'focus' as focus,
+        t.status, t.source, t.steps, t.error
+      from crm_turns t
+      join leads l on l.id = t.lead_id
+      where (${leadId}::uuid is null or t.lead_id = ${leadId}::uuid)
+        and t.finished_at > now() - interval '90 days'
+        and l.agent_mode <> 'off' and l.agent_paused_at is null
+        and l.unsubscribed_at is null and l.archived_at is null
+      order by t.lead_id, t.finished_at desc
+    ) r
+    where r.status = 'done' and r.source = 'followup' and r.steps = 0 and r.error is not null
+      and r.error not like '%custo%'
+    limit 500`;
+  let n = 0;
+  for (const r of rows) {
+    const [pending] = await tx`
+      select 1 from agent_mailbox m join agent_actors a on a.id = m.actor_id
+      where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID}
+        and a.subject_kind = ${LEAD_SUBJECT} and a.subject_id = ${r.lead_id}
+        and m.consumed_by_turn is null
+      limit 1`;
+    if (pending) continue;
+    const out = await requestLeadTx(tx, {
+      leadId: r.lead_id,
+      kind: 'timer.followup',
+      source: 'agent',
+      dedupeKey: `crm:refollow:${r.turn_id}`,
+      payload: {
+        focus: (r.focus ?? 'retomar o follow-up').slice(0, 500),
+        requested: false,
+        by: 'agent',
+      },
+    });
+    if (out.mailboxId) {
+      await syncNextActionTx(tx, r.lead_id);
+      n++;
+    }
+  }
+  return n;
 }

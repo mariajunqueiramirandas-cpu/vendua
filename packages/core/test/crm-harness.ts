@@ -71,7 +71,14 @@ export function crmBench(tag = 'crm') {
       key(),
     );
   }
+  /** every subject this bench ran: its unconsumed work goes at teardown, so a later file's
+   *  budgets and queues don't count it */
+  const ran = new Set<string>();
   async function teardown() {
+    await sql`
+      delete from agent_mailbox m using agent_actors a
+      where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID}
+        and a.subject_id = any(${[...ran]}) and m.consumed_by_turn is null`;
     await sql`delete from control_settings where key in ('agent', 'guardrails')`;
     await sql.end();
     await (appSql as unknown as { end: () => Promise<void> }).end();
@@ -121,6 +128,7 @@ export function crmBench(tag = 'crm') {
 
   /** Runs this test's due actors until none is left. The store claims on the database clock. */
   async function settle(rt: Runtime<Sql>, lanes: Lane[] = ['followup', 'background']) {
+    for (const id of mine) ran.add(id);
     for (let i = 0; i < 30; i++) {
       await sql`
         update agent_actors set next_wake_at = null

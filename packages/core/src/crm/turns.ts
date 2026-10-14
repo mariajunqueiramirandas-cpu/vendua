@@ -13,6 +13,7 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { afterCommit, type Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { CRM_AGENT_ID, CRM_DISCOVERY_ID, CRM_STRATEGIST_ID, LEAD_SUBJECT } from './dispatch.ts';
+import { syncNextActionTx } from './agenda.ts';
 import { TRIGGER_OF } from './jobs.ts';
 
 // What the CRM keeps of a finished turn (ADR 0030 steps 2–4): one crm_turns row, written by the
@@ -68,11 +69,10 @@ async function projectTx(
       ? info.params.briefId
       : null;
   // staff text rides in params: bounded so the row stays under its 8 KB check
-  const params = {
-    ...info.params,
-    ...(info.params.text ? { text: info.params.text.slice(0, 1500) } : {}),
-    ...(info.params.focus ? { focus: info.params.focus.slice(0, 1500) } : {}),
-  };
+  let params: Record<string, Json> = Object.fromEntries(
+    Object.entries(info.params).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 1500) : v]),
+  );
+  if (Buffer.byteLength(JSON.stringify(params)) > 8000) params = { kind: info.kind };
   await controlTx(
     tx,
     (c) => c`
@@ -180,14 +180,30 @@ async function debriefTx(tx: Sql, turnId: string, actorId: string, info: TurnInf
 export async function crmTurnEnded(tx: FencedTx<Sql>, end: TurnEnd): Promise<void> {
   if (!isCrmTurn(end)) return;
   const info = turn(end.state);
-  // a maintenance turn (compaction) did no CRM work
-  if (info.id !== end.turnId) return;
   const sql = tx.host;
+  // a maintenance turn (compaction) did no CRM work, but its spend is the subject's
+  if (info.id !== end.turnId) {
+    const { cost_usd } = await totalsTx(sql, end.actorId, end.turnId);
+    const cents = Math.round(cost_usd * 100);
+    if (cents > 0)
+      await controlTx(
+        sql,
+        (c) => c`
+          update crm_turns set cost_cents = cost_cents + ${cents}
+          where turn_id = (select turn_id from crm_turns where actor_id = ${end.actorId}
+                           order by finished_at desc limit 1)`,
+      );
+    return;
+  }
   // a parked subject (cost cap, paused lead) finished without a model call: say why
   const parked = (end.state.context.subject as { parked?: string | null } | null)?.parked ?? null;
   const { leadId, costCents } = await projectTx(sql, end, info, 'done', parked);
   // a lowered cap parks the lead without spending: the flag still goes up
-  if (leadId) await leadOverCostCapTx(sql, leadId);
+  if (leadId) {
+    await leadOverCostCapTx(sql, leadId);
+    // the timer this turn consumed no longer is the lead's next action
+    await controlTx(sql, (c) => syncNextActionTx(c, leadId));
+  }
   if (end.agentId === CRM_DISCOVERY_ID) await debriefTx(sql, end.turnId, end.actorId, info);
   afterCommit(sql, () => {
     emitControlEvent('run.update', end.turnId);
@@ -221,6 +237,7 @@ export async function crmTurnFailed(tx: FencedTx<Sql>, f: TurnFailure): Promise<
       },
       { dedupeKey: `run:${f.turnId}:failed` },
     );
+    if (leadId) await syncNextActionTx(c, leadId);
     // a lead who wrote is waiting on an answer nobody will send: a person picks it up
     if (leadId && info.kind === 'reply')
       await c`

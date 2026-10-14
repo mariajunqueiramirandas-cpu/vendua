@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { CRM_AGENT_ID } from '../crm/dispatch.ts';
 import { controlTx } from './control.ts';
 
@@ -6,7 +7,6 @@ import { controlTx } from './control.ts';
 
 export type MetricsKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 const KINDS: MetricsKind[] = ['triage', 'reply', 'outreach', 'discovery', 'strategist'];
-
 
 export interface KindMetrics {
   kind: MetricsKind;
@@ -124,7 +124,7 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
           where m.consumed_by_turn is not null and m.deliver_at >= ${from} and m.deliver_at <= ${to}
         )::int as fired
       from agent_mailbox m join agent_actors a on a.id = m.actor_id
-      where a.agent_id = ${CRM_AGENT_ID} and m.kind like 'timer.%'`;
+      where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and m.kind like 'timer.%'`;
 
     return {
       window: { from: from.toISOString(), to: to.toISOString() },

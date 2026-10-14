@@ -877,8 +877,8 @@ export async function updateLeadTx(
     (cur.agent_paused_at && 'agent_paused_at' in set && set.agent_paused_at === null) ||
     (cur.agent_mode === 'off' && typeof set.agent_mode === 'string' && set.agent_mode !== 'off')
   ) {
-    const { reserveUnansweredTx } = await import('../crm/inbound.ts');
-    await reserveUnansweredTx(tx, id);
+    const { reserveParkedTx } = await import('../crm/inbound.ts');
+    await reserveParkedTx(tx, id);
   }
   if (typeof set.state === 'string' && set.state !== cur.state) {
     // value_cents stamps the post-update deal value at the transition

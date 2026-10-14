@@ -1934,7 +1934,6 @@ export function createApp({
     const value = key === 'staff' ? normalizeStaff(body.value) : body.value;
     const res = await putSetting(sql, key, value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    // A lowered cap strands over-cap leads (queued runs park silently) — flag them now; deduped.
     return c.json(res.body);
   });
 
@@ -2219,15 +2218,30 @@ export function createApp({
     if (body.params != null && (typeof body.params !== 'object' || Array.isArray(body.params))) {
       throw new HttpError(422, 'BAD_REQUEST', 'params must be an object');
     }
+    // ids and provenance in params are the server's to set: a stray one would reach a uuid cast
+    const {
+      threadId: _t,
+      messageId: _m,
+      briefId: _b,
+      briefName: _bn,
+      kind: _k,
+      text: _x,
+      by: _by,
+      src: _s,
+      ...staffParams
+    } = (body.params as Record<string, unknown>) ?? {};
+    const cap = staffParams.monidCapUsd;
+    if (cap !== undefined && (typeof cap !== 'number' || !(cap >= 0 && cap <= 5)))
+      throw new HttpError(422, 'BAD_REQUEST', 'params.monidCapUsd must be a number in 0–5');
     const params: Record<string, unknown> = {
-      ...((body.params as Record<string, unknown>) ?? {}),
+      ...staffParams,
       ...(typeof body.focus === 'string' && body.focus.trim() ? { focus: body.focus.trim() } : {}),
       ...(wantChannel ? { channel: wantChannel } : {}),
       ...(body.draftOnly === true ? { draftOnly: true } : {}),
       ...(goal ? { goal } : {}),
     };
     // params lands verbatim in the mailbox payload (≤32 KB) and crm_turns.params — bound it.
-    if (JSON.stringify(params).length > 6_000)
+    if (Buffer.byteLength(JSON.stringify(params)) > 6_000)
       throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 6 KB');
     const text = goal ? `a equipe definiu a meta '${goal}'` : null;
     type Out = {

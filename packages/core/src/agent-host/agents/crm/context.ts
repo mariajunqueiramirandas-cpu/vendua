@@ -75,6 +75,7 @@ export interface Workspace {
 
 const MONID_TOOLS = ['maps_lookup', 'instagram_profile', 'serp'];
 const DISCOVERY_TOOLS = ['web_search', 'read_pages'];
+const RESEARCH_TOOLS = [...DISCOVERY_TOOLS, ...MONID_TOOLS];
 
 export async function workspaceTx(tx: Sql): Promise<Workspace> {
   return controlTx(tx, async (c) => {
@@ -357,7 +358,14 @@ export async function huntSubjectTx(
     if (p.briefName) parts.push(`BRIEF: ${p.briefName}`);
     const seg = segmentLines(await segmentStats(c));
     if (seg) parts.push(seg);
-    const parked = t.source.startsWith('staff') ? null : await automationParked(c, 'discovery');
+    let parked = t.source.startsWith('staff') ? null : await automationParked(c, 'discovery');
+    // a hunt with nothing to research with would only invent prospects: it costs no model call
+    if (!parked) {
+      const { disabled } = await workspaceTx(c);
+      if (RESEARCH_TOOLS.every((n) => disabled[n]))
+        parked =
+          'discovery sem ferramenta de pesquisa — configure a integração de descoberta ou a MONID_API_KEY';
+    }
     return {
       text: parts.join('\n\n') || '(sem consulta)',
       memory: await promptMemoryTx(c, p.segment ?? null),

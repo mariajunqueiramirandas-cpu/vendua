@@ -1,4 +1,4 @@
-import { defineTool, s, type Json } from '@vendua/agent-runtime';
+import { defineTool, type Json, s, ToolError } from '@vendua/agent-runtime';
 import type { Sql } from '../../../platform/db.ts';
 import { HttpError } from '../../../platform/http.ts';
 import { addActivity, createTask } from '../../../modules/activities.ts';
@@ -291,6 +291,8 @@ export const planTool = defineTool<{ items: PlanItem[] }, Sql>({
         return { step, status, note };
       };
       const steps = input.items.map(norm).filter((x) => x !== null);
+      if (!steps.length)
+        throw new ToolError('every item needs a step: a blank plan changes nothing');
       const next = await crm(ctx, async (tx) => {
         const [cur] = await tx<{ agent_plan: unknown }[]>`
           select agent_plan from leads where id = ${leadId} for update`;

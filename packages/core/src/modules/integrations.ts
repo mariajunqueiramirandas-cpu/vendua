@@ -895,8 +895,8 @@ export async function putSetting(
     `;
     // replies back on (or a raised cost cap): what leads wrote meanwhile gets its answer
     if (key === 'agent' || key === 'guardrails') {
-      const { reserveUnansweredTx } = await import('../crm/inbound.ts');
-      await reserveUnansweredTx(tx, null);
+      const { reserveParkedTx } = await import('../crm/inbound.ts');
+      await reserveParkedTx(tx, null);
     }
     return { status: 200, body: { key, value } };
   });

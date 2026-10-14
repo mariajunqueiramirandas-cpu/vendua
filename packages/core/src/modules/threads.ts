@@ -877,8 +877,8 @@ export async function setThreadAgent(
         update leads set agent_paused_at = null, updated_at = now()
         where id = ${rows[0].lead_id} and agent_paused_at is not null
       `;
-      const { reserveUnansweredTx } = await import('../crm/inbound.ts');
-      await reserveUnansweredTx(tx, rows[0].lead_id);
+      const { reserveParkedTx } = await import('../crm/inbound.ts');
+      await reserveParkedTx(tx, rows[0].lead_id);
     }
     return { status: 200, body: { thread: threadJson(rows[0]!) } };
   });

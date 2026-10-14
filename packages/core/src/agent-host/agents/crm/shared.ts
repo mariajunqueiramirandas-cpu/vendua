@@ -136,6 +136,8 @@ const PARAM_KEYS = [
   'by',
 ] as const;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** The turn a batch starts: the decisive row sets the job; params merge, the decisive row last. */
 export function turnOf(
   batch: readonly { kind: string; source: string; payload: Json }[],
@@ -149,6 +151,8 @@ export function turnOf(
     const p = obj(r.payload);
     for (const k of PARAM_KEYS) if (p[k] !== undefined && p[k] !== null) params[k] = p[k]!;
   }
+  // tools cast it: anything but a uuid (old mail, a hand-written payload) is no thread
+  if (typeof params.threadId !== 'string' || !UUID.test(params.threadId)) delete params.threadId;
   return {
     ...EMPTY_TURN,
     id,

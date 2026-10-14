@@ -4,6 +4,7 @@ import { requestBoardTx, requestLeadTx } from '../src/crm/dispatch.ts';
 import { adoptLegacy } from '../src/crm/legacy.ts';
 import { deliverQueued } from '../src/crm/outbox.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { upsertIntegration } from '../src/modules/integrations.ts';
 import { approveMessage, composeMessageTx } from '../src/modules/threads.ts';
 import { PLATFORM_TENANT_ID, TenantResolver } from '../src/platform/tenancy.ts';
 import { call, crmBench, OWNER_URL, say } from './crm-harness.ts';
@@ -285,48 +286,67 @@ describe.skipIf(!OWNER_URL)('CRM agents on Runtime v3 (db)', () => {
     expect(tasks).toHaveLength(1);
   });
 
-  test('discovery files a researched lead and wakes its agent for the first contact', async () => {
-    await settings('autopilot');
-    const hunt = crypto.randomUUID();
-    mine.add(hunt);
-    const wa = PHONE();
-    await controlTx(appSql, (tx) =>
-      requestBoardTx(tx, {
-        agent: 'crm-discovery',
-        subject: { kind: 'hunt', id: hunt },
-        kind: 'staff.request',
-        source: 'staff',
-        dedupeKey: `crm:staff:${hunt}`,
-        payload: { kind: 'discovery', query: 'doceria campinas', target: 2 },
-      }),
-    );
-    const { rt, adapter } = runtime([
-      call('create_lead', { name: 'Sem pesquisa', whatsapp: wa, findings: 'curto' }),
-      call('create_lead', {
-        name: `Doce Lar ${nonce}`,
-        city: 'Campinas',
-        whatsapp: `https://wa.me/${wa.replace(/\D/g, '')}`,
-        findings: 'Doceria artesanal, vende pelo WhatsApp sem link de pedido próprio.',
-        fitScore: 9,
-        intentScore: 8,
-      }),
-      call('update_lead', { lead: 'l99', segment: 'doces' }),
-      say('feito'),
-    ]);
-    await settle(rt, ['background']);
-    const contents = adapter.requests.map((r) => JSON.stringify(r.messages.at(-1)));
-    expect(contents[1]).toContain('FINDINGS_REQUIRED');
-    const [created] = await sql<{ id: string; whatsapp: string; tags: string[] }[]>`
+  /** discovery parks without a research tool: the mock provider stands in for the real one */
+  async function withMockDiscovery(fn: () => Promise<void>) {
+    const prior = await sql<{ driver: string; enabled: boolean }[]>`
+      select driver, enabled from control_integrations where kind = 'discovery'`;
+    await upsertIntegration(appSql, { kind: 'discovery', driver: 'mock', enabled: true }, key());
+    try {
+      await fn();
+    } finally {
+      await sql`delete from control_integrations where kind = 'discovery'`;
+      for (const d of prior)
+        await upsertIntegration(
+          appSql,
+          { kind: 'discovery', driver: d.driver, enabled: d.enabled },
+          key(),
+        );
+    }
+  }
+
+  test('discovery files a researched lead and wakes its agent for the first contact', () =>
+    withMockDiscovery(async () => {
+      await settings('autopilot');
+      const hunt = crypto.randomUUID();
+      mine.add(hunt);
+      const wa = PHONE();
+      await controlTx(appSql, (tx) =>
+        requestBoardTx(tx, {
+          agent: 'crm-discovery',
+          subject: { kind: 'hunt', id: hunt },
+          kind: 'staff.request',
+          source: 'staff',
+          dedupeKey: `crm:staff:${hunt}`,
+          payload: { kind: 'discovery', query: 'doceria campinas', target: 2 },
+        }),
+      );
+      const { rt, adapter } = runtime([
+        call('create_lead', { name: 'Sem pesquisa', whatsapp: wa, findings: 'curto' }),
+        call('create_lead', {
+          name: `Doce Lar ${nonce}`,
+          city: 'Campinas',
+          whatsapp: `https://wa.me/${wa.replace(/\D/g, '')}`,
+          findings: 'Doceria artesanal, vende pelo WhatsApp sem link de pedido próprio.',
+          fitScore: 9,
+          intentScore: 8,
+        }),
+        call('update_lead', { lead: 'l99', segment: 'doces' }),
+        say('feito'),
+      ]);
+      await settle(rt, ['background']);
+      const contents = adapter.requests.map((r) => JSON.stringify(r.messages.at(-1)));
+      expect(contents[1]).toContain('FINDINGS_REQUIRED');
+      const [created] = await sql<{ id: string; whatsapp: string; tags: string[] }[]>`
       select id, whatsapp, tags from leads where name = ${`Doce Lar ${nonce}`}`;
-    expect(created!.whatsapp.replace(/\D/g, '')).toBe(wa.replace(/\D/g, ''));
-    expect(created!.tags).toContain('descoberto');
-    // the model reads refs, never lead ids
-    expect(contents[2]).not.toContain(created!.id);
-    expect((await mail(created!.id)).map((m) => m.kind)).toEqual(['lead.first_contact']);
-    const [t] =
-      await sql`select leads_created, kind from crm_turns where params->>'query' = 'doceria campinas' order by finished_at desc limit 1`;
-    expect(t).toMatchObject({ leads_created: 1, kind: 'discovery' });
-  });
+      expect(created!.whatsapp.replace(/\D/g, '')).toBe(wa.replace(/\D/g, ''));
+      expect(created!.tags).toContain('descoberto');
+      // the model reads refs, never lead ids
+      expect(contents[2]).not.toContain(created!.id);
+      expect((await mail(created!.id)).map((m) => m.kind)).toEqual(['lead.first_contact']);
+      const [t] =
+        await sql`select leads_created, kind from crm_turns where params->>'query' = 'doceria campinas' order by finished_at desc limit 1`;
+      expect(t).toMatchObject({ leads_created: 1, kind: 'discovery' });
+    }));
 
   test('the strategist drafts a disabled brief', async () => {
     await settings('autopilot');
@@ -408,5 +428,86 @@ describe.skipIf(!OWNER_URL)('CRM agents on Runtime v3 (db)', () => {
     expect([wr!.status, rr!.status]).toEqual(['canceled', 'canceled']);
     const [nl] = await sql`select next_action_at from leads where id = ${l.id}`;
     expect(nl!.next_action_at).not.toBeNull();
+  });
+  test("a fired date stops being the lead's next action", async () => {
+    await settings('autopilot');
+    const l = await lead();
+    await controlTx(appSql, (tx) =>
+      scheduleTimerTx(tx, {
+        leadId: l.id,
+        at: new Date(Date.now() + 60 * 60_000),
+        focus: 'retomar',
+        requested: true,
+        by: 'agent',
+      }),
+    );
+    const [before] = await sql`select next_action_at from leads where id = ${l.id}`;
+    expect(before!.next_action_at).not.toBeNull();
+    await sql`
+      update agent_mailbox set deliver_at = now() - interval '1 minute'
+      where actor_id in (select id from agent_actors where subject_id = ${l.id})`;
+    await sql`update agent_actors set next_wake_at = now() where subject_id = ${l.id}`;
+    const { rt } = runtime([call('create_task', { title: 'ligar amanhã' }), say('ok')]);
+    await settle(rt);
+    expect((await turns(l.id)).map((t) => t.source)).toEqual(['callback']);
+    const [after] = await sql`select next_action_at from leads where id = ${l.id}`;
+    expect(after!.next_action_at).toBeNull();
+  });
+
+  test('a follow-up due while its job was off runs silent, and comes back with the job', async () => {
+    await settings('autopilot');
+    const l = await lead();
+    await controlTx(appSql, (tx) =>
+      scheduleTimerTx(tx, {
+        leadId: l.id,
+        at: new Date(Date.now() + 60 * 60_000),
+        focus: 'retomar a conversa do cardápio',
+        requested: false,
+        by: 'agent',
+      }),
+    );
+    await settings('autopilot', {}, { jobs: { outreach: false } });
+    await sql`
+      update agent_mailbox set deliver_at = now() - interval '1 minute'
+      where actor_id in (select id from agent_actors where subject_id = ${l.id})`;
+    await sql`update agent_actors set next_wake_at = now() where subject_id = ${l.id}`;
+    const { rt, adapter } = runtime([say('não deveria')]);
+    await settle(rt);
+    expect(adapter.requests).toHaveLength(0);
+    expect((await turns(l.id))[0]).toMatchObject({ source: 'followup', steps: 0 });
+    expect((await mail(l.id)).filter((m) => !m.consumed_by_turn)).toHaveLength(0);
+
+    const res = await control('PUT', '/control/v1/settings/agent', {
+      value: { level: 'autopilot', jobs: { outreach: true } },
+    });
+    expect(res.status).toBe(200);
+    const back = (await mail(l.id)).filter((m) => !m.consumed_by_turn);
+    expect(back.map((m) => [m.kind, m.payload.focus])).toEqual([
+      ['timer.followup', 'retomar a conversa do cardápio'],
+    ]);
+  });
+
+  test('a hunt with no research tool costs no model call', async () => {
+    await settings('autopilot');
+    const prior = await sql<{ driver: string; enabled: boolean }[]>`
+      select driver, enabled from control_integrations where kind = 'discovery'`;
+    await sql`update control_integrations set enabled = false where kind = 'discovery'`;
+    const monid = process.env.MONID_API_KEY;
+    delete process.env.MONID_API_KEY;
+    try {
+      const { requests } = await b.runTools([['web_search', { query: 'doceria' }]], {
+        kind: 'discovery',
+        payload: { query: `sem pesquisa ${nonce}` },
+      });
+      expect(requests).toBe(0);
+      const [t] = await sql<{ error: string | null }[]>`
+        select error from crm_turns where params->>'query' = ${`sem pesquisa ${nonce}`}`;
+      expect(t!.error).toContain('sem ferramenta de pesquisa');
+    } finally {
+      for (const d of prior)
+        await sql`update control_integrations set enabled = ${d.enabled}
+          where kind = 'discovery' and driver = ${d.driver}`;
+      if (monid !== undefined) process.env.MONID_API_KEY = monid;
+    }
   });
 });
