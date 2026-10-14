@@ -457,7 +457,8 @@ dietary? })` keep only products stating every tag in `dietary`, and a search mat
   `state`, `storeName`, `delivery` (`mode`, `promisedFrom`/`To`, `etaMin`/`Max`),
   `scheduledFor`, `placedAt`, `updatedAt`, `version` (live, like an order), `timeline` (`at`,
   `to`) and `items` (`name`, `qty`, `modifiers`, `combo`, `note`) — no customer, address,
-  payment, money or order notes. The device that placed the order keeps its full view. The page
+  payment, money or order notes (Kernel 1.26: a Pix order adds `payment`, below). The device
+  that placed the order keeps its full view. The page
   renders the new slot `order.TrackingPage` (`order`, `timeline` — the `order.Timeline` slot,
   rendered — `pickup?`, `timeZone?`, `vocabulary?`), "Falar com a loja" and the menu; never a
   payment, "pedir de novo" or the shopper's data. Core refuses the link on pay, card and reorder.
@@ -672,6 +673,42 @@ before its date, priced then. PULAR skips a week, CANCELAR PLANO ends it.
   order.
 - New `ERROR_CODES`: `PLAN_NOT_FOUND` (404, the plan left or the store can't text),
   `PLAN_NOT_ALLOWED` (422, a table order, `details.field`).
+
+### Sinal: an encomenda's date locked by Pix (Kernel 1.26)
+
+Additive — no storefront edit. A store that asks for a sinal (Loja › Encomendas: a share from 5
+to 90%, for every party and optionally for encomendas from an amount) splits such an order in
+two parts: the sinal, paid by Pix to lock the date, and the rest, paid by Pix before the date or
+at the door. Core computes both, and they always add up to the total.
+
+- `Cart.sinal` (`{ percent, policy }`, optional): the store asks this cart for a sinal once it is
+  an encomenda (a date picked, or required). `CartTotals.depositCents` / `balanceCents` are the
+  two parts of this total (`api.cart(method)` prices them too). With a date, checkout takes only
+  Pix: another method is `PAYMENT_NOT_ALLOWED` (422, `details.allowed`), and
+  `schedule.paymentMethods` is `['pix']` when the date is required. `policy` is the store's own
+  cancellation words, shown as the store's (Venduá states no rule).
+- Checkout's payment step shows the parts and the store's words (`[data-vendua="checkout-sinal"]`)
+  and the button reads "Confirmar · sinal de R$ X".
+- `Order.payment.sinal` (`OrderSinal`: `depositCents`, `balanceCents`, `depositPaidAt`,
+  `depositVia`, `balancePaidAt`, `balanceVia`, `policy`): `payment.status` stays `pending` until
+  both parts are paid, and `payment.pix` is the part due now. With Mercado Pago, `api.payOrder`
+  makes the sinal's Pix first, then the rest's; the order page doesn't make the rest's Pix by
+  itself, the shopper asks for it ("Pagar o restante por Pix"). The page shows both parts
+  (`[data-vendua="order-sinal"]`), and the `checkout.PixPayment` / `checkout.PaymentStatus`
+  amounts are the part due.
+
+### A Pix order paid from the store's WhatsApp link (Kernel 1.26)
+
+- `OrderTracking.payment` (`TrackingPayment`, optional; null for other methods): `status`,
+  `online`, `dueCents` (what is due now, 0 once paid), `pix` (`copyPaste`, `expiresAt`) and a
+  sinal's parts (`depositCents`, `balanceCents`, `depositPaid`, `balancePaid`). Nothing about the
+  shopper: the copia e cola carries the store's key and the amount.
+- `api.payTracked(id, { deviceId? })` → `POST /checkout/v1/orders/:id/pay` with the link's
+  credential: the online Pix Core makes (or the live one), `{ order: OrderTracking, next }`. A
+  card order answers 401 `SESSION_REQUIRED`; a paid order, a closed one or a store's own Pix,
+  409 `PAYMENT_NOT_REQUIRED`.
+- The tracking page shows the code (`checkout.PixPayment`) or "Pagar com Pix"
+  (`[data-vendua="tracking-pay"]`), and a sinal's parts.
 
 ### Where an order came from: `?ref=` (Kernel 1.26)
 

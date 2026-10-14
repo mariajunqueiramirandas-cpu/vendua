@@ -216,4 +216,6 @@ export type {
   PartyInput,
   PartyQuote,
   ShopperPlan,
+  OrderSinal,
+  TrackingPayment,
 } from './api.ts';

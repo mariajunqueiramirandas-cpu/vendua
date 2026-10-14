@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { withTenant, type Sql } from '../platform/db.ts';
+import { dueCharge, sinalOf } from '../modules/sinal.ts';
 import { HttpError, bodyJson, boundedText, parseJsonObject } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { normalizePixKey, pixPayload, type PixKeyType } from '../modules/pix.ts';
@@ -179,15 +180,29 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
     group by 1, 2
   `;
   // online Pix is confirmed by Mercado Pago — only offline Pix waits for "recebi"
-  const awaiting = await tx<
-    { id: string; number: number; name: string; totalCents: number; placedAt: string }[]
+  const rows = await tx<
+    {
+      id: string;
+      number: number;
+      name: string;
+      totalCents: number;
+      placedAt: string;
+      payment: unknown;
+    }[]
   >`
-    select id, number, customer ->> 'name' as name, total_cents as "totalCents", placed_at as "placedAt"
+    select id, number, customer ->> 'name' as name, total_cents as "totalCents", placed_at as "placedAt",
+           case when deposit_cents is not null then payment end as payment
     from orders where tenant_id = ${tenantId} and payment ->> 'method' = 'pix'
       and payment ->> 'status' = 'pending' and coalesce((payment ->> 'online')::boolean, false) = false
       and state not in ('cancelled', 'refunded')
     order by placed_at desc limit 20
   `;
+  // a sinal order waits for one part at a time (0128): "recebi" confirms that part
+  const awaiting = rows.map(({ payment, ...o }) => {
+    const sinal = sinalOf(payment);
+    const due = sinal ? dueCharge(sinal) : null;
+    return { ...o, part: due?.charge ?? null, dueCents: due?.cents ?? o.totalCents };
+  });
   const pix =
     s.pix_key && s.pix_key_type
       ? {

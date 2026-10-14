@@ -7,6 +7,7 @@ import { enqueueOrderMessageTx, isOrderEvent } from '../store-whatsapp/messages.
 import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { recordStaffEventTx, type OrderStep } from './staff-events.ts';
 import { restoreStock } from './stock.ts';
+import { dueCharge, sinalOf } from './sinal.ts';
 
 export const ORDER_STATES = [
   'placed',
@@ -355,6 +356,60 @@ export interface OrderStatusView {
     combo: { slotName: string; name: string; qty: number }[];
     note: string | null;
   }[];
+  /** Kernel 1.26 — a Pix order's payment, so the store's WhatsApp link can pay it: the amount
+   *  due now and its copia e cola (an online Pix: none until the page asks `/pay`) */
+  payment?: TrackingPayment | null;
+}
+
+export interface TrackingPayment {
+  status: string;
+  online: boolean;
+  /** what is due now: the order, or the part of it a sinal leaves (0 once paid) */
+  dueCents: number;
+  pix: { copyPaste: string; expiresAt: string | null } | null;
+  sinal: {
+    depositCents: number;
+    balanceCents: number;
+    depositPaid: boolean;
+    balancePaid: boolean;
+  } | null;
+}
+
+function trackingPayment(o: OrderView): TrackingPayment | null {
+  const p = o.payment as OrderView['payment'] & {
+    pix?: { copyPaste?: string; expiresAt?: string | null } | null;
+  };
+  if (p.method !== 'pix' || o.state === 'cancelled' || o.state === 'refunded') return null;
+  const sinal = sinalOf(p);
+  const dueCents = sinal ? (dueCharge(sinal)?.cents ?? 0) : p.status === 'paid' ? 0 : o.totalCents;
+  return {
+    status: String(p.status),
+    online: p.online === true,
+    dueCents,
+    pix:
+      dueCents && p.pix?.copyPaste
+        ? { copyPaste: p.pix.copyPaste, expiresAt: p.pix.expiresAt ?? null }
+        : null,
+    sinal: sinal
+      ? {
+          depositCents: sinal.depositCents,
+          balanceCents: sinal.balanceCents,
+          depositPaid: !!sinal.depositPaidAt,
+          balancePaid: !!sinal.balancePaidAt,
+        }
+      : null,
+  };
+}
+
+/** The order a WhatsApp link pays (a Pix order only: a card needs the device that placed it). */
+export async function trackedPixCartTx(tx: Sql, tenantId: string, orderId: string) {
+  const [o] = await tx<{ cart_id: string; method: string | null }[]>`
+    select cart_id, payment ->> 'method' as method from orders
+    where tenant_id = ${tenantId} and id = ${orderId}`;
+  if (!o) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+  if (o.method !== 'pix')
+    throw new HttpError(401, 'SESSION_REQUIRED', 'a valid session token is required');
+  return o.cart_id;
 }
 
 /** Whitelists the fields a tracking link may read (never spread the full view into it). */
@@ -378,6 +433,7 @@ export function orderStatusOf(o: OrderView, storeName: string): OrderStatusView 
     placedAt: new Date(o.placedAt).toISOString(),
     updatedAt: new Date(o.updatedAt).toISOString(),
     version: o.version,
+    payment: trackingPayment(o),
     timeline: o.timeline.map((e) => ({ at: e.at, to: e.to })),
     items: o.items.map((i) => ({
       name: i.name,

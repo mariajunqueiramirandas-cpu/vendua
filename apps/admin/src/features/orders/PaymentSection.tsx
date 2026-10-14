@@ -8,7 +8,7 @@ import {
 } from '@phosphor-icons/react';
 import { lazy, Suspense, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Order, OrderPayment } from '../../lib/api.ts';
+import type { Order, OrderPayment, OrderSinal } from '../../lib/api.ts';
 import { clock, money, when } from '../../lib/format.ts';
 import { useFeature } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -24,11 +24,16 @@ const ReceiveSheet = lazy(() => import('../pdv/ReceiveSheet.tsx'));
 
 const SETTLED = ['approved', 'partially_refunded', 'refunded', 'charged_back', 'in_mediation'];
 
-/** The attempt that carries the money (the paid one), else the latest. */
+/** The attempt that carries the money (the paid one with some left to give back — a sinal's
+ *  when its rest went back already), else the latest. */
 export function primaryPayment(payments: OrderPayment[] | undefined): OrderPayment | null {
   if (!payments?.length) return null;
   const byNew = [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return byNew.find((p) => SETTLED.includes(p.status)) ?? byNew[0]!;
+  return (
+    byNew.find((p) => refundable(p) > 0) ??
+    byNew.find((p) => SETTLED.includes(p.status)) ??
+    byNew[0]!
+  );
 }
 
 /** What can still go back on this attempt (Core's figure). */
@@ -48,9 +53,26 @@ function methodLabel(o: Order) {
   return PAY_LABEL[o.payment.method] ?? o.payment.method;
 }
 
+const VIA: Record<NonNullable<OrderSinal['depositVia']>, string> = {
+  online: 'pelo Mercado Pago',
+  manual: 'Pix na chave da loja',
+  pdv: 'no caixa',
+};
+
+/** A sinal order still pending: which part waits, and where it comes from. */
+function explainSinal(o: Order, s: OrderSinal): string {
+  const door = o.delivery.mode === 'delivery' ? 'na entrega' : 'na retirada';
+  if (!s.depositPaidAt)
+    return o.payment.online
+      ? 'Aguardando o sinal. O Mercado Pago confirma sozinho quando o cliente pagar.'
+      : 'Aguardando o sinal por Pix. Confira no seu banco e marque quando cair.';
+  return `Sinal recebido: a data está garantida. Falta ${money(s.balanceCents)}, por Pix antes do dia ou ${door}.`;
+}
+
 function explain(o: Order): string {
   const p = o.payment;
   const online = !!p.online;
+  if (p.sinal && p.status === 'pending') return explainSinal(o, p.sinal);
   switch (p.status) {
     case 'paid':
       return online
@@ -88,6 +110,41 @@ function explain(o: Order): string {
   }
 }
 
+/** The two parts of a sinal order: how much, and when and how each came in. */
+function SinalParts({ order, sinal }: { order: Order; sinal: OrderSinal }) {
+  const share = Math.round((sinal.depositCents / order.totalCents) * 100);
+  const row = (label: string, cents: number, at: string | null, via: OrderSinal['depositVia']) => (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="min-w-0">
+        {label}
+        <span className={cn('t-caption block', at ? 'text-success' : 'text-muted')}>
+          {at ? `pago ${when(at)}${via ? ` · ${VIA[via]}` : ''}` : 'a pagar'}
+        </span>
+      </dt>
+      <dd className="tnum font-semibold">{money(cents)}</dd>
+    </div>
+  );
+  return (
+    <div className="p-4">
+      <dl className="t-body space-y-3" aria-label="sinal e restante">
+        {row(`Sinal (${share}%)`, sinal.depositCents, sinal.depositPaidAt, sinal.depositVia)}
+        {row('Restante', sinal.balanceCents, sinal.balancePaidAt, sinal.balanceVia)}
+      </dl>
+      {sinal.policy ? (
+        <p className="t-caption mt-3 text-muted">
+          <span className="font-semibold text-ink">Sua política: </span>
+          {sinal.policy}
+        </p>
+      ) : null}
+      {order.state === 'cancelled' && sinal.depositPaidAt && sinal.depositVia === 'online' ? (
+        <p className="t-caption mt-3 text-muted">
+          O sinal ficou com a loja. Para devolver, use “devolver dinheiro”.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 const REFUND_STATE = { pending: 'processando', approved: 'devolvido', rejected: 'não passou' };
 
 /** Payment on the order detail: method, state, Mercado Pago's numbers, refunds, the action. */
@@ -117,10 +174,15 @@ export function PaymentSection({
   // a PDV order's money is the caixa's: Core refuses "marcar pago" on it
   const pdv = p.provider === 'pdv';
   const canMarkPaid = !online && !pdv && p.status !== 'paid' && open;
+  // a sinal order (0128): its parts are marked one at a time; the caixa takes the rest even of
+  // a sinal Mercado Pago confirmed
+  const sinal = p.sinal;
+  const restOpen = !!sinal?.depositPaidAt && !sinal.balancePaidAt;
   // a PDV order is received at the caixa only when it went out unpaid ("cobrar na entrega");
   // a comanda's round is paid through its comanda
   const pdvLater = pdv && p.status === 'pending' && p.method !== 'tab' && !order.delivery.tabId;
-  const canReceive = pdvOpen && !online && (!pdv || pdvLater) && p.status !== 'paid' && open;
+  const canReceive =
+    pdvOpen && (!online || restOpen) && (!pdv || pdvLater) && p.status !== 'paid' && open;
 
   return (
     <Card as="section" aria-label="pagamento" className="divide-y divide-line">
@@ -135,6 +197,8 @@ export function PaymentSection({
           </p>
         </div>
       </div>
+
+      {sinal ? <SinalParts order={order} sinal={sinal} /> : null}
 
       {reviews.length ? (
         <div className="space-y-2 p-4">
@@ -229,7 +293,7 @@ export function PaymentSection({
         <div className="flex flex-wrap gap-2 p-4">
           {canReceive ? (
             <Button icon={<CashRegister />} onClick={() => setReceiving(true)}>
-              receber no caixa
+              {restOpen ? 'receber o restante no caixa' : 'receber no caixa'}
             </Button>
           ) : null}
           {canRefund ? (
@@ -241,10 +305,20 @@ export function PaymentSection({
             <Button
               variant="secondary"
               loading={paid.isPending}
-              onClick={() => paid.mutate({ id: order.id, status: 'paid' })}
+              onClick={() =>
+                paid.mutate({
+                  id: order.id,
+                  status: 'paid',
+                  ...(sinal ? { charge: sinal.depositPaidAt ? 'all' : 'deposit' } : {}),
+                })
+              }
               icon={<CheckCircle />}
             >
-              marcar pago
+              {sinal
+                ? sinal.depositPaidAt
+                  ? 'restante recebido'
+                  : 'sinal recebido'
+                : 'marcar pago'}
             </Button>
           ) : null}
         </div>

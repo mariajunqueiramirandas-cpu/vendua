@@ -442,6 +442,10 @@ export interface CartTotals {
   /** Kernel 1.12 — the chosen payment method's discount (<0) or surcharge (>0), already in
    *  `totalCents`; 0 without one. Priced for a method by `api.cart(method)` / `quote` */
   paymentAdjustmentCents?: number;
+  /** Kernel 1.26 — the sinal (Core's) this total pays by Pix to lock an encomenda's date, and
+   *  the rest; present only when `Cart.sinal` is (with a date picked, the order asks for it) */
+  depositCents?: number;
+  balanceCents?: number;
 }
 
 export interface CartCoupon {
@@ -504,6 +508,10 @@ export interface Cart {
    *  offers it (`CheckoutInput.subscribe`). Its first week is an encomenda, on the plan's
    *  `weekday` when it has one. */
   plan?: { id: string; name: string; weekday: number | null } | null;
+  /** Kernel 1.26 — the store asks this cart, as an encomenda, for a sinal by Pix: its share and
+   *  the store's own cancellation words (shown as the store's). Amounts: `totals.depositCents` /
+   *  `balanceCents`. With a date, checkout takes only Pix (`PAYMENT_NOT_ALLOWED` otherwise). */
+  sinal?: { percent: number; policy: string | null } | null;
 }
 
 /** Kernel 1.26 — Plano semanal: a fixed basket the store delivers every week. `subtotalCents`
@@ -750,6 +758,9 @@ export interface Order {
     redirectUrl?: string | null;
     /** Kernel 1.17 — cash: the amount the shopper asked change for (null = no change) */
     changeForCents?: number | null;
+    /** Kernel 1.26 — an encomenda with a sinal: the two parts and when each was paid. `status`
+     *  stays 'pending' until both are; `pix` is the part due now */
+    sinal?: OrderSinal;
   };
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -852,9 +863,38 @@ export interface OrderItem {
   note?: string | null;
 }
 
+/** Kernel 1.26 — an order's sinal: paid by Pix to lock the date, the rest before it or at the
+ *  door (`via`: online = Mercado Pago, manual = the store saw the Pix, pdv = the caixa) */
+export interface OrderSinal {
+  depositCents: number;
+  balanceCents: number;
+  depositPaidAt: string | null;
+  depositVia: 'online' | 'manual' | 'pdv' | null;
+  balancePaidAt: string | null;
+  balanceVia: 'online' | 'manual' | 'pdv' | null;
+  /** the store's own cancellation words when the order was placed */
+  policy: string | null;
+}
+
+/** Kernel 1.26 — a Pix order's payment as its tracking link sees it: what is due now and its
+ *  copia e cola (an online Pix has none until `api.payTracked` asks for it) */
+export interface TrackingPayment {
+  status: string;
+  online: boolean;
+  /** 0 once paid */
+  dueCents: number;
+  pix: { copyPaste: string; expiresAt: string | null } | null;
+  sinal: {
+    depositCents: number;
+    balanceCents: number;
+    depositPaid: boolean;
+    balancePaid: boolean;
+  } | null;
+}
+
 /** Kernel 1.21 — an order read through the link in the store's WhatsApp updates
- *  (`/pedido/:id?t=…`): where it stands and what was ordered. No customer, address, payment,
- *  money or order notes — the device that placed it reads those (`Order`). */
+ *  (`/pedido/:id?t=…`): where it stands and what was ordered. No customer, address, money
+ *  beyond a Pix due, or order notes — the device that placed it reads those (`Order`). */
 export interface OrderTracking {
   statusOnly: true;
   id: string;
@@ -884,6 +924,8 @@ export interface OrderTracking {
     combo: { slotName: string; name: string; qty: number }[];
     note: string | null;
   }[];
+  /** Kernel 1.26 — a Pix order's payment, so the link can pay it; null for other methods */
+  payment?: TrackingPayment | null;
 }
 
 const SESSION_KEY = 'vendua.session';
@@ -1753,6 +1795,20 @@ export function createApi(baseUrl = '') {
             }
           : {}),
       }).then((r) => ({ ...r, next: safeNext(r.next) }));
+    },
+    /** Kernel 1.26 — the order's Pix through its tracking link (a Pix order only): the online
+     *  Pix Core makes (or the one it has), with the status view back. 401 SESSION_REQUIRED for
+     *  another method, 409 PAYMENT_NOT_REQUIRED (paid, closed or the store's own key) */
+    payTracked: (id: string, opts?: { deviceId?: string | null }) => {
+      const deviceId = opts?.deviceId && DEVICE_ID_RE.test(opts.deviceId) ? opts.deviceId : null;
+      return apiFetch<{ order: OrderTracking; next: PaymentNext }>(co(`/orders/${id}/pay`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${trackBearer(id) ?? ''}`,
+          'idempotency-key': idemKey(),
+        },
+        ...(deviceId ? { body: JSON.stringify({ deviceId }) } : {}),
+      }).then((r) => ({ ...r, next: safeNext(r.next) }), forgetTrack(id));
     },
     /** Kernel 1.19 — pay a card_online order with the card form's token. 409
      *  PAYMENT_IN_PROGRESS (an earlier submit is unresolved), 409 PAYMENT_NOT_REQUIRED, 422

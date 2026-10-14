@@ -1,7 +1,8 @@
 import { capacityOn, type EncomendaCapacity } from '../modules/encomenda-capacity.ts';
 import { deliveryWindow, freioConfig, queueTx, readyInMinutes } from '../modules/freio.ts';
 import { loadSettings } from './routes-store.ts';
-import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { enqueueOrderMessageTx, enqueueSinalPaidTx } from '../store-whatsapp/messages.ts';
+import { sinalOf, sinalPaid, type OrderSinal } from '../modules/sinal.ts';
 import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
@@ -25,6 +26,7 @@ import {
   forward,
   markConnectionLater,
   markReview,
+  offlineSinalPayment,
   orderPayments,
   processStorePayment,
   syncOrderPayment,
@@ -384,12 +386,11 @@ async function releaseUnsent(d: PayDeps, tenantId: string, orderId: string, key:
 /** Money that landed on a cancelled/refunded order goes straight back (or waits for a person). */
 export async function autoRefundIfClosed(d: PayDeps, tenantId: string, r: ApplyResult) {
   if (!r.applied || !r.closed) return;
-  const refundable = await withTenant(
-    d.sql,
-    tenantId,
-    async (tx) =>
-      (await orderPayments(tx, tenantId, r.orderId)).find((p) => p.id === r.paymentRowId)
-        ?.refundableCents ?? 0,
+  const refundable = await withTenant(d.sql, tenantId, async (tx) =>
+    (await keptSinalTx(tx, tenantId, r.orderId, r.paymentRowId))
+      ? 0
+      : ((await orderPayments(tx, tenantId, r.orderId)).find((p) => p.id === r.paymentRowId)
+          ?.refundableCents ?? 0),
   );
   if (refundable <= 0) return;
   try {
@@ -424,6 +425,24 @@ export async function settleProviderPayment(
  * After an order closes: anything still captured on it (a payment approved between our pre-read
  * and the transition) goes back too.
  */
+/**
+ * Festa calculada F2 (0128): a sinal (or a whole-order payment) of a sinal order that came in
+ * before the order closed stays with the store — the policy is the store's, and a manager gives
+ * it back with Estornar. Money that lands after the close still goes straight back.
+ */
+async function keptSinalTx(tx: Sql, tenantId: string, orderId: string, paymentId: string) {
+  const [k] = await tx<{ kept: boolean }[]>`
+    select coalesce(p.charge, 'whole') <> 'balance' and p.approved_at is not null
+           and p.approved_at < coalesce((
+             select min(e.at) from order_events e
+             where e.tenant_id = ${tenantId} and e.order_id = o.id
+               and e.to_state in ('cancelled', 'refunded')), 'infinity') as kept
+    from orders o join payments p on p.tenant_id = o.tenant_id and p.order_id = o.id
+    where o.tenant_id = ${tenantId} and o.id = ${orderId} and p.id = ${paymentId}
+      and o.deposit_cents is not null`;
+  return k?.kept === true;
+}
+
 export async function refundLeftovers(d: PayDeps, tenantId: string, orderId: string) {
   const rows = await withTenant(d.sql, tenantId, (tx) => orderPayments(tx, tenantId, orderId));
   for (const r of rows)
@@ -435,6 +454,62 @@ export async function refundLeftovers(d: PayDeps, tenantId: string, orderId: str
         paymentRowId: r.id,
         closed: true,
       });
+}
+
+/**
+ * A sinal order paid by the store's own Pix: a manager marks the part that landed (or undoes the
+ * last one marked). The Pix shown and sent moves on to the part still due.
+ */
+async function markSinal(
+  tx: Sql,
+  tenantId: string,
+  m: Merchant,
+  id: string,
+  number: number,
+  sinal: OrderSinal,
+  status: 'paid' | 'pending',
+  charge: 'deposit' | 'all',
+) {
+  const now = new Date().toISOString();
+  const next: OrderSinal = { ...sinal };
+  if (status === 'paid') {
+    if (!next.depositPaidAt) Object.assign(next, { depositPaidAt: now, depositVia: 'manual' });
+    if (charge === 'all' && !next.balancePaidAt)
+      Object.assign(next, { balancePaidAt: now, balanceVia: 'manual' });
+  } else if (next.balancePaidAt) Object.assign(next, { balancePaidAt: null, balanceVia: null });
+  else Object.assign(next, { depositPaidAt: null, depositVia: null });
+  const settings = await loadSettings(tx, tenantId);
+  const full = sinalPaid(next);
+  const off = offlineSinalPayment(settings, number, next);
+  const patch = {
+    sinal: next,
+    status: full ? 'paid' : 'pending',
+    paidAt: full ? next.balancePaidAt : null,
+    confirmedBy: next.depositPaidAt ? m.name : null,
+    pix: off.pix,
+    instructions: off.instructions,
+  };
+  await tx`
+    update orders set payment = payment || ${tx.json(patch as never)}, rev = rev + 1, updated_at = now()
+    where tenant_id = ${tenantId} and id = ${id}
+  `;
+  await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
+  if (full && !sinal.balancePaidAt) {
+    await recordOrderStep(tx, tenantId, { id, number }, 'paid', 'merchant');
+    await enqueueOrderMessageTx(tx, tenantId, id, 'paid');
+  } else if (next.depositPaidAt && !sinal.depositPaidAt) await enqueueSinalPaidTx(tx, tenantId, id);
+  const what = (s: OrderSinal) =>
+    s.balancePaidAt ? 'pago' : s.depositPaidAt ? 'sinal recebido' : 'a pagar';
+  await audit(tx, tenantId, m, {
+    action: `order.payment.${status}`,
+    entity: 'order',
+    entityId: id,
+    summary: `pedido #${number}: ${what(sinal)} → ${what(next)}`,
+    before: { payment: sinal },
+    after: { payment: next },
+  });
+  await emitAdminTx(tx, tenantId, 'order.changed', id);
+  return { status: 200, body: { order: await loadOrderView(tx, tenantId, id) } };
 }
 
 const requestKey = (c: Context) => {
@@ -702,9 +777,18 @@ export function mountOrders(d: AdminDeps) {
                     mode: DeliveryMode;
                     payment: { online?: boolean; status?: string };
                     counter_paid: boolean;
+                    deposit_cents: number | null;
+                    held: { id: string; charge: string | null }[];
                   }[]
                 >`
-                  select state, delivery ->> 'mode' as mode, payment,
+                  select state, delivery ->> 'mode' as mode, payment, deposit_cents,
+                    coalesce((
+                      select json_agg(json_build_object('id', p.id, 'charge', p.charge))
+                      from payments p
+                      where p.tenant_id = ${t0.id} and p.order_id = ${id}
+                        and p.status in ('approved', 'partially_refunded')
+                        and p.review is distinct from 'amount_mismatch'
+                    ), '[]'::json) as held,
                     exists (
                       select 1 from pdv_payments p
                       where p.tenant_id = ${t0.id} and p.voided_at is null
@@ -716,19 +800,29 @@ export function mountOrders(d: AdminDeps) {
           )
         : undefined;
     if (pre === null) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+    // Festa calculada F2 (0128): a sinal that came in stays with the store when the order is
+    // cancelled (the manager gives it back with Estornar, by the store's own policy); a rest
+    // paid online goes back as any payment does
+    const sinal = pre?.deposit_cents ? sinalOf(pre.payment) : null;
+    const keep =
+      sinal && to === 'cancelled'
+        ? new Set(pre!.held.filter((p) => p.charge !== 'balance').map((p) => p.id))
+        : null;
+    const backNow = keep ? pre!.held.filter((p) => !keep.has(p.id)).map((p) => p.id) : null;
     // cancelling money captured online refunds it, and cancelling a sale paid at the caixa takes
     // its money out of the drawer's expected count: the same role as an explicit refund
     if (
       pre &&
       to === 'cancelled' &&
-      (pre.counter_paid || (pre.payment.online && PAID_ONLINE.includes(String(pre.payment.status))))
+      (pre.counter_paid ||
+        (pre.payment.online && PAID_ONLINE.includes(String(pre.payment.status))) ||
+        !!sinal?.depositPaidAt)
     )
       need(c, 'manager');
     if (pre && canTransition(pre.state, to, pre.mode) && pre.payment.online) {
-      if (
-        (to === 'cancelled' || to === 'refunded') &&
-        PAID_ONLINE.includes(String(pre.payment.status))
-      )
+      const captured =
+        PAID_ONLINE.includes(String(pre.payment.status)) || (!!sinal && pre.held.length > 0);
+      if (backNow?.length || (!keep && (to === 'cancelled' || to === 'refunded') && captured))
         refunded = (
           await refundOrderPayments(pay, t0.id, id, {
             amountCents: null,
@@ -736,9 +830,10 @@ export function mountOrders(d: AdminDeps) {
             requestedBy: m0.userId,
             key,
             requireApproved: true,
+            ...(backNow?.length ? { paymentIds: backNow } : {}),
           })
         ).refundedCents;
-      else if (to === 'cancelled') await cancelOpenAttempts(pay, t0.id, id);
+      if (to === 'cancelled' && (keep || !captured)) await cancelOpenAttempts(pay, t0.id, id);
     }
     const step = write('attendant', async (tx, t, m) => {
       const meta: Record<string, unknown> = { by: m.name };
@@ -851,9 +946,17 @@ export function mountOrders(d: AdminDeps) {
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c);
       const status = oneOf(body.status, 'status', ['paid', 'pending'] as const);
+      // an order with a sinal (0128): 'deposit' = the sinal came in, 'all' = everything did
+      const charge =
+        body.charge === undefined
+          ? null
+          : oneOf(body.charge, 'charge', ['deposit', 'all'] as const);
       const cur = (
-        await tx<{ number: number; payment: Record<string, unknown> }[]>`
-          select number, payment from orders where tenant_id = ${t.id} and id = ${id} for update
+        await tx<
+          { number: number; payment: Record<string, unknown>; deposit_cents: number | null }[]
+        >`
+          select number, payment, deposit_cents from orders
+          where tenant_id = ${t.id} and id = ${id} for update
         `
       )[0];
       if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
@@ -862,6 +965,19 @@ export function mountOrders(d: AdminDeps) {
       // the caixa holds it (ADR 0035): it changes there, by cancelling or voiding
       if (cur.payment.provider === 'pdv')
         throw new HttpError(409, 'PAYMENT_PDV', 'this payment was taken at the PDV');
+      const sinal = cur.deposit_cents ? sinalOf(cur.payment) : null;
+      // without a part named (an admin from before the sinal), the part due now
+      if (sinal)
+        return markSinal(
+          tx,
+          t.id,
+          m,
+          id,
+          cur.number,
+          sinal,
+          status,
+          charge ?? (sinal.depositPaidAt ? 'all' : 'deposit'),
+        );
       const patch =
         status === 'paid'
           ? { status, paidAt: new Date().toISOString(), confirmedBy: m.name }

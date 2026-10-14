@@ -153,10 +153,14 @@ export function useSoldOutToday() {
 export function useMarkPaid() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; status: 'paid' | 'pending' }) => api.markPaid(v.id, v.status),
+    mutationFn: (v: { id: string; status: 'paid' | 'pending'; charge?: 'deposit' | 'all' }) =>
+      api.markPaid(v.id, v.status, v.charge),
     onMutate: async (v) => {
+      // a sinal alone leaves the order pending: only Core's answer moves it
       const flip = (o: Order): Order =>
-        o.id === v.id ? { ...o, payment: { ...o.payment, status: v.status } } : o;
+        o.id === v.id && v.charge !== 'deposit'
+          ? { ...o, payment: { ...o.payment, status: v.status } }
+          : o;
       const [board, one] = await Promise.all([
         optimistic<Board>(qc, qk.board, (b) => ({ ...b, orders: b.orders.map(flip) })),
         optimistic<{ customer: unknown; order: Order }>(qc, qk.order(v.id), (d) => ({
@@ -179,7 +183,13 @@ export function useMarkPaid() {
       void qc.invalidateQueries({ queryKey: ['orders'] });
       void qc.invalidateQueries({ queryKey: qk.payments });
       void qc.invalidateQueries({ queryKey: qk.home });
-      toast(v.status === 'paid' ? `#${order.number} marcado como pago` : 'Pagamento desmarcado', {
+      const said =
+        v.status !== 'paid'
+          ? 'Pagamento desmarcado'
+          : v.charge === 'deposit'
+            ? `Sinal do #${order.number} recebido`
+            : `#${order.number} marcado como pago`;
+      toast(said, {
         ...(v.status === 'paid'
           ? {
               undo: () =>

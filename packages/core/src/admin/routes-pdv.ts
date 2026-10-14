@@ -52,6 +52,7 @@ import {
 } from '../modules/pdv/delivery.ts';
 import { MAX_CHANGE_CENTS } from '../modules/place-order.ts';
 import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { dueCharge, sinalOf, type OrderSinal } from '../modules/sinal.ts';
 import { audit } from './audit.ts';
 import {
   bool,
@@ -513,13 +514,19 @@ export function mountPdv(d: AdminDeps) {
           total_cents: number;
           tab_id: string | null;
           payment: Record<string, unknown>;
+          deposit_cents: number | null;
         }[]
       >`
-        select number, state, total_cents, tab_id, payment from orders
+        select number, state, total_cents, tab_id, payment, deposit_cents from orders
         where tenant_id = ${t.id} and id = ${id} for update
       `;
       if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
-      if (cur.payment.online)
+      // Festa calculada F2 (0128): once the sinal is in, the caixa takes the rest, even of an
+      // order whose sinal Mercado Pago confirmed; before it, the whole order (own-key Pix only)
+      const sinal = cur.deposit_cents ? sinalOf(cur.payment) : null;
+      const due = sinal ? dueCharge(sinal) : null;
+      const rest = due?.charge === 'balance';
+      if (cur.payment.online && !rest)
         throw new HttpError(409, 'PAYMENT_ONLINE', 'Mercado Pago confirms this payment');
       if (cur.tab_id)
         throw new HttpError(409, 'ORDER_ON_TAB', 'this order is paid with its comanda');
@@ -537,16 +544,37 @@ export function mountPdv(d: AdminDeps) {
           state: cur.state,
         });
       const paid = sumOf(payments);
-      if (paid !== cur.total_cents)
+      const owed = rest ? due.cents : cur.total_cents;
+      if (paid !== owed)
         throw new HttpError(422, 'PAYMENT_MISMATCH', 'the payments must add up to the total', {
-          totalCents: cur.total_cents,
+          totalCents: owed,
           paidCents: paid,
         });
       const views = await insertPayments(tx, t.id, caixa.id, { orderId: id }, payments, m.name);
-      const patch = {
-        ...paidPayment(payments, m.name),
-        requestedMethod: cur.payment.method ?? null,
+      const at = new Date().toISOString();
+      const settled: OrderSinal | null = sinal && {
+        ...sinal,
+        ...(sinal.depositPaidAt ? {} : { depositPaidAt: at, depositVia: 'pdv' as const }),
+        balancePaidAt: at,
+        balanceVia: 'pdv',
       };
+      const counter = paidPayment(payments, m.name);
+      // the sinal Mercado Pago took stays its payment (refunds go back through it)
+      const patch =
+        settled && cur.payment.online
+          ? {
+              status: 'paid',
+              paidAt: counter.paidAt,
+              confirmedBy: m.name,
+              pdv: counter.pdv,
+              pix: null,
+              sinal: settled,
+            }
+          : {
+              ...counter,
+              requestedMethod: cur.payment.method ?? null,
+              ...(settled ? { sinal: settled, pix: null } : {}),
+            };
       await tx`
         update orders set payment = payment || ${tx.json(patch as never)}, rev = rev + 1, updated_at = now()
         where tenant_id = ${t.id} and id = ${id}
@@ -559,7 +587,9 @@ export function mountPdv(d: AdminDeps) {
           action: 'pdv.order_paid',
           entity: 'order',
           entityId: id,
-          summary: `recebeu no caixa o pedido #${cur.number} (${brl(cur.total_cents)})`,
+          summary: rest
+            ? `recebeu no caixa o restante do pedido #${cur.number} (${brl(owed)})`
+            : `recebeu no caixa o pedido #${cur.number} (${brl(cur.total_cents)})`,
           before: { payment: cur.payment.status },
           after: { payment: 'paid', payments },
         }),

@@ -61,7 +61,8 @@ Automático is an open question below).
 
 - **The week's code.** With the store's own key, the code (EMV copia e cola, the week's total) is
   its own WhatsApp message right after the order, and the order page shows it too. With Mercado
-  Pago connected, the order page makes the Pix and confirms it by itself.
+  Pago connected, the order page makes the Pix and confirms it by itself, from the link in the
+  message too (a Pix order's link can pay it).
 - **Not paid by the day before.** `planPaymentPass` (admin sweeper, from 09:00 store time, once
   the order is 6 h old) sends one reminder for a week due tomorrow or today and still unpaid: the
   total, the date, the code again in its own message. The store's managers get one push ("Pix do

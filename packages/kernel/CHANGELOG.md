@@ -28,6 +28,12 @@ edit. Two new sdk-catalog exports (`partyCta`, `plansCta`).
   `mutations.buildPlan`), `Cart.plan`, `CheckoutInput.subscribe` and its checkout tick
   (`[data-vendua="plan-subscribe"]`), type `ShopperPlan`; `ERROR_CODES` gains `PLAN_NOT_FOUND`,
   `PLAN_NOT_ALLOWED`. A plan cart takes only Pix (`schedule.paymentMethods: ['pix']`).
+- Sinal: `Cart.sinal`, `CartTotals.depositCents` / `balanceCents`, `Order.payment.sinal` (type
+  `OrderSinal`); checkout's sinal block (`[data-vendua="checkout-sinal"]`) and Pix-only payment
+  for such an encomenda; the order page pays the part due and shows both
+  (`[data-vendua="order-sinal"]`).
+- A Pix order's WhatsApp link pays it: `OrderTracking.payment` (type `TrackingPayment`),
+  `api.payTracked`, `[data-vendua="tracking-pay"]`.
 
 ## 1.25.0
 

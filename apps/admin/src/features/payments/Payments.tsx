@@ -205,7 +205,8 @@ function Awaiting({ data }: { data: PaymentsData }) {
                 #{o.number} · {o.name}
               </span>
               <span className="t-caption text-muted">
-                <span className="tnum font-semibold text-ink">{money(o.totalCents)}</span> ·{' '}
+                {o.part ? (o.part === 'deposit' ? 'sinal ' : 'restante ') : null}
+                <span className="tnum font-semibold text-ink">{money(o.dueCents)}</span> ·{' '}
                 {ago(o.placedAt)}
               </span>
             </Link>
@@ -213,7 +214,13 @@ function Awaiting({ data }: { data: PaymentsData }) {
               size="sm"
               variant="secondary"
               loading={paid.isPending && paid.variables?.id === o.id}
-              onClick={() => paid.mutate({ id: o.id, status: 'paid' })}
+              onClick={() =>
+                paid.mutate({
+                  id: o.id,
+                  status: 'paid',
+                  ...(o.part ? { charge: o.part === 'deposit' ? 'deposit' : 'all' } : {}),
+                })
+              }
             >
               recebi
             </Button>

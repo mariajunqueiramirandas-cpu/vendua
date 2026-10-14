@@ -7,7 +7,8 @@ import { storeOrigin } from '../../platform/store-origin.ts';
 import { ORDER_CHANNEL, loadOrderView, recordOrderStep, type OrderView } from '../orders.ts';
 import type { PaymentAdjustment, PaymentAdjustments } from '../payment-adjustments.ts';
 import { pixPayload, type PixKeyType } from '../pix.ts';
-import { enqueueOrderMessageTx } from '../../store-whatsapp/messages.ts';
+import { enqueueOrderMessageTx, enqueueSinalPaidTx } from '../../store-whatsapp/messages.ts';
+import { dueCharge, sinalOf, type Charge, type OrderSinal, type SinalVia } from '../sinal.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import type { StoreSettingsRow } from '../store.ts';
 import {
@@ -71,6 +72,8 @@ export interface PaymentRow {
   created_at: Date;
   /** set when a person must look at it (see migration 0055_core_pay) */
   review: string | null;
+  /** an order with a sinal (0128): the part this attempt pays; null = the whole order */
+  charge: Charge | null;
 }
 
 export type DeclineReason =
@@ -256,6 +259,35 @@ export function onlinePayment(
   };
 }
 
+/** An order with a sinal (0128): the part due now, in words. */
+export function sinalInstructions(s: OrderSinal, online: boolean) {
+  const due = dueCharge(s);
+  if (!due) return null;
+  const where = online ? 'pelo código desta página' : 'no Pix copia e cola abaixo';
+  return due.charge === 'deposit'
+    ? `Pague o sinal de R$ ${brl(s.depositCents)} ${where} para garantir a data. O restante (R$ ${brl(s.balanceCents)}) fica para a retirada ou a entrega.`
+    : `Sinal recebido ✓ Falta R$ ${brl(s.balanceCents)}: pague ${where} antes do dia, ou na hora de receber.`;
+}
+
+/** The store's own Pix for the part of a sinal order that is due now. */
+export function offlineSinalPayment(
+  settings: Parameters<typeof offlinePayment>[0],
+  number: number,
+  s: OrderSinal,
+) {
+  const due = dueCharge(s);
+  const base = offlinePayment(settings, 'pix', due?.cents ?? s.balanceCents, number);
+  if (!due) return { ...base, pix: null };
+  return { ...base, instructions: base.pix ? sinalInstructions(s, false) : base.instructions };
+}
+
+export function onlineSinalPayment(provider: ProviderName, s: OrderSinal) {
+  return {
+    ...onlinePayment(provider, 'pix', s.depositCents),
+    instructions: sinalInstructions(s, true),
+  };
+}
+
 /** Venduá's cut from the tenant's plan (plans.fee_bps; 0 today). Legacy plans have no row → 0. */
 async function applicationFee(tx: Sql, tenantId: string, totalCents: number) {
   const bps =
@@ -370,6 +402,7 @@ interface OrderLock {
   number: number;
   state: string;
   total_cents: number;
+  deposit_cents: number | null;
   delivery_fee_cents: number;
   customer: { name?: string };
   customer_phone: string | null;
@@ -481,7 +514,25 @@ async function pixBuyer(
   order: OrderLock,
   storeDomain: string,
   secret: string,
+  /** a sinal or its rest: one line for what this Pix pays, not the order's lines */
+  part: { title: string; cents: number } | null = null,
 ): Promise<PixBuyer> {
+  if (part)
+    return {
+      email: shopperPayerEmail(secret, order.customer_phone, order.id, storeDomain),
+      name: order.customer.name?.trim() || null,
+      phone: order.customer_phone,
+      items: [
+        {
+          id: 'sinal',
+          title: part.title,
+          description: part.title,
+          categoryId: 'others',
+          quantity: 1,
+          unitPriceCents: part.cents,
+        },
+      ],
+    };
   const lines = await tx<
     {
       product_id: string | null;
@@ -539,7 +590,8 @@ async function planPayment(
 ): Promise<Plan> {
   const order = (
     await tx<OrderLock[]>`
-      select id, number, state, total_cents, delivery_fee_cents, customer, customer_phone, payment
+      select id, number, state, total_cents, deposit_cents, delivery_fee_cents, customer,
+             customer_phone, payment
       from orders
       where tenant_id = ${tenant.id} and id = ${orderId} and cart_id = ${cartId} for update
     `
@@ -558,7 +610,11 @@ async function planPayment(
       reason: 'paid',
     });
   }
-  const method = order.payment.method === 'card_online' ? 'card_online' : 'pix';
+  // an order with a sinal (0128) pays its parts one at a time: the sinal, then the rest
+  const sinal = order.deposit_cents ? sinalOf(order.payment) : null;
+  const due = sinal ? dueCharge(sinal) : null;
+  if (sinal && !due) return { do: 'done', next: { kind: 'none' } };
+  const method = sinal ? 'pix' : order.payment.method === 'card_online' ? 'card_online' : 'pix';
   const conn = await loadConnection(tx, tenant.id);
   const tok = isOnline(conn, d.provider, now)
     ? await tokenFor(tx, tenant.id, d.sessionSecret)
@@ -574,18 +630,34 @@ async function planPayment(
     (
       await tx<PaymentRow[]>`
         select * from payments where tenant_id = ${tenant.id} and order_id = ${orderId} and review is null
+          ${due ? tx`and charge = ${due.charge}` : tx``}
         order by attempt desc limit 1 for update
       `
     )[0] ?? null;
+  const part = due
+    ? due.charge === 'deposit'
+      ? 'Sinal do pedido'
+      : 'Restante do pedido'
+    : 'Pedido';
   const create = async (row: PaymentRow): Promise<Plan> => ({
     do: 'create',
     row,
     tok,
-    title: `Pedido #${order.number} — ${tenant.name}`.slice(0, 200),
+    title: `${part} #${order.number} — ${tenant.name}`.slice(0, 200),
     statement: tenant.name,
     buyer:
       row.kind === 'pix'
-        ? await pixBuyer(tx, tenant.id, order, ctx.storeDomain, d.sessionSecret)
+        ? await pixBuyer(
+            tx,
+            tenant.id,
+            order,
+            ctx.storeDomain,
+            d.sessionSecret,
+            due && {
+              title: `${part} #${order.number}`,
+              cents: row.amount_cents,
+            },
+          )
         : null,
     backUrl:
       row.kind === 'card'
@@ -621,13 +693,15 @@ async function planPayment(
     });
   }
   const kind = method === 'pix' ? 'pix' : 'card';
-  const fee = await applicationFee(tx, tenant.id, order.total_cents);
+  const amount = due ? due.cents : order.total_cents;
+  const fee = await applicationFee(tx, tenant.id, amount);
   const row = (
     await tx<PaymentRow[]>`
       insert into payments (tenant_id, order_id, provider, kind, status, amount_cents,
-        application_fee_cents, pix_expires_at, attempt)
-      values (${tenant.id}, ${orderId}, ${d.provider.name}, ${kind}, 'creating', ${order.total_cents},
-        ${fee}, ${kind === 'pix' ? new Date(now.getTime() + PIX_TTL_MIN * 60_000) : null}, ${attempt})
+        application_fee_cents, pix_expires_at, attempt, charge)
+      values (${tenant.id}, ${orderId}, ${d.provider.name}, ${kind}, 'creating', ${amount},
+        ${fee}, ${kind === 'pix' ? new Date(now.getTime() + PIX_TTL_MIN * 60_000) : null}, ${attempt},
+        ${due?.charge ?? null})
       returning *
     `
   )[0]!;
@@ -1159,14 +1233,20 @@ async function syncAttempt(d: PayDeps, tenantId: string, tok: StoreToken, row: P
 /** The connection is gone: a Pix order becomes today's static Pix (or pay on delivery). */
 async function degradeToOffline(tx: Sql, tenantId: string, orderId: string): Promise<PayNext> {
   const order = (
-    await tx<{ number: number; total_cents: number }[]>`
-      select number, total_cents from orders where tenant_id = ${tenantId} and id = ${orderId} for update
+    await tx<
+      { number: number; total_cents: number; deposit_cents: number | null; payment: unknown }[]
+    >`
+      select number, total_cents, deposit_cents, payment from orders
+      where tenant_id = ${tenantId} and id = ${orderId} for update
     `
   )[0]!;
   const settings = (
     await tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`
   )[0];
-  const payment = offlinePayment(settings ?? null, 'pix', order.total_cents, order.number);
+  const sinal = order.deposit_cents ? sinalOf(order.payment) : null;
+  const payment = sinal
+    ? { ...offlineSinalPayment(settings ?? null, order.number, sinal), sinal }
+    : offlinePayment(settings ?? null, 'pix', order.total_cents, order.number);
   await tx`
     update orders set payment = ${tx.json(payment as never)}, rev = rev + 1, updated_at = now()
     where tenant_id = ${tenantId} and id = ${orderId}
@@ -1220,11 +1300,12 @@ export async function syncOrderPayment(
   orderId: string,
 ): Promise<{ changed: boolean; status: string | null }> {
   const cur = (
-    await tx<{ number: number; payment: Record<string, unknown> }[]>`
-      select number, payment from orders where tenant_id = ${tenantId} and id = ${orderId}
+    await tx<{ number: number; payment: Record<string, unknown>; deposit_cents: number | null }[]>`
+      select number, payment, deposit_cents from orders where tenant_id = ${tenantId} and id = ${orderId}
     `
   )[0];
   if (!cur) return { changed: false, status: null };
+  const sinal = cur.deposit_cents ? sinalOf(cur.payment) : null;
   // an amount that doesn't match the order never counts as this order's payment
   const rows = await tx<PaymentRow[]>`
     select * from payments where tenant_id = ${tenantId} and order_id = ${orderId}
@@ -1270,8 +1351,18 @@ export async function syncOrderPayment(
         ? latest.redirect_url
         : null,
   };
+  // a sinal order that fell back to the store's own key keeps that Pix for the part still due
+  const fellBack = !!sinal && cur.payment.online === false;
+  if (sinal) {
+    Object.assign(patch, sinalPatch(sinal, rows, settled, patch));
+    if (fellBack && dueCharge(patch.sinal as OrderSinal)) {
+      delete patch.pix;
+      delete patch.instructions;
+    }
+  }
   // money that landed makes the order online again, even one that fell back to offline meanwhile
-  if (settled.length) Object.assign(patch, { online: true, provider: settled[0]!.provider });
+  if (settled.length && !(fellBack && dueCharge(patch.sinal as OrderSinal)))
+    Object.assign(patch, { online: true, provider: settled[0]!.provider });
   const same = Object.entries(patch).every(
     ([k, v]) => JSON.stringify(cur.payment[k] ?? null) === JSON.stringify(v),
   );
@@ -1282,6 +1373,12 @@ export async function syncOrderPayment(
   `;
   await tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`;
   await emitAdminTx(tx, tenantId, 'order.changed', orderId);
+  // a sinal that just landed: the date is the shopper's, and the rest is what's left
+  const nowSinal = patch.sinal as OrderSinal | undefined;
+  if (sinal && !sinal.depositPaidAt && nowSinal?.depositPaidAt && !patch.paidAt) {
+    await emitAdminTx(tx, tenantId, 'payment.received', orderId);
+    await enqueueSinalPaidTx(tx, tenantId, orderId);
+  }
   // the "Pix recebido" push: once, when money first lands on this order
   if (patch.paidAt && !cur.payment.paidAt) {
     await emitAdminTx(tx, tenantId, 'payment.received', orderId);
@@ -1303,6 +1400,60 @@ export async function syncOrderPayment(
       refund: { cents: refunded - before, full: !before && status === 'refunded', online: true },
     });
   return { changed: true, status };
+}
+
+/**
+ * An order with a sinal: each part is paid by its own settled attempts (or one for the whole
+ * order), or by a manager or the caixa (kept as they were); 'paid' only once both are.
+ */
+function sinalPatch(
+  sinal: OrderSinal,
+  rows: PaymentRow[],
+  settled: PaymentRow[],
+  base: Record<string, unknown>,
+): Record<string, unknown> {
+  const at = (charge: Charge) => {
+    const t = settled
+      .filter((r) => r.charge === charge || r.charge === null)
+      .map((r) => new Date(r.approved_at ?? r.created_at).getTime());
+    return t.length ? new Date(Math.min(...t)).toISOString() : null;
+  };
+  const part = (charge: Charge, paidAt: string | null, via: SinalVia | null) =>
+    via && via !== 'online'
+      ? { at: paidAt, via }
+      : { at: at(charge), via: at(charge) ? 'online' : null };
+  const dep = part('deposit', sinal.depositPaidAt, sinal.depositVia);
+  const bal = part('balance', sinal.balancePaidAt, sinal.balanceVia);
+  const next: OrderSinal = {
+    ...sinal,
+    depositPaidAt: dep.at,
+    depositVia: dep.via as SinalVia | null,
+    balancePaidAt: bal.at,
+    balanceVia: bal.via as SinalVia | null,
+  };
+  const due = dueCharge(next);
+  // the part due now keeps the Pix the shopper is looking at; a paid part has none
+  const open = due
+    ? [...rows].reverse().find((r) => r.charge === due.charge && OPEN.includes(r.status))
+    : null;
+  return {
+    sinal: next,
+    // money on one part is not the order paid (nor a partly refunded one); disputes and full
+    // refunds read as they always have
+    status:
+      due && (base.status === 'paid' || base.status === 'partially_refunded')
+        ? 'pending'
+        : base.status,
+    paidAt: due ? null : (([dep.at, bal.at].filter(Boolean) as string[]).sort().at(-1) ?? null),
+    pix:
+      open?.kind === 'pix' && open.pix_copy_paste
+        ? {
+            copyPaste: open.pix_copy_paste,
+            expiresAt: open.pix_expires_at ? new Date(open.pix_expires_at).toISOString() : null,
+          }
+        : null,
+    instructions: sinalInstructions(next, true),
+  };
 }
 
 /**
@@ -1357,9 +1508,21 @@ export async function reconcileRefunds(
  * from the order, the team hears of it. Call when `row` has just become settled.
  */
 async function flagIfPaidTwice(tx: Sql, tenantId: string, row: PaymentRow) {
+  // a sinal and its rest are two payments of one order; the same part twice is not, nor a part
+  // the caixa or a manager already took
   const paidBefore = await tx`
     select 1 from payments where tenant_id = ${tenantId} and order_id = ${row.order_id} and id <> ${row.id}
-      and status = any(${SETTLED}) and review is distinct from 'amount_mismatch' limit 1
+      and status = any(${SETTLED}) and review is distinct from 'amount_mismatch'
+      and (charge is null or ${row.charge ?? null}::text is null or charge = ${row.charge ?? null})
+    union all
+    select 1 from orders o where o.tenant_id = ${tenantId} and o.id = ${row.order_id}
+      and case ${row.charge ?? 'whole'}::text
+            when 'deposit' then o.payment -> 'sinal' ->> 'depositVia' in ('pdv', 'manual')
+            when 'balance' then o.payment -> 'sinal' ->> 'balanceVia' in ('pdv', 'manual')
+            else o.payment -> 'sinal' ->> 'depositVia' in ('pdv', 'manual')
+              or o.payment -> 'sinal' ->> 'balanceVia' in ('pdv', 'manual')
+          end
+    limit 1
   `;
   if (!paidBefore.length) return;
   await markReview(tx, tenantId, row, 'paid_twice');
@@ -1406,11 +1569,29 @@ export async function applyProviderPayment(
   const orderId = p.externalReference ?? '';
   if (!UUID_RE.test(orderId)) return { applied: false, reason: 'reference' };
   const order = (
-    await tx<{ id: string; number: number; total_cents: number; state: string }[]>`
-      select id, number, total_cents, state from orders where tenant_id = ${tenantId} and id = ${orderId} for update
+    await tx<
+      {
+        id: string;
+        number: number;
+        total_cents: number;
+        deposit_cents: number | null;
+        state: string;
+      }[]
+    >`
+      select id, number, total_cents, deposit_cents, state from orders
+      where tenant_id = ${tenantId} and id = ${orderId} for update
     `
   )[0];
   if (!order) return { applied: false, reason: 'reference' };
+  // an order with a sinal is paid in parts: the sinal, the rest, or (a Core from before 0128
+  // during a deploy) the whole of it
+  const parts: { charge: Charge | null; cents: number }[] = order.deposit_cents
+    ? [
+        { charge: 'deposit', cents: order.deposit_cents },
+        { charge: 'balance', cents: order.total_cents - order.deposit_cents },
+        { charge: null, cents: order.total_cents },
+      ]
+    : [{ charge: null, cents: order.total_cents }];
   const kind = p.kind === 'pix' ? 'pix' : 'card';
   const maxAttempt = async () =>
     (
@@ -1425,11 +1606,17 @@ export async function applyProviderPayment(
     `
   )[0];
 
-  if (p.amountCents !== order.total_cents) {
+  if (!parts.some((x) => x.cents === p.amountCents)) {
     // checked before anything attaches: it never pins an attempt, and money that landed is kept
     // on record for a person, not dropped
     payLog.error(
-      { tenantId, orderId, paymentId: p.id, amount: p.amountCents, want: order.total_cents },
+      {
+        tenantId,
+        orderId,
+        paymentId: p.id,
+        amount: p.amountCents,
+        want: parts.map((x) => x.cents),
+      },
       'payment amount does not match the order',
     );
     if (!row && SETTLED.includes(p.status) && p.amountCents > 0) {
@@ -1476,6 +1663,7 @@ export async function applyProviderPayment(
               and kind = ${kind} and provider_payment_id is null and review is null
               and status_detail is distinct from ${CARD_FORM}
               and (status in ('creating', 'pending') or (status = 'cancelled' and status_detail = 'superseded'))
+              ${order.deposit_cents ? tx`and amount_cents = ${p.amountCents}` : tx``}
             order by attempt desc limit 1 for update
           `
     )[0];
@@ -1494,11 +1682,23 @@ export async function applyProviderPayment(
   if (!row) {
     const n = await maxAttempt();
     if (n >= MAX_ATTEMPTS || p.amountCents <= 0) return { applied: false, reason: 'attempts' };
+    // a sinal of exactly half: the same amount pays the rest once the sinal is in
+    const fits = parts.filter((x) => x.cents === p.amountCents);
+    let charge = fits[0]!.charge;
+    if (charge === 'deposit' && fits.some((x) => x.charge === 'balance')) {
+      const [paid] = await tx`
+        select 1 from payments where tenant_id = ${tenantId} and order_id = ${orderId}
+          and charge = 'deposit' and status = any(${SETTLED})
+          and review is distinct from 'amount_mismatch' limit 1`;
+      if (paid) charge = 'balance';
+    }
     const inserted = await bindsProviderId(
       tx,
       (sp) => sp<PaymentRow[]>`
-        insert into payments (tenant_id, order_id, provider, provider_payment_id, kind, status, amount_cents, attempt)
-        values (${tenantId}, ${orderId}, ${conn.provider}, ${p.id}, ${kind}, 'pending', ${p.amountCents}, ${n + 1})
+        insert into payments (tenant_id, order_id, provider, provider_payment_id, kind, status,
+          amount_cents, attempt, charge)
+        values (${tenantId}, ${orderId}, ${conn.provider}, ${p.id}, ${kind}, 'pending',
+          ${p.amountCents}, ${n + 1}, ${charge})
         returning *
       `,
     );
@@ -1642,10 +1842,12 @@ export async function orderPayments(tx: Sql, tenantId: string, orderId: string) 
       approvedAt: string | null;
       createdAt: string;
       review: string | null;
+      /** a sinal order's part (0128); null = the whole order */
+      charge: Charge | null;
       refunds: { amountCents: number; status: string; reason: string | null; createdAt: string }[];
     }[]
   >`
-    select p.id, p.kind, p.status, p.amount_cents as "amountCents", p.refunded_cents as "refundedCents",
+    select p.id, p.kind, p.status, p.charge, p.amount_cents as "amountCents", p.refunded_cents as "refundedCents",
            case when p.status in ('approved', 'partially_refunded') and p.provider_payment_id is not null
                   and p.review is distinct from 'amount_mismatch'
              then greatest(0, p.amount_cents - greatest(p.refunded_cents,

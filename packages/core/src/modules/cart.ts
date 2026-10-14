@@ -37,6 +37,7 @@ import { cartPlanTx, dayOfWeek, type CartPlan } from './shopper-plan-base.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
 import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
+import { newSinal, sinalApplies, sinalRule } from './sinal.ts';
 import type { StoreSettingsRow } from './store.ts';
 
 /**
@@ -177,6 +178,10 @@ export interface CartTotals {
   freeDeliveryThresholdCents: number | null;
   /** cents short of free delivery; 0 once reached; null without a threshold */
   freeDeliveryRemainingCents: number | null;
+  /** Festa calculada F2 (0128): the sinal of this total when the order is an encomenda (paid by
+   *  Pix to lock the date), and the rest; absent when the store asks for none */
+  depositCents?: number;
+  balanceCents?: number;
 }
 
 export interface CartDelivery {
@@ -216,6 +221,9 @@ export interface CartView {
   party?: CartParty | null;
   /** Plano semanal (0127): the plan this cart was built from — its checkout offers it */
   plan?: CartPlan | null;
+  /** Festa calculada F2 (0128): the sinal asked of this cart as an encomenda — its share and the
+   *  store's own cancellation words; the amounts are in `totals` */
+  sinal?: { percent: number; policy: string | null } | null;
 }
 
 export interface GroupPicks {
@@ -879,18 +887,30 @@ export async function loadCartView(
       schedule.dates,
     );
 
+  const totals = computeTotals(
+    items,
+    deliveryFee,
+    effectiveMinOrder,
+    discount,
+    match?.zone.free_delivery_over_cents ?? null,
+    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
+  );
+  // Festa calculada F2 (0128): what placeOrderTx will ask as a sinal once a date is picked
+  const rule = plan ? null : sinalRule(settings);
+  const sinal = sinalApplies(rule, { party: !!cart.party, totalCents: totals.totalCents })
+    ? newSinal(totals.totalCents, rule)
+    : null;
+  if (sinal) {
+    totals.depositCents = sinal.depositCents;
+    totals.balanceCents = sinal.balanceCents;
+    if (schedule.required) schedule.paymentMethods = ['pix'];
+  }
+
   return {
     id: cart.id,
     status: cart.status,
     items,
-    totals: computeTotals(
-      items,
-      deliveryFee,
-      effectiveMinOrder,
-      discount,
-      match?.zone.free_delivery_over_cents ?? null,
-      paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
-    ),
+    totals,
     // a zero fee can mean a free zone — branch on zoneId, not the amount
     delivery: delivery
       ? {
@@ -907,6 +927,7 @@ export async function loadCartView(
     schedule,
     party: cart.party ?? null,
     plan,
+    sinal: sinal ? { percent: rule!.bps / 100, policy: rule!.policy } : null,
   };
 }
 

@@ -465,8 +465,14 @@ export function CheckoutPage() {
             ? 'A loja pausou os pedidos por alguns instantes. Tente de novo daqui a pouco.'
             : null
         : closedNote(store, cart.items, vocabulary.bag);
+  // Kernel 1.26: an encomenda the store asks a sinal of (a party, or from its amount) is Pix
+  const sinalNow = !!cart?.sinal && !atTable && (encomenda || !!scheduledFor);
   // a table has no encomenda: Core takes no date there
-  const allowed = encomenda && !atTable ? schedule!.paymentMethods.join(',') : '';
+  const allowed = sinalNow
+    ? 'pix'
+    : encomenda && !atTable
+      ? schedule!.paymentMethods.join(',')
+      : '';
   // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
   const accepted = store?.paymentMethods?.join(',') ?? '';
   const online = store?.onlinePayments;
@@ -550,6 +556,7 @@ export function CheckoutPage() {
     };
   }, [pricesByMethod, priceKey, pay, api, priceTry]);
   const pricedTotals = pricesByMethod && priced?.key === priceKey ? priced.totals : null;
+  const sinalTotals = pricedTotals ?? (cart?.status === 'open' ? cart.totals : null);
   // a method with a rule shows no total until Core priced it
   const pricing = pricesByMethod && !pricedTotals && !!adjustments?.[pay];
   const priceError = pricing && priceFailed === priceKey;
@@ -1133,6 +1140,30 @@ export function CheckoutPage() {
                     encerrar.
                   </label>
                 ) : null}
+                {sinalNow && cart.sinal && sinalTotals?.depositCents ? (
+                  <div className="v-panel v-sinal" data-vendua="checkout-sinal">
+                    <p className="v-sinal-row">
+                      <span>Sinal hoje, por Pix</span>
+                      <strong>{money(sinalTotals.depositCents)}</strong>
+                    </p>
+                    <p className="v-sinal-row v-muted">
+                      <span>
+                        Restante, por Pix antes do dia ou{' '}
+                        {deliveryMode === 'delivery' ? 'na entrega' : 'na retirada'}
+                      </span>
+                      <span>{money(sinalTotals.balanceCents ?? 0)}</span>
+                    </p>
+                    <p className="v-note">
+                      O sinal ({cart.sinal.percent}% do total) garante a data da sua encomenda.
+                    </p>
+                    {cart.sinal.policy ? (
+                      <p className="v-sinal-policy" data-part="policy">
+                        <span className="v-sinal-policy-label">Política da loja</span>
+                        {cart.sinal.policy}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Slot
                   name="checkout.PaymentMethods"
                   methods={methods}
@@ -1214,9 +1245,11 @@ export function CheckoutPage() {
                 >
                   {pending
                     ? 'Enviando…'
-                    : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'}${
-                        pricing ? '' : ` · ${money((pricedTotals ?? cart.totals).totalCents)}`
-                      }`}
+                    : sinalNow && sinalTotals?.depositCents && !pricing
+                      ? `Confirmar · sinal de ${money(sinalTotals.depositCents)}`
+                      : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'}${
+                          pricing ? '' : ` · ${money((pricedTotals ?? cart.totals).totalCents)}`
+                        }`}
                 </button>
               ) : (
                 <button type="submit" className="v-btn v-btn-accent" disabled={syncing}>

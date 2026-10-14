@@ -282,6 +282,8 @@ export interface Order {
       expiresAt?: string | null;
     } | null;
     redirectUrl?: string | null;
+    /** an encomenda with a sinal (0128) */
+    sinal?: OrderSinal;
   };
   items: {
     productId: string | null;
@@ -340,6 +342,8 @@ export interface OrderPayment {
   netCents: number | null;
   approvedAt: string | null;
   createdAt: string;
+  /** a sinal order's part (0128); null = the whole order */
+  charge?: 'deposit' | 'balance' | null;
   refunds: {
     amountCents: number;
     status: 'pending' | 'approved' | 'rejected';
@@ -728,7 +732,21 @@ export interface StoreView {
     /** the D−1 message from the store's WhatsApp */
     reminder: boolean;
   };
+  /** Festa calculada F2 (0128): the sinal by Pix that locks a party's date (bps 0 = off), and an
+   *  encomenda's from minCents; policy = the store's own cancellation words. Owner-only. */
+  sinal: { bps: number; minCents: number | null; policy: string | null };
   zones: Zone[];
+}
+
+/** An order's sinal (0128): two parts, each paid on its own; status reads paid once both are */
+export interface OrderSinal {
+  depositCents: number;
+  balanceCents: number;
+  depositPaidAt: string | null;
+  depositVia: 'online' | 'manual' | 'pdv' | null;
+  balancePaidAt: string | null;
+  balanceVia: 'online' | 'manual' | 'pdv' | null;
+  policy: string | null;
 }
 
 export interface Home {
@@ -1354,7 +1372,16 @@ export interface Payments {
   last30Orders: number;
   /** per method, most money first */
   last30ByMethod: { method: PayMethod; cents: number; orders: number }[];
-  awaitingPix: { id: string; number: number; name: string; totalCents: number; placedAt: string }[];
+  awaitingPix: {
+    id: string;
+    number: number;
+    name: string;
+    totalCents: number;
+    placedAt: string;
+    /** a sinal order: the part this Pix pays, and its amount */
+    part: 'deposit' | 'balance' | null;
+    dueCents: number;
+  }[];
   month: StatementTotals & { month: string };
   /** money Core couldn't verify or settle by itself — a person looks at each (newest 50) */
   review: {
@@ -2745,8 +2772,12 @@ export const api = {
       ...(idem ? { idem } : {}),
       ...(opts.keepalive ? { keepalive: true } : {}),
     }),
-  markPaid: (id: string, status: 'paid' | 'pending') =>
-    send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
+  /** a sinal order (0128): 'deposit' marks the sinal, 'all' everything still open */
+  markPaid: (id: string, status: 'paid' | 'pending', charge?: 'deposit' | 'all') =>
+    send<{ order: Order }>('POST', `/orders/${id}/payment`, {
+      status,
+      ...(charge ? { charge } : {}),
+    }),
   /** "atrasou": the promise moves later; the shopper hears the new time on WhatsApp */
   delay: (id: string, minutes: number, idem: string, opts: { keepalive?: boolean } = {}) =>
     req<{ order: Order; notified: boolean }>(`/orders/${id}/delay`, {

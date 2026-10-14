@@ -4418,6 +4418,46 @@
   .v-plan-consent {
     margin: 12px 0;
   }
+  /* Kernel 1.26 — an encomenda's sinal: at checkout, on the order and on its WhatsApp link */
+  .v-sinal {
+    display: grid;
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .v-sinal p {
+    margin: 0;
+  }
+  .v-sinal-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 12px;
+  }
+  .v-sinal-row strong {
+    font-variant-numeric: tabular-nums;
+  }
+  .v-sinal-policy {
+    display: grid;
+    gap: 2px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    font-size: 0.875rem;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+  .v-sinal-policy-label {
+    font-weight: 600;
+  }
+  .v-track-pay {
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+    margin: 12px 0;
+  }
+  .v-track-pay p {
+    margin: 0;
+  }
   /* sdk:recent-order — the device's last order */
   .v-recent-order {
     display: grid;

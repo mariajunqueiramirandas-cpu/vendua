@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { localParts } from '../platform/tz.ts';
+import { sinalOf, type OrderSinal } from '../modules/sinal.ts';
 import { jidForPhone, phoneVariants } from './text.ts';
 
 // Order updates a store sends its shoppers from its own WhatsApp. Core renders every word and
@@ -77,6 +78,8 @@ export interface OrderFacts {
   source?: string;
   /** how it's paid: a Pix by hand carries its copia-e-cola code (the store's own key) */
   pay?: { method: string; online: boolean; paid: boolean; copyPaste: string | null };
+  /** Festa calculada F2 (0128): the order's sinal and what has been paid of it */
+  sinal?: OrderSinal | null;
 }
 
 interface OrderLinks {
@@ -322,6 +325,7 @@ async function orderFactsTx(
       paid: row.payment?.status === 'paid',
       copyPaste: row.payment?.pix?.copyPaste ?? null,
     },
+    sinal: sinalOf(row.payment),
     phone: row.phone,
   };
 }
@@ -332,7 +336,12 @@ export function eveReminderText(o: OrderFacts): string | null {
   const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
   const how = o.mode === 'pickup' ? 'Pode vir retirar' : 'A entrega sai';
   const text = `${hi}Amanhã (${ddmm(o.scheduledFor)}) é o dia da sua encomenda #${o.number} na ${o.storeName} 🎉 ${how} conforme combinado. Qualquer mudança, é só responder esta mensagem.`;
-  return o.trackUrl ? `${text}\n\nAcompanhe o pedido: ${o.trackUrl}` : text;
+  // a sinal's rest still open: how much, and that the door takes it too
+  const rest =
+    o.sinal?.depositPaidAt && !o.sinal.balancePaidAt
+      ? `\n\nFalta pagar ${brl(o.sinal.balanceCents)}: pelo Pix${o.pay?.online ? ' da página do pedido' : ''} ou ${atDoor(o)}.`
+      : '';
+  return o.trackUrl ? `${text}${rest}\n\nAcompanhe o pedido: ${o.trackUrl}` : `${text}${rest}`;
 }
 
 /** Queues the D−1 message once per order (event 'reminder_eve'), on the store's linked number. */
@@ -360,7 +369,9 @@ export function planConfirmText(
 /** How the shopper pays a plan's week: the code in the next message, or the order page. */
 function planPayLine(o: OrderFacts, again: boolean): string {
   if (o.pay?.online)
-    return `Pague o Pix pela página do pedido${o.trackUrl ? ' (o link abaixo)' : ''}: a confirmação chega aqui sozinha.`;
+    return o.trackUrl
+      ? 'Pague o Pix pela página do pedido (o link abaixo): a confirmação chega aqui sozinha.'
+      : 'Pague o Pix pela página do pedido: a confirmação chega aqui sozinha.';
   if (o.pay?.copyPaste)
     return `O código Pix copia e cola vem ${again ? 'de novo ' : ''}na próxima mensagem. Depois de pagar, mande o comprovante aqui.`;
   return 'Responda esta mensagem para combinar o Pix com a loja.';
@@ -403,6 +414,73 @@ export function planPixReminderText(
 /** The copia-e-cola code alone, so a long press copies just it (the store's own Pix key) */
 export function planPixCode(o: OrderFacts): string | null {
   return !o.pay?.online && !o.pay?.paid ? (o.pay?.copyPaste ?? null) : null;
+}
+
+const where = (o: OrderFacts) => (o.mode === 'pickup' ? 'a retirada' : 'a entrega');
+const atDoor = (o: OrderFacts) => (o.mode === 'pickup' ? 'na retirada' : 'na entrega');
+
+/** How the part due now is paid: the code in the next message, or the order's page */
+function sinalPayLine(o: OrderFacts): string {
+  if (o.pay?.online)
+    return o.trackUrl
+      ? `Pague pelo Pix da página do pedido: ${o.trackUrl}`
+      : 'Pague pelo Pix da página do pedido.';
+  if (o.pay?.copyPaste)
+    return 'O código Pix copia e cola vem na próxima mensagem. Depois de pagar, mande o comprovante aqui.';
+  return 'Responda esta mensagem para combinar o Pix com a loja.';
+}
+
+/** Festa calculada F2: right after the order, what locks the date and what's left for later */
+export function sinalDueText(o: OrderFacts): string | null {
+  const s = o.sinal;
+  if (!s || s.depositPaidAt || !o.scheduledFor) return null;
+  return [
+    `Para garantir ${ddmm(o.scheduledFor)}, o sinal da encomenda #${o.number} é de ${brl(s.depositCents)}, por Pix. O restante (${brl(s.balanceCents)}) fica para ${where(o)}.`,
+    sinalPayLine(o),
+  ].join('\n\n');
+}
+
+/** The sinal landed: the date is the shopper's, and the rest by Pix now or at the door */
+export function sinalPaidText(o: OrderFacts): string | null {
+  const s = o.sinal;
+  if (!s || !s.depositPaidAt || s.balancePaidAt || !o.scheduledFor) return null;
+  const how = o.pay?.online
+    ? `Se quiser, pague pela página do pedido${o.trackUrl ? `: ${o.trackUrl}` : '.'}`
+    : o.pay?.copyPaste
+      ? 'Se quiser pagar agora, o código Pix vem na próxima mensagem.'
+      : '';
+  return [
+    `Sinal de ${brl(s.depositCents)} recebido ✓ Sua encomenda #${o.number} para ${ddmm(o.scheduledFor)} está garantida na ${o.storeName}.`,
+    `Falta ${brl(s.balanceCents)}: por Pix antes do dia ou ${atDoor(o)}. ${how}`.trim(),
+  ].join('\n\n');
+}
+
+/** Queued with the order: the sinal's words, then its copia-e-cola on its own (own key). */
+export async function enqueueSinalDueTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<boolean> {
+  const told = await enqueueOrderNoteTx(tx, tenantId, orderId, 'sinal_due', sinalDueText, {
+    after: true,
+  });
+  if (told)
+    await enqueueOrderNoteTx(tx, tenantId, orderId, 'sinal_pix', planPixCode, { after: true });
+  return told;
+}
+
+/** Once the sinal is in: the date is held, and the rest's code (own key) follows. */
+export async function enqueueSinalPaidTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<boolean> {
+  const told = await enqueueOrderNoteTx(tx, tenantId, orderId, 'sinal_paid', sinalPaidText, {
+    after: true,
+  });
+  if (told)
+    await enqueueOrderNoteTx(tx, tenantId, orderId, 'balance_pix', planPixCode, { after: true });
+  return told;
 }
 
 /**
@@ -470,11 +548,11 @@ export async function enqueueOrderMessageTx(
     ).savepoint(async (sp) => {
       if (REPEATS.has(event) && !/^\d{1,20}$/.test(extra.occurrence ?? '')) return false;
       const wa = await sendingTx(sp, tenantId);
-      // a weekly plan's Pix is paid from these messages: its "pago" is always said
       const enabled = !!wa && wa.events.includes(event);
       if (!wa || (!enabled && event !== 'paid')) return false;
       const facts = await orderFactsTx(sp, tenantId, orderId);
-      if (!enabled && facts?.source !== 'plan') return false;
+      // a plan's week or a sinal is paid from these messages: its "pago" is always said
+      if (!enabled && facts?.source !== 'plan' && !facts?.sinal) return false;
       const phone = facts?.phone ?? null;
       if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
       if (await optedOutTx(sp, tenantId, phone)) return false;

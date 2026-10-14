@@ -30,7 +30,15 @@ import { KLink } from '../sdk/sections.tsx';
 import { KERNEL_PATHS, resolvePaths } from '../config.ts';
 import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useNavigateTo } from '../primitives.tsx';
-import type { CardPaymentInput, ImportReport, Order, PaymentNext, StoreProfile } from '../api.ts';
+import type {
+  CardPaymentInput,
+  ImportReport,
+  Order,
+  OrderSinal,
+  OrderTracking,
+  PaymentNext,
+  StoreProfile,
+} from '../api.ts';
 import { CardFields, ChallengeFrame, declineCopy } from '../card-payment.tsx';
 import { mpDeviceId } from '../mp-device.ts';
 import type { PaymentStatusKind, SlotProps } from '../slot-props.ts';
@@ -116,6 +124,14 @@ function useOnlinePayment(
   const method: 'pix' | 'card_online' = card ? 'card_online' : 'pix';
   const status = pay?.status;
   const currency = store?.currency ?? 'BRL';
+  // Kernel 1.26: an encomenda with a sinal pays it first, then the rest (when the shopper asks)
+  const sinal = pay?.sinal;
+  const restStage = !!sinal?.depositPaidAt && !sinal.balancePaidAt;
+  const dueCents = sinal ? dueOf(sinal) : (order?.totalCents ?? 0);
+  // the sinal's Pix this page asked for is spent once the sinal is in
+  useEffect(() => {
+    if (sinal?.depositPaidAt) setNext((n) => (n?.kind === 'pix' ? null : n));
+  }, [sinal?.depositPaidAt]);
   const nextPix = next?.kind === 'pix' ? next : null;
   const pixCode = pay?.pix?.copyPaste || nextPix?.copyPaste;
   const pixExpiresAt = pay?.pix?.expiresAt ?? nextPix?.expiresAt ?? null;
@@ -212,7 +228,7 @@ function useOnlinePayment(
   // one automatic call per order: generate the missing Pix, or open the card form
   const id = order?.id;
   const cancelled = order?.state === 'cancelled';
-  const autoPix = isOnline && !card && status === 'pending' && !pixCode && !cancelled;
+  const autoPix = isOnline && !card && status === 'pending' && !pixCode && !cancelled && !restStage;
   const autoCard = isOnline && card && (status === 'pending' || status === 'failed') && !cancelled;
   useEffect(() => {
     if (!id || started.current === id || !(autoPix || autoCard)) return;
@@ -267,7 +283,7 @@ function useOnlinePayment(
     action = again('Gerar novo Pix', 'sync');
   } else if (status === 'pending' && !pixCode) {
     kind = 'due';
-    action = again('Gerar Pix', 'sync');
+    action = again(restStage ? 'Pagar o restante por Pix' : 'Gerar Pix', 'sync');
   }
 
   const whatsapp = order ? whatsappHref(store, order) : null;
@@ -276,7 +292,7 @@ function useOnlinePayment(
       ? {
           status: kind,
           method,
-          amountCents: order.totalCents,
+          amountCents: kind === 'paid' || kind === 'refunded' ? order.totalCents : dueCents,
           currency,
           ...(kind === 'refunded' && pay?.refundedCents
             ? { refundedCents: pay.refundedCents }
@@ -339,8 +355,127 @@ function useOnlinePayment(
           >)
         : undefined,
     pixExpiresAt,
+    dueCents,
   };
 }
+
+/** Kernel 1.26 — an encomenda's sinal: what locked the date, what's left, the store's words */
+function SinalCard({
+  sinal,
+  mode,
+  currency,
+  policy,
+}: {
+  sinal: { depositCents: number; balanceCents: number; depositPaid: boolean; balancePaid: boolean };
+  mode: string;
+  currency: string;
+  policy?: string | null;
+}) {
+  const money = (c: number) => formatCents(c, currency);
+  const door = mode === 'delivery' ? 'na entrega' : 'na retirada';
+  return (
+    <section className="v-panel v-sinal" data-vendua="order-sinal" aria-label="Sinal">
+      <p className="v-sinal-row">
+        <span>Sinal</span>
+        <span>
+          {money(sinal.depositCents)} ·{' '}
+          <strong data-part="deposit">{sinal.depositPaid ? 'pago ✓' : 'a pagar'}</strong>
+        </span>
+      </p>
+      <p className="v-sinal-row">
+        <span>Restante</span>
+        <span>
+          {money(sinal.balanceCents)} ·{' '}
+          <strong data-part="balance">
+            {sinal.balancePaid ? 'pago ✓' : `por Pix antes do dia ou ${door}`}
+          </strong>
+        </span>
+      </p>
+      {policy ? (
+        <p className="v-sinal-policy" data-part="policy">
+          <span className="v-sinal-policy-label">Política da loja</span>
+          {policy}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** Kernel 1.26 — the store's WhatsApp link pays a Pix order: its code, or the button that has
+ *  Core make the online Pix */
+function TrackingPay({
+  order,
+  currency,
+  timeZone,
+}: {
+  order: OrderTracking;
+  currency: string;
+  timeZone?: string;
+}) {
+  const { api } = useKernel();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const p = order.payment;
+  if (!p || order.state === 'cancelled') return null;
+  const card = p.sinal ? (
+    <SinalCard sinal={p.sinal} mode={order.delivery.mode} currency={currency} />
+  ) : null;
+  if (!p.dueCents) return card;
+  const live =
+    p.pix && (!p.pix.expiresAt || Date.parse(p.pix.expiresAt) > Date.now()) ? p.pix : null;
+  const make = async () => {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const r = await api.payTracked(order.id, { deviceId: await mpDeviceId() });
+      invalidateQuery(`order-status:${order.id}`, r.order);
+    } catch (err) {
+      setFailed(errorCode(err));
+    }
+    setBusy(false);
+  };
+  const what = p.sinal ? (p.sinal.depositPaid ? 'Restante' : 'Sinal') : 'Total';
+  return (
+    <>
+      {card}
+      {live ? (
+        <Slot
+          name="checkout.PixPayment"
+          copyPaste={live.copyPaste}
+          beneficiary=""
+          amountCents={p.dueCents}
+          currency={currency}
+          {...(timeZone ? { timeZone } : {})}
+          {...(p.online ? { online: true, expiresAt: live.expiresAt } : {})}
+        />
+      ) : p.online ? (
+        <section className="v-panel v-track-pay" data-vendua="tracking-pay">
+          <p>
+            {what} a pagar por Pix: <strong>{formatCents(p.dueCents, currency)}</strong>
+          </p>
+          <button
+            type="button"
+            className="v-btn v-btn-accent"
+            onClick={() => void make()}
+            disabled={busy}
+            aria-busy={busy || undefined}
+          >
+            {busy ? 'Gerando o Pix…' : 'Pagar com Pix'}
+          </button>
+          {failed ? (
+            <p className="v-note" role="alert">
+              {errorCopy(failed).title}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+/** What a sinal leaves to pay now: the sinal, then the rest, then nothing. */
+const dueOf = (s: OrderSinal) =>
+  !s.depositPaidAt ? s.depositCents : !s.balancePaidAt ? s.balanceCents : 0;
 
 export function OrderPage() {
   const { id = '' } = useParams();
@@ -402,6 +537,7 @@ export function OrderPage() {
               ? { pickup: store.pickup }
               : {})}
           />
+          <TrackingPay order={tracking} currency={currency} {...time} />
           <p className="v-section-cta v-order-actions" data-part="actions">
             {talk ? (
               <a
@@ -445,12 +581,25 @@ export function OrderPage() {
               copyPaste={pix.copyPaste}
               beneficiary={pix.beneficiary ?? ''}
               {...(pix.keyType ? { keyLabel: PIX_KEY_LABEL[pix.keyType] ?? pix.keyType } : {})}
-              amountCents={order.totalCents}
+              amountCents={online.dueCents}
               currency={currency}
               {...time}
               {...(order.payment.online
                 ? { online: true, expiresAt: online.pixExpiresAt ?? null }
                 : {})}
+            />
+          ) : null}
+          {order.payment.sinal && order.state !== 'cancelled' ? (
+            <SinalCard
+              sinal={{
+                depositCents: order.payment.sinal.depositCents,
+                balanceCents: order.payment.sinal.balanceCents,
+                depositPaid: !!order.payment.sinal.depositPaidAt,
+                balancePaid: !!order.payment.sinal.balancePaidAt,
+              }}
+              mode={order.delivery.mode}
+              currency={currency}
+              policy={order.payment.sinal.policy}
             />
           ) : null}
           <Slot

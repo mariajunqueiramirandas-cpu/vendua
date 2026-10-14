@@ -117,6 +117,10 @@ export interface StoreSettingsRow {
   /** Festa calculada (0126): orders a day per weekday / date; the D−1 reminder */
   encomenda_capacity?: import('./encomenda-capacity.ts').EncomendaCapacity | null;
   encomenda_reminder?: boolean;
+  /** Festa calculada F2 (0128): the sinal — see modules/sinal.ts */
+  deposit_bps?: number;
+  deposit_min_cents?: number | null;
+  deposit_policy?: string | null;
   freio_suggestion?: { level: FreioLevel; pausedUntil: string | null; at: string } | null;
   freio_hold_until?: Date | string | null;
   late_mode?: 'off' | 'suggest' | 'auto';

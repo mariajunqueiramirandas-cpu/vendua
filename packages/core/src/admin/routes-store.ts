@@ -22,10 +22,13 @@ import {
   oneOf,
   optInt,
   optText,
+  roleAtLeast,
   text,
   type AdminCtx,
   type AdminDeps,
 } from './context.ts';
+import { onlineOffer } from '../modules/payments/store-payments.ts';
+import { DEPOSIT_POLICY_MAX } from '../modules/sinal.ts';
 import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
@@ -187,6 +190,13 @@ export async function storeView(
       /** Festa calculada (0126): orders a day per weekday and per date; null = no ceiling */
       capacity: s.encomenda_capacity ?? null,
       reminder: s.encomenda_reminder ?? true,
+    },
+    /** Festa calculada F2 (0128): the sinal a party (and an encomenda from minCents) pays by Pix;
+     *  bps 0 = off. `policy` is the store's own words, shown as the store's. */
+    sinal: {
+      bps: s.deposit_bps ?? 0,
+      minCents: s.deposit_min_cents ?? null,
+      policy: s.deposit_policy ?? null,
     },
     zones: await zonesOf(tx, tenantId),
   };
@@ -597,6 +607,31 @@ export function mountStore(d: AdminDeps) {
         }
         if (pre.reminder !== undefined) set.encomenda_reminder = bool(pre.reminder, 'reminder');
         changed.push('encomendas');
+      }
+      const sn = isObj(body.sinal) ? body.sinal : null;
+      if (sn) {
+        // money the shopper owes before the date: the owner's call, like the plan
+        if (!roleAtLeast(m.role, 'owner'))
+          throw new HttpError(403, 'FORBIDDEN', 'only the owner changes this', { field: 'sinal' });
+        if (sn.bps !== undefined) {
+          const bps = int(sn.bps, 'sinal.bps', 0, 9000);
+          if (bps !== 0 && (bps < 500 || bps % 100 !== 0))
+            throw new HttpError(422, 'BAD_REQUEST', 'the sinal is a whole percent from 5 to 90', {
+              field: 'sinal.bps',
+            });
+          // a sinal is a Pix: the store's own key, or Mercado Pago
+          if (bps && !(s.pix_key && s.pix_key_type) && !(await onlineOffer(tx, t.id)).online)
+            throw new HttpError(422, 'PIX_REQUIRED', "set up the store's Pix first", {
+              field: 'sinal.bps',
+            });
+          set.deposit_bps = bps;
+        }
+        if (sn.minCents !== undefined)
+          set.deposit_min_cents =
+            sn.minCents === null ? null : int(sn.minCents, 'sinal.minCents', 100, 100_000_000);
+        if (sn.policy !== undefined)
+          set.deposit_policy = optText(sn.policy, 'sinal.policy', DEPOSIT_POLICY_MAX) ?? null;
+        changed.push('sinal');
       }
       if (!changed.length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
       if (Object.keys(set).length)

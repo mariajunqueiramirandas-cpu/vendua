@@ -9,7 +9,7 @@ import { loadCartRow, loadCartView, loadZoneRows, repriceLines, storeCoords } fr
 import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
-import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { enqueueOrderMessageTx, enqueueSinalDueTx } from '../store-whatsapp/messages.ts';
 import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
@@ -17,9 +17,12 @@ import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts'
 import {
   freePayment,
   offlinePayment,
+  offlineSinalPayment,
   onlineOffer,
   onlinePayment,
+  onlineSinalPayment,
 } from './payments/store-payments.ts';
+import { newSinal, sinalApplies, sinalRule } from './sinal.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
 import { planHas } from './billing/plans.ts';
@@ -258,6 +261,21 @@ export async function placeOrderTx(
       totalCents: total,
       expectedTotalCents: body.expectedTotalCents,
     });
+  // Festa calculada F2 (0128): a party, or an encomenda from the store's amount on, locks its
+  // date with a sinal by Pix; the rest is paid before the date or at the caixa
+  const sinal =
+    scheduledFor &&
+    !atTable &&
+    !cart.plan &&
+    opts.source !== 'plan' &&
+    sinalApplies(sinalRule(settings), { party: !!cart.party, totalCents: total })
+      ? newSinal(total, sinalRule(settings)!)
+      : null;
+  if (sinal && body.payment.method !== 'pix')
+    throw new HttpError(422, 'PAYMENT_NOT_ALLOWED', 'the sinal is paid by Pix', {
+      field: 'payment.method',
+      allowed: ['pix'],
+    });
 
   const orderId = crypto.randomUUID();
   const stockDrawn = await drawStock(
@@ -296,10 +314,15 @@ export async function placeOrderTx(
       ? { provider: 'pdv', method: 'tab', status: 'pending', online: false }
       : total === 0
         ? freePayment(method, now)
-        : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
-          ? onlinePayment(offer.provider, method, total)
-          : offlinePayment(settings, method, total, number)),
+        : sinal
+          ? offer.online && offer.provider
+            ? onlineSinalPayment(offer.provider, sinal)
+            : offlineSinalPayment(settings, number, sinal)
+          : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+            ? onlinePayment(offer.provider, method, total)
+            : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
+    ...(sinal ? { sinal } : {}),
   };
   const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
 
@@ -411,13 +434,13 @@ export async function placeOrderTx(
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
-                        stock_drawn, addon_stock_drawn, ref, party)
+                        stock_drawn, addon_stock_drawn, ref, party, deposit_cents)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
             ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
-            ${ref}, ${party ? tx.json(party as never) : null})
+            ${ref}, ${party ? tx.json(party as never) : null}, ${sinal?.depositCents ?? null})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
@@ -508,8 +531,10 @@ export async function placeOrderTx(
   }
   // each hook re-checks everything in a savepoint of its own; the flags only skip a store that
   // has neither, which is what their first read would have found
-  if (store?.whatsapp !== false && !opts.quiet)
+  if (store?.whatsapp !== false && !opts.quiet) {
     await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+    if (sinal) await enqueueSinalDueTx(tx, tenantId, orderId);
+  }
   if (subscribe)
     await subscribeTx(
       tx,

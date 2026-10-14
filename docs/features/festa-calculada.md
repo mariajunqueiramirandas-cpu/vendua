@@ -1,7 +1,7 @@
 # Festa calculada: party orders with a sinal
 
-> Status: F0, F1 and F3 shipped (2026-10-13, migration 0126, Kernel 1.26); F2 (the sinal)
-> waits on the legal review and open decisions 2–4 · Started 2026-10-07 · Kind: differentiator (not a gap in
+> Status: F0–F3 shipped (F0, F1, F3 on 2026-10-13, migration 0126; F2, the sinal, on
+> 2026-10-14, migration 0128; Kernel 1.26) · Started 2026-10-07 · Kind: differentiator (not a gap in
 > [`competitor-parity.md`](../competitor-parity.md); none of our [competitor profiles](../competitors/README.md)
 > mention it) · Builds on: encomendas (Phase 2), [ADR 0009](../adr/0009-mercado-pago-marketplace.md),
 > [ADR 0026](../adr/0026-store-whatsapp-gateway.md), [ADR 0031](../adr/0031-vendedor.md),
@@ -265,16 +265,16 @@ due today and what's due later. It comes last because it needs F1 and F2 underne
 
 ## 5. Merchant controls
 
-| Setting                    | Default            | Who     |
-| -------------------------- | ------------------ | ------- |
-| Party profiles and groups  | none (off)         | manager |
-| Children count as          | 50%                | manager |
-| Capacity per weekday / day | no cap             | manager |
-| Sinal                      | off                | owner   |
-| Sinal applies to           | party orders       | owner   |
-| Balance due                | on pickup          | owner   |
-| Reminder days before       | 3                  | manager |
-| Sinal refundable until     | after legal review | owner   |
+| Setting                    | Default           | Who     |
+| -------------------------- | ----------------- | ------- |
+| Party profiles and groups  | none (off)        | manager |
+| Children count as          | 50%               | manager |
+| Capacity per weekday / day | no cap            | manager |
+| Sinal                      | off (50% when on) | owner   |
+| Sinal applies to           | party orders      | owner   |
+| Balance due                | on pickup         | owner   |
+| Reminder days before       | 1 (D−1)           | manager |
+| Cancellation policy        | the store's words | owner   |
 
 ## 6. Measuring it
 
@@ -318,6 +318,43 @@ F2 touches money and payments: after editing, the invariant review runs on the d
   The admin shows days at capacity on Início.
 
 ## Change log
+
+- 2026-10-14: F2 shipped (migration 0128). The owner's decisions on the open questions:
+  - **Scope (2):** every party order, plus any encomenda from an amount the store sets
+    (`deposit_min_cents`; empty = parties only). A table's order and a plan's week never.
+  - **Methods (3):** the sinal is a Pix; the rest is a Pix before the date or anything the caixa
+    takes. No card on a sinal order, so no per-charge payment adjustments.
+  - **Policy (4):** the store writes its own cancellation words (`deposit_policy`, 600
+    characters), shown as the store's at checkout and on the order. Venduá states no rule and
+    refunds nothing by itself: cancelling keeps a sinal that came in, and a manager gives it
+    back with "devolver dinheiro" (Mercado Pago) or by hand (own key).
+  - **Rails:** the store's own Pix key (a copia e cola per part, a manager marks each part) and
+    Mercado Pago (each part its own Pix, confirmed by itself).
+    Differences from the design above:
+  - No `order_charges` table. `orders.deposit_cents` fixes the sinal when the order is placed,
+    and the rest is always `total_cents − deposit_cents`, so the parts can't drift from the
+    total (a check keeps the sinal inside it). What was paid, when and how is
+    `orders.payment.sinal` (`depositPaidAt`/`Via`, `balancePaidAt`/`Via`, `policy`); `payments`
+    gains `charge` (`deposit` | `balance`; null = the whole order, as before).
+  - `applyProviderPayment` takes an amount equal to the sinal, the rest or the whole, and binds
+    it to the open attempt of that amount. `flagIfPaidTwice` compares within a part.
+    `syncOrderPayment` keeps `payment.status` at `pending` until both parts are paid, by any mix
+    of Mercado Pago, a manager and the caixa; `paidAt` and the "paid" step come with the second
+    part. An order without a sinal takes exactly the old path.
+  - The share is a whole percent from 5 to 90 (`deposit_bps`), owner-only, and needs a Pix (own
+    key or Mercado Pago, else 422 `PIX_REQUIRED`). A store that stops taking Pix asks for none.
+  - Messages: with the order, `sinal_due` (the two parts, how to pay) and `sinal_pix` (the code
+    alone, own key); when the sinal lands, `sinal_paid` and `balance_pix`; the D−1 reminder adds
+    the rest still open; "Pagamento confirmado" is always sent for a sinal order.
+  - The caixa (`POST /pdv/orders/:id/payments`) takes the rest once the sinal is in, even of a
+    sinal Mercado Pago confirmed (its money stays with that payment), or the whole order before
+    it (own key only).
+  - The shopper's WhatsApp link pays it: a Pix order's tracking view carries what's due and its
+    code, and `POST /orders/:id/pay` takes the link's credential for a Pix order. The weekly
+    plan's Mercado Pago weeks needed this too.
+  - Not built: the unpaid hold that cancels a party whose sinal never came (the store decides),
+    the D−3 balance reminder (the D−1 one carries the rest), shopper self-cancel and the
+    Vendedor quoting the sinal in chat (its order gets the same messages).
 
 - 2026-10-13: F0, F1 and F3 shipped. Differences from this design:
   - No `cart_items.party_group_id`: changing the cart line unique index would break the previous
