@@ -2,7 +2,14 @@ import { createApp } from './app.ts';
 import { AdminHub } from './admin/live.ts';
 import { startAdminSweeper, startPushNotifier } from './admin/workers.ts';
 import { log } from './platform/log.ts';
-import { createSql, jobsPoolMax, migrate, warmPool } from './platform/db.ts';
+import {
+  createSql,
+  jobsPoolMax,
+  jobsTimeouts,
+  migrate,
+  requestTimeouts,
+  warmPool,
+} from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
@@ -84,12 +91,12 @@ if (migrationUrl) {
   await migrator.end();
 }
 
-const sql = createSql(databaseUrl);
+const sql = createSql(databaseUrl, undefined, requestTimeouts);
 void warmPool(sql);
 // Background work (jobs, the scheduler, agents, inbound messages) gets a small pool of its own: a
 // request never waits behind a job for a connection, and since a connection prepares each
 // statement once, the request pool stays on statements requests have already prepared.
-const jobsSql = createSql(databaseUrl, jobsPoolMax);
+const jobsSql = createSql(databaseUrl, jobsPoolMax, jobsTimeouts);
 const adminHub = new AdminHub(sql);
 // one provider for the API and the jobs: the fake driver keeps its state in memory
 const paymentProvider = createPaymentProvider();
