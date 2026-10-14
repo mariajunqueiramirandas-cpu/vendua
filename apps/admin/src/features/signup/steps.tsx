@@ -32,6 +32,7 @@ import { SegmentPicker } from '../onboarding/SegmentPicker.tsx';
 import { MiniStore } from '../onboarding/MiniStore.tsx';
 import { GENERIC, segmentOf } from '../onboarding/segments.ts';
 import { CouponField, couponError, discountLine, useSignupCoupon } from './coupon.tsx';
+import { ReferralNote, useSignupReferral } from './referral.tsx';
 import { saveToken, type Draft, type StepId, type Verified } from './progress.ts';
 
 export type PlansData = Awaited<ReturnType<typeof api.signup.plans>>;
@@ -64,8 +65,15 @@ export function PlanStep({
   const open = plans.signup.open;
   // the trial is for a new owner paying the Venduá: not with an access code
   const trial = plans.billing.available && !d.byCode && trialEligible !== false;
-  const trialPlan = trial ? plans.plans.find((p) => p.trialDays > 0 && p.available) : undefined;
+  const openPlans = plans.plans.filter((p) => p.available);
+  const trialPlans = trial ? openPlans.filter((p) => p.trialDays > 0) : [];
+  const trialPlan = trialPlans.find((p) => p.recommended) ?? trialPlans[0];
+  const everyTrials =
+    trialPlans.length > 1 &&
+    trialPlans.length === openPlans.length &&
+    trialPlans.every((p) => p.trialDays === trialPlans[0]!.trialDays);
   const chosen = plans.plans.find((p) => p.id === d.planId);
+  const referral = useSignupReferral(d.referral, d.planId);
   return (
     <StepFrame
       title="Escolha o seu plano"
@@ -101,9 +109,11 @@ export function PlanStep({
           Recebeu um código da Venduá? Pode seguir: ele vai na última pergunta.
         </DuaNote>
       ) : null}
+      {referral.data && open ? <ReferralNote referral={referral.data.referral} /> : null}
       {trialPlan ? (
         <PlanTrialStrip
           plan={trialPlan}
+          every={everyTrials}
           selected={d.planId === trialPlan.id}
           onPick={() => patch({ planId: trialPlan.id })}
         />
@@ -766,6 +776,13 @@ export function PayStep({
   const [couponErr, setCouponErr] = useState<string | null>(null);
   const applied = d.coupon && coupon.data && !coupon.isError && !couponErr ? coupon.data : null;
   const couponDays = applied?.coupon.freeDays ?? 0;
+  // a store's referral (migration 0120): a welcome month on top of the trial, once per WhatsApp;
+  // a coupon's free days win over it
+  const referral = useSignupReferral(d.referral, d.planId, verified.token);
+  const welcomeDays =
+    !couponDays && !d.byCode && plans.billing.available && referral.data?.referral.kind === 'store'
+      ? referral.data.referral.welcomeDays
+      : 0;
   // Core refuses free days with an access code (COUPON_NEEDS_BILLING): with billing on, the
   // coupon's free days win over the code the owner picked
   const codeChosen = d.byCode && !(couponDays > 0 && plans.billing.available);
@@ -781,8 +798,9 @@ export function PayStep({
     planTrialDays > 0 &&
     !!verified.trialEligible &&
     !trialLost;
-  const trial = couponDays > 0 || planTrial;
-  const trialDays = couponDays || planTrialDays;
+  const freeDays = couponDays || welcomeDays;
+  const trial = freeDays > 0 || planTrial;
+  const trialDays = freeDays || planTrialDays;
   // a coupon still being checked, or refused: fix or take it off before creating the store
   const couponPending = !!d.coupon && !applied;
   const create = useMutation({
@@ -790,8 +808,10 @@ export function PayStep({
       api.signup.create({
         signupToken: verified.token,
         planId: d.planId!,
-        ...(couponDays ? {} : trial ? { trial: true } : { method: d.method }),
+        ...(freeDays ? {} : trial ? { trial: true } : { method: d.method }),
         ...(applied ? { coupon: d.coupon! } : {}),
+        // an unknown code is dropped by Core, never in the way
+        ...(d.referral && referral.data ? { referral: d.referral } : {}),
         storeName: d.storeName.trim(),
         slug: d.slug,
         ownerName: d.ownerName.trim(),
@@ -804,6 +824,10 @@ export function PayStep({
     onError: (e) => {
       if (e instanceof ApiError && e.code.startsWith('COUPON_'))
         return setCouponErr(couponError(e));
+      if (e instanceof ApiError && e.code === 'REFERRAL_CHANGED') {
+        void referral.refetch();
+        return setErr('A indicação mudou enquanto você respondia. Confira e tente de novo.');
+      }
       if (e instanceof ApiError && e.code === 'TRIAL_USED') {
         setTrialLost(true);
         return setErr('Esse WhatsApp já usou o teste grátis em outra loja. Escolha como pagar.');
@@ -838,9 +862,11 @@ export function PayStep({
           ? 'Com o código, você cria a loja agora e acerta o pagamento do plano com a equipe da Venduá.'
           : couponDays
             ? 'Presente do cupom: sem cartão e sem cobrança agora. A loja já abre para pedidos.'
-            : trial
-              ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
-              : 'Dá para trocar depois, em Conta e plano.'
+            : welcomeDays
+              ? `Presente da indicação da ${referral.data?.referral.name}: sem cartão e sem cobrança agora. A loja já abre para pedidos.`
+              : trial
+                ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
+                : 'Dá para trocar depois, em Conta e plano.'
       }
       back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
       busy={create.isPending}
@@ -848,7 +874,7 @@ export function PayStep({
         !plan || couponPending || (byCode ? code.trim().length < 12 : !plans.billing.available)
       }
       label={
-        couponDays
+        freeDays
           ? 'começar meus dias grátis'
           : trial
             ? 'começar meu teste grátis'

@@ -26,6 +26,7 @@ export default function ImportPage() {
         owner={owner}
         hasProducts={hasProducts}
         onApplied={() => nav('/cardapio', { state: { vt: 'pop' } })}
+        onPhotosDone={() => nav('/cardapio', { state: { vt: 'pop' } })}
       />
     </PageBody>
   );

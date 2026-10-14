@@ -153,7 +153,11 @@ configureOrderLinks({
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 const stopPushNotifier = startPushNotifier(jobsSql, adminHub);
-const stopAdminSweeper = startAdminSweeper(jobsSql, { notify, adminOrigin });
+const stopAdminSweeper = startAdminSweeper(jobsSql, {
+  notify,
+  adminOrigin,
+  provider: paymentProvider,
+});
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET || sessionSecret);

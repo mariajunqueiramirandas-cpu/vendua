@@ -28,7 +28,7 @@ import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { copyText } from '../../ui/CopyValue.tsx';
 import { DuaNote, ErrorState, messageOf } from '../../ui/feedback.tsx';
-import { Field, PhoneInput, Toggle } from '../../ui/fields.tsx';
+import { Field, PhoneInput, SavedStepper, Toggle } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
@@ -72,6 +72,13 @@ const EVENT_LABEL = Object.fromEntries(EVENTS.map((e) => [e.id, e.label])) as Re
   WaEvent,
   string
 >;
+
+/** an order's notes beyond its steps */
+const NOTE_LABEL: Record<string, string> = {
+  reminder_eve: 'Lembrete da véspera',
+  plan_confirm: 'Plano semanal',
+  plan_cycle: 'Pedido do plano',
+};
 
 export default function Whatsapp() {
   const settling = (d: WhatsappData | undefined) =>
@@ -120,12 +127,12 @@ export default function Whatsapp() {
       ) : (
         // phones read connection → steps → reminder → log; wide screens keep the reminder and
         // the log under the connection
-        <div className="grid gap-8 lg:grid-cols-2 lg:grid-rows-[auto_auto_1fr] [&>*]:min-w-0">
+        <div className="grid gap-8 lg:grid-cols-2 lg:grid-rows-[auto_auto_auto_1fr] [&>*]:min-w-0">
           <div className="lg:col-start-1 lg:row-start-1">
             <ConnectionCard data={data} owner={owner} />
           </div>
           <Section
-            className="lg:col-start-2 lg:row-span-3 lg:row-start-1"
+            className="lg:col-start-2 lg:row-span-4 lg:row-start-1"
             title="Avisos aos clientes"
             hint="Escolha em que momentos o cliente recebe uma mensagem. Cada uma aparece como ele vai ler."
           >
@@ -140,6 +147,13 @@ export default function Whatsapp() {
           </Section>
           <Section
             className="lg:col-start-1 lg:row-start-3"
+            title="Pedido de sempre"
+            hint={usualLine(data)}
+          >
+            <UsualReminderCard data={data} />
+          </Section>
+          <Section
+            className="lg:col-start-1 lg:row-start-4"
             title="Últimas mensagens"
             hint={statsLine(data)}
           >
@@ -307,6 +321,13 @@ function NotConnected({ data, owner }: { data: WhatsappData; owner: boolean }) {
           </Button>
           <p className="t-caption text-center text-muted">
             Você digita o código no WhatsApp do celular da loja.
+          </p>
+          {/* the connection is an unofficial linked device (ADR 0026): say the risk before pairing */}
+          <p className="t-caption rounded-md bg-sunken px-4 py-3 text-muted">
+            Use o WhatsApp Business da loja, não o seu número pessoal. A Venduá entra como um
+            aparelho conectado, sem a API oficial do WhatsApp, e só escreve para quem fez pedido ou
+            pediu aviso. Mesmo assim, o WhatsApp pode restringir um número que recebe muitas
+            denúncias.
           </p>
         </form>
       ) : (
@@ -707,6 +728,117 @@ function CartReminderCard({ data }: { data: WhatsappData }) {
   );
 }
 
+/** "12 clientes pediram · 5 lembretes nos últimos 7 dias · 2 viraram pedido." */
+function usualLine(d: WhatsappData) {
+  const u = d.usualReminder;
+  if (!u.asked && !u.week.sent) return undefined;
+  const parts = [`${plural(u.asked, 'cliente pediu', 'clientes pediram')}`];
+  if (u.week.sent) parts.push(`${plural(u.week.sent, 'lembrete', 'lembretes')} nos últimos 7 dias`);
+  if (u.week.ordered)
+    parts.push(`${u.week.ordered} ${u.week.ordered === 1 ? 'virou pedido' : 'viraram pedido'}`);
+  return `${parts.join(' · ')}.`;
+}
+
+const USUAL_RULES = [
+  'Só para quem pedir: marcando a opção ao finalizar a compra, ou respondendo LEMBRAR à mensagem de pedido entregue.',
+  'No máximo uma mensagem por semana para cada cliente, e só depois de uma semana sem pedir.',
+  'Com um link da loja e a sacola de sempre pronta, com os preços de hoje. O cliente confere e paga como sempre.',
+  'Só com a loja aberta, espaçadas ao longo do dia. Quem responder SAIR não recebe mais.',
+];
+
+function UsualReminderCard({ data }: { data: WhatsappData }) {
+  const qc = useQueryClient();
+  const u = data.usualReminder;
+  const save = useMutation({
+    mutationFn: (p: { on?: boolean; perDay?: number; undo?: boolean }) =>
+      api.whatsappUsualReminder({
+        ...(p.on !== undefined ? { on: p.on } : {}),
+        ...(p.perDay !== undefined ? { perDay: p.perDay } : {}),
+      }),
+    onMutate: (p) =>
+      optimistic<WhatsappData>(qc, qk.whatsapp, (d) => ({
+        ...d,
+        usualReminder: {
+          ...d.usualReminder,
+          ...(p.on !== undefined ? { on: p.on } : {}),
+          ...(p.perDay !== undefined ? { perDay: p.perDay } : {}),
+        },
+      })),
+    onSuccess: (d, p) => {
+      qc.setQueryData(qk.whatsapp, d);
+      if (p.on !== undefined && !p.undo)
+        toast(
+          p.on ? 'Lembrete do pedido de sempre ligado' : 'Lembrete do pedido de sempre desligado',
+          {
+            undo: () => save.mutate({ on: !p.on, undo: true }),
+          },
+        );
+    },
+    onError: (e, _p, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
+  });
+  const linked = data.state === 'open' || data.state === 'connecting' || data.state === 'error';
+  return (
+    <Card className="px-4">
+      <Toggle
+        checked={u.on}
+        onChange={(v) => save.mutate({ on: v })}
+        label="Lembrar do pedido de sempre"
+        description="Uma vez por semana, no máximo, quem pediu recebe o pedido de sempre pronto para repetir."
+      />
+      <div className="space-y-4 border-t border-line py-4">
+        <ul className="t-body space-y-2">
+          {USUAL_RULES.map((rule) => (
+            <li key={rule} className="flex gap-2.5">
+              <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-muted" />
+              <span className="min-w-0">{rule}</span>
+            </li>
+          ))}
+        </ul>
+        {u.on ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="t-label">Por dia, no máximo</p>
+              <p className="t-caption text-muted">Para a loja não parecer mandar em massa.</p>
+            </div>
+            <SavedStepper
+              label="lembretes por dia, no máximo"
+              value={u.perDay}
+              min={1}
+              max={200}
+              step={5}
+              onSave={(perDay) => save.mutateAsync({ perDay })}
+            />
+          </div>
+        ) : null}
+        <div>
+          <p className="t-caption mb-1.5 text-muted">Ao finalizar a compra, o cliente vê:</p>
+          <p className="t-body flex items-start gap-2.5 rounded-md bg-sunken px-3 py-2.5">
+            <span
+              aria-hidden
+              className="mt-0.5 size-5 shrink-0 rounded-[5px] border-2 border-line-strong bg-surface"
+            />
+            <span className="min-w-0">
+              Me lembre do meu pedido de sempre (no máximo 1 mensagem por semana)
+            </span>
+          </p>
+        </div>
+        <div>
+          <p className="t-caption mb-1.5 text-muted">E, uma semana depois do último pedido:</p>
+          <Bubble text={u.preview} />
+        </div>
+        {!linked ? (
+          <p className="t-caption text-muted">
+            Funciona com o WhatsApp da loja conectado. Conecte acima para começar.
+          </p>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
 /** what the shopper reads, the way WhatsApp shows it (sample order #128 for Ana) */
 function Bubble({ text }: { text: string }) {
   return (
@@ -749,11 +881,17 @@ function statusOf(m: WaMessage): { label: string; tone: Tone; read?: boolean } {
 
 function titleOf(m: WaMessage) {
   if (m.kind === 'opt_out') return 'Cliente pediu para parar';
-  if (m.kind === 'opt_in') return 'Cliente voltou a receber';
+  if (m.kind === 'opt_in')
+    return m.event === 'usual'
+      ? 'Cliente pediu o lembrete de sempre'
+      : m.event === 'plan'
+        ? 'Plano semanal'
+        : 'Cliente voltou a receber';
   if (m.kind === 'test') return 'Teste para você';
   if (m.kind === 'cart_reminder') return 'Lembrete de sacola';
   if (m.kind === 'store_open') return 'Aviso: a loja abriu';
-  const step = m.event ? EVENT_LABEL[m.event] : 'Aviso';
+  if (m.kind === 'usual_reminder') return 'Pedido de sempre';
+  const step = (m.event && (EVENT_LABEL[m.event as WaEvent] ?? NOTE_LABEL[m.event])) || 'Aviso';
   return m.orderNumber ? `#${m.orderNumber} · ${step}` : step;
 }
 

@@ -42,6 +42,8 @@ export const chunks = {
   product: once(() => import('../features/menu/ProductPage.tsx')),
   importMenu: once(() => import('../features/import/ImportPage.tsx')),
   stock: once(() => import('../features/menu/Stock.tsx')),
+  festa: once(() => import('../features/menu/Festa.tsx')),
+  planos: once(() => import('../features/menu/Planos.tsx')),
   store: once(() => import('../features/store/Store.tsx')),
   payments: once(() => import('../features/payments/Payments.tsx')),
   whatsapp: once(() => import('../features/whatsapp/Whatsapp.tsx')),
@@ -49,6 +51,8 @@ export const chunks = {
   customers: once(() => import('../features/customers/Customers.tsx')),
   customer: once(() => import('../features/customers/CustomerPage.tsx')),
   marketing: once(() => import('../features/marketing/Marketing.tsx')),
+  bagCard: once(() => import('../features/marketing/BagCard.tsx')),
+  statusDoDia: once(() => import('../features/marketing/StatusDoDia.tsx')),
   appearance: once(() => import('../features/appearance/Appearance.tsx')),
   reports: once(() => import('../features/reports/Reports.tsx')),
   team: once(() => import('../features/team/Team.tsx')),
@@ -106,6 +110,8 @@ export type RouteId =
   | 'product'
   | 'importMenu'
   | 'stock'
+  | 'festa'
+  | 'planos'
   | 'menu'
   | 'store'
   | 'payments'
@@ -114,6 +120,8 @@ export type RouteId =
   | 'customer'
   | 'customers'
   | 'marketing'
+  | 'bagCard'
+  | 'statusDoDia'
   | 'appearance'
   | 'reports'
   | 'team'
@@ -256,6 +264,18 @@ const ROUTES: RouteDef[] = [
     data: (qc) => q(qc, qk.imports, api.imports),
   },
   {
+    id: 'festa',
+    match: /^\/cardapio\/festa$/,
+    chunk: chunks.festa,
+    data: (qc) => q(qc, qk.party, api.party),
+  },
+  {
+    id: 'planos',
+    match: /^\/cardapio\/planos$/,
+    chunk: chunks.planos,
+    data: (qc) => q(qc, qk.plans, api.plans),
+  },
+  {
     id: 'stock',
     match: /^\/cardapio\/estoque$/,
     chunk: chunks.stock,
@@ -313,6 +333,18 @@ const ROUTES: RouteDef[] = [
     match: /^\/marketing$/,
     chunk: chunks.marketing,
     data: (qc) => q(qc, qk.marketing, api.marketing),
+  },
+  {
+    id: 'bagCard',
+    match: /^\/marketing\/cartao$/,
+    chunk: chunks.bagCard,
+    data: (qc) => q(qc, qk.marketing, api.marketing),
+  },
+  {
+    id: 'statusDoDia',
+    match: /^\/marketing\/status$/,
+    chunk: chunks.statusDoDia,
+    data: (qc) => q(qc, qk.statusDoDia, api.statusDoDia),
   },
   {
     id: 'appearance',

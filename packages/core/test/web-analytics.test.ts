@@ -325,4 +325,40 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     });
     expect(seen[0]).toEqual({ views: 0, order_days: 0 });
   });
+
+  test('the signup funnel counts each question once per visitor-day, in order', async () => {
+    const staff = { 'x-vendua-control': 'ctl' };
+    const read = async () =>
+      (await (
+        await app.request('/control/v1/analytics/signup?days=7', { headers: staff })
+      ).json()) as {
+        signup: { step: string; visitors: number }[];
+        setup: { step: string; visitors: number }[];
+        stores: { created: number };
+      };
+    expect((await app.request('/control/v1/analytics/signup?days=7')).status).toBe(404);
+    const before = await read();
+    const at = (r: typeof before, step: string) =>
+      r.signup.find((x) => x.step === step)?.visitors ?? 0;
+    const who = { 'user-agent': `${UA} funnel-${run}` };
+    await collect({ p: 'admin', id: `b${run}fun1`, path: '/admin/comecar/plano' }, who);
+    await collect({ p: 'admin', id: `b${run}fun2`, path: '/admin/comecar/plano' }, who);
+    await collect({ p: 'admin', id: `b${run}fun3`, path: '/admin/comecar/loja' }, who);
+    const after = await read();
+    expect(after.signup.map((x) => x.step)).toEqual([
+      'plano',
+      'loja',
+      'tipo',
+      'voce',
+      'whatsapp',
+      'codigo',
+      'pagamento',
+      'pronto',
+    ]);
+    expect(at(after, 'plano') - at(before, 'plano')).toBe(1);
+    expect(at(after, 'loja') - at(before, 'loja')).toBe(1);
+    expect(after.setup[0]?.step).toBe('oi');
+    expect(after.stores.created).toBeGreaterThanOrEqual(0);
+    await sql`delete from web_analytics_events where beacon_id like ${`b${run}fun%`}`;
+  });
 });

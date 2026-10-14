@@ -55,6 +55,14 @@ party. Any analytics had to keep those promises.
 
   The routes are `GET /control/v1/analytics/web` and `/control/v1/analytics/storefronts`.
 
+- **The signup funnel** (2026-10-13). Each signup question and each onboarding screen is sent as
+  its own admin page view, `/admin/comecar/<step>` and `/admin/bem-vindo/<step>`. Only the step's
+  name goes; no answer does. The CRM's cadastro view (`GET /control/v1/analytics/signup`) reads those
+  counts in order, with site visitors on top. Under them come the stores self-serve signup created
+  in the window, and how many trialed, paid and took a first order, plus the median days to it.
+  Google Ads' `sign_up` counts only a store that opened: one trialing or paid. A signup that
+  leaves with its payment pending, or that used an access code, doesn't count.
+
 ## Consequences
 
 - The site's `/privacidade/` page now says that visits are counted anonymously, and exactly

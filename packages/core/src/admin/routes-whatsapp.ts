@@ -1,6 +1,7 @@
 import { cartReminderViewTx } from '../modules/cart-reminder.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { whatsappDigits } from '../modules/store.ts';
+import { usualReminderViewTx } from '../modules/usual-reminder.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson } from '../platform/http.ts';
 import { wipeAuth } from '../store-whatsapp/auth-store.ts';
@@ -15,7 +16,7 @@ import {
 } from '../store-whatsapp/messages.ts';
 import { audit } from './audit.ts';
 import { loadAgent } from '../vendedor/settings.ts';
-import { bool, isObj, text, type AdminDeps, type Merchant } from './context.ts';
+import { bool, int, isObj, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -87,7 +88,7 @@ function effective(row: Row | null, available: boolean) {
 }
 
 export async function whatsappView(tx: Sql, tenantId: string, storeName: string) {
-  const [row, available, settings, recent, stats, cartReminder] = await Promise.all([
+  const [row, available, settings, recent, stats, cartReminder, usualReminder] = await Promise.all([
     loadRow(tx, tenantId),
     gatewayAlive(tx),
     tx<{ whatsapp: string | null; tz: string | null }[]>`
@@ -120,6 +121,7 @@ export async function whatsappView(tx: Sql, tenantId: string, storeName: string)
            and created_at > now() - interval '7 days')::int as failed,
         (select count(*) from store_wa_optouts where tenant_id = ${tenantId})::int as optouts`,
     cartReminderViewTx(tx, tenantId, storeName),
+    usualReminderViewTx(tx, tenantId, storeName),
   ]);
   const eff = effective(row, available);
   const enabled = new Set(row?.events ?? DEFAULT_EVENTS);
@@ -151,6 +153,7 @@ export async function whatsappView(tx: Sql, tenantId: string, storeName: string)
     ) as Record<OrderEvent, string | null>,
     stats: stats[0] ?? { sent: 0, failed: 0, optouts: 0 },
     cartReminder,
+    usualReminder,
     recent: recent.map((r) => ({
       id: r.id,
       kind: r.kind,
@@ -188,6 +191,43 @@ async function setCartReminderTx(
       action: 'whatsapp.cart_reminder',
       entity: 'whatsapp',
       summary: on ? 'ligou o lembrete de sacola' : 'desligou o lembrete de sacola',
+    });
+  await emitAdminTx(tx, t.id, 'whatsapp', 'settings');
+  return { status: 200, body: await whatsappView(tx, t.id, t.name) };
+}
+
+/** "O de sempre" (0122): the switch and the store's daily ceiling. */
+async function setUsualReminderTx(
+  tx: Sql,
+  t: { id: string; name: string },
+  m: Merchant,
+  v: Record<string, unknown>,
+): Promise<{ status: number; body: unknown }> {
+  const on = v.on === undefined ? undefined : bool(v.on, 'usualReminder.on');
+  const perDay = v.perDay === undefined ? undefined : int(v.perDay, 'usualReminder.perDay', 1, 200);
+  if (on === undefined && perDay === undefined)
+    throw new HttpError(422, 'BAD_REQUEST', 'nothing to change', { field: 'usualReminder' });
+  await tx`insert into store_whatsapp (tenant_id) values (${t.id}) on conflict do nothing`;
+  const [was] = await tx<{ on: boolean; perDay: number }[]>`
+    select usual_reminder as on, usual_per_day as "perDay" from store_whatsapp
+    where tenant_id = ${t.id} for update`;
+  await tx`
+    update store_whatsapp set usual_reminder = ${on ?? was!.on},
+      usual_per_day = ${perDay ?? was!.perDay}, updated_at = now()
+    where tenant_id = ${t.id}`;
+  if (on !== undefined && on !== was!.on)
+    await audit(tx, t.id, m, {
+      action: 'whatsapp.usual_reminder',
+      entity: 'whatsapp',
+      summary: on
+        ? 'ligou o lembrete do pedido de sempre'
+        : 'desligou o lembrete do pedido de sempre',
+    });
+  if (perDay !== undefined && perDay !== was!.perDay)
+    await audit(tx, t.id, m, {
+      action: 'whatsapp.usual_reminder',
+      entity: 'whatsapp',
+      summary: `limite do pedido de sempre: ${perDay} por dia`,
     });
   await emitAdminTx(tx, t.id, 'whatsapp', 'settings');
   return { status: 200, body: await whatsappView(tx, t.id, t.name) };
@@ -299,6 +339,15 @@ export function mountWhatsapp(d: AdminDeps) {
         if (body.events !== undefined)
           throw new HttpError(422, 'BAD_REQUEST', 'one setting at a time', { field: 'events' });
         return setCartReminderTx(tx, t, m, bool(body.cartReminder, 'cartReminder'));
+      }
+      if (body.usualReminder !== undefined) {
+        if (!isObj(body.usualReminder))
+          throw new HttpError(422, 'BAD_REQUEST', 'usualReminder must be an object', {
+            field: 'usualReminder',
+          });
+        if (body.events !== undefined)
+          throw new HttpError(422, 'BAD_REQUEST', 'one setting at a time', { field: 'events' });
+        return setUsualReminderTx(tx, t, m, body.usualReminder);
       }
       if (!isObj(body.events))
         throw new HttpError(422, 'BAD_REQUEST', 'events must be an object', { field: 'events' });

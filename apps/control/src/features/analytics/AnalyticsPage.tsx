@@ -4,14 +4,16 @@ import type { AnalyticsDays } from '@/lib/api.ts';
 import { Page } from '@/components/Page.tsx';
 import { Segmented } from '@/components/ui/controls.tsx';
 import { PIPELINE_TABS } from '@/features/pipeline/tabs.ts';
+import { SignupView } from './SignupView.tsx';
 import { StoresView } from './StoresView.tsx';
 import { WebView } from './WebView.tsx';
 
-type View = 'site' | 'painel' | 'lojas';
+type View = 'site' | 'painel' | 'cadastro' | 'lojas';
 
 const VIEWS = [
   ['site', 'site'],
   ['painel', 'painel'],
+  ['cadastro', 'cadastro'],
   ['lojas', 'lojas'],
 ] as const;
 
@@ -25,6 +27,8 @@ const NOTE: Record<View, string> = {
   site: 'sem cookies e sem IP guardado: um visitante é um hash com chave trocada (e apagada) todo dia',
   painel:
     'sem cookies e sem saber quem está logado: ids, telefones e pedidos saem do endereço antes de enviar',
+  cadastro:
+    'cada pergunta conta como uma página, sem a resposta; lojas e pedidos vêm do próprio Core',
   lojas:
     'funil da loja por sessão da aba, sem cookies; nome e telefone de clientes nunca entram no evento',
 };
@@ -32,7 +36,7 @@ const NOTE: Record<View, string> = {
 export default function AnalyticsPage() {
   const [sp, setSp] = useSearchParams();
   const p = sp.get('p');
-  const view: View = p === 'painel' || p === 'lojas' ? p : 'site';
+  const view: View = p === 'painel' || p === 'cadastro' || p === 'lojas' ? p : 'site';
   const d = Number(sp.get('dias'));
   const days: AnalyticsDays = d === 7 || d === 90 ? d : 30;
   const set = (k: string, v: string | null) =>
@@ -69,6 +73,8 @@ export default function AnalyticsPage() {
       <div className="flex flex-col gap-3">
         {view === 'lojas' ? (
           <StoresView days={days} />
+        ) : view === 'cadastro' ? (
+          <SignupView days={days} />
         ) : (
           <WebView property={view === 'painel' ? 'admin' : 'site'} days={days} />
         )}

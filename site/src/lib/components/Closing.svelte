@@ -2,6 +2,7 @@
   import { onMount, type Snippet } from 'svelte';
   import { loadLivePlans, plans } from '$lib/plans/live.svelte';
   import Section from './Section.svelte';
+  import CallMe from './CallMe.svelte';
   import Start from './Start.svelte';
 
   // How every inner page ends, like the home: the sun sets, the one call to action, the plans in one
@@ -29,6 +30,7 @@
           por {pangolim.price}/mês{/if}.
         <a href="/#preco">Compare os planos</a>
       </p>
+      <CallMe />
     </div>
   </div>
 

@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { localParts } from '../platform/tz.ts';
+import { sinalOf, type OrderSinal } from '../modules/sinal.ts';
 import { jidForPhone, phoneVariants } from './text.ts';
 
 // Order updates a store sends its shoppers from its own WhatsApp. Core renders every word and
@@ -36,6 +37,25 @@ const SENDABLE_STATES = new Set(['open', 'connecting', 'error']);
 /** a shopper who wrote SAIR before gets nothing until VOLTAR */
 export const OPT_OUT_FOOTER = '\n\n_Para não receber estes avisos, responda SAIR._';
 
+/** "o de sempre" (modules/usual-reminder.ts), offered under a delivered order's message */
+export const USUAL_INVITE =
+  '\n\nQuer que a gente te lembre do seu pedido de sempre? Responda LEMBRAR. É no máximo uma mensagem por semana.';
+
+/** The store sends "o de sempre" and this phone hasn't asked for it, nor been offered it lately. */
+async function usualInviteTx(tx: Sql, tenantId: string, phone: string): Promise<boolean> {
+  const [r] = await tx<{ ok: boolean }[]>`
+    select coalesce((select usual_reminder and wanted and state in ('open', 'connecting', 'error')
+                     from store_whatsapp where tenant_id = ${tenantId}), false)
+      and not exists (select 1 from usual_reminders where tenant_id = ${tenantId}
+                        and phone = any(${phoneVariants(phone)}))
+      and not exists (select 1 from store_wa_messages where tenant_id = ${tenantId}
+                        and kind = 'order' and event = 'delivered'
+                        and phone = any(${phoneVariants(phone)})
+                        and created_at > now() - interval '30 days'
+                        and body like '%Responda LEMBRAR%') as ok`;
+  return !!r?.ok;
+}
+
 export interface OrderFacts {
   storeName: string;
   firstName: string;
@@ -48,10 +68,18 @@ export interface OrderFacts {
   /** encomenda date YYYY-MM-DD */
   scheduledFor: string | null;
   timezone: string;
+  /** Freio's late notice: the apology coupon on the delay message */
+  apology?: { code: string; words: string } | null;
   /** the money this refund gave back; `full` when nothing paid is left */
   refund?: { cents: number; full: boolean; online: boolean } | null;
   /** the order's status-only page on the store's site (`/pedido/<id>?t=vot.…`) */
   trackUrl?: string | null;
+  /** where the order came from (orders.source): a weekly plan's orders say more about the Pix */
+  source?: string;
+  /** how it's paid: a Pix by hand carries its copia-e-cola code (the store's own key) */
+  pay?: { method: string; online: boolean; paid: boolean; copyPaste: string | null };
+  /** Festa calculada F2 (0128): the order's sinal and what has been paid of it */
+  sinal?: OrderSinal | null;
 }
 
 interface OrderLinks {
@@ -113,7 +141,11 @@ function stepText(event: OrderEvent, o: OrderFacts): string | null {
     }
     case 'delayed': {
       const when = promise(o);
-      return when ? `Seu pedido ${n} vai atrasar um pouquinho, desculpe 🙏 Agora ${when}.` : null;
+      if (!when) return null;
+      const sorry = o.apology
+        ? ` Pra compensar, seu próximo pedido tem ${o.apology.words}: cupom ${o.apology.code}.`
+        : '';
+      return `Seu pedido ${n} vai atrasar um pouquinho, desculpe 🙏 Agora ${when}.${sorry}`;
     }
     case 'preparing':
       return `Seu pedido ${n} está sendo preparado 👩‍🍳`;
@@ -155,6 +187,9 @@ export const optOutAck = (storeName: string) =>
 
 export const optInAck = (storeName: string) =>
   `Combinado! Você volta a receber os avisos dos seus pedidos da ${storeName} por aqui.`;
+
+export const usualAck = (storeName: string) =>
+  `Combinado! Uma vez por semana, no máximo, a ${storeName} te lembra do seu pedido de sempre. Para parar, responda SAIR.`;
 
 export const testMessage = (storeName: string) =>
   `Teste da Venduá ✓ O WhatsApp da ${storeName} está conectado e pronto para avisar seus clientes sobre os pedidos.`;
@@ -208,7 +243,7 @@ export async function contactedTx(tx: Sql, tenantId: string, phone: string): Pro
   const rows = await tx`
     select 1 from store_wa_messages
     where tenant_id = ${tenantId} and phone = any(${phoneVariants(phone)})
-      and kind in ('order', 'cart_reminder', 'store_open') and status = 'sent'
+      and kind in ('order', 'cart_reminder', 'store_open', 'usual_reminder') and status = 'sent'
     limit 1`;
   return rows.length > 0;
 }
@@ -246,13 +281,20 @@ async function orderFactsTx(
         slug: string;
         placed_at: Date;
         tz: string | null;
+        source: string;
+        payment: {
+          method?: string;
+          online?: boolean;
+          status?: string;
+          pix?: { copyPaste?: string } | null;
+        } | null;
       }[]
     >`
       select o.number, o.customer ->> 'name' as name, o.customer_phone as phone,
              o.delivery ->> 'mode' as mode, o.total_cents as total,
              o.delivery ->> 'promisedFrom' as "from", o.delivery ->> 'promisedTo' as "to",
              o.scheduled_for::text as scheduled_for, t.name as store_name, t.slug, o.placed_at,
-             s.hours ->> 'timezone' as tz
+             s.hours ->> 'timezone' as tz, o.source, o.payment
       from orders o
         join tenants t on t.id = o.tenant_id
         left join store_settings s on s.tenant_id = o.tenant_id
@@ -276,8 +318,209 @@ async function orderFactsTx(
     trackUrl: links
       ? `${await storeOrigin(tx, { id: tenantId, slug: row.slug }, links.storeDomain)}/pedido/${orderId}?t=${links.token(tenantId, orderId, row.placed_at)}`
       : null,
+    source: row.source,
+    pay: {
+      method: row.payment?.method ?? '',
+      online: row.payment?.online === true,
+      paid: row.payment?.status === 'paid',
+      copyPaste: row.payment?.pix?.copyPaste ?? null,
+    },
+    sinal: sinalOf(row.payment),
     phone: row.phone,
   };
+}
+
+/** Festa calculada F0: the day before an encomenda, its date and where it's picked up or goes */
+export function eveReminderText(o: OrderFacts): string | null {
+  if (!o.scheduledFor) return null;
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const how = o.mode === 'pickup' ? 'Pode vir retirar' : 'A entrega sai';
+  const text = `${hi}Amanhã (${ddmm(o.scheduledFor)}) é o dia da sua encomenda #${o.number} na ${o.storeName} 🎉 ${how} conforme combinado. Qualquer mudança, é só responder esta mensagem.`;
+  // a sinal's rest still open: how much, and that the door takes it too
+  const rest =
+    o.sinal?.depositPaidAt && !o.sinal.balancePaidAt
+      ? `\n\nFalta pagar ${brl(o.sinal.balanceCents)}: pelo Pix${o.pay?.online ? ' da página do pedido' : ''} ou ${atDoor(o)}.`
+      : '';
+  return o.trackUrl ? `${text}${rest}\n\nAcompanhe o pedido: ${o.trackUrl}` : `${text}${rest}`;
+}
+
+/** Queues the D−1 message once per order (event 'reminder_eve'), on the store's linked number. */
+export function enqueueEveReminderTx(tx: Sql, tenantId: string, orderId: string): Promise<boolean> {
+  return enqueueOrderNoteTx(tx, tenantId, orderId, 'reminder_eve', eveReminderText);
+}
+
+const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+/** "toda sexta", "todo sábado" */
+export const everyWeekday = (w: number) => `${w === 0 || w === 6 ? 'todo' : 'toda'} ${WEEKDAYS[w]}`;
+
+/** Plano semanal (0127): under the first order, the plan it starts; a typed number confirms it */
+export function planConfirmText(
+  o: OrderFacts,
+  plan: { name: string; weekday: number; nextOn: string; active: boolean },
+): string {
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const head = `${hi}Você assinou o plano semanal "${plan.name}" da ${o.storeName}: ${everyWeekday(plan.weekday)} a loja faz este pedido para você e avisa aqui antes.`;
+  const tail = plan.active
+    ? `A próxima entrega é ${ddmm(plan.nextOn)}. Para pular uma semana, responda PULAR. Para encerrar, responda CANCELAR PLANO.`
+    : 'Para confirmar, responda ASSINAR. Sem essa resposta o plano não começa (este pedido segue normal). Se não foi você, é só ignorar esta mensagem.';
+  return `${head}\n\n${tail}`;
+}
+
+/** How the shopper pays a plan's week: the code in the next message, or the order page. */
+function planPayLine(o: OrderFacts, again: boolean): string {
+  if (o.pay?.online)
+    return o.trackUrl
+      ? 'Pague o Pix pela página do pedido (o link abaixo): a confirmação chega aqui sozinha.'
+      : 'Pague o Pix pela página do pedido: a confirmação chega aqui sozinha.';
+  if (o.pay?.copyPaste)
+    return `O código Pix copia e cola vem ${again ? 'de novo ' : ''}na próxima mensagem. Depois de pagar, mande o comprovante aqui.`;
+  return 'Responda esta mensagem para combinar o Pix com a loja.';
+}
+
+/** The week's order, placed by the plan: what, when, how much, how to pay and how to skip it */
+export function planCycleText(
+  o: OrderFacts,
+  plan: { name: string; missing: string[] },
+): string | null {
+  if (!o.scheduledFor) return null;
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const lines = [
+    `${hi}O pedido do seu plano "${plan.name}" desta semana está feito: #${o.number}, para ${ddmm(o.scheduledFor)}. Total: ${brl(o.totalCents)}, por Pix.`,
+    plan.missing.length ? `Fora desta vez (a loja não tem hoje): ${plan.missing.join(', ')}.` : '',
+    planPayLine(o, false),
+    'Para pular esta semana, responda PULAR. Para encerrar o plano, responda CANCELAR PLANO.',
+  ].filter(Boolean);
+  const text = lines.join('\n\n');
+  return o.trackUrl ? `${text}\n\nAcompanhe o pedido: ${o.trackUrl}` : text;
+}
+
+/** The week's Pix, still unpaid as the date comes: the total, the date and the code again */
+export function planPixReminderText(
+  o: OrderFacts,
+  plan: { name: string },
+  today: string,
+): string | null {
+  if (!o.scheduledFor || o.pay?.paid) return null;
+  const hi = o.firstName ? `Oi, ${o.firstName}! ` : 'Oi! ';
+  const when = o.scheduledFor === today ? 'hoje' : `amanhã (${ddmm(o.scheduledFor)})`;
+  const text = [
+    `${hi}O Pix do pedido #${o.number} do seu plano "${plan.name}" (${brl(o.totalCents)}) ainda não chegou para a ${o.storeName}. A entrega é ${when}.`,
+    planPayLine(o, true),
+    'Se não quiser esta semana, responda PULAR.',
+  ].join('\n\n');
+  return o.pay?.online && o.trackUrl ? `${text}\n\nPagar: ${o.trackUrl}` : text;
+}
+
+/** The copia-e-cola code alone, so a long press copies just it (the store's own Pix key) */
+export function planPixCode(o: OrderFacts): string | null {
+  return !o.pay?.online && !o.pay?.paid ? (o.pay?.copyPaste ?? null) : null;
+}
+
+const where = (o: OrderFacts) => (o.mode === 'pickup' ? 'a retirada' : 'a entrega');
+const atDoor = (o: OrderFacts) => (o.mode === 'pickup' ? 'na retirada' : 'na entrega');
+
+/** How the part due now is paid: the code in the next message, or the order's page */
+function sinalPayLine(o: OrderFacts): string {
+  if (o.pay?.online)
+    return o.trackUrl
+      ? `Pague pelo Pix da página do pedido: ${o.trackUrl}`
+      : 'Pague pelo Pix da página do pedido.';
+  if (o.pay?.copyPaste)
+    return 'O código Pix copia e cola vem na próxima mensagem. Depois de pagar, mande o comprovante aqui.';
+  return 'Responda esta mensagem para combinar o Pix com a loja.';
+}
+
+/** Festa calculada F2: right after the order, what locks the date and what's left for later */
+export function sinalDueText(o: OrderFacts): string | null {
+  const s = o.sinal;
+  if (!s || s.depositPaidAt || !o.scheduledFor) return null;
+  return [
+    `Para garantir ${ddmm(o.scheduledFor)}, o sinal da encomenda #${o.number} é de ${brl(s.depositCents)}, por Pix. O restante (${brl(s.balanceCents)}) fica para ${where(o)}.`,
+    sinalPayLine(o),
+  ].join('\n\n');
+}
+
+/** The sinal landed: the date is the shopper's, and the rest by Pix now or at the door */
+export function sinalPaidText(o: OrderFacts): string | null {
+  const s = o.sinal;
+  if (!s || !s.depositPaidAt || s.balancePaidAt || !o.scheduledFor) return null;
+  const how = o.pay?.online
+    ? `Se quiser, pague pela página do pedido${o.trackUrl ? `: ${o.trackUrl}` : '.'}`
+    : o.pay?.copyPaste
+      ? 'Se quiser pagar agora, o código Pix vem na próxima mensagem.'
+      : '';
+  return [
+    `Sinal de ${brl(s.depositCents)} recebido ✓ Sua encomenda #${o.number} para ${ddmm(o.scheduledFor)} está garantida na ${o.storeName}.`,
+    `Falta ${brl(s.balanceCents)}: por Pix antes do dia ou ${atDoor(o)}. ${how}`.trim(),
+  ].join('\n\n');
+}
+
+/** Queued with the order: the sinal's words, then its copia-e-cola on its own (own key). */
+export async function enqueueSinalDueTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<boolean> {
+  const told = await enqueueOrderNoteTx(tx, tenantId, orderId, 'sinal_due', sinalDueText, {
+    after: true,
+  });
+  if (told)
+    await enqueueOrderNoteTx(tx, tenantId, orderId, 'sinal_pix', planPixCode, { after: true });
+  return told;
+}
+
+/** Once the sinal is in: the date is held, and the rest's code (own key) follows. */
+export async function enqueueSinalPaidTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<boolean> {
+  const told = await enqueueOrderNoteTx(tx, tenantId, orderId, 'sinal_paid', sinalPaidText, {
+    after: true,
+  });
+  if (told)
+    await enqueueOrderNoteTx(tx, tenantId, orderId, 'balance_pix', planPixCode, { after: true });
+  return told;
+}
+
+/**
+ * A store note on one order beyond its steps (the eve reminder, a plan's messages): once per
+ * order and event, on the store's linked number, never to a number that said SAIR. Runs in a
+ * savepoint and never throws, like enqueueOrderMessageTx.
+ */
+export async function enqueueOrderNoteTx(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+  event: string,
+  render: (o: OrderFacts) => string | null,
+  /** queued after this tx's other messages (a Pix code under its message) */
+  opts: { after?: boolean } = {},
+): Promise<boolean> {
+  try {
+    return await (
+      tx as unknown as { savepoint<T>(fn: (s: Sql) => Promise<T>): Promise<T> }
+    ).savepoint(async (sp) => {
+      const wa = await sendingTx(sp, tenantId);
+      if (!wa) return false;
+      const facts = await orderFactsTx(sp, tenantId, orderId);
+      const phone = facts?.phone ?? null;
+      if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
+      if (await optedOutTx(sp, tenantId, phone)) return false;
+      const text = render(facts);
+      if (!text) return false;
+      const rows = await sp`
+          insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body, created_at)
+          values (${tenantId}, ${orderId}, 'order', ${event}, ${phone}, ${text},
+                  ${opts.after ? sp`clock_timestamp()` : sp`now()`})
+          on conflict (order_id, event) where order_id is not null do nothing
+          returning id`;
+      return rows.length > 0;
+    });
+  } catch (err) {
+    msgLog.error({ err, orderId, event }, 'order note not queued');
+    return false;
+  }
 }
 
 /**
@@ -292,7 +535,12 @@ export async function enqueueOrderMessageTx(
   tenantId: string,
   orderId: string,
   event: OrderEvent,
-  extra: { occurrence?: string; refund?: OrderFacts['refund'] } = {},
+  extra: {
+    occurrence?: string;
+    refund?: OrderFacts['refund'];
+    /** Freio's late notice: the apology coupon, said on the delay message */
+    apology?: { code: string; words: string };
+  } = {},
 ): Promise<boolean> {
   try {
     return await (
@@ -300,13 +548,25 @@ export async function enqueueOrderMessageTx(
     ).savepoint(async (sp) => {
       if (REPEATS.has(event) && !/^\d{1,20}$/.test(extra.occurrence ?? '')) return false;
       const wa = await sendingTx(sp, tenantId);
-      if (!wa || !wa.events.includes(event)) return false;
+      const enabled = !!wa && wa.events.includes(event);
+      if (!wa || (!enabled && event !== 'paid')) return false;
       const facts = await orderFactsTx(sp, tenantId, orderId);
+      // a plan's week or a sinal is paid from these messages: its "pago" is always said
+      if (!enabled && facts?.source !== 'plan' && !facts?.sinal) return false;
       const phone = facts?.phone ?? null;
       if (!facts || !phone || !/^\d{10,11}$/.test(phone)) return false;
       if (await optedOutTx(sp, tenantId, phone)) return false;
-      const text = renderOrderMessage(event, { ...facts, refund: extra.refund ?? null });
+      let text = renderOrderMessage(event, {
+        ...facts,
+        refund: extra.refund ?? null,
+        apology: extra.apology ?? null,
+      });
       if (!text) return false;
+      // a delivered order may offer "o de sempre" once, to someone who hasn't asked yet
+      if (event === 'delivered' && (await usualInviteTx(sp, tenantId, phone)))
+        text = text.includes(OPT_OUT_FOOTER)
+          ? text.replace(OPT_OUT_FOOTER, USUAL_INVITE + OPT_OUT_FOOTER)
+          : text + USUAL_INVITE;
       const key = REPEATS.has(event) ? `${event}:${extra.occurrence}` : event;
       const rows = await sp`
           insert into store_wa_messages (tenant_id, order_id, kind, event, phone, body)

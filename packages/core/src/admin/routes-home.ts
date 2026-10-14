@@ -1,5 +1,7 @@
 import { printTroubleTx } from '../modules/printing/jobs.ts';
 import type { Sql } from '../platform/db.ts';
+import { HttpError, bodyJson } from '../platform/http.ts';
+import { audit } from './audit.ts';
 import { waLinkedTx } from '../store-whatsapp/proactive.ts';
 import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -11,7 +13,7 @@ import { demandOf, loadSettings, statusOf } from './routes-store.ts';
 
 export function mountHome(d: AdminDeps) {
   const { admin } = d;
-  const { read, named } = handlers(d);
+  const { read, write, named } = handlers(d);
 
   admin.get(
     '/home',
@@ -267,6 +269,83 @@ export function mountHome(d: AdminDeps) {
       };
     }),
   );
+
+  // "Quanto o site já poupou": own-site sales against the commission the owner says their
+  // delivery app charges. PDV sales never went through an app, so they don't count.
+  admin.get(
+    '/home/savings',
+    read('manager', (tx, t) => savingsOf(tx, t.id)),
+  );
+  admin.put(
+    '/home/savings',
+    write('owner', async (tx, t, m, c) => {
+      const body = await bodyJson(c, 1024);
+      const p = body.feePercent;
+      if (
+        p !== null &&
+        p !== 0 &&
+        (typeof p !== 'number' || !Number.isFinite(p) || p < 1 || p > 50)
+      )
+        throw new HttpError(422, 'BAD_REQUEST', 'feePercent must be 1–50, 0 (no app) or null', {
+          field: 'feePercent',
+        });
+      const bp = p === null ? null : Math.round(p * 100);
+      await tx`update store_settings set marketplace_fee_bp = ${bp} where tenant_id = ${t.id}`;
+      await audit(tx, t.id, m, {
+        action: 'store.marketplace_fee',
+        entity: 'store',
+        summary:
+          bp === null || bp === 0
+            ? 'disse que não usa app de delivery'
+            : `comissão do app de delivery: ${(bp / 100).toLocaleString('pt-BR')}%`,
+      });
+      return { status: 200, body: await savingsOf(tx, t.id) };
+    }),
+  );
+}
+
+async function savingsOf(tx: Sql, tenantId: string) {
+  const [r] = await tx<
+    {
+      bp: number | null;
+      monthOrders: number;
+      monthSalesCents: number;
+      monthFeeCents: number;
+      allOrders: number;
+      allFeeCents: number;
+      since: string | null;
+    }[]
+  >`
+    with s as (
+      select marketplace_fee_bp as bp, coalesce(hours ->> 'timezone', 'America/Sao_Paulo') as tz
+      from store_settings where tenant_id = ${tenantId}
+    ), o as (
+      select o.total_cents, o.placed_at,
+             o.placed_at >= (date_trunc('month', now() at time zone s.tz) at time zone s.tz) as this_month
+      from orders o, s
+      where o.tenant_id = ${tenantId} and o.source <> 'pdv'
+        and o.state not in ('cancelled', 'refunded')
+    )
+    select s.bp,
+           (select count(*) from o where this_month)::int as "monthOrders",
+           (select coalesce(sum(total_cents), 0) from o where this_month)::bigint::int as "monthSalesCents",
+           -- per order, rounded half up: what the app would have kept of each one
+           (select coalesce(sum((total_cents::bigint * s.bp + 5000) / 10000), 0) from o where this_month)::bigint::int
+             as "monthFeeCents",
+           (select count(*) from o)::int as "allOrders",
+           (select coalesce(sum((total_cents::bigint * s.bp + 5000) / 10000), 0) from o)::bigint::int as "allFeeCents",
+           (select min(placed_at)::date::text from o) as since
+    from s`;
+  return {
+    feePercent: r?.bp == null ? null : r.bp / 100,
+    month: {
+      orders: r?.monthOrders ?? 0,
+      salesCents: r?.monthSalesCents ?? 0,
+      feeCents: r?.bp == null ? 0 : r.monthFeeCents,
+    },
+    all: { orders: r?.allOrders ?? 0, feeCents: r?.bp == null ? 0 : r.allFeeCents },
+    since: r?.since ?? null,
+  };
 }
 
 type Attention = {

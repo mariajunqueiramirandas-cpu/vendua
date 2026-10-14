@@ -19,9 +19,10 @@ roadmap entry.
 Features no competitor in our profiles ships, proposed to set Venduá apart rather than to close a
 gap. Same rule: nothing here is planned until it has an ADR or a roadmap entry.
 
-| Feature                                                                            | Status                 |
-| ---------------------------------------------------------------------------------- | ---------------------- |
-| [Freio automático: delivery promises from the real kitchen](freio-automatico.md)   | Proposed               |
-| [Status do dia: the store's WhatsApp Status](status-do-dia.md)                     | Proposed               |
-| [Festa calculada: party orders with a sinal](festa-calculada.md)                   | Proposed               |
-| [Duá no WhatsApp do dono, and Venduá's numbers on the gateway](dua-no-whatsapp.md) | Built; cutover pending |
+| Feature                                                                            | Status                     |
+| ---------------------------------------------------------------------------------- | -------------------------- |
+| [Freio automático: delivery promises from the real kitchen](freio-automatico.md)   | Shipped F0–F3 (0125)       |
+| [Status do dia: the store's WhatsApp Status](status-do-dia.md)                     | Shipped S0 + S1 (0124)     |
+| [Festa calculada: party orders with a sinal](festa-calculada.md)                   | Shipped F0–F3 (0126, 0128) |
+| [Plano semanal: a basket the shopper gets every week](plano-semanal.md)            | Shipped (0127)             |
+| [Duá no WhatsApp do dono, and Venduá's numbers on the gateway](dua-no-whatsapp.md) | Built; cutover pending     |

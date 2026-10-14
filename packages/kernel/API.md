@@ -149,6 +149,8 @@ may only use `store:` types.
 | `sdk:pix-info`         | block   | category `info`; title, showQr — **Kernel 1.2**                       | —                                                                                                                              |
 | `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                               | —                                                                                                                              |
 | `sdk:recent-order`     | block   | category `promo`; title — **Kernel 1.21**                             | —                                                                                                                              |
+| `sdk:party-cta`        | block   | category `promo`; title, text, cta — **Kernel 1.26**                  | —                                                                                                                              |
+| `sdk:plans-cta`        | block   | category `promo`; title, text, cta — **Kernel 1.26**                  | —                                                                                                                              |
 
 Kernel 1.5: `catalog.ProductCard` receives an optional `quickAdd(children)` render prop — the
 Kernel's add-to-cart button, offered only for products that can be added as-is (active, not a
@@ -455,7 +457,8 @@ dietary? })` keep only products stating every tag in `dietary`, and a search mat
   `state`, `storeName`, `delivery` (`mode`, `promisedFrom`/`To`, `etaMin`/`Max`),
   `scheduledFor`, `placedAt`, `updatedAt`, `version` (live, like an order), `timeline` (`at`,
   `to`) and `items` (`name`, `qty`, `modifiers`, `combo`, `note`) — no customer, address,
-  payment, money or order notes. The device that placed the order keeps its full view. The page
+  payment, money or order notes (Kernel 1.26: a Pix order adds `payment`, below). The device
+  that placed the order keeps its full view. The page
   renders the new slot `order.TrackingPage` (`order`, `timeline` — the `order.Timeline` slot,
   rendered — `pickup?`, `timeZone?`, `vocabulary?`), "Falar com a loja" and the menu; never a
   payment, "pedir de novo" or the shopper's data. Core refuses the link on pay, card and reorder.
@@ -582,6 +585,138 @@ caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot th
   with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
   in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
 
+### "O de sempre" (Kernel 1.26)
+
+Additive — no storefront edit, no new runtime export. A store may remind a shopper who asked of
+their usual order from its own WhatsApp: at most once a week, a week or more after their last
+order, under a daily ceiling the merchant sets, and SAIR stops it.
+
+- `StoreProfile.usualReminder` (optional; true only while the store sends it and its WhatsApp is
+  linked).
+- Client: `api.usualReminder(orderId)` → `POST /checkout/v1/usual-reminder` with the order's own
+  credential (the session that placed it), after the order exists; Core takes the phone and name
+  from that order, never from the call. `api.cancelUsualReminder(orderId)` → `DELETE`. Both
+  resolve `{ on }`. New `ERROR_CODES` entry: `ORDER_REQUIRED` (409, no order placed by that
+  session); `REMINDER_OFF` (409) and `INVALID_PHONE` (422) as for the bag reminder.
+- Checkout's "Seus dados", with a valid phone and the profile flag, adds an unticked "Me lembre
+  do meu pedido de sempre (no máximo 1 mensagem por semana)" (`[data-vendua="usual-reminder"]`,
+  the same `.v-check.v-reminder` look). Ticked, the consent is sent once the order is placed; a
+  refusal is quiet and never touches the order.
+- The reminder itself is a link to the store with the usual bag ready (`?cart=CODE`, the shared
+  bag of 1.21): re-added at today's prices, unavailable lines reported as for any shared bag.
+
+### The kitchen right now: `StoreProfile.fulfillment` (Kernel 1.26)
+
+Additive — no storefront edit, no new runtime export. Core's Freio automático keeps a queue of the
+kitchen; the storefront shows its times instead of the configured ones.
+
+- `StoreProfile.fulfillment` (optional): `{ pickupMinutes, deliveryExtraMinutes, level,
+deliveryPausedUntil }`. `level` is `normal | busy | full | pickup_only` (new values may appear);
+  `deliveryPausedUntil` is an ISO time while delivery is paused, else null.
+- `deliverySummary` `(store, zones, now?)` uses it: `pickup.prepMinutes` is `pickupMinutes`, each
+  zone ETA gains `deliveryExtraMinutes`, and `delivery.pausedUntil` is set while the pause lasts
+  (null once it's past `now`). `deliveryWords` `(summary, currency?, timeZone?)` adds `paused`
+  ("entregas voltam às ~19:40"). `useDeliverySummary` re-renders when a pause ends.
+- `sdk:delivery-eta` says "Entregas voltam às ~19:40" while paused. Checkout disables Entrega
+  then (detail "voltam às ~19:40") unless the order is an encomenda for a date. New
+  `ERROR_CODES` entry: `DELIVERY_PAUSED` (409, `details.until`), for a checkout that raced it.
+
+### Festa calculada (Kernel 1.26)
+
+Additive — no storefront edit. A store whose owner set up party kinds in the admin (Cardápio ›
+Festa) gets a party calculator: guests and picks in, Core's quantities out, an ordinary cart.
+
+- `/festa` — the calculator page (`data-vendua-page="party"`): the store's party kinds, adults and
+  children, a choice per group (up to the group's `maxChoices`), then Core's quote, one line per
+  product with its reason ("300 de 600 salgados · 3 × 100"), and "Colocar na sacola". A store's
+  own `page:festa` keeps the path, and this page isn't mounted.
+- New block `sdk:party-cta` (category `promo`; settings `title`, `text`, `cta`; schema `partyCta`
+  in `@vendua/kernel/sdk-catalog`): a card to `/festa`, nothing while the store has no party kind.
+  Template migration `2026-10-party-cta-on-home` places it in the home page's first area
+  accepting `promo` blocks.
+- Client: `api.partyProfiles()` → `GET /storefront/v1/party` (`{ profiles: PartyProfile[] }`);
+  `api.partyQuote(input)` → `POST /checkout/v1/party/quote` (`{ quote: PartyQuote }`, nothing
+  written); `api.buildPartyCart(input)` → `POST /checkout/v1/cart/party` (`{ cart, quote, report }`:
+  the cart's lines give way to the party's; `report.skipped` as for a shared bag), also
+  `useCart().mutations.buildParty` (optional on `CartMutations`). New types `PartyProfile`,
+  `PartyInput`, `PartyQuote`.
+- `Cart.party` (`{ profileId, adults, children }`, optional): a party cart is an encomenda,
+  `schedule.required` is true. A day at the store's ceiling leaves `schedule.dates`.
+- New `ERROR_CODES`: `INVALID_PARTY` (422, `details.field`, `details.groupId`), `PARTY_TOO_BIG`
+  (422, a line past 99 sales, `details.productId`), `DATE_FULL` (409 at checkout, the date or a
+  group's pieces a day are full; `details.date`, `details.groupId`).
+
+### Plano semanal (Kernel 1.26)
+
+Additive — no storefront edit. A store with its WhatsApp connected and weekly plans set up in the
+admin (Cardápio › Planos) offers them: a shopper picks a basket, says yes at checkout, the store's
+WhatsApp confirms the number (ASSINAR), and Core places each week's order itself, `lead_days`
+before its date, priced then. PULAR skips a week, CANCELAR PLANO ends it.
+
+- `/planos` — the plans page (`data-vendua-page="plans"`): each plan's lines, its day and Core's
+  sum at today's prices, and "Quero este plano" (the bag becomes the plan, then the cart). A
+  store's own `page:planos` keeps the path, and this page isn't mounted.
+- New block `sdk:plans-cta` (category `promo`; settings `title`, `text`, `cta`; schema `plansCta`
+  in `@vendua/kernel/sdk-catalog`): a card to `/planos`, nothing while the store offers no plan.
+  No template migration places it: the merchant adds it, or shares the link.
+- Client: `api.plans()` → `GET /storefront/v1/plans` (`{ plans: ShopperPlan[] }`; `[]` when the
+  store can't text its shoppers or take Pix); `api.buildPlanCart(planId)` → `POST /checkout/v1/cart/plan`
+  (`{ cart, report }`), also `useCart().mutations.buildPlan` (optional on `CartMutations`). New
+  type `ShopperPlan`.
+- `Cart.plan` (`{ id, name, weekday }`, optional): the plan's first week is an encomenda,
+  `schedule.required` is true, and a plan with a `weekday` offers only that weekday's dates. A
+  plan is paid by Pix, week by week: `schedule.paymentMethods` is `['pix']`, and checkout refuses
+  another method with `PAYMENT_NOT_ALLOWED` (422, `details.allowed`). Each week's Pix code goes
+  out in the store's WhatsApp with the order (or the order page, with Mercado Pago).
+- `CheckoutInput.subscribe` (optional boolean): the shopper's yes to `Cart.plan`. Checkout shows
+  it ticked (`[data-vendua="plan-subscribe"]`) on the payment step; unticked, the order is just an
+  order.
+- New `ERROR_CODES`: `PLAN_NOT_FOUND` (404, the plan left or the store can't text),
+  `PLAN_NOT_ALLOWED` (422, a table order, `details.field`).
+
+### Sinal: an encomenda's date locked by Pix (Kernel 1.26)
+
+Additive — no storefront edit. A store that asks for a sinal (Loja › Encomendas: a share from 5
+to 90%, for every party and optionally for encomendas from an amount) splits such an order in
+two parts: the sinal, paid by Pix to lock the date, and the rest, paid by Pix before the date or
+at the door. Core computes both, and they always add up to the total.
+
+- `Cart.sinal` (`{ percent, policy }`, optional): the store asks this cart for a sinal once it is
+  an encomenda (a date picked, or required). `CartTotals.depositCents` / `balanceCents` are the
+  two parts of this total (`api.cart(method)` prices them too). With a date, checkout takes only
+  Pix: another method is `PAYMENT_NOT_ALLOWED` (422, `details.allowed`), and
+  `schedule.paymentMethods` is `['pix']` when the date is required. `policy` is the store's own
+  cancellation words, shown as the store's (Venduá states no rule).
+- Checkout's payment step shows the parts and the store's words (`[data-vendua="checkout-sinal"]`)
+  and the button reads "Confirmar · sinal de R$ X".
+- `Order.payment.sinal` (`OrderSinal`: `depositCents`, `balanceCents`, `depositPaidAt`,
+  `depositVia`, `balancePaidAt`, `balanceVia`, `policy`): `payment.status` stays `pending` until
+  both parts are paid, and `payment.pix` is the part due now. With Mercado Pago, `api.payOrder`
+  makes the sinal's Pix first, then the rest's; the order page doesn't make the rest's Pix by
+  itself, the shopper asks for it ("Pagar o restante por Pix"). The page shows both parts
+  (`[data-vendua="order-sinal"]`), and the `checkout.PixPayment` / `checkout.PaymentStatus`
+  amounts are the part due.
+
+### A Pix order paid from the store's WhatsApp link (Kernel 1.26)
+
+- `OrderTracking.payment` (`TrackingPayment`, optional; null for other methods): `status`,
+  `online`, `dueCents` (what is due now, 0 once paid), `pix` (`copyPaste`, `expiresAt`) and a
+  sinal's parts (`depositCents`, `balanceCents`, `depositPaid`, `balancePaid`). Nothing about the
+  shopper: the copia e cola carries the store's key and the amount.
+- `api.payTracked(id, { deviceId? })` → `POST /checkout/v1/orders/:id/pay` with the link's
+  credential: the online Pix Core makes (or the live one), `{ order: OrderTracking, next }`. A
+  card order answers 401 `SESSION_REQUIRED`; a paid order, a closed one or a store's own Pix,
+  409 `PAYMENT_NOT_REQUIRED`.
+- The tracking page shows the code (`checkout.PixPayment`) or "Pagar com Pix"
+  (`[data-vendua="tracking-pay"]`), and a sinal's parts.
+
+### Where an order came from: `?ref=` (Kernel 1.26)
+
+Additive — no storefront edit, no new export. A link with `?ref=CODE` (`^[a-z0-9]{6,12}$`: a
+Status do dia post, the bag card) is remembered for the tab (sessionStorage `vendua.ref`) on
+first load and sent as `ref` with `api.checkout`; Core keeps it on the order and counts each
+post's orders. Anything else in `ref` is ignored, never an error, and the address is left as it is.
+
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
 Additive — no storefront edit, no new runtime export. Money stays Core's.
@@ -684,8 +819,8 @@ separate function a store may skip for its own voice. Additive — no storefront
 **Delivery** (`rules/delivery.ts`)
 
 - `zoneFeeFloor` `(zone)` — the least a zone charges: Core's `minFeeCents` (a per-km zone costs at least one km), else the zone's flat fee.
-- `deliverySummary` `(store, zones)` — `{ delivery: { etaMin, etaMax, fee: { form, cents }, freeOverCents, minOrderCents, minOrderVaries } | null, pickup: { prepMinutes } | null }`.
-- `deliveryWords` `(summary, currency?)` — `{ fee, eta, minOrder, freeOver }`: `entrega a partir de R$ 5,00`, `30–50 min`.
+- `deliverySummary` `(store, zones, now?)` — `{ delivery: { etaMin, etaMax, fee: { form, cents }, freeOverCents, minOrderCents, minOrderVaries, pausedUntil } | null, pickup: { prepMinutes } | null }` (1.26: the live kitchen when `store.fulfillment` is set).
+- `deliveryWords` `(summary, currency?, timeZone?)` — `{ fee, eta, minOrder, freeOver, paused }`: `entrega a partir de R$ 5,00`, `30–50 min`, `entregas voltam às ~19:40`.
 
 **Links** (`rules/links.ts`)
 

@@ -142,12 +142,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('free trial (db)', () => {
     await sql.end();
   });
 
-  test('the catalog: Bandeira trials 14 days, Mirim and Pangolim none; a new phone is eligible', async () => {
+  test('the catalog: Mirim and Bandeira trial 14 days, Pangolim none; a new phone is eligible', async () => {
     const plans = await call('GET', '/admin/v1/signup/plans');
     const by = Object.fromEntries(plans.body.plans.map((p: any) => [p.id, p]));
     expect(by.bandeira.trialDays).toBe(14);
     expect(by.pangolim.trialDays).toBe(0);
-    expect(by.mirim.trialDays).toBe(0);
+    expect(by.mirim.trialDays).toBe(14);
     expect((await verified(mkPhone())).trialEligible).toBe(true);
   });
 

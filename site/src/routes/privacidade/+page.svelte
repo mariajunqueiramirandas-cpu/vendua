@@ -9,8 +9,8 @@
   // What the site keeps about a visitor, as a receipt (the same device the price block uses).
   // A build with a Google tag (gtag.ts) says so everywhere below.
   const receipt = [
-    { item: 'Dados pessoais', value: 'nenhum' },
-    { item: 'Formulários', value: 'nenhum' },
+    { item: 'Dados pessoais', value: 'só se você mandar' },
+    { item: 'Formulários', value: 'dois, opcionais' },
     { item: 'Cookies', value: googleTag ? 'do Google Analytics' : 'nenhum' },
     { item: 'Rastreadores', value: googleTag ? 'Google Analytics' : 'nenhum' },
     { item: 'Contagem de visitas', value: 'anônima' },
@@ -21,8 +21,8 @@
 <Seo
   title="Privacidade · Venduá"
   description={googleTag
-    ? 'O site da Venduá não pede dados e usa o Google Analytics para medir visitas e anúncios. Tudo o que acontece quando você passa por aqui, em palavras simples.'
-    : 'O site da Venduá não pede dados, não usa cookies e não tem rastreadores. Tudo o que acontece quando você passa por aqui, em palavras simples.'}
+    ? 'O site da Venduá só guarda o que você manda num formulário e usa o Google Analytics para medir visitas e anúncios. Tudo o que acontece quando você passa por aqui, em palavras simples.'
+    : 'O site da Venduá só guarda o que você manda num formulário, não usa cookies e não tem rastreadores. Tudo o que acontece quando você passa por aqui, em palavras simples.'}
   path="/privacidade/"
   noindex
 />
@@ -36,15 +36,15 @@
         {#if googleTag}
           <h1 class="t-display">Sua visita, explicada.</h1>
           <p class="t-lede">
-            Este site não pede nada e não sabe quem você é. Ele usa o Google Analytics para medir as
-            visitas e os nossos anúncios. Aqui está, em palavras simples, tudo o que acontece quando
-            você passa por aqui.
+            Este site não sabe quem você é, a não ser que você mande o seu contato num formulário.
+            Ele usa o Google Analytics para medir as visitas e os nossos anúncios. Aqui está, em
+            palavras simples, tudo o que acontece quando você passa por aqui.
           </p>
         {:else}
           <h1 class="t-display">Sua visita fica só com você.</h1>
           <p class="t-lede">
-            Este site não pede nada, não usa cookies e não segue ninguém. Aqui está, em palavras
-            simples, tudo o que acontece quando você passa por aqui.
+            Este site só guarda o que você mandar num formulário, não usa cookies e não segue
+            ninguém. Aqui está, em palavras simples, tudo o que acontece quando você passa por aqui.
           </p>
         {/if}
       </div>
@@ -67,7 +67,7 @@
         {/each}
         <div class="line total">
           <dt>Total</dt>
-          <dd><span class="chip">{googleTag ? 'nada que diga quem você é' : 'nada seu'}</span></dd>
+          <dd><span class="chip">só o que você mandar</span></dd>
         </div>
       </dl>
       <p class="receipt-note">
@@ -77,10 +77,25 @@
 
     <article class="prose">
       <section aria-labelledby="coleta">
-        <h2 id="coleta" class="t-title-2">Nada de cadastro por aqui</h2>
+        <h2 id="coleta" class="t-title-2">Dois formulários, só se você quiser</h2>
         <p>
-          O site não tem formulário, campo de contato, login nem cadastro. Você lê, olha o Duá e vai
-          embora. Nenhum dado seu é pedido, e nenhum é guardado.
+          O site não tem login nem cadastro. Você lê, olha o Duá e vai embora. Há só dois
+          formulários, e os dois são opcionais:
+        </p>
+        <ul class="ticks">
+          <li>
+            <strong>“Prefere conversar antes?”</strong> guarda o seu nome, o seu WhatsApp e o que você
+            vende, para alguém da equipe da Venduá te chamar no WhatsApp. A primeira mensagem pode vir
+            do nosso assistente de vendas, e uma pessoa da equipe acompanha a conversa.
+          </li>
+          <li>
+            <strong>“Seja parceiro”</strong> guarda o nome, o que você faz, o WhatsApp e, se você quiser,
+            o e-mail, a cidade e uma nota, para a equipe avaliar a parceria.
+          </li>
+        </ul>
+        <p>
+          Esses dados ficam com a equipe da Venduá, servem só para responder a você e nunca são
+          vendidos nem passados a ninguém. Para apagar, é só pedir pelos endereços no fim da página.
         </p>
       </section>
 
@@ -152,9 +167,9 @@
       <section aria-labelledby="erros">
         <h2 id="erros" class="t-title-2">Quando algo dá errado</h2>
         <p>
-          Fora a contagem acima, o servidor não anota as visitas que dão certo. Ele só registra os
-          pedidos que falham, como uma página que não existe ou um erro nosso. Nesses casos ficam os
-          dados técnicos de costume:
+          Fora a contagem e os formulários acima, o servidor não anota as visitas que dão certo. Ele
+          só registra os pedidos que falham, como uma página que não existe ou um erro nosso. Nesses
+          casos ficam os dados técnicos de costume:
         </p>
         <ul class="ticks">
           <li>o endereço IP de onde veio o acesso;</li>

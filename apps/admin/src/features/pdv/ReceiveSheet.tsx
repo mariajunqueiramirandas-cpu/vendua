@@ -14,6 +14,9 @@ import { PaySheet } from './PaySheet.tsx';
  * paid at the counter: its whole total through the caixa, so the money lands in today's count.
  */
 export default function ReceiveSheet({ order, onClose }: { order: Order; onClose: () => void }) {
+  // a sinal already in (0128): the caixa takes the rest only
+  const sinal = order.payment.sinal;
+  const rest = !!sinal?.depositPaidAt && !sinal.balancePaidAt;
   const qc = useQueryClient();
   const nav = useNavigate();
   const state = usePdvState();
@@ -60,8 +63,8 @@ export default function ReceiveSheet({ order, onClose }: { order: Order; onClose
     <PaySheet
       open={open}
       onOpenChange={(o) => !o && close()}
-      title={`Receber o pedido #${order.number}`}
-      totalCents={order.totalCents}
+      title={rest ? `Receber o restante do #${order.number}` : `Receber o pedido #${order.number}`}
+      totalCents={rest ? sinal.balanceCents : order.totalCents}
       caixaOpen={!state.data || !!state.data.caixa}
       busy={receive.isPending}
       paused={receive.isPaused}

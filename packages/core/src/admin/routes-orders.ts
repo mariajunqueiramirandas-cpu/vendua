@@ -1,4 +1,8 @@
-import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { capacityOn, type EncomendaCapacity } from '../modules/encomenda-capacity.ts';
+import { deliveryWindow, freioConfig, queueTx, readyInMinutes } from '../modules/freio.ts';
+import { loadSettings } from './routes-store.ts';
+import { enqueueOrderMessageTx, enqueueSinalPaidTx } from '../store-whatsapp/messages.ts';
+import { sinalOf, sinalPaid, type OrderSinal } from '../modules/sinal.ts';
 import type { Context } from 'hono';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
@@ -22,6 +26,7 @@ import {
   forward,
   markConnectionLater,
   markReview,
+  offlineSinalPayment,
   orderPayments,
   processStorePayment,
   syncOrderPayment,
@@ -31,7 +36,16 @@ import {
 } from '../modules/payments/store-payments.ts';
 import { log } from '../platform/log.ts';
 import { audit } from './audit.ts';
-import { int, isDate, need, oneOf, optInt, optText, type AdminDeps } from './context.ts';
+import {
+  int,
+  isDate,
+  need,
+  oneOf,
+  optInt,
+  optText,
+  type AdminDeps,
+  type Merchant,
+} from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -372,12 +386,11 @@ async function releaseUnsent(d: PayDeps, tenantId: string, orderId: string, key:
 /** Money that landed on a cancelled/refunded order goes straight back (or waits for a person). */
 export async function autoRefundIfClosed(d: PayDeps, tenantId: string, r: ApplyResult) {
   if (!r.applied || !r.closed) return;
-  const refundable = await withTenant(
-    d.sql,
-    tenantId,
-    async (tx) =>
-      (await orderPayments(tx, tenantId, r.orderId)).find((p) => p.id === r.paymentRowId)
-        ?.refundableCents ?? 0,
+  const refundable = await withTenant(d.sql, tenantId, async (tx) =>
+    (await keptSinalTx(tx, tenantId, r.orderId, r.paymentRowId))
+      ? 0
+      : ((await orderPayments(tx, tenantId, r.orderId)).find((p) => p.id === r.paymentRowId)
+          ?.refundableCents ?? 0),
   );
   if (refundable <= 0) return;
   try {
@@ -412,6 +425,24 @@ export async function settleProviderPayment(
  * After an order closes: anything still captured on it (a payment approved between our pre-read
  * and the transition) goes back too.
  */
+/**
+ * Festa calculada F2 (0128): a sinal (or a whole-order payment) of a sinal order that came in
+ * before the order closed stays with the store — the policy is the store's, and a manager gives
+ * it back with Estornar. Money that lands after the close still goes straight back.
+ */
+async function keptSinalTx(tx: Sql, tenantId: string, orderId: string, paymentId: string) {
+  const [k] = await tx<{ kept: boolean }[]>`
+    select coalesce(p.charge, 'whole') <> 'balance' and p.approved_at is not null
+           and p.approved_at < coalesce((
+             select min(e.at) from order_events e
+             where e.tenant_id = ${tenantId} and e.order_id = o.id
+               and e.to_state in ('cancelled', 'refunded')), 'infinity') as kept
+    from orders o join payments p on p.tenant_id = o.tenant_id and p.order_id = o.id
+    where o.tenant_id = ${tenantId} and o.id = ${orderId} and p.id = ${paymentId}
+      and o.deposit_cents is not null`;
+  return k?.kept === true;
+}
+
 export async function refundLeftovers(d: PayDeps, tenantId: string, orderId: string) {
   const rows = await withTenant(d.sql, tenantId, (tx) => orderPayments(tx, tenantId, orderId));
   for (const r of rows)
@@ -423,6 +454,62 @@ export async function refundLeftovers(d: PayDeps, tenantId: string, orderId: str
         paymentRowId: r.id,
         closed: true,
       });
+}
+
+/**
+ * A sinal order paid by the store's own Pix: a manager marks the part that landed (or undoes the
+ * last one marked). The Pix shown and sent moves on to the part still due.
+ */
+async function markSinal(
+  tx: Sql,
+  tenantId: string,
+  m: Merchant,
+  id: string,
+  number: number,
+  sinal: OrderSinal,
+  status: 'paid' | 'pending',
+  charge: 'deposit' | 'all',
+) {
+  const now = new Date().toISOString();
+  const next: OrderSinal = { ...sinal };
+  if (status === 'paid') {
+    if (!next.depositPaidAt) Object.assign(next, { depositPaidAt: now, depositVia: 'manual' });
+    if (charge === 'all' && !next.balancePaidAt)
+      Object.assign(next, { balancePaidAt: now, balanceVia: 'manual' });
+  } else if (next.balancePaidAt) Object.assign(next, { balancePaidAt: null, balanceVia: null });
+  else Object.assign(next, { depositPaidAt: null, depositVia: null });
+  const settings = await loadSettings(tx, tenantId);
+  const full = sinalPaid(next);
+  const off = offlineSinalPayment(settings, number, next);
+  const patch = {
+    sinal: next,
+    status: full ? 'paid' : 'pending',
+    paidAt: full ? next.balancePaidAt : null,
+    confirmedBy: next.depositPaidAt ? m.name : null,
+    pix: off.pix,
+    instructions: off.instructions,
+  };
+  await tx`
+    update orders set payment = payment || ${tx.json(patch as never)}, rev = rev + 1, updated_at = now()
+    where tenant_id = ${tenantId} and id = ${id}
+  `;
+  await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
+  if (full && !sinal.balancePaidAt) {
+    await recordOrderStep(tx, tenantId, { id, number }, 'paid', 'merchant');
+    await enqueueOrderMessageTx(tx, tenantId, id, 'paid');
+  } else if (next.depositPaidAt && !sinal.depositPaidAt) await enqueueSinalPaidTx(tx, tenantId, id);
+  const what = (s: OrderSinal) =>
+    s.balancePaidAt ? 'pago' : s.depositPaidAt ? 'sinal recebido' : 'a pagar';
+  await audit(tx, tenantId, m, {
+    action: `order.payment.${status}`,
+    entity: 'order',
+    entityId: id,
+    summary: `pedido #${number}: ${what(sinal)} → ${what(next)}`,
+    before: { payment: sinal },
+    after: { payment: next },
+  });
+  await emitAdminTx(tx, tenantId, 'order.changed', id);
+  return { status: 200, body: { order: await loadOrderView(tx, tenantId, id) } };
 }
 
 const requestKey = (c: Context) => {
@@ -588,7 +675,40 @@ export function mountOrders(d: AdminDeps) {
         group by o.scheduled_for
         order by o.scheduled_for
       `;
-      return { orders: rows, days };
+      // Festa calculada (0126): each day's ceiling, where the store set one
+      const [st] = await tx<{ cap: EncomendaCapacity | null }[]>`
+        select encomenda_capacity as cap from store_settings where tenant_id = ${t.id}`;
+      const caps: Record<string, number> = {};
+      if (st?.cap)
+        for (
+          let d = Date.parse(`${from}T12:00:00Z`);
+          d <= Date.parse(`${to}T12:00:00Z`);
+          d += 86_400_000
+        ) {
+          const day = new Date(d).toISOString().slice(0, 10);
+          const c = capacityOn(st.cap, day);
+          if (c !== null) caps[day] = c;
+        }
+      // Festa calculada (0126): pieces per party group a day, from each order's frozen units
+      const made = await tx<{ date: string; name: string; units: number }[]>`
+        select o.scheduled_for::text as date, coalesce(pg.name, 'Outros') as name,
+               sum((g ->> 'units')::int)::int as units
+        from orders o
+        cross join lateral jsonb_array_elements(o.party -> 'groups') g
+        left join party_groups pg on pg.tenant_id = o.tenant_id and pg.id = (g ->> 'groupId')::uuid
+        where o.tenant_id = ${t.id} and o.party is not null
+          and o.scheduled_for between ${from}::date and ${to}::date
+          and o.state not in ('cancelled', 'refunded')
+        group by 1, 2
+        order by 1, 3 desc`;
+      const production: Record<string, { name: string; units: number }[]> = {};
+      for (const m of made) (production[m.date] ??= []).push({ name: m.name, units: m.units });
+      return {
+        orders: rows,
+        days,
+        ...(st?.cap ? { caps } : {}),
+        ...(made.length ? { production } : {}),
+      };
     }),
   );
 
@@ -657,9 +777,18 @@ export function mountOrders(d: AdminDeps) {
                     mode: DeliveryMode;
                     payment: { online?: boolean; status?: string };
                     counter_paid: boolean;
+                    deposit_cents: number | null;
+                    held: { id: string; charge: string | null }[];
                   }[]
                 >`
-                  select state, delivery ->> 'mode' as mode, payment,
+                  select state, delivery ->> 'mode' as mode, payment, deposit_cents,
+                    coalesce((
+                      select json_agg(json_build_object('id', p.id, 'charge', p.charge))
+                      from payments p
+                      where p.tenant_id = ${t0.id} and p.order_id = ${id}
+                        and p.status in ('approved', 'partially_refunded')
+                        and p.review is distinct from 'amount_mismatch'
+                    ), '[]'::json) as held,
                     exists (
                       select 1 from pdv_payments p
                       where p.tenant_id = ${t0.id} and p.voided_at is null
@@ -671,19 +800,29 @@ export function mountOrders(d: AdminDeps) {
           )
         : undefined;
     if (pre === null) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+    // Festa calculada F2 (0128): a sinal that came in stays with the store when the order is
+    // cancelled (the manager gives it back with Estornar, by the store's own policy); a rest
+    // paid online goes back as any payment does
+    const sinal = pre?.deposit_cents ? sinalOf(pre.payment) : null;
+    const keep =
+      sinal && to === 'cancelled'
+        ? new Set(pre!.held.filter((p) => p.charge !== 'balance').map((p) => p.id))
+        : null;
+    const backNow = keep ? pre!.held.filter((p) => !keep.has(p.id)).map((p) => p.id) : null;
     // cancelling money captured online refunds it, and cancelling a sale paid at the caixa takes
     // its money out of the drawer's expected count: the same role as an explicit refund
     if (
       pre &&
       to === 'cancelled' &&
-      (pre.counter_paid || (pre.payment.online && PAID_ONLINE.includes(String(pre.payment.status))))
+      (pre.counter_paid ||
+        (pre.payment.online && PAID_ONLINE.includes(String(pre.payment.status))) ||
+        !!sinal?.depositPaidAt)
     )
       need(c, 'manager');
     if (pre && canTransition(pre.state, to, pre.mode) && pre.payment.online) {
-      if (
-        (to === 'cancelled' || to === 'refunded') &&
-        PAID_ONLINE.includes(String(pre.payment.status))
-      )
+      const captured =
+        PAID_ONLINE.includes(String(pre.payment.status)) || (!!sinal && pre.held.length > 0);
+      if (backNow?.length || (!keep && (to === 'cancelled' || to === 'refunded') && captured))
         refunded = (
           await refundOrderPayments(pay, t0.id, id, {
             amountCents: null,
@@ -691,9 +830,10 @@ export function mountOrders(d: AdminDeps) {
             requestedBy: m0.userId,
             key,
             requireApproved: true,
+            ...(backNow?.length ? { paymentIds: backNow } : {}),
           })
         ).refundedCents;
-      else if (to === 'cancelled') await cancelOpenAttempts(pay, t0.id, id);
+      if (to === 'cancelled' && (keep || !captured)) await cancelOpenAttempts(pay, t0.id, id);
     }
     const step = write('attendant', async (tx, t, m) => {
       const meta: Record<string, unknown> = { by: m.name };
@@ -705,11 +845,43 @@ export function mountOrders(d: AdminDeps) {
       // invalid step still throws below and rolls this back with it
       if (to === 'confirmed' && prep && before.state === 'placed') {
         // accepting with a prep time re-promises the window the customer sees
+        // Freio (0125): the merchant's prep for this order after the tickets placed before it,
+        // plus the drive (a distance order) or no earlier than its zone's ETA. An older distance
+        // order has no driveMinutes: its etaMin already holds the prep, so it reads as a zone
+        // ETA and is never counted twice.
         const dl = before.delivery;
-        const now = Date.now();
-        const at = (min: number) => new Date(now + min * 60_000).toISOString();
-        const from = dl.mode === 'delivery' ? prep + (dl.etaMin ?? 0) : prep;
-        const until = dl.mode === 'delivery' ? prep + (dl.etaMax ?? dl.etaMin ?? 0) : prep;
+        const now = new Date();
+        const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
+        const s = await loadSettings(tx, t.id);
+        const cfg = freioConfig(s);
+        const queue = await queueTx(
+          tx,
+          t.id,
+          now,
+          cfg.prep,
+          s.hours?.timezone || 'America/Sao_Paulo',
+        );
+        const self = queue.find((q) => q.id === id);
+        const ready = readyInMinutes(
+          { id, placedAt: self?.placedAt ?? now, prep, startedAt: null },
+          queue,
+          cfg.capacity,
+          now,
+        );
+        const win =
+          dl.mode === 'delivery'
+            ? deliveryWindow(
+                dl.driveMinutes != null
+                  ? { kind: 'distance', driveMinutes: dl.driveMinutes }
+                  : dl.etaMin != null
+                    ? { kind: 'zone', etaMin: dl.etaMin, etaMax: dl.etaMax ?? dl.etaMin }
+                    : null,
+                ready,
+                cfg.buffer,
+              )
+            : { from: ready, to: ready };
+        const from = win.from;
+        const until = win.to;
         if (!before.scheduledFor)
           await tx`
             update orders set delivery = delivery || ${tx.json({ promisedFrom: at(from), promisedTo: at(until) })}
@@ -774,9 +946,17 @@ export function mountOrders(d: AdminDeps) {
       const id = uuidParam(c, 'id');
       const body = await bodyJson(c);
       const status = oneOf(body.status, 'status', ['paid', 'pending'] as const);
+      // an order with a sinal (0128): 'deposit' = the sinal came in, 'all' = everything did
+      const charge =
+        body.charge === undefined
+          ? null
+          : oneOf(body.charge, 'charge', ['deposit', 'all'] as const);
       const cur = (
-        await tx<{ number: number; payment: Record<string, unknown> }[]>`
-          select number, payment from orders where tenant_id = ${t.id} and id = ${id} for update
+        await tx<
+          { number: number; payment: Record<string, unknown>; deposit_cents: number | null }[]
+        >`
+          select number, payment, deposit_cents from orders
+          where tenant_id = ${t.id} and id = ${id} for update
         `
       )[0];
       if (!cur) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
@@ -785,6 +965,19 @@ export function mountOrders(d: AdminDeps) {
       // the caixa holds it (ADR 0035): it changes there, by cancelling or voiding
       if (cur.payment.provider === 'pdv')
         throw new HttpError(409, 'PAYMENT_PDV', 'this payment was taken at the PDV');
+      const sinal = cur.deposit_cents ? sinalOf(cur.payment) : null;
+      // without a part named (an admin from before the sinal), the part due now
+      if (sinal)
+        return markSinal(
+          tx,
+          t.id,
+          m,
+          id,
+          cur.number,
+          sinal,
+          status,
+          charge ?? (sinal.depositPaidAt ? 'all' : 'deposit'),
+        );
       const patch =
         status === 'paid'
           ? { status, paidAt: new Date().toISOString(), confirmedBy: m.name }
@@ -844,36 +1037,7 @@ export function mountOrders(d: AdminDeps) {
         );
       if (cur.scheduled)
         throw new HttpError(409, 'ORDER_NOT_DELAYABLE', 'an encomenda is promised for its day');
-      const d = cur.delivery;
-      const now = Date.now();
-      const to0 = Date.parse(d.promisedTo ?? '');
-      const from0 = Date.parse(d.promisedFrom ?? '');
-      // a promise already past starts again from now; the window keeps its width
-      const to = (Number.isFinite(to0) ? Math.max(to0, now) : now) + minutes * 60_000;
-      const width = Number.isFinite(to0) && Number.isFinite(from0) ? Math.max(0, to0 - from0) : 0;
-      const patch = {
-        promisedFrom: new Date(to - width).toISOString(),
-        promisedTo: new Date(to).toISOString(),
-        delayMinutes: (d.delayMinutes ?? 0) + minutes,
-      };
-      // rev is the live cursor: the shopper's order page re-reads on it
-      await tx`
-        update orders set delivery = delivery || ${tx.json(patch)}, rev = rev + 1, updated_at = now()
-        where tenant_id = ${t.id} and id = ${id}
-      `;
-      await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
-      await emitAdminTx(tx, t.id, 'order.changed', id);
-      const notified = await enqueueOrderMessageTx(tx, t.id, id, 'delayed', {
-        occurrence: String(to),
-      });
-      await audit(tx, t.id, m, {
-        action: 'order.delayed',
-        entity: 'order',
-        entityId: id,
-        summary: `pedido #${cur.number}: atrasou ${minutes} min`,
-        before: { promisedFrom: d.promisedFrom ?? null, promisedTo: d.promisedTo ?? null },
-        after: patch,
-      });
+      const { notified } = await delayOrderTx(tx, t.id, m, id, cur, minutes);
       // whether the shopper hears of it: the store's WhatsApp sends this step to their number
       return { status: 200, body: { order: await loadOrderView(tx, t.id, id), notified } };
     }),
@@ -957,4 +1121,52 @@ export function mountOrders(d: AdminDeps) {
       };
     })(c);
   });
+}
+
+/**
+ * "Atrasou": the promise moves `minutes` later (from now, if already past; the window keeps its
+ * width), the shopper's page re-reads, and the store's WhatsApp says so. Freio's late notice
+ * (admin/late-orders.ts) runs the same path, with its apology coupon on the message.
+ */
+export async function delayOrderTx(
+  tx: Sql,
+  tenantId: string,
+  actor: Pick<Merchant, 'name'> & { userId: string | null },
+  id: string,
+  cur: { number: number; delivery: OrderView['delivery'] },
+  minutes: number,
+  apology: { code: string; words: string } | null = null,
+): Promise<{ notified: boolean }> {
+  const d = cur.delivery;
+  const now = Date.now();
+  const to0 = Date.parse(d.promisedTo ?? '');
+  const from0 = Date.parse(d.promisedFrom ?? '');
+  // a promise already past starts again from now; the window keeps its width
+  const to = (Number.isFinite(to0) ? Math.max(to0, now) : now) + minutes * 60_000;
+  const width = Number.isFinite(to0) && Number.isFinite(from0) ? Math.max(0, to0 - from0) : 0;
+  const patch = {
+    promisedFrom: new Date(to - width).toISOString(),
+    promisedTo: new Date(to).toISOString(),
+    delayMinutes: (d.delayMinutes ?? 0) + minutes,
+  };
+  // rev is the live cursor: the shopper's order page re-reads on it
+  await tx`
+    update orders set delivery = delivery || ${tx.json(patch)}, rev = rev + 1, updated_at = now()
+    where tenant_id = ${tenantId} and id = ${id}
+  `;
+  await tx`select pg_notify(${ORDER_CHANNEL}, ${id})`;
+  await emitAdminTx(tx, tenantId, 'order.changed', id);
+  const notified = await enqueueOrderMessageTx(tx, tenantId, id, 'delayed', {
+    occurrence: String(to),
+    ...(apology ? { apology } : {}),
+  });
+  await audit(tx, tenantId, actor, {
+    action: 'order.delayed',
+    entity: 'order',
+    entityId: id,
+    summary: `pedido #${cur.number}: atrasou ${minutes} min${apology ? `, cupom ${apology.code}` : ''}`,
+    before: { promisedFrom: d.promisedFrom ?? null, promisedTo: d.promisedTo ?? null },
+    after: patch,
+  });
+  return { notified };
 }

@@ -41,6 +41,8 @@ const STORE_SECTION_NAMES: Record<string, string> = {
   'store:product-perks': 'Vantagens do produto',
   // blocks inside a section, should one ever be named on its own
   'sdk:recent-order': 'Seu último pedido',
+  'sdk:party-cta': 'Monte sua festa',
+  'sdk:plans-cta': 'Planos semanais',
   'sdk:notify-me': 'Avise quando voltar',
   'sdk:delivery-eta': 'Entrega e retirada',
   'sdk:stock-counter': 'Últimas unidades',
@@ -66,6 +68,10 @@ export const ADD_HINT: Record<string, string> = {
   'sdk:rich-text': 'Um título e um texto seu, como um recado ou a sua história.',
   'sdk:recent-order':
     'Para quem já pediu deste celular: acompanhar o pedido em andamento ou pedir de novo.',
+  'sdk:party-cta':
+    'Um convite para a calculadora de festa: o cliente diz quantas pessoas e a loja calcula tudo.',
+  'sdk:plans-cta':
+    'Um convite para os planos semanais: o cliente escolhe uma cesta e recebe toda semana.',
 };
 
 /** The words a merchant recognises a section by: its own title or first line of copy. */

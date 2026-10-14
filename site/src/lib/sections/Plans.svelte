@@ -7,7 +7,7 @@
   import Cards from '$lib/plans/Cards.svelte';
   import Compare from '$lib/plans/Compare.svelte';
 
-  const { bandeira } = plans;
+  const { mirim, bandeira } = plans;
   // the CRM's prices replace the built ones in place (cards, table, calculator, the night's FAQ)
   onMount(() => void loadLivePlans());
 </script>
@@ -23,7 +23,13 @@
 
     {#if bandeira.trial && bandeira.available}
       <div class="trial">
-        <p class="trial-t">Comece pelo {bandeira.name}: {bandeira.trial}, sem cartão.</p>
+        <p class="trial-t">
+          {#if mirim.available && mirim.trial === bandeira.trial}
+            Todo plano começa com {bandeira.trial}, sem cartão.
+          {:else}
+            Comece pelo {bandeira.name}: {bandeira.trial}, sem cartão.
+          {/if}
+        </p>
         <Start plano={bandeira.id} label="Criar loja no {bandeira.short}" />
       </div>
     {/if}

@@ -83,6 +83,7 @@ export async function pixExpiryPass(sql: Sql, tenantId: string, now = new Date()
       join shopper_messages m on m.thread_id = t.id and m.kind = 'pix'
       where o.tenant_id = ${tenantId} and o.state not in ('cancelled', 'refunded')
         and o.payment ->> 'status' <> 'paid' and coalesce((o.payment ->> 'online')::boolean, false)
+        and o.payment -> 'sinal' ->> 'depositPaidAt' is null
         and (m.meta -> 'data' ->> 'orderNumber')::int = o.number
         and (m.meta -> 'data' ->> 'expiresAt')::timestamptz < ${now}
         and (m.meta -> 'data' ->> 'expiresAt')::timestamptz > ${new Date(now.getTime() - 6 * 3600_000)}

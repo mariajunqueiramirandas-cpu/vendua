@@ -1,3 +1,4 @@
+import { partyTool } from './tools-party.ts';
 import {
   defineAgent,
   defineStatechart,
@@ -204,6 +205,7 @@ export const vendedor = defineAgent<Sql>({
     viewCartTool,
     cartEditTool,
     reorderTool,
+    partyTool,
     setFulfillmentTool,
     setPaymentTool,
     setCustomerTool,

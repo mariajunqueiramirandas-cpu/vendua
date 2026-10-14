@@ -16,6 +16,8 @@ import {
   Selection,
   Trash,
   X,
+  Basket,
+  Confetti,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -404,6 +406,24 @@ export default function Menu() {
             {...preloadRoute('/cardapio/estoque')}
           >
             estoque
+          </ButtonLink>
+          <ButtonLink
+            to="/cardapio/festa"
+            variant="ghost"
+            className="max-md:hidden"
+            icon={<Confetti />}
+            {...preloadRoute('/cardapio/festa')}
+          >
+            festa
+          </ButtonLink>
+          <ButtonLink
+            to="/cardapio/planos"
+            variant="ghost"
+            className="max-md:hidden"
+            icon={<Basket />}
+            {...preloadRoute('/cardapio/planos')}
+          >
+            planos
           </ButtonLink>
         </div>
       </div>

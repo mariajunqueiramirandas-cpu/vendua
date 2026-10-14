@@ -32,8 +32,12 @@ import {
   type ZoneMatch,
 } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
+import { datesWithRoomTx, type CartParty } from './encomenda-capacity.ts';
+import { cartPlanTx, dayOfWeek, type CartPlan } from './shopper-plan-base.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
+import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
+import { newSinal, sinalApplies, sinalRule } from './sinal.ts';
 import type { StoreSettingsRow } from './store.ts';
 
 /**
@@ -174,6 +178,10 @@ export interface CartTotals {
   freeDeliveryThresholdCents: number | null;
   /** cents short of free delivery; 0 once reached; null without a threshold */
   freeDeliveryRemainingCents: number | null;
+  /** Festa calculada F2 (0128): the sinal of this total when the order is an encomenda (paid by
+   *  Pix to lock the date), and the rest; absent when the store asks for none */
+  depositCents?: number;
+  balanceCents?: number;
 }
 
 export interface CartDelivery {
@@ -209,6 +217,13 @@ export interface CartView {
   coupon: AppliedCoupon | null;
   /** encomenda calendar — dates Core accepts for `scheduledFor` */
   schedule: ScheduleView;
+  /** Festa calculada (0126): the guests the cart was built for; null = an ordinary cart */
+  party?: CartParty | null;
+  /** Plano semanal (0127): the plan this cart was built from — its checkout offers it */
+  plan?: CartPlan | null;
+  /** Festa calculada F2 (0128): the sinal asked of this cart as an encomenda — its share and the
+   *  store's own cancellation words; the amounts are in `totals` */
+  sinal?: { percent: number; policy: string | null } | null;
 }
 
 export interface GroupPicks {
@@ -641,6 +656,9 @@ export interface CartRow {
   delivery: CartDelivery | null;
   delivery_route: RouteQuote | null;
   coupon_code: string | null;
+  /** Festa calculada (0126): the guests this cart was built for */
+  party?: CartParty | null;
+  plan_id?: string | null;
 }
 
 export function loadCartRow(
@@ -651,7 +669,7 @@ export function loadCartRow(
 ): Promise<CartRow | undefined> {
   const lock = opts.forUpdate ? tx`for update` : tx``;
   return tx<CartRow[]>`
-    select id, status, delivery, delivery_route, coupon_code from carts
+    select id, status, delivery, delivery_route, coupon_code, party, plan_id from carts
     where tenant_id = ${tenantId} and id = ${cartId} ${lock}
   `.then((rows) => rows[0]);
 }
@@ -796,6 +814,17 @@ export async function loadCartView(
     }
   }
 
+  // Freio (0125): the window the order would get now, from the queue the sweep last measured
+  const quoteZone = promiseZoneOf(match?.zone);
+  const quoteCfg = freioConfig(settings);
+  const quoteWindow = quoteZone
+    ? deliveryWindow(
+        quoteZone,
+        quoteCfg.prep + (settings?.freio_backlog_minutes ?? 0),
+        quoteCfg.buffer,
+      )
+    : null;
+
   let coupon: AppliedCoupon | null = null;
   let discount = 0;
   let itemDiscount = 0;
@@ -829,18 +858,59 @@ export async function loadCartView(
     }
   }
 
+  const schedule = scheduleView(
+    items,
+    {
+      hours: settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
+      preorder_payment_methods: settings?.preorder_payment_methods ?? null,
+      preorder_max_days: settings?.preorder_max_days ?? null,
+      special_days: settings?.special_days ?? [],
+    },
+    now,
+  );
+  // Festa calculada (0126): a party is an encomenda; a day at its ceiling isn't offered
+  if (cart.party) schedule.required = true;
+  // Plano semanal (0127): the first week is an encomenda too, on the plan's day when it has one
+  const plan = await cartPlanTx(tx, tenantId, cart.plan_id);
+  if (plan) {
+    schedule.required = true;
+    // each week is a Pix the shopper pays from the store's message, the first one too
+    schedule.paymentMethods = ['pix'];
+    if (plan.weekday !== null)
+      schedule.dates = schedule.dates.filter((d) => dayOfWeek(d) === plan.weekday);
+  }
+  if (settings?.encomenda_capacity && (schedule.required || schedule.dates.length))
+    schedule.dates = await datesWithRoomTx(
+      tx,
+      tenantId,
+      settings.encomenda_capacity,
+      schedule.dates,
+    );
+
+  const totals = computeTotals(
+    items,
+    deliveryFee,
+    effectiveMinOrder,
+    discount,
+    match?.zone.free_delivery_over_cents ?? null,
+    paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
+  );
+  // Festa calculada F2 (0128): what placeOrderTx will ask as a sinal once a date is picked
+  const rule = plan ? null : sinalRule(settings);
+  const sinal = sinalApplies(rule, { party: !!cart.party, totalCents: totals.totalCents })
+    ? newSinal(totals.totalCents, rule)
+    : null;
+  if (sinal) {
+    totals.depositCents = sinal.depositCents;
+    totals.balanceCents = sinal.balanceCents;
+    if (schedule.required) schedule.paymentMethods = ['pix'];
+  }
+
   return {
     id: cart.id,
     status: cart.status,
     items,
-    totals: computeTotals(
-      items,
-      deliveryFee,
-      effectiveMinOrder,
-      discount,
-      match?.zone.free_delivery_over_cents ?? null,
-      paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
-    ),
+    totals,
     // a zero fee can mean a free zone — branch on zoneId, not the amount
     delivery: delivery
       ? {
@@ -849,21 +919,15 @@ export async function loadCartView(
           zoneName: match?.zone.name ?? null,
           distanceKm: match?.distanceKm ?? null,
           distanceSource: match?.distanceSource ?? null,
-          etaMin: match?.zone.eta_min_minutes ?? null,
-          etaMax: match?.zone.eta_max_minutes ?? null,
+          etaMin: quoteWindow?.from ?? null,
+          etaMax: quoteWindow?.to ?? null,
         }
       : null,
     coupon,
-    schedule: scheduleView(
-      items,
-      {
-        hours: settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
-        preorder_payment_methods: settings?.preorder_payment_methods ?? null,
-        preorder_max_days: settings?.preorder_max_days ?? null,
-        special_days: settings?.special_days ?? [],
-      },
-      now,
-    ),
+    schedule,
+    party: cart.party ?? null,
+    plan,
+    sinal: sinal ? { percent: rule!.bps / 100, policy: rule!.policy } : null,
   };
 }
 

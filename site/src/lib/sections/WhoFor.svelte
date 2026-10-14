@@ -1,7 +1,7 @@
 <script lang="ts">
   import KindArt, { type Kind } from '$lib/components/KindArt.svelte';
   import Section from '$lib/components/Section.svelte';
-  import { nicheFor } from '$lib/pages';
+  import { nicheFor, niches } from '$lib/pages';
 
   const kinds: { art: Kind; name: string; how: string }[] = [
     {
@@ -25,6 +25,9 @@
       how: 'Acabou a fornada? O cliente entra na lista de espera.',
     },
   ];
+  // the other kinds of shop get a line under the tiles: four drawings are a glance, nine a catalogue
+  const more = niches.filter((n) => !kinds.some((k) => k.art === n.kind));
+  const name = (label: string) => label.replace(/^Para /, '');
 </script>
 
 <Section
@@ -49,6 +52,14 @@
       </li>
     {/each}
   </ul>
+  {#if more.length}
+    <p class="more">
+      Também tem página para
+      {#each more as n, i (n.path)}{i === 0 ? ' ' : i === more.length - 1 ? ' e ' : ', '}<a
+          href={n.path}>{name(n.label)}</a
+        >{/each}.
+    </p>
+  {/if}
 </Section>
 
 <style>
@@ -96,6 +107,22 @@
     border-radius: 4px;
   }
   .tile a:hover {
+    text-decoration-color: currentColor;
+  }
+  .more {
+    margin-top: clamp(24px, 3vw, 36px);
+    color: var(--body);
+    max-width: 44rem;
+  }
+  .more a {
+    color: var(--ink);
+    font-weight: 600;
+    text-decoration-line: underline;
+    text-decoration-color: color-mix(in srgb, var(--ink) 28%, transparent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+  .more a:hover {
     text-decoration-color: currentColor;
   }
   .how {

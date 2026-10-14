@@ -8,7 +8,17 @@ const HOME = '/';
 const PRIVACY = '/privacidade/';
 const MISSING = '/nao-existe/';
 // the pages written to be found on search (src/lib/pages.ts): one per kind of shop, the guides, about
-const NICHES = ['/para/doceiras/', '/para/marmitarias/', '/para/hamburguerias/', '/para/padarias/'];
+const NICHES = [
+  '/para/doceiras/',
+  '/para/marmitarias/',
+  '/para/hamburguerias/',
+  '/para/padarias/',
+  '/para/pizzarias/',
+  '/para/salgadeiras/',
+  '/para/acaiterias/',
+  '/para/comida-japonesa/',
+  '/para/adegas/',
+];
 const GUIDES = [
   '/guias/vender-comida-pelo-whatsapp/',
   '/guias/cardapio-digital/',
@@ -29,7 +39,8 @@ const POSTS = [
   '/novidades/cupons-e-cartao-fidelidade/',
   '/novidades/pausar-a-loja/',
 ];
-const CONTENT = [...NICHES, '/guias/', ...GUIDES, '/novidades/', ...POSTS, '/sobre/'];
+const PARTNERS = '/parceiros/';
+const CONTENT = [...NICHES, '/guias/', ...GUIDES, '/novidades/', ...POSTS, '/sobre/', PARTNERS];
 const PAGES = [HOME, ...CONTENT, PRIVACY, MISSING];
 const DOMAIN = 'https://vendua.com.br';
 const INSTAGRAM = 'https://www.instagram.com/vendua.digital/';
@@ -165,7 +176,7 @@ test.describe('busca', () => {
     const footer = await page
       .locator('footer a[href^="/"]')
       .evaluateAll((els) => els.map((a) => a.getAttribute('href')));
-    for (const path of [...NICHES, '/guias/', '/novidades/', '/sobre/', PRIVACY])
+    for (const path of [...NICHES, '/guias/', '/novidades/', '/sobre/', PARTNERS, PRIVACY])
       expect(footer).toContain(path);
     await page.goto('/guias/');
     for (const path of GUIDES)
@@ -339,21 +350,24 @@ test.describe('conteúdo', () => {
     await ctx.close();
   });
 
-  test('a chamada leva ao cadastro no painel: sem formulário nem contato no site', async ({
+  test('a chamada leva ao cadastro no painel: só os dois formulários opcionais coletam dados', async ({
     page,
   }) => {
     const CTA =
       /cadastr|inscrev|assin[ae]|criar|come[cç]ar agora|comece|teste|experimente|fale|contato|whats|agend|quero/i;
     for (const path of PAGES) {
       await page.goto(path);
-      // the only control is the plans' calculator (a number, no submit): nothing collects data
-      // (a news post's widgets are simulations: their sliders, fields and buttons live inside the
-      // post's text, send nothing anywhere, and no <form> exists on any page)
-      await expect(page.locator('form'), path).toHaveCount(0);
+      // two forms collect data, both opt-in (/privacidade/ says what they keep): "Prefere
+      // conversar antes?" opens only on a tap, and the partners' application lives on /parceiros/.
+      // Anything else is the plans' calculator or a news post's simulation (inside the post's
+      // text, sending nothing anywhere).
+      await expect(page.locator('form'), path).toHaveCount(path === PARTNERS ? 1 : 0);
       const outsideText = (sel: string) =>
         page
           .locator(sel)
-          .evaluateAll((els) => els.filter((e) => !e.closest('#preco, .prose')).length);
+          .evaluateAll(
+            (els) => els.filter((e) => !e.closest('#preco, .prose, .callme, .partner-form')).length,
+          );
       expect(await outsideText('textarea, select'), path).toBe(0);
       expect(await outsideText('input'), path).toBe(0);
       expect(await outsideText('button[type="submit"], [role="button"]'), path).toBe(0);
@@ -400,14 +414,39 @@ test.describe('conteúdo', () => {
       ).toHaveLength(1);
       // at most one "acompanhe no Instagram" line near the closing call to action
       expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
-      // the demos' and the posts' widget buttons are the visitor's lines in a simulation ("Quero a fatia também", "imprimir teste"), not calls to action
+      // the demos' and the posts' widget buttons are the visitor's lines in a simulation ("Quero a fatia também", "imprimir teste"), not calls to action;
+      // the two opt-in forms' buttons say what they send
       for (const b of await page
         .locator('button')
         .evaluateAll((els) =>
-          els.filter((e) => !e.closest('.demo, .prose')).map((e) => e.textContent ?? ''),
+          els
+            .filter((e) => !e.closest('.demo, .prose, .callme, .partner-form'))
+            .map((e) => e.textContent ?? ''),
         ))
         expect(b, `${path}: botão`).not.toMatch(CTA);
     }
+  });
+
+  test('"Prefere conversar antes?" abre só no toque e manda nome e WhatsApp para a equipe', async ({
+    page,
+  }) => {
+    let sent: Record<string, unknown> | null = null;
+    await page.route('**/site/v1/leads', async (r) => {
+      sent = r.request().postDataJSON();
+      await r.fulfill({ status: 202, json: { received: true } });
+    });
+    await page.goto(HOME);
+    const ask = page.getByRole('button', { name: /Prefere conversar antes/ }).first();
+    await ask.click();
+    const form = page.locator('.callme form');
+    await expect(form).toHaveCount(1);
+    const go = form.getByRole('button', { name: 'Pedir para me chamarem' });
+    await expect(go).toBeDisabled();
+    await form.getByLabel('Seu nome').fill('Ana Souza');
+    await form.getByLabel('WhatsApp com DDD').fill('(21) 99999-0000');
+    await go.click();
+    await expect(page.locator('.callme [role="status"]')).toContainText('Recebemos, Ana');
+    expect(sent).toMatchObject({ name: 'Ana Souza', whatsapp: '(21) 99999-0000', website: '' });
   });
 
   test('#preco mostra os três planos como decididos, o Bandeira recomendado, cada um com o seu cadastro', async ({
@@ -418,13 +457,15 @@ test.describe('conteúdo', () => {
     const text = (await preco.innerText()).replace(/\s+/g, ' ');
     expect(text).toContain('Venduá Mirim R$ 69,90/mês');
     expect(text).toContain('Venduá Pangolim R$ 449/mês');
-    // Bandeira is the recommended plan: the trial leads the section and sits by its price; the others have none
-    expect(text).toContain('Comece pelo Venduá Bandeira: 14 dias grátis, sem cartão.');
+    // Mirim and Bandeira both trial (owner, 2026-10-13): one line leads the section and each sits by
+    // its price; Pangolim, closed, has none
+    expect(text).toContain('Todo plano começa com 14 dias grátis, sem cartão.');
+    expect(text).toMatch(/Venduá Mirim R\$ 69,90\/mês começa com 14 dias grátis, sem cartão/);
     expect(text).toMatch(
       /Recomendado Venduá Bandeira .*R\$ 169\/mês começa com 14 dias grátis, sem cartão/,
     );
     expect(text.match(/Recomendado/g)).toHaveLength(1);
-    expect(text.match(/grátis, sem cartão/g)).toHaveLength(2);
+    expect(text.match(/grátis, sem cartão/g)).toHaveLength(3);
     expect(text).toContain('seunome.vendua.com.br');
     expect(text).toContain('250 conversas por mês');
     expect(text).toMatch(
@@ -697,8 +738,9 @@ test.describe('rede', () => {
     // Measured 2026-09-29: JS 45.2 KB gzip (9 files), fonts 64.6 KB (3 woff2: Figtree, Space Grotesk,
     // Instrument Serif italic, latin subsets). 2026-10-03: the four interactive demos and the plans
     // calculator (the owner's decision) bring JS to 67.0 KB gzip (10 files). Budgets are ~20% above;
-    // raise them only on purpose.
-    expect(jsBytes, report).toBeLessThanOrEqual(80_000);
+    // raise them only on purpose. 2026-10-13: the "Prefere conversar antes?" form (owner) brings it
+    // to 82.9 KB (21 files).
+    expect(jsBytes, report).toBeLessThanOrEqual(86_000);
     expect(fontBytes, report).toBeLessThanOrEqual(78_000);
   });
 });

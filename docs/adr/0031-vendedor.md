@@ -59,7 +59,11 @@ listed in [`features/sales-agent-features.md`](../features/sales-agent-features.
    - **Pacing.** Replies inside a conversation the shopper started have no ceiling (owner,
      2026-10-03). ADR 0026's 200-an-hour ceiling stays for messages the store starts, and the
      gap between sends applies per conversation.
-   - Broadcasts and re-engagement wait for the official API (phase V4).
+   - Broadcasts and re-engagement wait for the official API (phase V4). One exception (owner,
+     2026-10-13, migration 0122): "o pedido de sempre", only to a shopper who asked for it (the
+     tick at checkout, or LEMBRAR under a delivered order), at most once a week and a week or
+     more after their last order, under a per-store daily ceiling and 8 an hour, only while the
+     store is open, spaced at random, and SAIR stops it (`modules/usual-reminder.ts`).
 6. **The merchant's controls are plain questions** (the team's board):
    - **Coverage, when it answers:** Ensaio (writes, never sends), quando eu demorar (1, 2 or 5
      min, or when closed), fora do horário, sempre.

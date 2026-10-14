@@ -4279,6 +4279,185 @@
     font-size: 0.875rem;
   }
 
+  /* Kernel 1.26 — Festa calculada: the calculator page and the home card (sdk:plans-cta too) */
+  .v-party-cta {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+    max-width: 40rem;
+    margin: 0 0 24px;
+    padding: 18px;
+    border-radius: var(--v-radius-lg, 14px);
+    background: color-mix(in srgb, var(--v-color-accent, #b5532a) 8%, var(--v-color-surface, #fff));
+    border: 1px solid color-mix(in srgb, var(--v-color-accent, #b5532a) 22%, transparent);
+  }
+  .v-party-cta p {
+    margin: 0;
+  }
+  .v-party-cta-title {
+    font-weight: 700;
+    font-size: 1.0625rem;
+  }
+  .v-party-cta .v-btn {
+    margin-top: 8px;
+  }
+  .v-party {
+    max-width: 44rem;
+  }
+  .v-party-intro {
+    margin: 6px 0 24px;
+  }
+  .v-party-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .v-party-picks .v-chip {
+    white-space: normal;
+    text-align: start;
+  }
+  .v-party-picks .v-chip:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .v-party-guests {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    max-width: 22rem;
+  }
+  .v-party-guests .v-field {
+    margin-bottom: 0;
+  }
+  .v-party-note {
+    margin: 8px 0 0;
+    font-size: 0.875rem;
+  }
+  .v-party-result {
+    display: grid;
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .v-party-result .v-panel-title {
+    margin: 0;
+  }
+  .v-party-lines {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .v-party-line {
+    display: grid;
+    gap: 2px;
+    overflow-wrap: anywhere;
+  }
+  .v-party-line-why {
+    font-size: 0.8125rem;
+  }
+  /* Kernel 1.26 — Plano semanal: the /planos page and the checkout tick */
+  .v-plans {
+    max-width: 44rem;
+  }
+  .v-plans-intro {
+    margin: 6px 0 24px;
+  }
+  .v-plans-list {
+    display: grid;
+    gap: 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .v-plan {
+    display: grid;
+    gap: 12px;
+  }
+  .v-plan p {
+    margin: 0;
+  }
+  .v-plan-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+  }
+  .v-plan-head .v-panel-title {
+    margin: 0;
+  }
+  .v-plan-day {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--v-color-accent, #b5532a);
+  }
+  .v-plan-lines {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-wrap: anywhere;
+  }
+  .v-plan-total {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding-top: 12px;
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  }
+  .v-plan-note {
+    font-size: 0.875rem;
+  }
+  .v-plans-foot {
+    margin: 16px 0 0;
+  }
+  .v-plan-consent {
+    margin: 12px 0;
+  }
+  /* Kernel 1.26 — an encomenda's sinal: at checkout, on the order and on its WhatsApp link */
+  .v-sinal {
+    display: grid;
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .v-sinal p {
+    margin: 0;
+  }
+  .v-sinal-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 12px;
+  }
+  .v-sinal-row strong {
+    font-variant-numeric: tabular-nums;
+  }
+  .v-sinal-policy {
+    display: grid;
+    gap: 2px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    font-size: 0.875rem;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+  .v-sinal-policy-label {
+    font-weight: 600;
+  }
+  .v-track-pay {
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+    margin: 12px 0;
+  }
+  .v-track-pay p {
+    margin: 0;
+  }
   /* sdk:recent-order — the device's last order */
   .v-recent-order {
     display: grid;

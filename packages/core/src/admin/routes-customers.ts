@@ -3,10 +3,11 @@ import type { Context } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson } from '../platform/http.ts';
 import { forgetSubjectTx } from '../agent-host/forget.ts';
+import { withdrawUsualTx } from '../modules/usual-reminder.ts';
 import { loyaltyCard } from '../modules/customer.ts';
 import { jidForPhone, phoneVariants } from '../store-whatsapp/text.ts';
 import { audit } from './audit.ts';
-import { oneOf, text, type AdminDeps } from './context.ts';
+import { need, oneOf, text, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { orderListColumns, type OrderListRow } from './routes-orders.ts';
 import { loadSettings } from './routes-store.ts';
@@ -74,7 +75,40 @@ async function notesOf(tx: Sql, tenantId: string, phone: string) {
   );
 }
 
-async function summary(tx: Sql, tenantId: string, phone: string) {
+type Summary = {
+  phone: string;
+  name: string;
+  orders: number;
+  spentCents: number;
+  avgTicketCents: number;
+  firstAt: string;
+  lastAt: string | null;
+  cancelled: number;
+  imported: boolean;
+};
+
+/** a phone that ordered, or one the store imported (0121) and that hasn't ordered yet */
+async function summary(tx: Sql, tenantId: string, phone: string): Promise<Summary | undefined> {
+  const s = await ordered(tx, tenantId, phone);
+  const [k] = await tx<{ name: string; createdAt: string }[]>`
+    select name, created_at as "createdAt" from customer_contacts
+    where tenant_id = ${tenantId} and phone = ${phone}`;
+  if (s) return { ...s, imported: !!k };
+  if (!k) return undefined;
+  return {
+    phone,
+    name: k.name,
+    orders: 0,
+    spentCents: 0,
+    avgTicketCents: 0,
+    firstAt: k.createdAt,
+    lastAt: null,
+    cancelled: 0,
+    imported: true,
+  };
+}
+
+async function ordered(tx: Sql, tenantId: string, phone: string) {
   return (
     await tx<
       {
@@ -119,21 +153,31 @@ export function mountCustomers(d: AdminDeps) {
       const tag = tagOf(c.req.query('tag') ?? '');
       if (tag.length > TAG_MAX) throw new HttpError(400, 'BAD_REQUEST', 'tag is too long');
       const digits = q.replace(/\D/g, '');
+      // an imported contact that hasn't ordered has no "lastAt": it sorts after every buyer
       const order =
         sort === 'value'
-          ? tx`"spentCents" desc`
+          ? tx`"spentCents" desc, "lastAt" desc nulls last`
           : sort === 'orders'
-            ? tx`orders desc, "lastAt" desc`
-            : tx`"lastAt" desc`;
+            ? tx`orders desc, "lastAt" desc nulls last`
+            : tx`"lastAt" desc nulls last, "firstAt" desc`;
       const rows = await tx`
         select x.*, coalesce(n.tags, '{}') as tags from (
-          select customer_phone as phone,
-                 (array_agg(customer ->> 'name' order by placed_at desc))[1] as name,
-                 count(*) filter (where state not in ('cancelled', 'refunded'))::int as orders,
-                 coalesce(sum(total_cents) filter (where state not in ('cancelled', 'refunded')), 0)::int as "spentCents",
-                 min(placed_at) as "firstAt", max(placed_at) as "lastAt"
-          from orders where tenant_id = ${t.id} and customer_phone is not null
-          group by customer_phone
+          select coalesce(o.phone, k.phone) as phone, coalesce(o.name, k.name) as name,
+                 coalesce(o.orders, 0) as orders, coalesce(o."spentCents", 0) as "spentCents",
+                 coalesce(o."firstAt", k.created_at) as "firstAt", o."lastAt",
+                 k.phone is not null as imported
+          from (
+            select customer_phone as phone,
+                   (array_agg(customer ->> 'name' order by placed_at desc))[1] as name,
+                   count(*) filter (where state not in ('cancelled', 'refunded'))::int as orders,
+                   coalesce(sum(total_cents) filter (where state not in ('cancelled', 'refunded')), 0)::int as "spentCents",
+                   min(placed_at) as "firstAt", max(placed_at) as "lastAt"
+            from orders where tenant_id = ${t.id} and customer_phone is not null
+            group by customer_phone
+          ) o
+          full join (
+            select phone, name, created_at from customer_contacts where tenant_id = ${t.id}
+          ) k on k.phone = o.phone
         ) x
         left join customer_notes n on n.tenant_id = ${t.id} and n.phone = x.phone
         where true
@@ -148,10 +192,13 @@ export function mountCustomers(d: AdminDeps) {
         limit ${limit} offset ${offset}
       `;
       const stats = (
-        await tx<{ customers: number; repeat: number; newThisMonth: number }[]>`
+        await tx<{ customers: number; repeat: number; newThisMonth: number; imported: number }[]>`
           select count(*)::int as customers,
                  count(*) filter (where n >= 2)::int as repeat,
-                 count(*) filter (where first_at > now() - interval '30 days')::int as "newThisMonth"
+                 count(*) filter (where first_at > now() - interval '30 days')::int as "newThisMonth",
+                 (select count(*)::int from customer_contacts k where k.tenant_id = ${t.id}
+                    and not exists (select 1 from orders o where o.tenant_id = ${t.id}
+                                      and o.customer_phone = k.phone)) as imported
           from (
             select customer_phone, count(*) filter (where state not in ('cancelled', 'refunded')) as n,
                    min(placed_at) as first_at
@@ -173,7 +220,7 @@ export function mountCustomers(d: AdminDeps) {
     read('manager', async (tx, t, _m, c) => {
       const phone = phoneParam(c);
       const s = await summary(tx, t.id, phone);
-      if (!s) throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no orders for this phone');
+      if (!s) throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no orders or contact for this phone');
       const orders = await tx<OrderListRow[]>`
         select ${orderListColumns(tx)} from orders o
         where o.tenant_id = ${t.id} and o.customer_phone = ${phone}
@@ -275,7 +322,12 @@ export function mountCustomers(d: AdminDeps) {
                                 order by i.sort) from order_items i where i.order_id = orders.id) as items
         from orders where tenant_id = ${t.id} and customer_phone = ${phone} order by placed_at
       `;
-      if (!orders.length)
+      const contact = (
+        await tx`
+          select name, source, created_at from customer_contacts
+          where tenant_id = ${t.id} and phone = ${phone}`
+      )[0];
+      if (!orders.length && !contact)
         throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no orders for this phone');
       const waitlist = await tx`
         select n.subject, p.name as product, n.created_at, n.notified_at from notify_requests n
@@ -290,6 +342,17 @@ export function mountCustomers(d: AdminDeps) {
         select name, consented_at, withdrawn_at, sent_at from cart_reminders
         where tenant_id = ${t.id} and phone = any(${phoneVariants(phone)}::text[])
       `;
+      const usualReminder = (
+        await tx`
+          select name, source, consented_at, last_sent_at from usual_reminders
+          where tenant_id = ${t.id} and phone = any(${phoneVariants(phone)}::text[])`
+      )[0];
+      const plans = await tx`
+        select p.name as plan, s.state, s.name, s.delivery, s.payment, s.notes, s.weekday,
+               s.next_on, s.created_at, s.confirmed_at, s.cancelled_at
+        from plan_subscriptions s join shopper_plans p on p.id = s.plan_id
+        where s.tenant_id = ${t.id} and s.phone = any(${phoneVariants(phone)}::text[])
+        order by s.created_at`;
       const notes = (
         await tx`
           select note, tags, updated_at from customer_notes where tenant_id = ${t.id} and phone = ${phone}
@@ -315,7 +378,10 @@ export function mountCustomers(d: AdminDeps) {
         waitlist,
         coupons,
         cartReminders,
+        usualReminder: usualReminder ?? null,
+        plans,
         notes: notes ?? null,
+        importedContact: contact ?? null,
         agentMemory,
       };
     }),
@@ -422,6 +488,10 @@ export function mountCustomers(d: AdminDeps) {
       `;
       await tx`update coupons set phone = null, active = false where tenant_id = ${t.id} and phone = ${phone}`;
       await tx`delete from customer_notes where tenant_id = ${t.id} and phone = ${phone}`;
+      await tx`delete from customer_contacts where tenant_id = ${t.id} and phone = ${phone}`;
+      await withdrawUsualTx(tx, t.id, phone);
+      // their weekly plans: the address, the name and the number go (the weeks' orders stay above)
+      await tx`delete from plan_subscriptions where tenant_id = ${t.id} and phone = any(${variants}::text[])`;
       await tx`update coupon_redemptions set phone = '' where tenant_id = ${t.id} and phone = ${phone}`;
       await audit(tx, t.id, m, {
         action: 'customer.forget',
@@ -434,4 +504,111 @@ export function mountCustomers(d: AdminDeps) {
       return { status: 200, body: { anonymized: orders.length, conversations: threads.length } };
     }),
   );
+
+  // Clientes → Importar: the list exported from the old system (a CSV or a paste), parsed here
+  // only, so the screen's preview and the import read it the same way
+  admin.post('/customers/import/preview', async (c) => {
+    need(c, 'manager');
+    const body = await bodyJson(c, IMPORT_BYTES);
+    const r = parseContacts(text(body.text, 'text', IMPORT_BYTES));
+    return c.json({
+      contacts: r.contacts.slice(0, 20),
+      total: r.contacts.length,
+      skipped: r.skipped,
+    });
+  });
+
+  // a phone already here keeps its name; nothing is sent to anyone (0121)
+  admin.post(
+    '/customers/import',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c, IMPORT_BYTES + 1024);
+      const r = parseContacts(text(body.text, 'text', IMPORT_BYTES, 2));
+      if (!r.contacts.length)
+        throw new HttpError(422, 'NOTHING_TO_IMPORT', 'no lines with a name and a phone', {
+          field: 'text',
+        });
+      const added = await tx<{ phone: string }[]>`
+        insert into customer_contacts (tenant_id, phone, name, created_by)
+        select ${t.id}, x.phone, x.name, ${m.userId}
+        from unnest(${r.contacts.map((k) => k.phone)}::text[], ${r.contacts.map((k) => k.name)}::text[])
+          as x(phone, name)
+        on conflict (tenant_id, phone) do nothing
+        returning phone`;
+      await audit(tx, t.id, m, {
+        action: 'customer.import',
+        entity: 'customer',
+        // a count, never the phones: the log must not hold the list
+        summary: `importou ${added.length} clientes de uma lista (${r.contacts.length - added.length} já estavam, ${r.skipped} linhas sem nome e telefone)`,
+      });
+      await emitAdminTx(tx, t.id, 'order.changed');
+      return {
+        status: 201,
+        body: {
+          imported: added.length,
+          known: r.contacts.length - added.length,
+          skipped: r.skipped,
+        },
+      };
+    }),
+  );
+}
+
+const IMPORT_BYTES = 400_000;
+export const MAX_CONTACTS = 5000;
+
+/** a Brazilian phone as the list groups it: DDD + number, no country code; null otherwise */
+export function contactPhone(raw: string): string | null {
+  let d = raw.replace(/\D/g, '');
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+  // a trunk prefix ("021 …")
+  if (d.length === 11 || d.length === 12) d = d.replace(/^0/, '');
+  if (!/^[1-9][1-9]\d{8,9}$/.test(d)) return null;
+  // a mobile has 9 digits after the DDD and starts with 9
+  if (d.length === 11 && d[2] !== '9') return null;
+  return d;
+}
+
+/**
+ * A customer export (CSV with ; , or tab, any column order, a header line or not) or a pasted
+ * list ("Ana Souza - (21) 99999-0000") → name + phone. A line without both is skipped; a phone
+ * seen twice keeps its first name.
+ */
+export function parseContacts(raw: string): {
+  contacts: { name: string; phone: string }[];
+  skipped: number;
+} {
+  const out = new Map<string, string>();
+  let skipped = 0;
+  const lines = raw.split(/\r?\n/).filter((l) => l.trim());
+  for (const line of lines.slice(0, MAX_CONTACTS * 2)) {
+    const cells = line
+      .split(/[;\t]|,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+      .map((x) => x.replace(/^"|"$/g, '').trim());
+    let phone: string | null = null;
+    let name = '';
+    if (cells.length > 1) {
+      for (const cell of cells) {
+        const p = /^[+\d\s().-]{10,22}$/.test(cell) ? contactPhone(cell) : null;
+        if (p && !phone) phone = p;
+        else if (!name && /\p{L}{2}/u.test(cell) && !/@/.test(cell)) name = cell;
+      }
+    } else {
+      const m = /(\+?\(?\d[\d\s().-]{8,20}\d)/.exec(line);
+      phone = m ? contactPhone(m[1]!) : null;
+      name = m ? line.replace(m[1]!, ' ') : '';
+    }
+    name = name
+      .replace(/[\s\-–—:|•*·]+$|^[\s\-–—:|•*·]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+    if (!phone || name.length < 2 || !/\p{L}/u.test(name)) {
+      skipped++;
+      continue;
+    }
+    if (!out.has(phone)) out.set(phone, name);
+    if (out.size >= MAX_CONTACTS) break;
+  }
+  return { contacts: [...out].map(([phone, name]) => ({ phone, name })), skipped };
 }

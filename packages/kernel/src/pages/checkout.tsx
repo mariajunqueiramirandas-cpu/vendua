@@ -19,6 +19,7 @@ import {
 } from '../hooks.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import { closedNote } from './closed.ts';
+import { everyWeekday } from './plans.tsx';
 import { Slot } from '../slot.tsx';
 import { errorCopy, errorCode } from '../errors.ts';
 import { emit } from '../telemetry.ts';
@@ -112,6 +113,8 @@ interface SavedDraft {
   done: StepId[];
   /** Kernel 1.21 — the phone the bag reminder was asked for (null = not asked) */
   reminder?: string | null;
+  /** Kernel 1.26 — "me lembre do meu pedido de sempre" ticked */
+  usual?: boolean;
 }
 
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -151,6 +154,7 @@ function readDraft(session: string | null): SavedDraft | null {
       coords: savedPin(d.coords as { lat?: number; lng?: number } | undefined),
       done: Array.isArray(d.done) ? ORDER.filter((s) => (d.done as unknown[]).includes(s)) : [],
       reminder: typeof d.reminder === 'string' ? text(d.reminder, 20) : null,
+      usual: d.usual === true,
     };
   } catch {
     return null;
@@ -296,7 +300,11 @@ export function CheckoutPage() {
   const [scheduleError, setScheduleError] = useState<string | undefined>();
   // a coupon Core refused at submit (the field shows it like an apply failure)
   const [couponError, setCouponError] = useState<string | undefined>();
-  const deliveryOk = store?.deliveryEnabled !== false;
+  // Kernel 1.26: the kitchen paused delivery for now; an encomenda for another day still goes
+  const pausedWords = scheduledFor
+    ? null
+    : (deliveryWords(summary, store?.currency, store?.hours.timezone)?.paused ?? null);
+  const deliveryOk = store?.deliveryEnabled !== false && !pausedWords;
   const pickupOk = store?.pickupEnabled !== false;
   // Kernel 1.15 (ADR 0024): Core prices the confirmed pin by road distance
   const byDistance = deliveryOk ? (store?.distancePricing ?? null) : null;
@@ -353,6 +361,11 @@ export function CheckoutPage() {
       setReminder(null);
     }
   };
+  // Kernel 1.26 — "o de sempre": asked for once the order exists (Core reads its phone)
+  const [usual, setUsual] = useState(() => restored?.usual === true);
+  // Kernel 1.26 — Plano semanal: the shopper picked a plan, so the yes starts ticked
+  const [subscribe, setSubscribe] = useState(true);
+  const usualOffered = !!store?.usualReminder && !atTable && isValidPhone(draft.phone);
   // the number fixed after ticking: the reminder follows it
   useEffect(() => {
     if (!reminder || !reminderOffered || digitsOf(reminder) === digitsOf(draft.phone)) return;
@@ -381,8 +394,9 @@ export function CheckoutPage() {
       coords,
       done: [...done],
       reminder,
+      usual,
     });
-  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done, reminder]);
+  }, [api, draft, mode, pay, notes, scheduledFor, changeFor, coords, done, reminder, usual]);
 
   // step entries that can't be shown are skipped, never rewritten into copies of the first
   // step: a reload mid-checkout lands on the first step's entry; with the order placed (no
@@ -451,8 +465,14 @@ export function CheckoutPage() {
             ? 'A loja pausou os pedidos por alguns instantes. Tente de novo daqui a pouco.'
             : null
         : closedNote(store, cart.items, vocabulary.bag);
+  // Kernel 1.26: an encomenda the store asks a sinal of (a party, or from its amount) is Pix
+  const sinalNow = !!cart?.sinal && !atTable && (encomenda || !!scheduledFor);
   // a table has no encomenda: Core takes no date there
-  const allowed = encomenda && !atTable ? schedule!.paymentMethods.join(',') : '';
+  const allowed = sinalNow
+    ? 'pix'
+    : encomenda && !atTable
+      ? schedule!.paymentMethods.join(',')
+      : '';
   // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
   const accepted = store?.paymentMethods?.join(',') ?? '';
   const online = store?.onlinePayments;
@@ -536,17 +556,20 @@ export function CheckoutPage() {
     };
   }, [pricesByMethod, priceKey, pay, api, priceTry]);
   const pricedTotals = pricesByMethod && priced?.key === priceKey ? priced.totals : null;
+  const sinalTotals = pricedTotals ?? (cart?.status === 'open' ? cart.totals : null);
   // a method with a rule shows no total until Core priced it
   const pricing = pricesByMethod && !pricedTotals && !!adjustments?.[pay];
   const priceError = pricing && priceFailed === priceKey;
   const payLabel = methods.find((m) => m.id === pay)?.label;
   // "a partir de R$ 5,00", "grátis" — the least a zone charges (a per-km zone is never free)
   const feeWords = deliveryWords(summary, currency)?.fee.replace(/^entrega /, '');
-  const deliveryDetail = byDistance
-    ? byDistance.fromFeeCents > 0
-      ? `a partir de ${money(byDistance.fromFeeCents)}`
-      : 'calculada pela distância'
-    : feeWords;
+  const deliveryDetail = pausedWords
+    ? pausedWords.replace(/^entregas /, '')
+    : byDistance
+      ? byDistance.fromFeeCents > 0
+        ? `a partir de ${money(byDistance.fromFeeCents)}`
+        : 'calculada pela distância'
+      : feeWords;
   const options: DeliveryOption[] = atTable
     ? [
         {
@@ -878,6 +901,7 @@ export function CheckoutPage() {
         },
         ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
         ...(scheduledFor && !atTable ? { scheduledFor } : {}),
+        ...(cart.plan && !atTable && subscribe ? { subscribe: true } : {}),
         // the total on the button (Core's for this method, else the cart's while that loads): Core
         // refuses (409 PRICES_CHANGED) an order whose total moved since. Not when the delivery
         // didn't sync: the cart's fee is stale
@@ -887,6 +911,8 @@ export function CheckoutPage() {
       });
       placed.current = true;
       clearDraft();
+      // quiet: the order is placed either way
+      if (usual && usualOffered) void api.usualReminder(order.id).catch(() => {});
       if (draft.remember && atTable)
         // the name only: the phone and addresses the device holds stay as they are
         remember({
@@ -992,6 +1018,16 @@ export function CheckoutPage() {
                 Me lembre pelo WhatsApp se eu não terminar o pedido
               </label>
             ) : null}
+            {step === 'dados' && usualOffered ? (
+              <label className="v-check v-reminder" data-vendua="usual-reminder">
+                <input
+                  type="checkbox"
+                  checked={usual}
+                  onChange={(e) => setUsual(e.target.checked)}
+                />{' '}
+                Me lembre do meu pedido de sempre (no máximo 1 mensagem por semana)
+              </label>
+            ) : null}
             {step === 'entrega' ? (
               <>
                 {tableOff ? (
@@ -1087,6 +1123,47 @@ export function CheckoutPage() {
                     {...(scheduleError ? { error: scheduleError } : {})}
                   />
                 ) : null}
+                {cart.plan && !atTable ? (
+                  <label className="v-check v-plan-consent" data-vendua="plan-subscribe">
+                    <input
+                      type="checkbox"
+                      checked={subscribe}
+                      onChange={(e) => setSubscribe(e.target.checked)}
+                    />{' '}
+                    Receber este pedido{' '}
+                    {everyWeekday(
+                      cart.plan.weekday ??
+                        (scheduledFor ? new Date(`${scheduledFor}T12:00:00Z`).getUTCDay() : null),
+                    )}{' '}
+                    (plano “{cart.plan.name}”). A loja confirma pelo WhatsApp e manda o pedido com o
+                    Pix antes de cada semana; responda PULAR para pular uma, ou CANCELAR PLANO para
+                    encerrar.
+                  </label>
+                ) : null}
+                {sinalNow && cart.sinal && sinalTotals?.depositCents ? (
+                  <div className="v-panel v-sinal" data-vendua="checkout-sinal">
+                    <p className="v-sinal-row">
+                      <span>Sinal hoje, por Pix</span>
+                      <strong>{money(sinalTotals.depositCents)}</strong>
+                    </p>
+                    <p className="v-sinal-row v-muted">
+                      <span>
+                        Restante, por Pix antes do dia ou{' '}
+                        {deliveryMode === 'delivery' ? 'na entrega' : 'na retirada'}
+                      </span>
+                      <span>{money(sinalTotals.balanceCents ?? 0)}</span>
+                    </p>
+                    <p className="v-note">
+                      O sinal ({cart.sinal.percent}% do total) garante a data da sua encomenda.
+                    </p>
+                    {cart.sinal.policy ? (
+                      <p className="v-sinal-policy" data-part="policy">
+                        <span className="v-sinal-policy-label">Política da loja</span>
+                        {cart.sinal.policy}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Slot
                   name="checkout.PaymentMethods"
                   methods={methods}
@@ -1168,9 +1245,11 @@ export function CheckoutPage() {
                 >
                   {pending
                     ? 'Enviando…'
-                    : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'}${
-                        pricing ? '' : ` · ${money((pricedTotals ?? cart.totals).totalCents)}`
-                      }`}
+                    : sinalNow && sinalTotals?.depositCents && !pricing
+                      ? `Confirmar · sinal de ${money(sinalTotals.depositCents)}`
+                      : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'}${
+                          pricing ? '' : ` · ${money((pricedTotals ?? cart.totals).totalCents)}`
+                        }`}
                 </button>
               ) : (
                 <button type="submit" className="v-btn v-btn-accent" disabled={syncing}>

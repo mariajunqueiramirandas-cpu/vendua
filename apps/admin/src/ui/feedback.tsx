@@ -163,10 +163,17 @@ const FRIENDLY: Record<string, string> = {
   REASON_REQUIRED: 'Escolha um motivo para avisar o cliente.',
   IDEMPOTENCY_IN_PROGRESS: 'Ainda estamos salvando isso. Espere um instante.',
   INVALID_ORDER_TRANSITION: 'Esse pedido já mudou. A tela foi atualizada.',
+  PRODUCT_NEEDS_CHOICES:
+    'Um dos produtos pede uma escolha (sabor, tamanho, montar o kit). Tire-o e tente de novo.',
+  PLAN_HAS_SUBSCRIBERS: 'Alguém já assinou este plano. Pause em vez de apagar.',
+  SUBSCRIPTION_CANCELLED: 'Este plano já foi encerrado.',
+  INVALID_STATE: 'Isso já mudou. A tela foi atualizada.',
   CATEGORY_NOT_EMPTY: 'Essa categoria ainda tem produtos. Mova ou esconda eles antes.',
   COUPON_EXISTS: 'Já existe um cupom com esse código.',
   LAST_OWNER: 'A loja precisa ter pelo menos um dono.',
   WHATSAPP_REQUIRED: 'Conecte o WhatsApp da loja antes de ligar o Duá.',
+  PIX_REQUIRED:
+    'O sinal é um Pix: cadastre a chave Pix da loja ou conecte o Mercado Pago em Pagamentos.',
   MEMBER_EXISTS: 'Esse celular já faz parte da equipe. Toque na pessoa para mudar o papel.',
   AI_PACK_NEEDS_PAID_PLAN:
     'Os pacotes de conversas ficam disponíveis depois do primeiro pagamento do plano.',

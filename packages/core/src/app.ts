@@ -111,6 +111,10 @@ import { mediaProviders } from './vendedor/media.ts';
 import { hostGateway } from './agent-host/models.ts';
 import type { CopilotMediaDeps } from './admin/context.ts';
 import { cartReminderOffered, mountCartReminder } from './modules/cart-reminder.ts';
+import { mountUsualReminder, usualReminderOffered } from './modules/usual-reminder.ts';
+import { mountParty } from './modules/party.ts';
+import { mountShopperPlans } from './modules/shopper-plans.ts';
+import { deliveryPaused } from './modules/freio.ts';
 import { MAX_WATCHERS_PER_ORDER, mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
@@ -254,6 +258,8 @@ import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountInstanceReset } from './modules/instance-reset.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
+import { mountControlPartners } from './modules/control-partners.ts';
+import { mountSiteLeads } from './modules/site-leads.ts';
 import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
 import { mountDiscord } from './modules/discord/routes.ts';
 import { recordStaffEventTx } from './modules/staff-events.ts';
@@ -702,13 +708,22 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder, dineIn } = await cache.read(
-      tenant.id,
-      'store',
-      () =>
-        withTenant(sql, tenant.id, async (tx) => {
-          const [settings, conn, publicUrl, loyaltyPlan, chat, cartReminder, pdvPlan] =
-            await Promise.all([
+    const { settings, online, publicUrl, loyaltyOn, chat, cartReminder, usualReminder, dineIn } =
+      await cache.read(
+        tenant.id,
+        'store',
+        () =>
+          withTenant(sql, tenant.id, async (tx) => {
+            const [
+              settings,
+              conn,
+              publicUrl,
+              loyaltyPlan,
+              chat,
+              cartReminder,
+              pdvPlan,
+              usualReminder,
+            ] = await Promise.all([
               loadSettings(tx, tenant.id),
               loadConnection(tx, tenant.id),
               storeOrigin(tx, tenant, publicStoreDomain),
@@ -716,27 +731,29 @@ export function createApp({
               webChatProfile(tx, tenant.id, ears.media),
               cartReminderOffered(tx, tenant.id),
               planHas(tx, tenant.id, 'pdv'),
+              usualReminderOffered(tx, tenant.id),
             ]);
-          return {
-            settings,
-            // orders from the tables' QR codes (ADR 0036)
-            dineIn: pdvPlan && (settings?.pdv_qr_orders ?? true),
-            online: storePaymentsPublic(
-              conn,
-              provider,
-              settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
-              readPaymentAdjustments(settings?.payment_adjustments),
-            ),
-            // online payments switch off by themselves when the token expires
-            onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
-            publicUrl,
-            loyaltyOn: !!settings?.loyalty && loyaltyPlan,
-            chat,
-            cartReminder,
-          };
-        }),
-      { deps: STORE_DEPS, until: (v) => v.onlineUntil },
-    );
+            return {
+              settings,
+              // orders from the tables' QR codes (ADR 0036)
+              dineIn: pdvPlan && (settings?.pdv_qr_orders ?? true),
+              online: storePaymentsPublic(
+                conn,
+                provider,
+                settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
+                readPaymentAdjustments(settings?.payment_adjustments),
+              ),
+              // online payments switch off by themselves when the token expires
+              onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
+              publicUrl,
+              loyaltyOn: !!settings?.loyalty && loyaltyPlan,
+              chat,
+              cartReminder,
+              usualReminder,
+            };
+          }),
+        { deps: STORE_DEPS, until: (v) => v.onlineUntil },
+      );
     const now = new Date();
     const status = currentStatus(settings, now);
     const hours = settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] };
@@ -806,6 +823,15 @@ export function createApp({
       chat,
       // Kernel 1.21: checkout may offer "me lembre pelo WhatsApp" (modules/cart-reminder.ts)
       cartReminder,
+      // Kernel 1.26: checkout may offer "me lembre do pedido de sempre" (modules/usual-reminder.ts)
+      usualReminder,
+      // Kernel 1.26 (Freio, 0125): the promise from the kitchen's queue, and the brake
+      fulfillment: {
+        pickupMinutes: (settings?.prep_time_minutes ?? 30) + (settings?.freio_backlog_minutes ?? 0),
+        deliveryExtraMinutes: settings?.freio_backlog_minutes ?? 0,
+        level: settings?.freio_level ?? 'normal',
+        deliveryPausedUntil: deliveryPaused(settings, now)?.toISOString() ?? null,
+      },
     });
   });
 
@@ -3125,6 +3151,9 @@ export function createApp({
   });
   mountWebChat({ checkout, sql, sessionSecret, idempotency, media: ears.media });
   mountCartReminder({ checkout, sql, sessionSecret, idempotency });
+  mountUsualReminder({ checkout, sql, sessionSecret, idempotency });
+  mountParty({ storefront, checkout, sql, sessionSecret, idempotency });
+  mountShopperPlans({ storefront, checkout, sql, sessionSecret, idempotency });
 
   mountControlBilling({
     app,
@@ -3153,6 +3182,26 @@ export function createApp({
     app,
     sql,
     controlGate,
+    trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  });
+  mountControlPartners({
+    app,
+    sql,
+    controlGate,
+    idemKey: (c) => {
+      const key = c.req.header('idempotency-key');
+      if (!key)
+        throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+      if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+      return key;
+    },
+    trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  });
+  mountSiteLeads({
+    app,
+    sql,
     trustProxy,
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
   });

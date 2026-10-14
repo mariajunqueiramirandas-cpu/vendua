@@ -3,6 +3,38 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.26.0
+
+"O de sempre", Freio automático, Festa calculada, Plano semanal — additive, no storefront
+edit. Two new sdk-catalog exports (`partyCta`, `plansCta`).
+
+- `StoreProfile.usualReminder`; `api.usualReminder(orderId)` / `api.cancelUsualReminder(orderId)`
+  (`/checkout/v1/usual-reminder`, the phone read from the order); `ERROR_CODES` gains
+  `ORDER_REQUIRED`.
+- Checkout: "Me lembre do meu pedido de sempre (no máximo 1 mensagem por semana)"
+  (`[data-vendua="usual-reminder"]`), sent after the order is placed.
+- `?ref=CODE` on a link is kept for the tab and sent with checkout (`ref`), so Core can tell
+  which Status do dia post or bag card an order came from.
+- `StoreProfile.fulfillment` (Freio automático): `deliverySummary` shows the kitchen's live
+  pickup time and delivery ETAs, and `delivery.pausedUntil` while delivery is paused;
+  `deliveryWords` gains `paused`, `sdk:delivery-eta` and checkout say when delivery returns
+  (Entrega disabled until then, except an encomenda for a date); `ERROR_CODES` gains
+  `DELIVERY_PAUSED`.
+- Festa calculada: the `/festa` calculator page, block `sdk:party-cta`, `api.partyProfiles` /
+  `partyQuote` / `buildPartyCart` (and `mutations.buildParty`), `Cart.party`, types
+  `PartyProfile` / `PartyInput` / `PartyQuote`; `ERROR_CODES` gains `INVALID_PARTY`,
+  `PARTY_TOO_BIG`, `DATE_FULL`. A full day leaves `schedule.dates`.
+- Plano semanal: the `/planos` page, block `sdk:plans-cta`, `api.plans` / `buildPlanCart` (and
+  `mutations.buildPlan`), `Cart.plan`, `CheckoutInput.subscribe` and its checkout tick
+  (`[data-vendua="plan-subscribe"]`), type `ShopperPlan`; `ERROR_CODES` gains `PLAN_NOT_FOUND`,
+  `PLAN_NOT_ALLOWED`. A plan cart takes only Pix (`schedule.paymentMethods: ['pix']`).
+- Sinal: `Cart.sinal`, `CartTotals.depositCents` / `balanceCents`, `Order.payment.sinal` (type
+  `OrderSinal`); checkout's sinal block (`[data-vendua="checkout-sinal"]`) and Pix-only payment
+  for such an encomenda; the order page pays the part due and shows both
+  (`[data-vendua="order-sinal"]`).
+- A Pix order's WhatsApp link pays it: `OrderTracking.payment` (type `TrackingPayment`),
+  `api.payTracked`, `[data-vendua="tracking-pay"]`.
+
 ## 1.25.0
 
 Default UI refresh, part two — visual polish in `@vendua/ui-defaults`; additive, no storefront

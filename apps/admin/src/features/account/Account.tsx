@@ -71,6 +71,7 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../auth/pending.ts';
 import { DocumentGate, needsDocument } from './DocumentGate.tsx';
+import { Referrals } from './Referrals.tsx';
 import { Addresses } from './domain/Addresses.tsx';
 import { CustomDomain } from './domain/CustomDomain.tsx';
 import { Callout, Chip, hostOf, useAccountWrite } from './domain/kit.tsx';
@@ -376,6 +377,10 @@ function AccountView({ a }: { a: AccountData }) {
 
       <Section title="Faturas" id="faturas">
         <Invoices a={a} onOpen={(id) => setSheet({ kind: 'invoice', id })} />
+      </Section>
+
+      <Section title="Indique e ganhe" id="indique">
+        <Referrals />
       </Section>
 
       <Section title="Endereços da loja" id="enderecos">

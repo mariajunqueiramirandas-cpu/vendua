@@ -393,16 +393,39 @@ export function PlanCards({
   );
 }
 
-/** The free trial, before the cards: it names the plan it belongs to and picks it. */
+/** The free trial, before the cards: it names the plan it belongs to and picks it. When every
+ *  plan trials for the same days, it says so and the cards do the picking. */
 export function PlanTrialStrip({
   plan,
+  every = false,
   selected,
   onPick,
 }: {
   plan: Plan;
+  /** all the open plans trial for `plan.trialDays` days */
+  every?: boolean | undefined;
   selected: boolean;
   onPick: () => void;
 }) {
+  if (every)
+    return (
+      <div className="flex items-start gap-4 rounded-lg bg-spark p-5 text-on-spark depth-2 noite:bg-spark-soft noite:text-ink noite:ring-1 noite:ring-spark/40 md:items-center md:gap-5 md:p-6">
+        <span
+          aria-hidden
+          className="grid size-12 shrink-0 -rotate-6 place-items-center rounded-full bg-surface text-ink depth-1 noite:bg-spark noite:text-on-spark"
+        >
+          <Gift weight="duotone" className="size-7" />
+        </span>
+        <div className="min-w-0">
+          <p className="font-display text-[1.25rem] font-semibold leading-7 tracking-tight">
+            Todo plano começa com {plan.trialDays} dias grátis, sem cartão.
+          </p>
+          <p className="t-body mt-1">
+            No teste vem tudo do plano que você escolher. Você só escolhe como pagar depois.
+          </p>
+        </div>
+      </div>
+    );
   return (
     <div className="flex flex-col gap-4 rounded-lg bg-spark p-5 text-on-spark depth-2 noite:bg-spark-soft noite:text-ink noite:ring-1 noite:ring-spark/40 md:flex-row md:items-center md:gap-5 md:p-6">
       <div className="flex min-w-0 flex-1 items-start gap-4">

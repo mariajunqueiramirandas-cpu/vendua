@@ -16,6 +16,11 @@ export const niches: Niche[] = [
   { kind: 'marmita', path: '/para/marmitarias/', label: 'Para marmitarias' },
   { kind: 'burger', path: '/para/hamburguerias/', label: 'Para hamburguerias' },
   { kind: 'pao', path: '/para/padarias/', label: 'Para padarias' },
+  { kind: 'pizza', path: '/para/pizzarias/', label: 'Para pizzarias' },
+  { kind: 'salgado', path: '/para/salgadeiras/', label: 'Para salgadeiras' },
+  { kind: 'acai', path: '/para/acaiterias/', label: 'Para açaiterias' },
+  { kind: 'sushi', path: '/para/comida-japonesa/', label: 'Para comida japonesa' },
+  { kind: 'bebida', path: '/para/adegas/', label: 'Para adegas' },
 ];
 
 export const nicheFor = (kind: Kind) => niches.find((n) => n.kind === kind)!;

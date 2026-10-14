@@ -335,6 +335,105 @@ export async function storefrontReport(sql: Sql, days: ReportDays): Promise<Stor
   });
 }
 
+/** The admin's signup questions, in order (apps/admin signup/progress.ts): each is sent as a page
+ *  view of `/admin/comecar/<step>`, so drop-off is read from the same anonymous counts. */
+export const SIGNUP_STEPS = [
+  'plano',
+  'loja',
+  'tipo',
+  'voce',
+  'whatsapp',
+  'codigo',
+  'pagamento',
+  'pronto',
+] as const;
+/** The onboarding's screens, in order (apps/admin onboarding/flow.ts), as `/admin/bem-vindo/<step>`. */
+export const SETUP_STEPS = [
+  'oi',
+  'tipo',
+  'importar',
+  'nome',
+  'logo',
+  'cores',
+  'frase',
+  'whatsapp',
+  'horarios',
+  'como',
+  'retirada',
+  'entrega',
+  'formas',
+  'pix',
+  'mercadopago',
+  'produtos',
+  'pronto',
+] as const;
+
+export interface SignupReport {
+  days: ReportDays;
+  /** visitor-days on the marketing site: the top of the funnel */
+  siteVisitors: number;
+  signup: { step: string; visitors: number }[];
+  setup: { step: string; visitors: number }[];
+  /** stores created by self-serve signup in the window, and how far each got */
+  stores: {
+    created: number;
+    trialing: number;
+    paid: number;
+    firstOrder: number;
+    /** median whole days from the store's creation to its first order, null with none */
+    medianDaysToFirstOrder: number | null;
+  };
+}
+
+/** Where merchants stop between the site and the first sale: anonymous step views, then stores. */
+export async function signupReport(sql: Sql, days: ReportDays): Promise<SignupReport> {
+  const today = brDay();
+  return controlTx(sql, async (tx) => {
+    const since = tx`(${today}::date - ${days - 1}::int)`;
+    const stepCounts = (prefix: string, steps: readonly string[]) => tx<
+      { step: string; visitors: number }[]
+    >`
+      -- a step nobody reached joins one all-null row, and (null, null) is a value to count(distinct)
+      select s.step, count(distinct (e.day, e.visitor)) filter (where e.visitor is not null)::int as visitors
+      from unnest(${steps as string[]}::text[]) with ordinality s(step, n)
+      left join web_analytics_events e on e.property = 'admin' and e.day >= ${since}
+        and e.path = ${prefix} || s.step
+      group by s.step, s.n order by s.n
+    `;
+    const [site, signup, setup, stores] = await Promise.all([
+      tx<{ visitors: number }[]>`
+        select coalesce(sum(v), 0)::int as visitors from (
+          select count(distinct visitor) as v from web_analytics_events
+          where property = 'site' and day >= ${since} group by day
+        ) x
+      `,
+      stepCounts('/admin/comecar/', SIGNUP_STEPS),
+      stepCounts('/admin/bem-vindo/', SETUP_STEPS),
+      tx<SignupReport['stores'][]>`
+        with t as (
+          select p.tenant_id, (p.created_at at time zone ${TZ})::date as day from provisionings p
+          where p.source = 'signup' and p.created_at >= ${since}::timestamp at time zone ${TZ}
+        ), first_order as (
+          select o.tenant_id, min(o.day) as day from store_order_days(${since}) o
+          join t using (tenant_id) group by o.tenant_id
+        )
+        select count(*)::int as created,
+          count(*) filter (where exists (
+            select 1 from subscriptions s where s.tenant_id = t.tenant_id and s.trial_ends_at is not null
+          ))::int as trialing,
+          count(*) filter (where exists (
+            select 1 from invoices i where i.tenant_id = t.tenant_id and i.status = 'paid'
+          ))::int as paid,
+          (select count(*) from first_order)::int as "firstOrder",
+          (select percentile_disc(0.5) within group (order by f.day - t2.day)
+            from first_order f join t t2 using (tenant_id))::int as "medianDaysToFirstOrder"
+        from t
+      `,
+    ]);
+    return { days, siteVisitors: site[0]?.visitors ?? 0, signup, setup, stores: stores[0]! };
+  });
+}
+
 /** Hourly expiry (salts past their day, page views past 13 months), whatever the traffic. */
 export function startWebAnalyticsJobs(sql: Sql): () => void {
   const run = () =>
@@ -397,6 +496,12 @@ export function mountWebAnalytics(o: {
       );
     c.header('cache-control', 'no-store');
     return c.json(await webReport(sql, p as WebProperty, days(c)));
+  });
+
+  app.get('/control/v1/analytics/signup', async (c) => {
+    controlGate(c);
+    c.header('cache-control', 'no-store');
+    return c.json(await signupReport(sql, days(c)));
   });
 
   app.get('/control/v1/analytics/storefronts', async (c) => {

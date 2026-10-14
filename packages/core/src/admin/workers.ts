@@ -1,11 +1,19 @@
+import { eveReminderPass } from '../modules/party.ts';
+import { planCyclePass, planPaymentPass } from '../modules/shopper-plan-cycles.ts';
+import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
+import { usualReminderPass } from '../modules/usual-reminder.ts';
+import { statusDayPass } from '../modules/status-do-dia.ts';
+import { FREIO_ACTOR, freioPassTx } from '../modules/freio.ts';
+import { latePassTx } from './late-orders.ts';
 import { setStock } from '../modules/stock.ts';
 import { wakeStoreWaitlist } from '../modules/storefront-platform.ts';
 import { maskPhone } from '../vendedor/threads.ts';
 import type { MerchantNotify } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
+import { audit } from './audit.ts';
 import { DEMAND_DEFAULT_MINUTES } from './routes-store.ts';
 import { sendPushResult, vapidPublicKey, type PushResult } from './webpush.ts';
 
@@ -18,6 +26,8 @@ export interface AlertOpts {
   notify?: MerchantNotify | undefined;
   /** `https://<admin host>` for links in messages; null = no link */
   adminOrigin?: string | null | undefined;
+  /** the install's payment driver: a plan's weekly order is checked out like any other */
+  provider?: PaymentProvider | undefined;
 }
 
 type Sub = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
@@ -154,6 +164,29 @@ export async function pushExhausted(sql: Sql, tenantId: string, period: string) 
     'vendedor.exhausted',
     period,
   );
+}
+
+/** One push to the store's owner and managers, once per `key` (push_deliveries dedupes it for
+ *  two days): Duá's store-manager nudges — Status do dia ready, Freio suggestions. */
+export async function pushManagers(
+  sql: Sql,
+  tenantId: string,
+  key: string,
+  message: { title: string; body: string; tag: string; url: string },
+  event: string,
+) {
+  const subs = await withTenant(sql, tenantId, async (tx) => {
+    const won = await tx`
+      insert into push_deliveries (tenant_id, key) values (${tenantId}, ${key})
+      on conflict do nothing returning key`;
+    if (!won[0]) return null;
+    return tx<Sub[]>`
+      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+        join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
+        and coalesce((u.prefs ->> 'push')::boolean, true)`;
+  });
+  if (subs) await fanOut(sql, tenantId, subs, message, event, key);
 }
 
 async function fanOut(
@@ -570,6 +603,83 @@ export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
     await cartReminderPass(sql, t.id).catch((err) =>
       workLog.warn({ err, tenantId: t.id }, 'bag reminder pass failed'),
     );
+    // Freio automático: the kitchen's queue measured, the level stepped, delivery braked or not
+    await withTenant(sql, t.id, (tx) =>
+      freioPassTx(tx, t.id, new Date(), {
+        audit: (summary) =>
+          audit(tx, t.id, FREIO_ACTOR, { action: 'store.freio', entity: 'store', summary }),
+        emitStore: () => emitAdminTx(tx, t.id, 'store'),
+      }),
+    )
+      .then(
+        (push) =>
+          push &&
+          pushManagers(
+            sql,
+            t.id,
+            push.key,
+            { title: push.title, body: push.body, tag: 'freio', url: '/admin/' },
+            'freio',
+          ),
+      )
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'freio pass failed'));
+    // Freio › atraso avisado: an order about to miss its promise, said before it's asked
+    await withTenant(sql, t.id, (tx) => latePassTx(tx, t.id, new Date()))
+      .then(async (pushes) => {
+        for (const p of pushes)
+          await pushManagers(
+            sql,
+            t.id,
+            p.key,
+            { title: p.title, body: p.body, tag: p.key, url: '/admin/' },
+            'freio.late',
+          );
+      })
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'late order pass failed'));
+    // Status do dia: today's post prepared at the owner's hour, and a push to go post it
+    await statusDayPass(sql, t.id)
+      .then(
+        (post) =>
+          post &&
+          pushManagers(
+            sql,
+            t.id,
+            `status:${post.id}`,
+            {
+              title: 'Seu status de hoje está pronto',
+              body: `${post.products} ${post.products === 1 ? 'imagem' : 'imagens'} com o link da loja. Toque para postar.`,
+              tag: 'status-do-dia',
+              url: '/admin/marketing/status',
+            },
+            'status.ready',
+          ),
+      )
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'status do dia pass failed'));
+    // "o de sempre": a shopper who asked, a week or more after their last order
+    await usualReminderPass(sql, t.id).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'usual reminder pass failed'),
+    );
+    // Festa calculada F0: tomorrow's encomendas hear from the store the day before
+    await eveReminderPass(sql, t.id).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'eve reminder pass failed'),
+    );
+    // Plano semanal (0127): each subscription's week, placed while the store is open
+    await planCyclePass(sql, t.id, opts.provider).catch((err) =>
+      workLog.warn({ err, tenantId: t.id }, 'plan cycle pass failed'),
+    );
+    // ...and a week whose Pix hasn't landed by the day before: the shopper and the store hear it
+    await planPaymentPass(sql, t.id)
+      .then(async (pushes) => {
+        for (const p of pushes)
+          await pushManagers(
+            sql,
+            t.id,
+            p.key,
+            { title: p.title, body: p.body, tag: p.key, url: '/admin/pedidos/agendados' },
+            'plan.pix',
+          );
+      })
+      .catch((err) => workLog.warn({ err, tenantId: t.id }, 'plan payment pass failed'));
     if (prune)
       await pruneTenant(sql, t.id).catch((err) =>
         workLog.warn({ err, tenantId: t.id }, 'retention prune failed'),

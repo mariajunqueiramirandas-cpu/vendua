@@ -5,6 +5,7 @@ export const STORES_TABS: PageTab[] = [
   { to: '/lojas', label: 'Lojas', end: true },
   { to: '/lojas/sites', label: 'Sites' },
   { to: '/lojas/planos', label: 'Planos' },
+  { to: '/lojas/parceiros', label: 'Parceiros' },
   { to: '/lojas/incidentes', label: 'Incidentes' },
   { to: '/lojas/frota', label: 'Frota' },
 ];

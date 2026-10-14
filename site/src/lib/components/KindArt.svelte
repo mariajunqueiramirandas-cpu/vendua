@@ -1,5 +1,6 @@
 <script lang="ts" module>
-  export type Kind = 'bolo' | 'marmita' | 'burger' | 'pao';
+  export type Kind =
+    'bolo' | 'marmita' | 'burger' | 'pao' | 'pizza' | 'salgado' | 'acai' | 'sushi' | 'bebida';
 </script>
 
 <script lang="ts">
@@ -54,6 +55,52 @@
     <path d="M40 82c0-3 2-4 5-4h70c3 0 5 1 5 4v5c0 3-2 4-5 4H45c-3 0-5-1-5-4z" />
     <path d="M54 85h4M68 84h4M86 85h4M100 84h4" stroke-width="2" />
     <path d="M42 96h76c0 7-6 11-14 11H56c-8 0-14-4-14-11z" />
+  {:else if kind === 'pizza'}
+    <path d="M74 66h38a38 38 0 1 1-11.1-26.9z" />
+    <path d="M105 66a31 31 0 1 1-9.1-21.9" stroke-width="2" stroke-dasharray="1 6" />
+    <path d="M82 58h38a38 38 0 0 0-11.1-26.9z" fill="var(--spark)" />
+    <circle cx="58" cy="54" r="5" />
+    <circle cx="56" cy="80" r="5" />
+    <circle cx="80" cy="86" r="5" />
+    <circle cx="92" cy="74" r="4" />
+    <circle cx="104" cy="49" r="3" />
+    <path d="M36 32c-3-4 3-7 0-11M48 26c-3-4 3-7 0-11" stroke-width="2" />
+  {:else if kind === 'salgado'}
+    <path d="M62 24c-5 9-28 32-28 54 0 14 12 22 28 22s28-8 28-22c0-22-23-45-28-54z" />
+    <path d="M50 68l3-1M60 60h3M68 74l3 1M56 86h3M72 88l2-2M46 80l2 2" stroke-width="2" />
+    <ellipse cx="112" cy="78" rx="18" ry="10" transform="rotate(-20 112 78)" />
+    <path d="M104 80l3-1M114 74h3" stroke-width="2" />
+    <path d="M98 96h30l-4 12h-22z" fill="var(--spark)" />
+    <path d="M26 108h108" stroke-width="2" />
+  {:else if kind === 'acai'}
+    <path d="M50 50c0-12 13-20 30-20s30 8 30 20" />
+    <circle cx="66" cy="40" r="4" />
+    <circle cx="90" cy="38" r="4" />
+    <circle cx="78" cy="44" r="1.8" fill="currentColor" stroke="none" />
+    <circle cx="70" cy="47" r="1.8" fill="currentColor" stroke="none" />
+    <circle cx="98" cy="46" r="1.8" fill="currentColor" stroke="none" />
+    <path d="M96 34l16-22c2-3 6-1 5 2l-13 24" />
+    <path d="M44 50h72" />
+    <path d="M50 52l7 48c1 4 3 6 7 6h32c4 0 6-2 7-6l7-48" />
+    <path d="M53 68c18 3 36 3 54 0l-2 14c-17 3-33 3-50 0z" fill="var(--spark)" />
+  {:else if kind === 'sushi'}
+    <path d="M36 30l92 22M42 22l90 18" />
+    <ellipse cx="60" cy="68" rx="18" ry="8" />
+    <path d="M42 68v20c0 4.4 8 8 18 8s18-3.6 18-8V68" />
+    <ellipse cx="60" cy="68" rx="11" ry="4.5" stroke-width="2" stroke-dasharray="1 5" />
+    <ellipse cx="60" cy="68" rx="5" ry="2.4" fill="var(--spark)" />
+    <ellipse cx="102" cy="76" rx="18" ry="8" />
+    <path d="M84 76v20c0 4.4 8 8 18 8s18-3.6 18-8V76" />
+    <ellipse cx="102" cy="76" rx="11" ry="4.5" stroke-width="2" stroke-dasharray="1 5" />
+    <ellipse cx="102" cy="76" rx="5" ry="2.4" fill="var(--spark)" />
+  {:else if kind === 'bebida'}
+    <path d="M58 22h12v14c0 4 8 8 8 18v46c0 4-2 6-6 6H56c-4 0-6-2-6-6V54c0-10 8-14 8-18z" />
+    <path d="M50 64h28v20H50z" fill="var(--spark)" />
+    <path d="M58 28h12" stroke-width="2" />
+    <path d="M92 56c0-3 2-5 4-6h20c2 1 4 3 4 6v44c0 3-2 5-4 6H96c-2-1-4-3-4-6z" />
+    <path d="M102 45h8M92 62h28M92 94h28" stroke-width="2" />
+    <path d="M126 70c2 3 2 5 0 6M128 84c2 3 2 5 0 6" stroke-width="2" />
+    <path d="M30 109h100" stroke-width="2" />
   {:else}
     <ellipse cx="80" cy="104" rx="50" ry="5" fill="var(--spark)" stroke="none" opacity=".7" />
     <path d="M90 53l33-33c3-3 8-2 9 2 1 2 0 4-2 6l-30 30" />

@@ -86,6 +86,18 @@ export interface StoreProfile {
   /** Kernel 1.21 — the store sends one WhatsApp reminder about a bag left full, to a shopper who
    *  ticked it at checkout (`api.cartReminder`). Absent = false. */
   cartReminder?: boolean;
+  /** Kernel 1.26 — the store reminds a shopper who asked of their usual order, at most once a
+   *  week, from its WhatsApp (`api.usualReminder`). Absent = false. */
+  usualReminder?: boolean;
+  /** Kernel 1.26 — the kitchen right now (Freio automático): what a pickup takes, what a
+   *  delivery's zone ETA gains, and until when the store takes no delivery (null = it does).
+   *  Absent = the zones and `prepTimeMinutes` are the whole story. */
+  fulfillment?: {
+    pickupMinutes: number;
+    deliveryExtraMinutes: number;
+    level: 'normal' | 'busy' | 'full' | 'pickup_only';
+    deliveryPausedUntil: string | null;
+  };
   /** Kernel 1.22 — the store takes orders from its tables' QR codes (ADR 0036): its plan and its
    *  switch. Absent = false. */
   dineIn?: { enabled: boolean };
@@ -430,6 +442,10 @@ export interface CartTotals {
   /** Kernel 1.12 — the chosen payment method's discount (<0) or surcharge (>0), already in
    *  `totalCents`; 0 without one. Priced for a method by `api.cart(method)` / `quote` */
   paymentAdjustmentCents?: number;
+  /** Kernel 1.26 — the sinal (Core's) this total pays by Pix to lock an encomenda's date, and
+   *  the rest; present only when `Cart.sinal` is (with a date picked, the order asks for it) */
+  depositCents?: number;
+  balanceCents?: number;
 }
 
 export interface CartCoupon {
@@ -485,6 +501,85 @@ export interface Cart {
   /** Kernel 1.2 */
   coupon?: CartCoupon | null;
   schedule?: CartSchedule;
+  /** Kernel 1.26 — the guests the cart was built for (`api.buildPartyCart`); null/absent = an
+   *  ordinary cart. A party is an encomenda: `schedule.required` is true. */
+  party?: { profileId: string; adults: number; children: number } | null;
+  /** Kernel 1.26 — the weekly plan the cart was built from (`api.buildPlanCart`): checkout
+   *  offers it (`CheckoutInput.subscribe`). Its first week is an encomenda, on the plan's
+   *  `weekday` when it has one. */
+  plan?: { id: string; name: string; weekday: number | null } | null;
+  /** Kernel 1.26 — the store asks this cart, as an encomenda, for a sinal by Pix: its share and
+   *  the store's own cancellation words (shown as the store's). Amounts: `totals.depositCents` /
+   *  `balanceCents`. With a date, checkout takes only Pix (`PAYMENT_NOT_ALLOWED` otherwise). */
+  sinal?: { percent: number; policy: string | null } | null;
+}
+
+/** Kernel 1.26 — Plano semanal: a fixed basket the store delivers every week. `subtotalCents`
+ *  is Core's sum at today's prices; each week's order is priced by Core when it is placed. */
+export interface ShopperPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  /** 0 = Sunday; null = the weekday of the shopper's first date */
+  weekday: number | null;
+  lines: {
+    productId: string;
+    slug: string;
+    name: string;
+    qty: number;
+    unitPriceCents: number;
+    imageUrl: string | null;
+  }[];
+  subtotalCents: number;
+}
+
+/** Kernel 1.26 — Festa calculada: one of the store's party kinds and its rules, as Core keeps
+ *  them. Quantities and money are always Core's (`api.partyQuote`, then the cart). */
+export interface PartyProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  /** how much a child counts (0.5 = half an adult) */
+  childFactor: number;
+  minGuests: number;
+  maxGuests: number;
+  groups: {
+    id: string;
+    name: string;
+    /** pieces per guest */
+    perGuest: number;
+    /** the shopper picks up to this many products in the group */
+    maxChoices: number;
+    required: boolean;
+    products: { productId: string; name: string; slug: string; unitsPerSale: number }[];
+  }[];
+}
+
+export interface PartyInput {
+  profileId: string;
+  adults: number;
+  children?: number;
+  /** groupId → the products picked in it */
+  choices: Record<string, string[]>;
+}
+
+export interface PartyQuote {
+  profileId: string;
+  adults: number;
+  children: number;
+  /** guests counted as adults */
+  guests: number;
+  groups: { groupId: string; name: string; units: number }[];
+  /** whole sales of each product; `reason` says why ("300 de 600 salgados · 3 × 100") */
+  lines: {
+    productId: string;
+    groupId: string;
+    name: string;
+    qty: number;
+    units: number;
+    unitsPerSale: number;
+    reason: string;
+  }[];
 }
 
 export interface CheckoutInput {
@@ -507,6 +602,9 @@ export interface CheckoutInput {
   /** Kernel 1.23 — the total the shopper saw, integer cents, as Core priced it for this payment
    *  method (never a client sum). Core answers 409 `PRICES_CHANGED` when its total differs. */
   expectedTotalCents?: number;
+  /** Kernel 1.26 — the shopper's yes to the cart's weekly plan (`Cart.plan`): the order starts
+   *  it, the store's WhatsApp confirms the number, and Core places each week from then on */
+  subscribe?: boolean;
 }
 
 export interface DeliveryZone {
@@ -660,6 +758,9 @@ export interface Order {
     redirectUrl?: string | null;
     /** Kernel 1.17 — cash: the amount the shopper asked change for (null = no change) */
     changeForCents?: number | null;
+    /** Kernel 1.26 — an encomenda with a sinal: the two parts and when each was paid. `status`
+     *  stays 'pending' until both are; `pix` is the part due now */
+    sinal?: OrderSinal;
   };
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -762,9 +863,38 @@ export interface OrderItem {
   note?: string | null;
 }
 
+/** Kernel 1.26 — an order's sinal: paid by Pix to lock the date, the rest before it or at the
+ *  door (`via`: online = Mercado Pago, manual = the store saw the Pix, pdv = the caixa) */
+export interface OrderSinal {
+  depositCents: number;
+  balanceCents: number;
+  depositPaidAt: string | null;
+  depositVia: 'online' | 'manual' | 'pdv' | null;
+  balancePaidAt: string | null;
+  balanceVia: 'online' | 'manual' | 'pdv' | null;
+  /** the store's own cancellation words when the order was placed */
+  policy: string | null;
+}
+
+/** Kernel 1.26 — a Pix order's payment as its tracking link sees it: what is due now and its
+ *  copia e cola (an online Pix has none until `api.payTracked` asks for it) */
+export interface TrackingPayment {
+  status: string;
+  online: boolean;
+  /** 0 once paid */
+  dueCents: number;
+  pix: { copyPaste: string; expiresAt: string | null } | null;
+  sinal: {
+    depositCents: number;
+    balanceCents: number;
+    depositPaid: boolean;
+    balancePaid: boolean;
+  } | null;
+}
+
 /** Kernel 1.21 — an order read through the link in the store's WhatsApp updates
- *  (`/pedido/:id?t=…`): where it stands and what was ordered. No customer, address, payment,
- *  money or order notes — the device that placed it reads those (`Order`). */
+ *  (`/pedido/:id?t=…`): where it stands and what was ordered. No customer, address, money
+ *  beyond a Pix due, or order notes — the device that placed it reads those (`Order`). */
 export interface OrderTracking {
   statusOnly: true;
   id: string;
@@ -794,6 +924,8 @@ export interface OrderTracking {
     combo: { slotName: string; name: string; qty: number }[];
     note: string | null;
   }[];
+  /** Kernel 1.26 — a Pix order's payment, so the link can pay it; null for other methods */
+  payment?: TrackingPayment | null;
 }
 
 const SESSION_KEY = 'vendua.session';
@@ -809,6 +941,29 @@ function storageOf(kind: 'localStorage' | 'sessionStorage'): Storage | undefined
     return globalThis[kind] ?? undefined;
   } catch {
     return undefined;
+  }
+}
+
+// Kernel 1.26 — `?ref=CODE` (a Status do dia post, the bag card): kept for the tab and sent with
+// checkout, so the order knows where it came from. Anything else is ignored.
+const REF_KEY = 'vendua.ref';
+const REF_RE = /^[a-z0-9]{6,12}$/;
+/** reads `?ref=` from this page's address; internal, called once by the provider */
+export function captureLinkRef(search: string): void {
+  const ref = new URLSearchParams(search).get('ref');
+  if (!ref || !REF_RE.test(ref)) return;
+  try {
+    storageOf('sessionStorage')?.setItem(REF_KEY, ref);
+  } catch {
+    /* storage off: the order just won't carry it */
+  }
+}
+function linkRef(): string | null {
+  try {
+    const ref = storageOf('sessionStorage')?.getItem(REF_KEY) ?? null;
+    return ref && REF_RE.test(ref) ? ref : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1088,6 +1243,17 @@ export function createApi(baseUrl = '') {
     return t ? { authorization: `Bearer ${t}` } : {};
   };
   const orderBearer = (id: string) => orderTokenMem.get(id) ?? readOrderTokens()[id] ?? current();
+  const usualCall = (orderId: string, method: 'POST' | 'DELETE') => {
+    const bearer = orderBearer(orderId);
+    return apiFetch<{ reminder: { on: boolean } }>(co('/usual-reminder'), {
+      method,
+      headers: {
+        ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+        'idempotency-key': idemKey(),
+      },
+      body: '{}',
+    }).then((r) => r.reminder);
+  };
   const trackTokenMem = new Map<string, string>();
   const trackBearer = (id: string) => trackTokenMem.get(id) ?? readTrackTokens()[id];
   const forgetTrack = (id: string) => (err: unknown) => {
@@ -1263,6 +1429,25 @@ export function createApi(baseUrl = '') {
     store: () => apiFetch<StoreProfile>(sf('/store')),
     /** Kernel 1.22 — what a table's QR token names (404 TABLE_NOT_FOUND: bad, replaced or
      *  removed). `VenduaProvider` reads `?mesa=` itself; see `useTable` */
+    /** Kernel 1.26 — the store's party kinds (Festa calculada); [] = the store has none */
+    partyProfiles: () => apiFetch<{ profiles: PartyProfile[] }>(sf('/party')),
+    /** Kernel 1.26 — Core's quantities for guests and picks; nothing is written. 422
+     *  INVALID_PARTY / PARTY_TOO_BIG */
+    partyQuote: (input: PartyInput) =>
+      apiFetch<{ quote: PartyQuote }>(co('/party/quote'), {
+        method: 'POST',
+        headers: { 'idempotency-key': idemKey() },
+        body: JSON.stringify(input),
+      }),
+    /** Kernel 1.26 — the session's cart becomes the party (what was in it gives way); what
+     *  can't be sold now comes back in `report.skipped`, as for a shared bag */
+    buildPartyCart: (input: PartyInput) =>
+      cartPost<{ cart: Cart; quote: PartyQuote; report: ImportReport }>('/cart/party', input),
+    /** Kernel 1.26 — the store's weekly plans; [] = none, or the store can't text its shoppers */
+    plans: () => apiFetch<{ plans: ShopperPlan[] }>(sf('/plans')),
+    /** Kernel 1.26 — the session's cart becomes the plan's basket (what was in it gives way) */
+    buildPlanCart: (planId: string) =>
+      cartPost<{ cart: Cart; report: ImportReport }>('/cart/plan', { planId }),
     table: (token: string) =>
       apiFetch<{ table: TableInfo }>(sf(`/table?t=${encodeURIComponent(token.slice(0, 400))}`)),
     catalog: () =>
@@ -1486,7 +1671,8 @@ export function createApi(baseUrl = '') {
     async checkout(input: CheckoutInput): Promise<Order> {
       // the cart this order closes: its token is the order's tracking credential
       const sent = current();
-      const body = JSON.stringify(input);
+      const ref = linkRef();
+      const body = JSON.stringify(ref ? { ...input, ref } : input);
       const of = hashOf(`${sent ?? ''}\n${body}`);
       if (checkoutKey?.of !== of) {
         const kept = readCheckoutKey();
@@ -1570,6 +1756,12 @@ export function createApi(baseUrl = '') {
         body: JSON.stringify(media),
       });
     },
+    /** Kernel 1.26 — "me lembre do meu pedido de sempre", sent after the order is placed: Core
+     *  takes the phone from that order, never from this call (only when
+     *  `StoreProfile.usualReminder`). 409 REMINDER_OFF / ORDER_REQUIRED, 422 INVALID_PHONE */
+    usualReminder: (orderId: string) => usualCall(orderId, 'POST'),
+    /** Kernel 1.26 — withdraws it */
+    cancelUsualReminder: (orderId: string) => usualCall(orderId, 'DELETE'),
     order: (id: string) => {
       const bearer = orderBearer(id);
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
@@ -1603,6 +1795,20 @@ export function createApi(baseUrl = '') {
             }
           : {}),
       }).then((r) => ({ ...r, next: safeNext(r.next) }));
+    },
+    /** Kernel 1.26 — the order's Pix through its tracking link (a Pix order only): the online
+     *  Pix Core makes (or the one it has), with the status view back. 401 SESSION_REQUIRED for
+     *  another method, 409 PAYMENT_NOT_REQUIRED (paid, closed or the store's own key) */
+    payTracked: (id: string, opts?: { deviceId?: string | null }) => {
+      const deviceId = opts?.deviceId && DEVICE_ID_RE.test(opts.deviceId) ? opts.deviceId : null;
+      return apiFetch<{ order: OrderTracking; next: PaymentNext }>(co(`/orders/${id}/pay`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${trackBearer(id) ?? ''}`,
+          'idempotency-key': idemKey(),
+        },
+        ...(deviceId ? { body: JSON.stringify({ deviceId }) } : {}),
+      }).then((r) => ({ ...r, next: safeNext(r.next) }), forgetTrack(id));
     },
     /** Kernel 1.19 — pay a card_online order with the card form's token. 409
      *  PAYMENT_IN_PROGRESS (an earlier submit is unresolved), 409 PAYMENT_NOT_REQUIRED, 422
@@ -1697,6 +1903,15 @@ export const ERROR_CODES = [
   'STORE_PAUSED',
   'ORDER_MIN_NOT_MET',
   'DELIVERY_UNAVAILABLE',
+  // Kernel 1.26 — Freio paused delivery for a while (`details.until`); pickup is open
+  'DELIVERY_PAUSED',
+  // Kernel 1.26 — Festa calculada: a quote that doesn't fit the profile (`details.field`,
+  // `details.groupId`), a line past 99 sales (`details.productId`), a date at its ceiling
+  'INVALID_PARTY',
+  'PARTY_TOO_BIG',
+  'DATE_FULL',
+  'PLAN_NOT_FOUND',
+  'PLAN_NOT_ALLOWED',
   'PICKUP_UNAVAILABLE',
   'OUT_OF_ZONE',
   'INVALID_DELIVERY',
@@ -1808,6 +2023,8 @@ export const ERROR_CODES = [
   // Kernel 1.21 — the bag reminder: the store doesn't offer it; the phone isn't one
   'REMINDER_OFF',
   'INVALID_PHONE',
+  // Kernel 1.26 — "o de sempre" asked before the order was placed
+  'ORDER_REQUIRED',
   // Kernel 1.22 — ordering from a table's QR code: the token is bad or replaced; the store turned
   // QR orders off; five of this table's orders still wait for the staff; the comanda changed
   // under the order (try again)

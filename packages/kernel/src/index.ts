@@ -211,4 +211,11 @@ export type {
   OrderTracking,
   // Kernel 1.22
   TableInfo,
+  // Kernel 1.26
+  PartyProfile,
+  PartyInput,
+  PartyQuote,
+  ShopperPlan,
+  OrderSinal,
+  TrackingPayment,
 } from './api.ts';

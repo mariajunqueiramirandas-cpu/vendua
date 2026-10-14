@@ -102,3 +102,25 @@ describe('2026-10-recent-order-on-home', () => {
     expect(runMigration(ro, removed, { kernelVersion: '1.21.0', sections }).status).toBe('skipped');
   });
 });
+
+describe('2026-10-party-cta-on-home', () => {
+  const pc = findMigration('2026-10-party-cta-on-home')!;
+  const sdkHome = {
+    version: 1 as const,
+    page: 'home' as const,
+    sections: [{ id: 'catalog', type: 'sdk:catalog-grid' as const, settings: { title: 'Doces' } }],
+  };
+
+  test('lands in a promo area, idempotently; older Kernels and a removal are skipped', () => {
+    const r = runMigration(pc, sdkHome, { kernelVersion: '1.26.0', sections });
+    expect(r.status).toBe('applied');
+    if (r.status !== 'applied') return;
+    expect(r.template.sections[0]!.blocks?.['before-grid']?.[0]?.type).toBe('sdk:party-cta');
+    expect(runMigration(pc, r.template, { kernelVersion: '1.26.0', sections }).status).toBe(
+      'skipped',
+    );
+    expect(runMigration(pc, sdkHome, { kernelVersion: '1.25.0', sections }).status).toBe('skipped');
+    const removed = { ...sdkHome, removed: ['sdk:party-cta' as const] };
+    expect(runMigration(pc, removed, { kernelVersion: '1.26.0', sections }).status).toBe('skipped');
+  });
+});

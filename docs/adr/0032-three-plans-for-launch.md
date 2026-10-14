@@ -26,7 +26,8 @@ The owner decided (2026-10-03):
   - **Venduá Pangolim, R$ 449/mês:** everything in Bandeira, plus a custom domain, a site made
     by our agent and 1.000 conversations a month.
 - **The 14-day trial with no card moves to Bandeira.** Mirim and Pangolim have no trial. A trial
-  includes 50 Vendedor conversations.
+  includes 50 Vendedor conversations. _Amended 2026-10-13 (the owner): Mirim trials 14 days too, so a
+  store on either open plan sells before it pays (Core 0119). Pangolim still has no trial._
 - **Extra conversations are sold in packs:** +100 conversations for R$ 39,90.
 - **No fee per order on any plan.**
 - **No founder's price.**

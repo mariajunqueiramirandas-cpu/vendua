@@ -282,6 +282,8 @@ export interface Order {
       expiresAt?: string | null;
     } | null;
     redirectUrl?: string | null;
+    /** an encomenda with a sinal (0128) */
+    sinal?: OrderSinal;
   };
   items: {
     productId: string | null;
@@ -340,6 +342,8 @@ export interface OrderPayment {
   netCents: number | null;
   approvedAt: string | null;
   createdAt: string;
+  /** a sinal order's part (0128); null = the whole order */
+  charge?: 'deposit' | 'balance' | null;
   refunds: {
     amountCents: number;
     status: 'pending' | 'approved' | 'rejected';
@@ -722,8 +726,27 @@ export interface StoreView {
     maxDays: number;
     /** while closed, a cart made only of encomendas still goes through */
     whileClosed: boolean;
+    /** Festa calculada (0126): encomendas a day, per weekday (Sunday first) and per date; null =
+     *  no ceiling */
+    capacity: EncomendaCapacity | null;
+    /** the D−1 message from the store's WhatsApp */
+    reminder: boolean;
   };
+  /** Festa calculada F2 (0128): the sinal by Pix that locks a party's date (bps 0 = off), and an
+   *  encomenda's from minCents; policy = the store's own cancellation words. Owner-only. */
+  sinal: { bps: number; minCents: number | null; policy: string | null };
   zones: Zone[];
+}
+
+/** An order's sinal (0128): two parts, each paid on its own; status reads paid once both are */
+export interface OrderSinal {
+  depositCents: number;
+  balanceCents: number;
+  depositPaidAt: string | null;
+  depositVia: 'online' | 'manual' | 'pdv' | null;
+  balancePaidAt: string | null;
+  balanceVia: 'online' | 'manual' | 'pdv' | null;
+  policy: string | null;
 }
 
 export interface Home {
@@ -786,7 +809,10 @@ export interface Customer {
   orders: number;
   spentCents: number;
   firstAt: string;
-  lastAt: string;
+  /** null for an imported contact who hasn't ordered here yet */
+  lastAt: string | null;
+  /** came from a list the store imported (Clientes › Importar) */
+  imported?: boolean;
   /** list rows: the store's tags on this customer */
   tags?: string[];
 }
@@ -1055,8 +1081,12 @@ export interface WaMessage {
     /** "lembrete de sacola", once per bag a shopper asked for at checkout */
     | 'cart_reminder'
     /** "avise-me quando abrir" */
-    | 'store_open';
-  event: WaEvent | null;
+    | 'store_open'
+    /** "o pedido de sempre", at most weekly to a shopper who asked */
+    | 'usual_reminder';
+  /** 'usual' on an opt_in: the ack to a shopper's LEMBRAR; 'plan': a weekly plan's answer or
+   *  note. On an order: 'reminder_eve' (Festa) and a plan's 'plan_confirm' / 'plan_cycle' */
+  event: WaEvent | 'usual' | 'plan' | 'reminder_eve' | 'plan_confirm' | 'plan_cycle' | null;
   orderId: string | null;
   orderNumber: number | null;
   status: 'pending' | 'sending' | 'sent' | 'failed' | 'expired' | 'skipped';
@@ -1098,8 +1128,228 @@ export interface Whatsapp {
     /** reminders queued in the last 7 days, and how many of those bags became orders */
     week: { sent: number; ordered: number };
   };
+  /** "O pedido de sempre" (0122): a weekly reminder to shoppers who asked for it */
+  usualReminder: {
+    on: boolean;
+    /** the store's daily ceiling, 1–200 */
+    perDay: number;
+    /** shoppers who asked (at checkout or with LEMBRAR) */
+    asked: number;
+    /** sent in the last 7 days, and how many of them ordered within 3 days */
+    week: { sent: number; ordered: number };
+    preview: string;
+  };
   recent: WaMessage[];
 }
+
+/** Cardápio › Festa (0126): a party kind and its per-guest rules, as Core keeps them */
+export interface PartyProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  /** how much a child counts, 0..1 */
+  childFactor: number;
+  minGuests: number;
+  maxGuests: number;
+  active: boolean;
+  groups: {
+    id: string;
+    name: string;
+    /** pieces per guest */
+    perGuest: number;
+    maxChoices: number;
+    required: boolean;
+    /** pieces of the group a day across party orders; null = no ceiling */
+    dailyCapUnits: number | null;
+    products: {
+      productId: string;
+      name: string;
+      slug: string;
+      unitsPerSale: number;
+      /** asks for a required option or a kit: the calculator can't add it */
+      needsChoices?: boolean;
+    }[];
+  }[];
+}
+
+export interface PartyView {
+  profiles: PartyProfile[];
+  /** products that ask for a choice: the picker leaves them out */
+  needsChoices: string[];
+}
+
+export interface PartyProfileIn {
+  name: string;
+  description: string | null;
+  childFactor: number;
+  minGuests: number;
+  maxGuests: number;
+  active: boolean;
+  groups: {
+    id: string | null;
+    name: string;
+    perGuest: number;
+    maxChoices: number;
+    required: boolean;
+    dailyCapUnits: number | null;
+    products: { productId: string; unitsPerSale: number }[];
+  }[];
+}
+
+/** Cardápio › Planos (0127): a weekly basket, as Core keeps it */
+export interface ShopperPlanIn {
+  name: string;
+  description: string | null;
+  /** 0 = Sunday; null = the weekday of the shopper's first date */
+  weekday: number | null;
+  /** the week's order is placed this many days before its date */
+  leadDays: number;
+  items: { productId: string; qty: number }[];
+  active: boolean;
+}
+
+export interface ShopperPlan extends ShopperPlanIn {
+  id: string;
+  /** active and waiting for ASSINAR */
+  subscribers: number;
+}
+
+export type PlanSubscriptionState = 'pending' | 'active' | 'paused' | 'cancelled';
+
+export interface PlanSubscription {
+  id: string;
+  planId: string;
+  name: string;
+  phone: string;
+  state: PlanSubscriptionState;
+  mode: 'pickup' | 'delivery';
+  method: PayMethod;
+  weekday: number;
+  nextOn: string | null;
+  /** the last week's error code ('missed', 'opted_out', a checkout code) */
+  lastError: string | null;
+  createdAt: string;
+  /** weeks placed so far */
+  weeks: number;
+  /** the latest week placed: its Pix paid yet? */
+  lastOrder: {
+    id: string;
+    number: number;
+    day: string;
+    totalCents: number;
+    state: OrderState;
+    paid: boolean;
+  } | null;
+}
+
+export interface PlansView {
+  /** the store's WhatsApp is on: without it no plan reaches the shopper */
+  offered: boolean;
+  /** why no plan reaches the shopper: no WhatsApp, or no way to take a Pix (own key or Mercado Pago) */
+  blocked: 'whatsapp' | 'pix' | null;
+  plans: ShopperPlan[];
+  subscriptions: PlanSubscription[];
+  needsChoices: string[];
+}
+
+export interface EncomendaCapacity {
+  days?: (number | null)[];
+  dates?: Record<string, number | null>;
+}
+
+export type FreioLevel = 'normal' | 'busy' | 'full' | 'pickup_only';
+export type FreioMode = 'off' | 'suggest' | 'auto';
+
+/** Loja › Freio automático (0125): the kitchen now, the brake and its settings */
+export interface Freio {
+  settings: {
+    mode: FreioMode;
+    capacity: number;
+    bufferMinutes: number;
+    maxPromiseMinutes: number;
+    lateMode: FreioMode;
+    apologyKind: 'free_delivery' | 'fixed';
+    apologyValueCents: number;
+    apologyBudgetCents: number;
+  };
+  now: {
+    /** orders in the kitchen's queue */
+    queue: number;
+    backlogMinutes: number;
+    pickupMinutes: number;
+    level: FreioLevel;
+    deliveryPausedUntil: string | null;
+    deliveryEnabled: boolean;
+    suggestion: { level: FreioLevel; pausedUntil: string | null } | null;
+  };
+  /** Automático opens once the board is used: 80% of last week's orders marked ready */
+  auto: { unlocked: boolean; readyRate: number; orders: number };
+  apology: { spentCents: number; leftCents: number };
+  late: {
+    orderId: string;
+    number: number;
+    predictedMinutes: number;
+    mode: 'suggest' | 'auto';
+    state: string;
+    createdAt: string;
+  }[];
+}
+
+export type FreioPatch = Partial<Freio['settings']>;
+
+export interface HomeSavings {
+  /** what the owner said their delivery app charges, 1–50; 0 = no app; null = not told */
+  feePercent: number | null;
+  /** this calendar month in the store's timezone; PDV sales don't count */
+  month: { orders: number; salesCents: number; feeCents: number };
+  all: { orders: number; feeCents: number };
+  /** the first own-site order, YYYY-MM-DD */
+  since: string | null;
+}
+
+/** Marketing › Status do dia (0124): Core prepares, the owner posts from the phone. */
+export interface StatusDoDia {
+  plan: {
+    enabled: boolean;
+    /** HH:MM, the store's time */
+    postAt: string;
+    /** 0 = Sunday */
+    days: number[];
+    mode: 'auto' | 'pinned';
+    picks: string[];
+    caption: string | null;
+  };
+  store: { name: string; url: string };
+  today: {
+    id: string;
+    day: string;
+    state: StatusPostState;
+    /** the text to paste, the post's link at the end */
+    caption: string;
+    ref: string;
+    orders: number;
+    revenueCents: number;
+    products: {
+      id: string;
+      name: string;
+      /** Core's words for the price ("R$ 12,90"); the image prints them as they are */
+      priceLabel: string;
+      compareAtLabel: string | null;
+      imageUrl: string | null;
+      /** sold out or outside its hours since the post was prepared */
+      available: boolean;
+      url: string;
+    }[];
+  } | null;
+  recent: {
+    id: string;
+    day: string;
+    state: StatusPostState;
+    orders: number;
+    revenueCents: number;
+  }[];
+}
+export type StatusPostState = 'ready' | 'shared' | 'skipped';
 
 export interface Payments {
   methods: PayMethod[];
@@ -1122,7 +1372,16 @@ export interface Payments {
   last30Orders: number;
   /** per method, most money first */
   last30ByMethod: { method: PayMethod; cents: number; orders: number }[];
-  awaitingPix: { id: string; number: number; name: string; totalCents: number; placedAt: string }[];
+  awaitingPix: {
+    id: string;
+    number: number;
+    name: string;
+    totalCents: number;
+    placedAt: string;
+    /** a sinal order: the part this Pix pays, and its amount */
+    part: 'deposit' | 'balance' | null;
+    dueCents: number;
+  }[];
   month: StatementTotals & { month: string };
   /** money Core couldn't verify or settle by itself — a person looks at each (newest 50) */
   review: {
@@ -2107,6 +2366,14 @@ export interface CopilotView {
   media?: { voice: boolean; image: boolean };
 }
 
+/** a product read from a photo of the old menu, priced by Core; the owner reviews it */
+export interface PhotoMenuItem {
+  category: string | null;
+  name: string;
+  description: string | null;
+  priceCents: number;
+}
+
 /** a voice message or a photo for Duá: the bytes as base64 (no `data:` prefix), ≤ 2 MB decoded */
 export type CopilotMediaIn =
   | { kind: 'voice'; mime: string; data: string; seconds?: number; screen?: string }
@@ -2372,6 +2639,11 @@ export const api = {
         priceCents: number;
         discountedCents: number | null;
       }>(`/signup/coupon?code=${encodeURIComponent(code)}&planId=${encodeURIComponent(planId)}`),
+    /** who a referral link names; with the confirmed phone, whether its welcome month holds */
+    referral: (code: string, planId: string | null, signupToken: string | null) =>
+      get<{ referral: { kind: 'store' | 'partner'; name: string; welcomeDays: number } }>(
+        `/signup/referral?code=${encodeURIComponent(code)}${planId ? `&planId=${encodeURIComponent(planId)}` : ''}${signupToken ? `&signupToken=${encodeURIComponent(signupToken)}` : ''}`,
+      ),
     otpStart: (phone: string) =>
       send<{ sent: boolean; devCode?: string; expiresAt: string }>('POST', '/signup/otp/start', {
         phone,
@@ -2398,6 +2670,8 @@ export const api = {
       accessCode?: string;
       /** a signup coupon (ADR 0042): its free days replace `trial` and the payment method */
       coupon?: string;
+      /** a referral link's code; a store's gives a welcome month (Core decides) */
+      referral?: string;
     }) => sendPix<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),
@@ -2425,6 +2699,31 @@ export const api = {
     send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
 
   home: () => get<Home>('/home'),
+  party: () => get<PartyView>('/party'),
+  createParty: (b: PartyProfileIn) =>
+    send<PartyView & { id: string }>('POST', '/party/profiles', b),
+  saveParty: (id: string, b: PartyProfileIn) => send<PartyView>('PUT', `/party/profiles/${id}`, b),
+  deleteParty: (id: string) => send<PartyView>('DELETE', `/party/profiles/${id}`),
+  plans: () => get<PlansView>('/plans'),
+  createPlan: (b: ShopperPlanIn) => send<PlansView & { id: string }>('POST', '/plans', b),
+  savePlan: (id: string, b: ShopperPlanIn) => send<PlansView>('PUT', `/plans/${id}`, b),
+  deletePlan: (id: string) => send<PlansView>('DELETE', `/plans/${id}`),
+  planSubscription: (id: string, action: 'pause' | 'resume' | 'cancel') =>
+    send<PlansView>('POST', `/plans/subscriptions/${id}/${action}`),
+  freio: () => get<Freio>('/freio'),
+  patchFreio: (b: FreioPatch) => send<Freio>('PATCH', '/freio', b),
+  freioApply: () => send<Freio>('POST', '/freio/apply'),
+  freioDismiss: () => send<Freio>('POST', '/freio/dismiss'),
+  freioRelease: () => send<Freio>('POST', '/freio/release'),
+  freioLateSend: (orderId: string) =>
+    send<{ notified: boolean; coupon: string | null; freio: Freio }>(
+      'POST',
+      `/freio/late/${orderId}`,
+    ),
+  freioLateDismiss: (orderId: string) => send<Freio>('POST', `/freio/late/${orderId}/dismiss`),
+  homeSavings: () => get<HomeSavings>('/home/savings'),
+  setMarketplaceFee: (feePercent: number | null) =>
+    send<HomeSavings>('PUT', '/home/savings', { feePercent }),
   search: (q: string) => get<SearchResult>(`/search?q=${encodeURIComponent(q)}`),
 
   board: () => get<Board>('/orders/board'),
@@ -2444,9 +2743,14 @@ export const api = {
     return get<{ orders: OrderRow[]; next: string | null }>(`/orders?${s}`);
   },
   scheduled: (from: string, to: string) =>
-    get<{ orders: OrderRow[]; days: { date: string; count: number; totalCents: number }[] }>(
-      `/orders/scheduled?from=${from}&to=${to}`,
-    ),
+    get<{
+      orders: OrderRow[];
+      days: { date: string; count: number; totalCents: number }[];
+      /** each day's ceiling, only when the store set one */
+      caps?: Record<string, number>;
+      /** pieces per party group a day (Festa calculada), only when there are party orders */
+      production?: Record<string, { name: string; units: number }[]>;
+    }>(`/orders/scheduled?from=${from}&to=${to}`),
   order: (id: string) =>
     get<{
       order: Order;
@@ -2468,8 +2772,12 @@ export const api = {
       ...(idem ? { idem } : {}),
       ...(opts.keepalive ? { keepalive: true } : {}),
     }),
-  markPaid: (id: string, status: 'paid' | 'pending') =>
-    send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
+  /** a sinal order (0128): 'deposit' marks the sinal, 'all' everything still open */
+  markPaid: (id: string, status: 'paid' | 'pending', charge?: 'deposit' | 'all') =>
+    send<{ order: Order }>('POST', `/orders/${id}/payment`, {
+      status,
+      ...(charge ? { charge } : {}),
+    }),
   /** "atrasou": the promise moves later; the shopper hears the new time on WhatsApp */
   delay: (id: string, minutes: number, idem: string, opts: { keepalive?: boolean } = {}) =>
     req<{ order: Order; notified: boolean }>(`/orders/${id}/delay`, {
@@ -2564,6 +2872,26 @@ export const api = {
     }),
   importProducts: (text: string, categoryId: string) =>
     send<{ created: number }>('POST', '/products/import', { text, categoryId }),
+  /** one photo of a menu, read by Core for review: nothing is written (≤ 2 MB decoded) */
+  importPhoto: (photo: { mime: 'image/jpeg' | 'image/png' | 'image/webp'; data: string }) =>
+    req<{ items: PhotoMenuItem[] }>('/products/import/photo', {
+      method: 'POST',
+      body: JSON.stringify(photo),
+      timeoutMs: 90_000,
+    }),
+  /** the reviewed list: categories matched by name, a new one created */
+  importItems: (items: PhotoMenuItem[]) =>
+    send<{ created: number; categories: number }>('POST', '/products/import/items', { items }),
+  customerImportPreview: (text: string) =>
+    send<{ contacts: { name: string; phone: string }[]; total: number; skipped: number }>(
+      'POST',
+      '/customers/import/preview',
+      { text },
+    ),
+  importCustomers: (text: string) =>
+    send<{ imported: number; known: number; skipped: number }>('POST', '/customers/import', {
+      text,
+    }),
   createCategory: (name: string, description?: string | null) =>
     send<{ category: Category }>('POST', '/categories', {
       name,
@@ -2650,6 +2978,8 @@ export const api = {
   whatsappDisconnect: () => send<Whatsapp>('POST', '/whatsapp/disconnect'),
   whatsappCartReminder: (on: boolean) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { cartReminder: on }),
+  whatsappUsualReminder: (p: { on?: boolean; perDay?: number }) =>
+    send<Whatsapp>('PATCH', '/whatsapp/settings', { usualReminder: p }),
   whatsappSettings: (events: Partial<Record<WaEvent, boolean>>) =>
     send<Whatsapp>('PATCH', '/whatsapp/settings', { events }),
   whatsappTest: () => send<Whatsapp>('POST', '/whatsapp/test'),
@@ -2687,7 +3017,7 @@ export const api = {
     if (p.offset) s.set('offset', String(p.offset));
     return get<{
       customers: Customer[];
-      stats: { customers: number; repeat: number; newThisMonth: number };
+      stats: { customers: number; repeat: number; newThisMonth: number; imported: number };
       /** the store's tags, most used first */
       tags: { tag: string; customers: number }[];
       next: number | null;
@@ -2701,6 +3031,12 @@ export const api = {
     send<{ anonymized: number }>('POST', `/customers/${phone}/forget`, { confirm }),
 
   marketing: () => get<Marketing>('/marketing'),
+  statusDoDia: () => get<StatusDoDia>('/marketing/status'),
+  saveStatusPlan: (p: Partial<StatusDoDia['plan']>) =>
+    send<StatusDoDia>('PATCH', '/marketing/status', p),
+  prepareStatus: () => send<StatusDoDia>('POST', '/marketing/status/today'),
+  updateStatusPost: (id: string, p: { state?: StatusPostState; productIds?: string[] }) =>
+    send<StatusDoDia>('POST', `/marketing/status/${id}`, p),
   createCoupon: (c: Record<string, unknown>) => send<{ coupons: Coupon[] }>('POST', '/coupons', c),
   updateCoupon: (id: string, c: Record<string, unknown>) =>
     send<{ coupons: Coupon[] }>('PATCH', `/coupons/${id}`, c),
@@ -2752,6 +3088,16 @@ export const api = {
     return get<{ entries: ActivityEntry[]; next: number | null }>(`/activity?${s}`);
   },
   account: () => get<Account>('/account'),
+  /** Indique e ganhe: the store's link code and the stores it brought (migration 0120) */
+  referrals: () =>
+    get<{
+      code: string;
+      stores: { name: string; joinedAt: string; rewarded: boolean }[];
+      pendingMonths: number;
+      appliedMonths: number;
+      welcomeDays: number;
+      referredBy: string | null;
+    }>('/account/referrals'),
   startSubscription: (p: {
     planId: string;
     method: 'card' | 'pix';

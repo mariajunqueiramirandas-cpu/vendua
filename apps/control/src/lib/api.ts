@@ -338,6 +338,93 @@ export interface StoreFunnel {
   revenueCents: number;
 }
 /** The storefront funnel across every store (Kernel beacon + Core's order_placed). */
+export type PartnerKind = 'contador' | 'fornecedor' | 'agencia' | 'consultor' | 'outro';
+export type PartnerStatus = 'pending' | 'active' | 'paused' | 'rejected';
+export interface Partner {
+  id: string;
+  code: string;
+  name: string;
+  kind: PartnerKind;
+  phone: string;
+  email: string | null;
+  city: string | null;
+  pixKey: string | null;
+  note: string | null;
+  status: PartnerStatus;
+  commissionBps: number;
+  commissionMonths: number;
+  approvedAt: string | null;
+  createdAt: string;
+  link: string | null;
+  stores: number;
+  dueCents: number;
+  paidCents: number;
+}
+export interface StoreReferral {
+  tenantId: string;
+  name: string;
+  slug: string;
+  referrer: string | null;
+  createdAt: string;
+  rewardedAt: string | null;
+}
+export interface PartnerDetail {
+  partner: Partner;
+  stores: { tenantId: string; name: string; slug: string; createdAt: string }[];
+  commissions: {
+    id: string;
+    store: string;
+    invoiceNumber: number;
+    paidCents: number;
+    commissionCents: number;
+    status: 'due' | 'paid' | 'void';
+    createdAt: string;
+  }[];
+  payouts: {
+    id: string;
+    totalCents: number;
+    commissions: number;
+    paidAt: string;
+    note: string | null;
+  }[];
+}
+export type NewPartner = {
+  name: string;
+  kind: PartnerKind;
+  phone: string;
+  email?: string;
+  city?: string;
+  pixKey?: string;
+  note?: string;
+  code?: string;
+};
+export type PartnerPatch = {
+  name?: string;
+  kind?: PartnerKind;
+  code?: string;
+  status?: PartnerStatus;
+  commissionBps?: number;
+  commissionMonths?: number;
+  email?: string | null;
+  city?: string | null;
+  pixKey?: string | null;
+  note?: string | null;
+};
+
+export interface SignupReport {
+  days: AnalyticsDays;
+  siteVisitors: number;
+  signup: { step: string; visitors: number }[];
+  setup: { step: string; visitors: number }[];
+  stores: {
+    created: number;
+    trialing: number;
+    paid: number;
+    firstOrder: number;
+    medianDaysToFirstOrder: number | null;
+  };
+}
+
 export interface StorefrontReport {
   days: AnalyticsDays;
   totals: StoreFunnel & { stores: number; avgTicketCents: number | null };
@@ -732,6 +819,7 @@ const apiBase = {
 
   webAnalytics: (property: WebProperty, days: AnalyticsDays) =>
     req<WebReport>(`/analytics/web?property=${property}&days=${days}`),
+  signupAnalytics: (days: AnalyticsDays) => req<SignupReport>(`/analytics/signup?days=${days}`),
   storefrontAnalytics: (days: AnalyticsDays) =>
     req<StorefrontReport>(`/analytics/storefronts?days=${days}`),
 
@@ -1085,6 +1173,20 @@ const fleet = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  partners: () => req<{ partners: Partner[]; referrals: StoreReferral[] }>('/partners'),
+  partner: (id: string) => req<PartnerDetail>(`/partners/${encodeURIComponent(id)}`),
+  createPartner: (body: NewPartner) =>
+    req<{ partner: Partner }>('/partners', { method: 'POST', body: JSON.stringify(body) }),
+  patchPartner: (id: string, patch: PartnerPatch) =>
+    req<{ partner: Partner }>(`/partners/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  payPartner: (id: string, note: string | null) =>
+    req<{ payout: { id: string; totalCents: number; commissions: number } }>(
+      `/partners/${encodeURIComponent(id)}/payouts`,
+      { method: 'POST', body: JSON.stringify({ note }) },
+    ),
   signupCoupons: () => req<{ coupons: SignupCoupon[] }>('/signup-coupons'),
   createSignupCoupons: (body: NewSignupCoupon) =>
     req<{ coupons: SignupCoupon[] }>('/signup-coupons', {

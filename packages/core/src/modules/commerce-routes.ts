@@ -61,10 +61,12 @@ import {
   ORDER_STATES,
   TERMINAL_STATES,
   canTransition,
+  loadOrderStatusView,
   loadOrderView,
   loadOrderViews,
   readStorefrontOrder,
   storefrontOrderAccess,
+  trackedPixCartTx,
   transitionOrder,
   type DeliveryMode,
   type OrderState,
@@ -481,12 +483,23 @@ export function mountCommerce(d: Deps) {
   // an answer skips straight to the replay.
   checkout.post('/orders/:id/pay', async (c) => {
     const tenant = c.get('tenant') as Tenant;
-    const cartId = await sessionCartId(c, sessionSecret);
     const orderId = uuidParam(c, 'id');
+    // Kernel 1.26: the store's WhatsApp link (status only) pays a Pix order too, never a card
+    const access = (c.req.header('authorization') ?? '').startsWith('Bearer vot.')
+      ? await storefrontOrderAccess(
+          c.req.header('authorization'),
+          tenant.id,
+          orderId,
+          sessionSecret,
+        )
+      : null;
+    const cartId = access
+      ? await withTenant(sql, tenant.id, (tx) => trackedPixCartTx(tx, tenant.id, orderId))
+      : await sessionCartId(c, sessionSecret);
     const key = requireIdemKey(c);
     const raw = await boundedText(c, 1_000);
     const body = raw.trim() !== '' ? parseJsonObject(raw) : {};
-    const cardForm = body.card === 'form';
+    const cardForm = !access && body.card === 'form';
     const next = (await answered(tenant.id, key))
       ? null
       : await preparePayment(
@@ -502,7 +515,9 @@ export function mountCommerce(d: Deps) {
     return d.idempotency(sql, async (_c, tx) => ({
       status: 200,
       body: {
-        order: await loadOrderView(tx, tenant.id, orderId, cartId),
+        order: access
+          ? await loadOrderStatusView(tx, tenant.id, orderId)
+          : await loadOrderView(tx, tenant.id, orderId, cartId),
         next: next ?? { kind: 'none' },
       },
     }))(c);
@@ -1122,28 +1137,45 @@ export function mountCommerce(d: Deps) {
               mode: DeliveryMode;
               online: boolean | null;
               status: string | null;
+              deposit_cents: number | null;
+              held: { id: string; charge: string | null }[];
             }[]
           >`
             select state, delivery ->> 'mode' as mode, (payment ->> 'online')::boolean as online,
-                   payment ->> 'status' as status
+                   payment ->> 'status' as status, deposit_cents,
+                   coalesce((
+                     select json_agg(json_build_object('id', p.id, 'charge', p.charge))
+                     from payments p
+                     where p.tenant_id = ${t.id} and p.order_id = ${orderId}
+                       and p.status in ('approved', 'partially_refunded')
+                       and p.review is distinct from 'amount_mismatch'
+                   ), '[]'::json) as held
             from orders where tenant_id = ${t.id} and id = ${orderId}
           `
         )[0],
     );
+    // like the admin, a cancel keeps a sinal that came in (0128): it goes back only by Estornar
+    const keep =
+      pre?.deposit_cents && to === 'cancelled'
+        ? new Set(pre.held.filter((p) => p.charge !== 'balance').map((p) => p.id))
+        : null;
     if (pre?.online && canTransition(pre.state, to, pre.mode)) {
       const pay = { sql, provider: d.provider, sessionSecret };
-      if (
-        (to === 'cancelled' || to === 'refunded') &&
-        (pre.status === 'paid' || pre.status === 'partially_refunded')
-      )
+      const backNow = keep ? pre.held.filter((p) => !keep.has(p.id)).map((p) => p.id) : null;
+      const captured =
+        pre.status === 'paid' ||
+        pre.status === 'partially_refunded' ||
+        (!!pre.deposit_cents && pre.held.length > 0);
+      if (backNow?.length || (!keep && (to === 'cancelled' || to === 'refunded') && captured))
         await refundOrderPayments(pay, t.id, orderId, {
           amountCents: null,
           reason: note ?? `pedido ${to === 'cancelled' ? 'cancelado' : 'estornado'}`,
           requestedBy: null,
           key: `control:${requireIdemKey(c)}`,
           requireApproved: true,
+          ...(backNow?.length ? { paymentIds: backNow } : {}),
         });
-      else if (to === 'cancelled') await cancelOpenAttempts(pay, t.id, orderId);
+      if (to === 'cancelled' && (keep || !captured)) await cancelOpenAttempts(pay, t.id, orderId);
     }
     const res = await claimTenant(c, t.id, async (tx) => {
       await transitionOrder(tx, t.id, orderId, to, 'staff', note ? { note } : {});

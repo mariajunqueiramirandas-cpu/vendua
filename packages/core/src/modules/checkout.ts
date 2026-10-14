@@ -1,3 +1,4 @@
+import { deliveryPaused } from './freio.ts';
 import { HttpError } from '../platform/http.ts';
 import { validPhone } from './customer.ts';
 import { deliveryPricing, validateLine, type CartView } from './cart.ts';
@@ -42,6 +43,11 @@ export interface CheckoutInput {
   scheduledFor?: string;
   /** the total Core showed the shopper; a different one now → 409 PRICES_CHANGED */
   expectedTotalCents?: number | null;
+  /** the link the shopper came from (`?ref=`, a Status post or the bag card); anything that
+   *  isn't one is dropped, never a 4xx */
+  ref?: string | null;
+  /** Plano semanal (0127): the shopper's yes to the plan the cart was built from */
+  subscribe?: boolean;
 }
 
 export type ZoneRowLike = ZoneLike;
@@ -188,6 +194,12 @@ export function validateCheckout<Z extends ZoneLike>(
     if (!(settings?.delivery_enabled ?? true)) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');
     }
+    // Freio (0125): delivery braked for a while; pickup and another day's encomenda stay open
+    const paused = input.scheduledFor ? null : deliveryPaused(settings);
+    if (paused)
+      throw new HttpError(409, 'DELIVERY_PAUSED', 'delivery is paused for now', {
+        until: paused.toISOString(),
+      });
     const match = resolveDelivery(
       zones,
       {

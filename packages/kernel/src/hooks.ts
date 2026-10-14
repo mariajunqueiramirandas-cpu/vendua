@@ -14,6 +14,8 @@ import type {
   DeliveryZone,
   ImportLine,
   ImportReport,
+  PartyInput,
+  PartyQuote,
   LinePicks,
   LineQuote,
   LoyaltyCard,
@@ -225,10 +227,18 @@ export interface CartMutations {
   share: () => Promise<{ code: string; url: string; expiresAt: string }>;
   /** Kernel 1.2 — "pedir de novo": a past order's lines back in the sacola */
   reorder: (orderId: string) => Promise<{ cart: Cart; report: ImportReport }>;
+  /** Kernel 1.26 — the cart becomes a party (`api.buildPartyCart`). Optional like `addLine`;
+   *  `useCart().mutations` always has it. */
+  buildParty?: (
+    input: PartyInput,
+  ) => Promise<{ cart: Cart; quote: PartyQuote; report: ImportReport }>;
+  /** Kernel 1.26 — the cart becomes a weekly plan's basket (`api.buildPlanCart`) */
+  buildPlan?: (planId: string) => Promise<{ cart: Cart; report: ImportReport }>;
 }
 
 /** The Kernel's own cart mutations: every one, `addLine` and `setNote` included. */
-type KernelCartMutations = CartMutations & Required<Pick<CartMutations, 'addLine' | 'setNote'>>;
+type KernelCartMutations = CartMutations &
+  Required<Pick<CartMutations, 'addLine' | 'setNote' | 'buildParty' | 'buildPlan'>>;
 
 export function useCart(): {
   /** null = no session/cart yet (or a resolved empty read). */
@@ -294,6 +304,16 @@ export function useCart(): {
       },
       reorder: (orderId) =>
         api.reorder(orderId).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
+      buildParty: (input) =>
+        api.buildPartyCart(input).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
+      buildPlan: (planId) =>
+        api.buildPlanCart(planId).then((r) => {
           bump(r.cart);
           return r;
         }),
@@ -1081,10 +1101,21 @@ export function useStoreHours(): {
 export function useDeliverySummary(): DeliverySummary & { loading: boolean } {
   const { store, loading } = useStore();
   const { zones, loading: zonesLoading } = useDeliveryZones();
+  // a delivery pause ends on the clock, not on a refetch
+  const [tick, setTick] = useState(0);
   const summary = useMemo(
     () => (store ? deliverySummary(store, zones) : { delivery: null, pickup: null }),
-    [store, zones],
+    [store, zones, tick],
   );
+  const pausedUntil = summary.delivery?.pausedUntil;
+  useEffect(() => {
+    if (!pausedUntil) return;
+    const t = setTimeout(
+      () => setTick((n) => n + 1),
+      Math.min(Date.parse(pausedUntil) - Date.now() + 1000, 2 ** 31 - 1),
+    );
+    return () => clearTimeout(t);
+  }, [pausedUntil]);
   return { ...summary, loading: loading || zonesLoading };
 }
 

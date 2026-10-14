@@ -11,6 +11,10 @@ import { ApiError, withRetryScope } from './api.ts';
 export const qk = {
   session: ['session'] as const,
   home: ['home'] as const,
+  // under 'home': whatever refreshes Início refreshes it too
+  homeSavings: ['home', 'savings'] as const,
+  // under 'home': the store topic and every order topic refresh the kitchen's queue
+  freio: ['home', 'freio'] as const,
   board: ['orders', 'board'] as const,
   orders: (p: object) => ['orders', 'list', p] as const,
   scheduled: (from: string, to: string) => ['orders', 'scheduled', from, to] as const,
@@ -18,6 +22,9 @@ export const qk = {
   // under 'orders': every order topic refreshes the kitchen too
   kitchen: ['orders', 'kitchen'] as const,
   catalog: ['catalog'] as const,
+  // under 'catalog': the catalog topic refreshes it
+  party: ['catalog', 'party'] as const,
+  plans: ['catalog', 'plans'] as const,
   product: (id: string) => ['catalog', 'product', id] as const,
   // Estoque's reads sit under 'catalog': a sale, a cancel or a catalog write refreshes them
   addons: ['catalog', 'addons'] as const,
@@ -33,6 +40,8 @@ export const qk = {
   customers: (p: object) => ['customers', p] as const,
   customer: (phone: string) => ['customers', 'one', phone] as const,
   marketing: ['marketing'] as const,
+  // under 'marketing': the marketing topic refreshes it
+  statusDoDia: ['marketing', 'status'] as const,
   share: ['share'] as const,
   // a preset is one key whatever day it is: Core resolves its days and says which in `range`
   reports: (period: string, from = '', to = '') => ['reports', period, from, to] as const,
@@ -40,6 +49,7 @@ export const qk = {
   activity: ['activity'] as const,
   activityOf: (kind: string) => ['activity', kind] as const,
   account: ['account'] as const,
+  referrals: ['account', 'referrals'] as const,
   appearance: ['appearance'] as const,
   sessions: ['me', 'sessions'] as const,
   statement: (month: string) => ['payments', 'statement', month] as const,
@@ -47,6 +57,8 @@ export const qk = {
   helpStatus: ['help', 'status'] as const,
   signupPlans: ['signup', 'plans'] as const,
   signupCoupon: (code: string, planId: string) => ['signup', 'coupon', code, planId] as const,
+  signupReferral: (code: string, planId: string, token: string) =>
+    ['signup', 'referral', code, planId, token] as const,
   imports: ['imports'] as const,
   importOf: (id: string) => ['imports', id] as const,
   // every Vendedor screen under one root: the live topic `vendedor` refreshes them all

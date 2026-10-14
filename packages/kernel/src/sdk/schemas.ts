@@ -252,6 +252,33 @@ export const recentOrder = defineBlock({
   },
 });
 
+/** Kernel 1.26 — Festa calculada: a card to the party calculator (`/festa`). Nothing while the
+ *  store has no party profile. */
+export const partyCta = defineBlock({
+  type: 'sdk:party-cta',
+  category: 'promo',
+  settings: {
+    title: text({ max: 60, default: 'Vai dar uma festa?' }),
+    text: text({ max: 160, default: 'Diga quantas pessoas vêm e a gente calcula tudo.' }),
+    cta: text({ max: 30, default: 'Monte sua festa' }),
+  },
+});
+
+/** Kernel 1.26 — Plano semanal: a card to the store's weekly plans (`/planos`). Nothing while the
+ *  store offers none. */
+export const plansCta = defineBlock({
+  type: 'sdk:plans-cta',
+  category: 'promo',
+  settings: {
+    title: text({ max: 60, default: 'Receba toda semana' }),
+    text: text({
+      max: 160,
+      default: 'Escolha uma cesta e a loja entrega no mesmo dia, toda semana.',
+    }),
+    cta: text({ max: 30, default: 'Ver os planos' }),
+  },
+});
+
 export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pageContent,
   header,
@@ -271,6 +298,8 @@ export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pixInfo,
   loyaltyTeaser,
   recentOrder,
+  partyCta,
+  plansCta,
 ];
 
 /** The shape the artifact manifest publishes (template migrations target areas by category). */

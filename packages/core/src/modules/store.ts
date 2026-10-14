@@ -80,6 +80,8 @@ export interface LoyaltyProgram {
   rewardValidDays: number;
 }
 
+export type FreioLevel = 'normal' | 'busy' | 'full' | 'pickup_only';
+
 export interface StoreSettingsRow {
   tenant_id: string;
   tagline: string | null;
@@ -103,6 +105,28 @@ export interface StoreSettingsRow {
   demand_level?: 'normal' | 'high';
   /** when 'high' goes back to normal by itself (migration 0089) */
   demand_until?: Date | string | null;
+  /** Freio automático (0125); optional so fixtures written before it still type */
+  kitchen_capacity?: number;
+  dispatch_buffer_minutes?: number;
+  max_promise_minutes?: number;
+  freio_mode?: 'off' | 'suggest' | 'auto';
+  freio_level?: FreioLevel;
+  freio_level_since?: Date | string | null;
+  freio_backlog_minutes?: number;
+  delivery_paused_until?: Date | string | null;
+  /** Festa calculada (0126): orders a day per weekday / date; the D−1 reminder */
+  encomenda_capacity?: import('./encomenda-capacity.ts').EncomendaCapacity | null;
+  encomenda_reminder?: boolean;
+  /** Festa calculada F2 (0128): the sinal — see modules/sinal.ts */
+  deposit_bps?: number;
+  deposit_min_cents?: number | null;
+  deposit_policy?: string | null;
+  freio_suggestion?: { level: FreioLevel; pausedUntil: string | null; at: string } | null;
+  freio_hold_until?: Date | string | null;
+  late_mode?: 'off' | 'suggest' | 'auto';
+  apology_kind?: 'free_delivery' | 'fixed';
+  apology_value_cents?: number;
+  apology_budget_cents?: number;
   // Phase 2 (migration 0051) — optional so pre-0051 fixtures still type
   preorder_payment_methods?: string[];
   preorder_max_days?: number;

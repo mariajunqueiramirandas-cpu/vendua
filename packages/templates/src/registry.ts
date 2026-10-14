@@ -79,11 +79,30 @@ const recentOrderOnHome = defineTemplateMigration({
   },
 });
 
+/** Kernel 1.26's `sdk:party-cta` on the home page, like `sdk:recent-order`: the door to the
+ *  party calculator. It renders nothing while the store has no party kind, so placing it
+ *  everywhere is safe. */
+const partyCtaOnHome = defineTemplateMigration({
+  id: '2026-10-party-cta-on-home',
+  description:
+    'place sdk:party-cta (Kernel 1.26) in the first home-page area accepting promo blocks',
+  requiresKernel: '>=1.26.0',
+  pages: ['home'],
+  up(t, ctx) {
+    if (t.has('sdk:party-cta') || t.wasRemoved('sdk:party-cta')) return;
+    const hit = findArea(t, 'promo', ctx.sections);
+    if (!hit)
+      throw new MigrationConflict('no area on the home page accepts promo blocks (or it is full)');
+    t.addBlock(hit.section, hit.area, { type: 'sdk:party-cta' });
+  },
+});
+
 export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [
   deliveryEtaOnProduct,
   loyaltyTeaserOnProduct,
   bagBarOnLayout,
   recentOrderOnHome,
+  partyCtaOnHome,
 ];
 
 export function findMigration(id: string): TemplateMigration | undefined {

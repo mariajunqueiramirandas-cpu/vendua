@@ -254,6 +254,8 @@ export interface StaffEventMap {
     trialEndsAt?: Opt<string>;
     /** the signup coupon and what it gave, "AMIGO-7KQ2 (30 dias grátis)" (ADR 0042) */
     coupon?: Opt<string>;
+    /** who brought it: "loja Bolos da Nena" or "parceiro Escritório Lima" (migration 0120) */
+    referral?: Opt<string>;
   };
   'store.onboarding': { step: OnboardingStep };
   'billing.paid': {
@@ -303,6 +305,8 @@ export interface StaffEventMap {
     by: Name;
   };
   'store.live': { storeName: Name; host: Opt<string> };
+  /** someone applied on the site to bring stores (migration 0120) — staff approve in the CRM */
+  'partner.applied': { name: Name; kind: string; city: Opt<string> };
   'incident.opened': {
     incidentId: Id;
     kind: string;
@@ -710,6 +714,13 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'silent',
     severity: 'info',
     label: 'promote, rollback ou pin pela equipe',
+  },
+  'partner.applied': {
+    category: 'crm',
+    level: 'normal',
+    severity: 'info',
+    label: 'parceiro novo',
+    hint: 'contador, fornecedor ou agência pediu para indicar lojas — aprovar em Lojas → Parceiros',
   },
   'store.live': {
     category: 'frota',

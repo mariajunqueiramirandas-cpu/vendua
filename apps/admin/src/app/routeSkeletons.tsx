@@ -114,6 +114,8 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   product: () => page('Produto', <ProductSkeleton />, { subtitle: false }),
   menu: () => page('Cardápio', <MenuSkeleton />, { wide: true, subtitle: false }),
   importMenu: () => page('Importar cardápio', <FieldSkeleton />),
+  festa: () => page('Calculadora de festa', <RowsSkeleton rows={2} />),
+  planos: () => page('Planos semanais', <RowsSkeleton rows={3} />),
   stock: () =>
     page(
       'Estoque',
@@ -137,6 +139,8 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
       </div>,
     ),
   marketing: () => page('Marketing', <SectionsSkeleton columns={2} />, { wide: true }),
+  bagCard: () => page('Cartão da sacola', <TilesSkeleton count={1} />),
+  statusDoDia: () => page('Status do dia', <SectionsSkeleton columns={2} />, { wide: true }),
   appearance: () => (
     <EditorFrame>
       <HeaderSkeleton title="Aparência" subtitle={false} />

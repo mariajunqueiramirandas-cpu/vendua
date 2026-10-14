@@ -7,7 +7,7 @@ import { phoneVariants } from '../store-whatsapp/text.ts';
 // expired) reports why and discounts nothing, and checkout re-checks it with the
 // customer's phone (per-phone limits, first order, personal rewards).
 
-export type CouponSource = 'staff' | 'merchant' | 'loyalty' | 'agent';
+export type CouponSource = 'staff' | 'merchant' | 'loyalty' | 'agent' | 'apology';
 
 export interface CouponRow {
   id: string;

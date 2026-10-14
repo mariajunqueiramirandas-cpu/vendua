@@ -31,7 +31,6 @@ const PII = [
   'portão azul',
   '-22.9',
   'chave-pix',
-  '00020126',
   'https://pay',
   'deixar na portaria',
   'BEMVINDO',
@@ -104,6 +103,7 @@ const STATUS_KEYS = [
   'id',
   'items',
   'number',
+  'payment',
   'placedAt',
   'scheduledFor',
   'state',
@@ -123,11 +123,28 @@ const paths = (v: unknown, at = ''): string[] =>
       })
     : [];
 
+// Kernel 1.26: a Pix order's link pays it — what's due, its copia e cola, a sinal's parts
+const PAYMENT_PATHS = new Set([
+  'payment.status',
+  'payment.online',
+  'payment.dueCents',
+  'payment.pix',
+  'payment.pix.copyPaste',
+  'payment.pix.expiresAt',
+  'payment.sinal',
+  'payment.sinal.depositCents',
+  'payment.sinal.balanceCents',
+  'payment.sinal.depositPaid',
+  'payment.sinal.balancePaid',
+]);
+
 const assertStatusOnly = (o: unknown) => {
   const json = JSON.stringify(o);
   for (const bit of PII) expect(json).not.toContain(bit);
   expect(Object.keys(o as object).sort()).toEqual(STATUS_KEYS);
-  expect([...new Set(paths(o))].sort()).toEqual(
+  const all = [...new Set(paths(o))];
+  expect(all.filter((p) => p.startsWith('payment.') && !PAYMENT_PATHS.has(p))).toEqual([]);
+  expect(all.filter((p) => !p.startsWith('payment.')).sort()).toEqual(
     [
       ...STATUS_KEYS,
       'delivery.mode',
@@ -427,10 +444,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('order tracking (db)', () => {
     expect(cross.status).toBe(404);
   });
 
-  test('pay, card and reorder refuse it', async () => {
+  test('a Pix order’s link can ask for its Pix; card and reorder refuse it', async () => {
+    // Kernel 1.26: the link pays a Pix order (this store's Pix is its own key: nothing to make)
     const pay = await call('POST', `/checkout/v1/orders/${order.id}/pay`, {}, track());
-    expect(pay.status).toBe(401);
-    expect(pay.body.error.code).toBe('SESSION_REQUIRED');
+    expect(pay.status).toBe(409);
+    expect(pay.body.error.code).toBe('PAYMENT_NOT_REQUIRED');
     const card = await call('POST', `/checkout/v1/orders/${order.id}/card`, {}, track());
     expect(card.status).toBe(401);
     const fresh = await call('POST', '/checkout/v1/session', undefined, { host });

@@ -34,6 +34,8 @@ const Menu = screen(chunks.menu, (m) => m.default);
 const ProductPage = screen(chunks.product, (m) => m.default);
 const ImportPage = screen(chunks.importMenu, (m) => m.default);
 const Stock = screen(chunks.stock, (m) => m.default);
+const Festa = screen(chunks.festa, (m) => m.default);
+const Planos = screen(chunks.planos, (m) => m.default);
 const Store = screen(chunks.store, (m) => m.default);
 const Payments = screen(chunks.payments, (m) => m.default);
 const Whatsapp = screen(chunks.whatsapp, (m) => m.default);
@@ -41,6 +43,8 @@ const Printers = screen(chunks.printers, (m) => m.default);
 const Customers = screen(chunks.customers, (m) => m.default);
 const CustomerPage = screen(chunks.customer, (m) => m.default);
 const Marketing = screen(chunks.marketing, (m) => m.default);
+const BagCard = screen(chunks.bagCard, (m) => m.default);
+const StatusDoDia = screen(chunks.statusDoDia, (m) => m.default);
 const Appearance = screen(chunks.appearance, (m) => m.default);
 const Reports = screen(chunks.reports, (m) => m.default);
 const Team = screen(chunks.team, (m) => m.default);
@@ -202,6 +206,8 @@ export default function App() {
                   <Route path="cardapio/produto/:id" element={<ProductPage />} />
                   <Route path="cardapio/importar" element={<ImportPage />} />
                   <Route path="cardapio/estoque" element={<Stock />} />
+                  <Route path="cardapio/festa" element={<Festa />} />
+                  <Route path="cardapio/planos" element={<Planos />} />
                   <Route path="loja" element={<Store />} />
                   <Route path="pagamentos" element={<Payments />} />
                   <Route path="whatsapp" element={<Whatsapp />} />
@@ -210,6 +216,8 @@ export default function App() {
                   <Route path="clientes" element={<Customers />} />
                   <Route path="clientes/:phone" element={<CustomerPage />} />
                   <Route path="marketing" element={<Marketing />} />
+                  <Route path="marketing/cartao" element={<BagCard />} />
+                  <Route path="marketing/status" element={<StatusDoDia />} />
                   <Route path="aparencia" element={<Appearance />} />
                   <Route path="relatorios" element={<Reports />} />
                   <Route path="equipe" element={<Team />} />

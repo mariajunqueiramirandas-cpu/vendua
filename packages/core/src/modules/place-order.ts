@@ -1,3 +1,7 @@
+import { assertDateRoomTx } from './encomenda-capacity.ts';
+import { orderPartyTx } from './party.ts';
+import { planToSubscribeTx, subscribeTx } from './shopper-plans.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
@@ -5,7 +9,7 @@ import { loadCartRow, loadCartView, loadZoneRows, repriceLines, storeCoords } fr
 import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
-import { enqueueOrderMessageTx } from '../store-whatsapp/messages.ts';
+import { enqueueOrderMessageTx, enqueueSinalDueTx } from '../store-whatsapp/messages.ts';
 import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
@@ -13,16 +17,23 @@ import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts'
 import {
   freePayment,
   offlinePayment,
+  offlineSinalPayment,
   onlineOffer,
   onlinePayment,
+  onlineSinalPayment,
 } from './payments/store-payments.ts';
+import { newSinal, sinalApplies, sinalRule } from './sinal.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
 import { planHas } from './billing/plans.ts';
 import type { QrTable } from './pdv/qr.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 import { drawAddonStock, drawStock, modifierDemand, stockDemand } from './stock.ts';
+import { deliveryWindow, freioConfig, kitchenNowTx, promiseZoneOf } from './freio.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
+
+/** a link's attribution code (`?ref=`, Status do dia and the bag card; 0124) */
+export const REF_RE = /^[a-z0-9]{6,12}$/;
 
 /** R$ 10.000: no shopper pays a delivery with more than that in cash */
 export const MAX_CHANGE_CENTS = 1_000_000;
@@ -56,6 +67,8 @@ export async function placeOrderTx(
     threadId?: string | null;
     /** dine_in: the QR's table, its open comanda already locked (tableForToken) */
     table?: QrTable | null;
+    /** the caller sends the shopper its own message (a plan's week), not the 'placed' one */
+    quiet?: boolean;
   } = {},
 ): Promise<string> {
   // One pipelined batch. postgres.js sends a query when it is first executed, so the locks are
@@ -161,6 +174,15 @@ export async function placeOrderTx(
         field: 'payment.method',
       });
   }
+  // Festa calculada (0126): the party's units, frozen now; a full day says so (the cart already
+  // leaves it out of its dates, so this answers a stale page)
+  const party = cart.party ? await orderPartyTx(tx, tenantId, cart.party, cart.items) : null;
+  if (
+    typeof body.scheduledFor === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(body.scheduledFor) &&
+    (settings?.encomenda_capacity || party?.groups.length)
+  )
+    await assertDateRoomTx(tx, tenantId, settings?.encomenda_capacity, body.scheduledFor, party);
   const scheduledFor = validateSchedule(
     cart.schedule,
     body.scheduledFor ?? undefined,
@@ -183,6 +205,11 @@ export async function placeOrderTx(
         )
       : 0;
   const phone = (body.customer.phone && normalizePhone(body.customer.phone)) || null;
+  // Plano semanal (0127): the shopper's yes to the cart's plan, checked before anything is written
+  const subscribe =
+    cart.plan && body.subscribe === true
+      ? await planToSubscribeTx(tx, tenantId, cart.plan, body, phone, scheduledFor)
+      : null;
 
   // coupon: re-evaluated with the phone (per-phone limits, first order, personal rewards)
   let discount = 0;
@@ -234,6 +261,21 @@ export async function placeOrderTx(
       totalCents: total,
       expectedTotalCents: body.expectedTotalCents,
     });
+  // Festa calculada F2 (0128): a party, or an encomenda from the store's amount on, locks its
+  // date with a sinal by Pix; the rest is paid before the date or at the caixa
+  const sinal =
+    scheduledFor &&
+    !atTable &&
+    !cart.plan &&
+    opts.source !== 'plan' &&
+    sinalApplies(sinalRule(settings), { party: !!cart.party, totalCents: total })
+      ? newSinal(total, sinalRule(settings)!)
+      : null;
+  if (sinal && body.payment.method !== 'pix')
+    throw new HttpError(422, 'PAYMENT_NOT_ALLOWED', 'the sinal is paid by Pix', {
+      field: 'payment.method',
+      allowed: ['pix'],
+    });
 
   const orderId = crypto.randomUUID();
   const stockDrawn = await drawStock(
@@ -272,14 +314,25 @@ export async function placeOrderTx(
       ? { provider: 'pdv', method: 'tab', status: 'pending', online: false }
       : total === 0
         ? freePayment(method, now)
-        : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
-          ? onlinePayment(offer.provider, method, total)
-          : offlinePayment(settings, method, total, number)),
+        : sinal
+          ? offer.online && offer.provider
+            ? onlineSinalPayment(offer.provider, sinal)
+            : offlineSinalPayment(settings, number, sinal)
+          : offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+            ? onlinePayment(offer.provider, method, total)
+            : offlinePayment(settings, method, total, number)),
     ...(changeFor !== null ? { changeForCents: changeFor } : {}),
+    ...(sinal ? { sinal } : {}),
   };
   const source = atTable ? 'table_qr' : (opts.source ?? 'storefront');
 
-  const prep = settings?.prep_time_minutes ?? 30;
+  // Freio (0125): the promise is the kitchen's real queue, not the number typed once
+  const cfg = freioConfig(settings);
+  const kitchen = scheduledFor
+    ? null
+    : await kitchenNowTx(tx, tenantId, cfg, settings?.hours?.timezone || 'America/Sao_Paulo', now);
+  const ready = cfg.prep + (kitchen?.backlogMinutes ?? 0);
+  const win = deliveryWindow(promiseZoneOf(match.zone), ready, cfg.buffer);
   const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
   const delivery =
     body.delivery.mode === 'delivery'
@@ -297,8 +350,10 @@ export async function placeOrderTx(
           feeCents: deliveryFee,
           etaMin: match.zone?.eta_min_minutes ?? null,
           etaMax: match.zone?.eta_max_minutes ?? null,
-          promisedFrom: scheduledFor ? null : at(match.zone?.eta_min_minutes ?? prep),
-          promisedTo: scheduledFor ? null : at(match.zone?.eta_max_minutes ?? prep),
+          // the drive alone: accepting re-promises from it, never from etaMin (prep is in there)
+          driveMinutes: match.zone?.kind === 'distance' ? match.zone.drive_minutes : null,
+          promisedFrom: scheduledFor ? null : at(win.from),
+          promisedTo: scheduledFor ? null : at(win.to),
         }
       : atTable
         ? {
@@ -308,8 +363,8 @@ export async function placeOrderTx(
             feeCents: 0,
             etaMin: null,
             etaMax: null,
-            promisedFrom: at(prep),
-            promisedTo: at(prep),
+            promisedFrom: at(ready),
+            promisedTo: at(ready),
             table: table!.label,
             tabId: null as string | null,
           }
@@ -320,8 +375,8 @@ export async function placeOrderTx(
             feeCents: 0,
             etaMin: null,
             etaMax: null,
-            promisedFrom: scheduledFor ? null : at(prep),
-            promisedTo: scheduledFor ? null : at(prep),
+            promisedFrom: scheduledFor ? null : at(ready),
+            promisedTo: scheduledFor ? null : at(ready),
           };
 
   const customer = {
@@ -374,16 +429,18 @@ export async function placeOrderTx(
       );
     (delivery as { tabId?: string | null }).tabId = tabId;
   }
+  const ref = typeof body.ref === 'string' && REF_RE.test(body.ref) ? body.ref : null;
   await tx`
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
-                        stock_drawn, addon_stock_drawn)
+                        stock_drawn, addon_stock_drawn, ref, party, deposit_cents)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
-            ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null})
+            ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
+            ${ref}, ${party ? tx.json(party as never) : null}, ${sinal?.depositCents ?? null})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
@@ -432,7 +489,7 @@ export async function placeOrderTx(
     tx`
       insert into analytics_events (tenant_id, name, at, session_id, props)
       values (${tenantId}, 'order_placed', now(), ${cartId},
-        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}), ...(paymentAdjustment ? { payment_adjustment: paymentAdjustment } : {}) })})
+        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}), ...(paymentAdjustment ? { payment_adjustment: paymentAdjustment } : {}), ...(ref ? { ref } : {}) })})
     `,
     // the merchant admin's live board rings on commit
     emitAdminTx(tx, tenantId, 'order.placed', orderId),
@@ -474,7 +531,19 @@ export async function placeOrderTx(
   }
   // each hook re-checks everything in a savepoint of its own; the flags only skip a store that
   // has neither, which is what their first read would have found
-  if (store?.whatsapp !== false) await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+  if (store?.whatsapp !== false && !opts.quiet) {
+    await enqueueOrderMessageTx(tx, tenantId, orderId, 'placed');
+    if (sinal) await enqueueSinalDueTx(tx, tenantId, orderId);
+  }
+  if (subscribe)
+    await subscribeTx(
+      tx,
+      tenantId,
+      subscribe,
+      orderId,
+      body,
+      !!opts.provenPhone && phoneVariants(subscribe.phone).includes(opts.provenPhone),
+    );
   if (store?.printers !== false) await enqueueOrderPrintTx(tx, tenantId, orderId, 'placed');
   return orderId;
 }

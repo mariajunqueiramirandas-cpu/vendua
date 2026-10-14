@@ -3,7 +3,9 @@ import { controlTx } from '../modules/control.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { LeaseLost, wipeAuth, type Fence } from './auth-store.ts';
-import { enqueueTextTx, optInAck, optOutAck } from './messages.ts';
+import { consentUsualTx, usualReminderOffered } from '../modules/usual-reminder.ts';
+import { planKeywordTx } from '../modules/shopper-plans.ts';
+import { enqueueTextTx, optInAck, optOutAck, optedOutTx, usualAck } from './messages.ts';
 import { NOTICE_KINDS } from './proactive.ts';
 import type { Inbound, Receipt, StateUpdate } from './session.ts';
 import { jidForPhone, optKeyword, phoneVariants } from './text.ts';
@@ -230,6 +232,35 @@ export async function handleInbound(sql: Sql, tenantId: string, m: Inbound): Pro
     // the spelling the store texted (the contact may be on record by its jid)
     const phone = m.phone ? (/^\d{10,11}$/.test(known.address) ? known.address : m.phone) : null;
     const jid = phone ? null : to.jids[0]!;
+    if (kw === 'remind') {
+      // LEMBRAR under a delivered order: "o de sempre" (modules/usual-reminder.ts), only while the
+      // store offers it and never for a number that said SAIR
+      if (!phone || !(await usualReminderOffered(tx, tenantId))) return;
+      if (await optedOutTx(tx, tenantId, phone)) return;
+      // asked already: a repeat earns no second ack
+      const [had] = await tx`select 1 from usual_reminders where tenant_id = ${tenantId}
+                               and phone = any(${phoneVariants(phone)}::text[])`;
+      if (had) return;
+      await consentUsualTx(tx, tenantId, phone, null, 'whatsapp');
+      // an opt_in marked 'usual': the admin's log tells it from a VOLTAR
+      await tx`
+        insert into store_wa_messages (tenant_id, kind, event, phone, body, expires_at)
+        values (${tenantId}, 'opt_in', 'usual', ${phone}, ${usualAck(name)},
+                now() + interval '30 minutes')`;
+      await emitAdminTx(tx, tenantId, 'whatsapp', 'usual');
+      return;
+    }
+    if (kw === 'plan_yes' || kw === 'plan_skip' || kw === 'plan_stop') {
+      // Plano semanal (0127): a word for the number's plans; none = the store's conversation
+      if (!phone) return;
+      const answer = await planKeywordTx(tx, tenantId, phone, kw);
+      if (!answer) return;
+      await tx`
+        insert into store_wa_messages (tenant_id, kind, event, phone, body, expires_at)
+        values (${tenantId}, 'opt_in', 'plan', ${phone}, ${answer}, now() + interval '30 minutes')`;
+      await emitAdminTx(tx, tenantId, 'whatsapp', 'plan');
+      return;
+    }
     const added = await tx`
       insert into store_wa_optouts (tenant_id, phone, jid) values (${tenantId}, ${phone}, ${jid})
       on conflict do nothing returning tenant_id`;

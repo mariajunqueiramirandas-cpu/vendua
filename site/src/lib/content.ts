@@ -23,7 +23,8 @@ if (admin.protocol !== 'https:' && admin.hostname !== '127.0.0.1' && admin.hostn
  * `plans/live.svelte.ts`, which updates these from the CRM (prices, trial, Duá's conversations,
  * `available`), so a price changed in the CRM shows without a new build. The admin charges
  * from Core. Bandeira is the recommended one: the site's sign-up links preselect it.
- * `trial` is the only free offer (Bandeira, no card) and the only "grátis" postbuild.ts lets through.
+ * `trial` is the only free offer (Mirim and Bandeira, no card; owner, 2026-10-13) and the only
+ * "grátis" postbuild.ts lets through.
  * `available` follows the CRM's flag of the same name (Core answers 409 PLAN_UNAVAILABLE for a closed
  * plan): a closed plan keeps its price and perks but gets no sign-up link.
  */
@@ -33,7 +34,7 @@ export const plans = {
     name: 'Venduá Mirim',
     short: 'Mirim',
     price: 'R$ 69,90',
-    trial: null,
+    trial: '14 dias grátis',
     available: true,
     features: {
       kds: false,
@@ -130,3 +131,19 @@ export const push = {
     `${o.customer} · ${o.total} · ${o.mode}`,
   action: 'aceitar',
 };
+
+/**
+ * What real store owners said, with their consent in writing: never invented, never paraphrased, no
+ * stand-ins ("no fake testimonials/numbers"). Empty until there are some; `<Voices/>` renders
+ * nothing while it is.
+ */
+export type Testimonial = {
+  quote: string;
+  /** the person, as they agreed to be named */
+  who: string;
+  /** their store and city, e.g. "Doceria X, Niterói" */
+  store: string;
+  /** a link to their store, when they want one */
+  url?: string;
+};
+export const testimonials: Testimonial[] = [];
