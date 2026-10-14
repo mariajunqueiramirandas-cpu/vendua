@@ -2,6 +2,7 @@ import { eveReminderPass } from '../modules/party.ts';
 import { planCyclePass, planPaymentPass } from '../modules/shopper-plan-cycles.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
+import { ownsJob } from '../platform/job-lease.ts';
 import { log } from '../platform/log.ts';
 import { cartReminderPass } from '../modules/cart-reminder.ts';
 import { usualReminderPass } from '../modules/usual-reminder.ts';
@@ -756,13 +757,19 @@ async function sweepTenant(sql: Sql, tenantId: string) {
   });
 }
 
-export function startAdminSweeper(sql: Sql, opts: AlertOpts = {}): () => void {
+export function startAdminSweeper(
+  sql: Sql,
+  opts: AlertOpts = {},
+  // one Core sweeps at a time (job-lease.ts); a test passes its own
+  owns: () => Promise<boolean> = () => ownsJob(sql, 'admin.sweep', 180_000),
+): () => void {
   let running = false;
   const timer = setInterval(() => {
     // a slow pass holds a pool connection — never stack a second one behind it
     if (running) return;
     running = true;
-    void sweepAdmin(sql, opts)
+    void owns()
+      .then((mine) => (mine ? sweepAdmin(sql, opts) : undefined))
       .catch((err) => workLog.warn({ err }, 'admin sweep failed'))
       .finally(() => {
         running = false;

@@ -2519,9 +2519,45 @@ async function runKernel(att: Attempt): Promise<void> {
   await endAttempt(att);
 }
 
+// Runs this process is executing: id → claim token. A shutdown that outlasts its grace hands them
+// back (releaseRunsInHand) instead of leaving them 'running' until RUN_LEASE_MIN reclaims them.
+const runsInHand = new Map<string, string>();
+
 export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
+  runsInHand.set(run.id, run.claim_token);
+  try {
+    return await runClaimed(sql, run);
+  } finally {
+    runsInHand.delete(run.id);
+  }
+}
+
+/** Requeues the runs still in hand when a shutdown's grace ran out. The attempt is not counted
+ *  (a deploy, not a failure), the run waits a little so the dying process stops first, and the
+ *  cleared claim token fences whatever that process still tries to write. */
+export async function releaseRunsInHand(sql: Sql): Promise<number> {
+  const tokens = [...runsInHand.values()];
+  if (!tokens.length) return 0;
+  const released = await controlTx(
+    sql,
+    (tx) => tx<{ id: string }[]>`
+      update agent_runs set
+        status = 'queued',
+        run_at = now() + interval '30 seconds',
+        started_at = null,
+        alive_at = null,
+        claim_token = null
+      where status = 'running' and claim_token = any(${tokens}::text[])
+      returning id
+    `,
+  );
+  for (const r of released) emitControlEvent('run.update', r.id);
+  return released.length;
+}
+
+async function runClaimed(sql: Sql, run: RunRow): Promise<boolean> {
   // A reclaimed row carries its prior attempts' journal — keep it (the audit
   // trail for the whole run, not just this attempt) and mark the boundary so
   // the next resume replays only the latest attempt's entries.

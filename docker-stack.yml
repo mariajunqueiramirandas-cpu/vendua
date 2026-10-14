@@ -176,7 +176,7 @@ services:
       start_period: 15s
     # old and new Core overlap for seconds: each migration must keep the previous Core working
     # (CLAUDE.md), and Venduá's own WhatsApp must be on the wa-gateway (WA_PLATFORM_TRANSPORT)
-    stop_grace_period: 30s
+    stop_grace_period: 45s
     deploy:
       update_config: { order: start-first, failure_action: rollback, monitor: 30s }
       rollback_config: { order: start-first }

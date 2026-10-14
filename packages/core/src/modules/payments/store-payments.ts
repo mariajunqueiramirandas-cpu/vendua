@@ -1706,13 +1706,18 @@ export async function applyProviderPayment(
     row = inserted[0];
   }
   const status = forward(row.status, p.status);
+  // a fetch whose status lost to the row's is older than what we hold (two webhooks, or one and
+  // the reconcile, racing): it must not rewrite the details that came with the newer status
+  const stale = status !== p.status;
   const refunded = Math.min(row.amount_cents, Math.max(row.refunded_cents, p.refundedCents));
   const next = {
     status,
-    status_detail: p.statusDetail?.slice(0, 120) ?? null,
+    status_detail: stale ? row.status_detail : (p.statusDetail?.slice(0, 120) ?? null),
     refunded_cents: refunded,
-    provider_fee_cents: p.providerFeeCents ?? row.provider_fee_cents,
-    net_cents: p.netCents ?? row.net_cents,
+    provider_fee_cents: stale
+      ? row.provider_fee_cents
+      : (p.providerFeeCents ?? row.provider_fee_cents),
+    net_cents: stale ? row.net_cents : (p.netCents ?? row.net_cents),
     application_fee_cents: p.applicationFeeCents || row.application_fee_cents,
     approved_at: p.approvedAt ? new Date(p.approvedAt) : row.approved_at,
     pix_copy_paste: p.pix?.copyPaste?.slice(0, 1000) ?? row.pix_copy_paste,
