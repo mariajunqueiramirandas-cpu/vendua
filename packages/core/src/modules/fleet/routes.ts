@@ -119,7 +119,9 @@ export function mountFleet(o: {
         const slug = slugFromStoreHost(hostname, d.storeDomain);
         if (slug && !RESERVED_SLUGS.has(slug))
           tenant = (
-            await tx<Tenant[]>`select id, slug, name, status from tenants where slug = ${slug} and status <> 'platform'`
+            await tx<
+              Tenant[]
+            >`select id, slug, name, status from tenants where slug = ${slug} and status <> 'platform'`
           )[0];
       }
       if (!tenant) {

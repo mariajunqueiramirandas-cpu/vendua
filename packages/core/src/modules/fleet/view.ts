@@ -128,7 +128,10 @@ const listSql = (tx: Sql, where: ReturnType<Sql>) => tx<ListRow[]>`
 `;
 
 export async function listStorefrontsTx(tx: Sql) {
-  const rows = await listSql(tx, tx`where t.status <> 'platform' order by t.created_at desc limit 1000`);
+  const rows = await listSql(
+    tx,
+    tx`where t.status <> 'platform' order by t.created_at desc limit 1000`,
+  );
   return rows.map(storefrontJson);
 }
 

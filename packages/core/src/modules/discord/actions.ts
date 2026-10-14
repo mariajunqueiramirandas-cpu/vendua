@@ -70,8 +70,7 @@ export async function runAction(
       if (res.status !== 200) {
         const err = (res.body as unknown as { error?: { code?: string; message?: string } }).error;
         return say(REASONS[err?.code ?? ''] ?? err?.message ?? 'o CRM recusou a aprovação');
-      }
-      else {
+      } else {
         const { dispatchMessage } = await import('../../crm/send.ts');
         // the send can take seconds (WhatsApp, email): answer Discord now, send right after
         void dispatchMessage(c.sql, res.body.message.id).catch((e) =>

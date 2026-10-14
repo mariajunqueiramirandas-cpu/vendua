@@ -15,7 +15,8 @@ export function controlTx<T>(sql: Sql, work: (tx: Sql) => Promise<T>): Promise<T
         select current_setting('vendua.control', true) as prev`;
       await sp`select set_config('vendua.control', '1', true)`;
       const out = await work(sp);
-      if (row?.prev !== '1') await sp`select set_config('vendua.control', ${row?.prev ?? ''}, true)`;
+      if (row?.prev !== '1')
+        await sp`select set_config('vendua.control', ${row?.prev ?? ''}, true)`;
       return out;
     });
   return beginTracked(sql, async (tx) => {
