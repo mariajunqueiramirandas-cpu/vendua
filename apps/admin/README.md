@@ -99,7 +99,9 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   the store avatar. A navigation from inside a sheet replaces the sheet's history entry.
   Back closes an open sheet, back/forward restore scroll, a tap on the current tab scrolls
   to the top (deeper in it, returns to its root), pulling down refetches the screen, and
-  `html[data-kb]` (keyboard up) hides the tab bar. Touch feedback is `press` (scale) and
+  `html[data-kb]` (keyboard up) hides the tab bar, while sheets and chat composers ride above the
+  keyboard on `--kb` (`ui/keyboard.ts`; vaul's own `repositionInputs` stays off, and a sheet holds an
+  autofocus until it has slid up, or iOS scrolls to where the field was mid-slide). Touch feedback is `press` (scale) and
   `press-row` (rows darken), never hover; offsets above the tab bar use `--tabbar-h`.
   `vite.config.ts` strips Phosphor's unused thin/light weights (re-add one there before
   using it).
