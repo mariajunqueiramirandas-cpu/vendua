@@ -63,11 +63,21 @@ export function crmBench(tag = 'crm') {
   /** the subjects (lead ids, hunt ids, 'weekly') settle() may run; clear it per test */
   const mine = new Set<string>();
 
+  /** the discovery rows before setup: a hunt with no research tool parks, so the bench runs
+   *  discovery on the mock provider and puts back what was there */
+  let discoveryWas: { driver: string; enabled: boolean }[] = [];
   async function setup() {
     await migrate(sql as unknown as Sql, join(import.meta.dir, '../db/migrations'));
     await upsertIntegration(
       sql as unknown as Sql,
       { kind: 'whatsapp', driver: 'log', enabled: true },
+      key(),
+    );
+    discoveryWas = await sql<{ driver: string; enabled: boolean }[]>`
+      select driver, enabled from control_integrations where kind = 'discovery'`;
+    await upsertIntegration(
+      sql as unknown as Sql,
+      { kind: 'discovery', driver: 'mock', enabled: true },
       key(),
     );
   }
@@ -80,6 +90,13 @@ export function crmBench(tag = 'crm') {
       where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID}
         and a.subject_id = any(${[...ran]}) and m.consumed_by_turn is null`;
     await sql`delete from control_settings where key in ('agent', 'guardrails')`;
+    await sql`delete from control_integrations where kind = 'discovery'`;
+    for (const d of discoveryWas)
+      await upsertIntegration(
+        sql as unknown as Sql,
+        { kind: 'discovery', driver: d.driver, enabled: d.enabled },
+        key(),
+      );
     await sql.end();
     await (appSql as unknown as { end: () => Promise<void> }).end();
   }

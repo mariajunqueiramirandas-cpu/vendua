@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import { scheduleTimerTx } from '../src/crm/agenda.ts';
 import { agentMetrics } from '../src/modules/agent-metrics.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { ensureThread } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
+import { PLATFORM_TENANT_ID } from '../src/platform/tenancy.ts';
 
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
@@ -20,24 +22,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     return { leadId, threadId: thread.id };
   };
 
-  const seedRun = async (opts: {
+  const seedTurn = async (opts: {
     kind: string;
     leadId?: string | null;
-    status?: string;
-    steps?: unknown[];
+    status?: 'done' | 'failed';
+    acted?: boolean;
+    steps?: number;
     costCents?: number;
-    createdAt?: Date;
   }) => {
-    const rows = await sql<{ id: string }[]>`
-      insert into agent_runs (kind, lead_id, status, steps, cost_cents, created_at, finished_at)
-      values (
-        ${opts.kind}, ${opts.leadId ?? null}, ${opts.status ?? 'done'},
-        ${sql.json((opts.steps ?? []) as never[])}, ${opts.costCents ?? 0},
-        ${opts.createdAt ?? new Date()}, ${opts.status === 'queued' ? null : new Date()}
-      )
-      returning id`;
-    return rows[0]!.id;
+    await sql`
+      insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, status, started_at,
+                             steps, acted, cost_cents)
+      values (gen_random_uuid(), gen_random_uuid(), 'crm', ${opts.kind}, 'staff',
+              ${opts.leadId ?? null}, ${opts.status ?? 'done'}, now(), ${opts.steps ?? 0},
+              ${opts.acted ?? false}, ${opts.costCents ?? 0})`;
   };
+
+  /** the CRM agent's agenda: timer rows of the lead actors */
+  const timers = sql`
+    select m.id from agent_mailbox m join agent_actors a on a.id = m.actor_id
+    where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = 'crm' and m.kind like 'timer.%'`;
 
   const seedMessage = async (opts: {
     threadId: string;
@@ -63,12 +67,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       )`;
   };
 
-  // reset every metric source per test: sibling files' leftover rows and stray
-  // drains can touch 'queued' — nothing here seeds it
+  // reset every metric source per test: sibling files leave rows behind
   const clean = async () => {
-    await sql`delete from agent_wakeups`;
+    await sql`delete from agent_mailbox where id in (${timers})`;
     await sql`delete from lead_messages`;
-    await sql`delete from agent_runs`;
+    await sql`delete from crm_turns`;
   };
 
   test('empty window returns zeroed contract shape', async () => {
@@ -92,43 +95,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     expect(m.wakeups).toEqual({ pending: 0, fired: 0 });
   });
 
-  test('byKind counts statuses; actedRate mirrors runActed over the journal', async () => {
+  test('byKind counts statuses and the acted rate over finished turns', async () => {
     await migrate(sql, MIGRATIONS);
     await clean();
     const { leadId } = await seedLead('Metrics Lead');
-    const actedSteps = [
-      { type: 'model', content: 'ok', toolCalls: [] },
-      {
-        type: 'tool',
-        name: 'send_message',
-        args: { leadId, body: 'oi' },
-        out: { message: { id: 'm1', status: 'sent' } },
-      },
-    ];
-    const noisySteps = [
-      // error'd / blocked / ignored results and pending entries never count
-      { type: 'tool', name: 'send_message', args: {}, out: { blocked: true } },
-      { type: 'tool', name: 'update_lead', args: {}, out: { ignored: true } },
-      { type: 'tool', name: 'create_task', args: {}, out: { error: 'boom' } },
-      { type: 'tool', name: 'send_message', args: {}, pending: true },
-      // read tools don't count even when clean
-      { type: 'tool', name: 'web_search', args: {}, out: { results: [] } },
-    ];
-    await seedRun({ kind: 'reply', leadId, steps: actedSteps });
-    await seedRun({ kind: 'reply', leadId, steps: actedSteps });
-    await seedRun({ kind: 'reply', leadId, steps: noisySteps });
-    await seedRun({ kind: 'reply', leadId, status: 'failed' });
-    await seedRun({ kind: 'reply', leadId, status: 'canceled' });
-    await seedRun({ kind: 'outreach', leadId, steps: actedSteps, costCents: 250 });
-    // 'canceled', not 'queued': queued rows are fair game to other files' sweeps/drains
-    await seedRun({ kind: 'discovery', steps: actedSteps, status: 'canceled' });
+    await seedTurn({ kind: 'reply', leadId, acted: true, steps: 2 });
+    await seedTurn({ kind: 'reply', leadId, acted: true, steps: 4 });
+    await seedTurn({ kind: 'reply', leadId, acted: false, steps: 3 });
+    // a failed turn counts as a run, never toward acted or the done-only average
+    await seedTurn({ kind: 'reply', leadId, status: 'failed', steps: 9 });
+    await seedTurn({ kind: 'outreach', leadId, acted: true, steps: 1, costCents: 250 });
+    await seedTurn({ kind: 'discovery', status: 'failed', steps: 5 });
     const m = await agentMetrics(sql, 7);
     const reply = m.byKind.find((k) => k.kind === 'reply')!;
-    expect(reply.runs).toBe(5);
+    expect(reply.runs).toBe(4);
     expect(reply.done).toBe(3);
     expect(reply.failed).toBe(1);
-    expect(reply.canceled).toBe(1);
+    expect(reply.canceled).toBe(0);
     expect(reply.actedRate).toBeCloseTo(2 / 3, 5);
+    expect(reply.avgSteps).toBe(3);
     const outreach = m.byKind.find((k) => k.kind === 'outreach')!;
     expect(outreach.runs).toBe(1);
     expect(outreach.done).toBe(1);
@@ -138,11 +123,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     const discovery = m.byKind.find((k) => k.kind === 'discovery')!;
     expect(discovery.runs).toBe(1);
     expect(discovery.done).toBe(0);
-    expect(discovery.canceled).toBe(1);
     expect(discovery.actedRate).toBe(0);
-    // non-done rows don't drag the done-only average either
     expect(discovery.avgSteps).toBe(0);
-    expect(reply.avgSteps).toBe(3);
   });
 
   test('outbound and replies read lead_messages, windowed', async () => {
@@ -248,29 +230,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     expect(m30.outbound.approved).toBe(1);
   });
 
-  test('wakeups counts pending backlog and fired-in-window', async () => {
+  test('wakeups counts the pending agenda and dates that came due in the window', async () => {
     await migrate(sql, MIGRATIONS);
     await clean();
-    const stale = new Date(Date.now() - 20 * 86_400_000);
-    await sql`
-      insert into agent_wakeups (kind, at, focus, status, created_by, fired_at)
-      values
-        ('reply', now(), 'follow up', 'pending', 'agent', null),
-        ('outreach', now() + interval '1 day', 'retry', 'pending', 'staff', null),
-        -- fired_at an hour inside the window: bare now() races the to-boundary under clock skew
-        ('reply', now(), 'follow up', 'fired', 'agent', now() - interval '1 hour'),
-        ('reply', ${stale}, 'old fire', 'fired', 'agent', ${stale}),
-        ('outreach', now(), 'gave up', 'canceled', 'staff', null)`;
-    // a wakeup scheduled long ago but fired now attributes to fired_at
-    const firedRun = await seedRun({ kind: 'outreach' });
-    await sql`
-      insert into agent_wakeups (kind, at, focus, status, created_by, fired_run_id, fired_at)
-      values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun}, now() - interval '1 hour')`;
-    // a post-fire cancellation bumps updated_at but must not move the metric
-    await sql`update agent_wakeups set updated_at = now() + interval '1 day' where focus = 'follow up' and status = 'fired'`;
+    const a = await seedLead('Agenda A');
+    const b = await seedLead('Agenda B');
+    const c = await seedLead('Agenda C');
+    const d = await seedLead('Agenda D');
+    const at = (ms: number) => new Date(Date.now() + ms);
+    const book = (leadId: string, when: Date, by: 'agent' | 'staff') =>
+      controlTx(sql, (tx) =>
+        scheduleTimerTx(tx, { leadId, at: when, focus: 'retomar', requested: false, by }),
+      );
+    await book(a.leadId, at(60 * 60_000), 'agent');
+    await book(b.leadId, at(86_400_000), 'staff');
+    await book(c.leadId, at(60 * 60_000), 'agent');
+    await book(d.leadId, at(60 * 60_000), 'agent');
+    // C fired an hour ago; D fired 20 days ago (outside 7d, inside 30d)
+    const fire = (leadId: string, ago: string) => sql`
+      update agent_mailbox set consumed_by_turn = gen_random_uuid(),
+        deliver_at = now() - ${ago}::interval
+      where actor_id in (select id from agent_actors where subject_id = ${leadId})`;
+    await fire(c.leadId, '1 hour');
+    await fire(d.leadId, '20 days');
     const m = await agentMetrics(sql, 7);
-    expect(m.wakeups).toEqual({ pending: 2, fired: 2 });
+    expect(m.wakeups).toEqual({ pending: 2, fired: 1 });
     const m30 = await agentMetrics(sql, 30);
-    expect(m30.wakeups).toEqual({ pending: 2, fired: 3 });
+    expect(m30.wakeups).toEqual({ pending: 2, fired: 2 });
   });
 });
