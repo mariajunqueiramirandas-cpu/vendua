@@ -216,9 +216,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     expect(m!.body).toContain('responda ASSINAR');
     // the same number again: still one plan
     await subscribe(s);
-    const [{ count }] = await sql<{ count: number }[]>`
+    const [row] = await sql<{ count: number }[]>`
       select count(*)::int as count from plan_subscriptions where tenant_id = ${s.id}`;
-    expect(count).toBe(1);
+    expect(row!.count).toBe(1);
 
     await say(s.id, 'Assinar');
     const [after] = await sql<{ state: string }[]>`
