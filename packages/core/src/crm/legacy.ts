@@ -184,13 +184,17 @@ export async function adoptLegacy(sql: Sql): Promise<number> {
     // runs the old Core finished during the overlap (the migration copied the ones before it)
     await tx`
       insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, brief_id, status,
-                             started_at, finished_at, steps, acted, tokens_in, tokens_out,
-                             cost_cents, error, params)
+                             started_at, finished_at, steps, acted, leads_created, tokens_in,
+                             tokens_out, cost_cents, error, params)
       select r.id, r.id, 'crm', r.kind, coalesce(r.source, 'agent'),
              case when exists (select 1 from leads l where l.id = r.lead_id) then r.lead_id end,
              (select b.id from discovery_briefs b where b.id::text = r.params->>'briefId'),
              r.status, coalesce(r.started_at, r.created_at), coalesce(r.finished_at, r.created_at),
-             0, false, coalesce(r.tokens_in, 0), coalesce(r.tokens_out, 0),
+             0, false,
+             (select count(*)::int from jsonb_array_elements(
+                case when jsonb_typeof(r.steps) = 'array' then r.steps else '[]'::jsonb end) s
+              where s->>'name' = 'create_lead' and s->'out'->'lead'->>'id' is not null),
+             coalesce(r.tokens_in, 0), coalesce(r.tokens_out, 0),
              coalesce(r.cost_cents, 0), left(r.error, 1000),
              case when octet_length(r.params::text) <= 8000 then r.params else '{}'::jsonb end
       from agent_runs r

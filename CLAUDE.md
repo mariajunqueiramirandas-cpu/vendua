@@ -9,6 +9,8 @@ Core's side is `packages/core/src/agent-host/`), `apps/control` (staff CRM conso
 `packages/core/src/wa-gateway.ts` (stores' own WhatsApp, its own process — ADR 0026),
 `packages/core/src/vendedor/` + `agent-host/agents/vendedor*` (the Vendedor, ADR 0031: the AI seller on
 the store's WhatsApp, its ingest, sweeper and admin views),
+`packages/core/src/crm/` + `agent-host/agents/crm/` (the CRM sales agent on Agent Runtime v3 under the
+platform tenant: its producers, agenda, outbox, `crm_turns` projection and sims),
 `apps/admin` (merchant admin PWA at `/admin/`, API `/admin/v1`),
 `apps/print-agents` (Windows Go + Android Kotlin printing agents, ADR 0027),
 `packages/core/src/modules/site-builder/` + `.claude/skills/storefront-generate/` (Pangolim's site, ADR
@@ -32,11 +34,11 @@ the only producer of `site_tasks`),
   `[data-vendua]` — `vendua check` (K01–K15) enforces it.
 - Kernel changes are additive within a Contract major; a new export needs `API.md` +
   `test/api-surface.test.ts`, a version bump and a `CHANGELOG.md` line.
-- Agent work has one producer per runtime, each the only way to start work on its side (ADR
-  0030 step 1): the CRM agent's `requestAgentTx` (`agent/dispatch.ts`) with a `source`, nothing
-  else inserts runs, future touches on a lead are `agent_wakeups` rows (ADR 0016); Agent Runtime
-  v3's `dispatchTx` (`agent-host/dispatch.ts`), a mailbox row with a `source` written inside the
-  transaction that caused it, nothing else creates turns, future touches are timer rows of it.
+- Agent work starts only as a mailbox message with a `source`, written by `dispatchTx`
+  (`agent-host/dispatch.ts`) inside the transaction that caused it (ADR 0030); nothing else
+  creates turns, and future touches are timer messages. The CRM agents (platform tenant) reach it
+  through `requestLeadTx` / `requestBoardTx` (`crm/dispatch.ts`), which only decide parking and
+  start time.
 - `packages/agent-runtime` imports nothing from Core (`tools/check-agent-runtime-boundary.mjs`);
   a turn's writes run behind the actor's lease fence in `withTenant`, and a tool takes its
   tenant and subject from the runtime, never from the model's arguments.
@@ -72,8 +74,7 @@ the only producer of `site_tasks`),
   each have a `CLAUDE.md` with their UI rules; it loads when you work in that app.
 - Don't `pkill -f <pattern>` (or `pgrep -f` + kill) where the pattern also appears in your
   own command line — it kills the shell running it. Save `$!` to a pidfile instead.
-- Some files are huge: `packages/core/src/agent/runner.ts`, `agent/tools.ts` and `src/app.ts`
-  (~100 KB each), `test/agent-reclaim.test.ts` (~200 KB). Grep for the symbol and Read a
+- Some files are huge: `packages/core/src/app.ts` (~125 KB). Grep for the symbol and Read a
   line range — never the whole file.
 - `.claude/settings.json` blocks reading build output (`dist/`, `qa-report/`) and runs
   prettier on every file Claude writes, except what `.prettierignore` lists (video projects

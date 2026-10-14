@@ -13,6 +13,7 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { afterCommit, type Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { CRM_AGENT_ID, CRM_DISCOVERY_ID, CRM_STRATEGIST_ID, LEAD_SUBJECT } from './dispatch.ts';
+import { TRIGGER_OF } from './jobs.ts';
 
 // What the CRM keeps of a finished turn (ADR 0030 steps 2–4): one crm_turns row, written by the
 // host's turn hooks in the transaction that ends the turn. It is what the activity list, the cost
@@ -77,7 +78,7 @@ async function projectTx(
     (c) => c`
     insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, brief_id, status,
       started_at, steps, acted, leads_created, tokens_in, tokens_out, cost_cents, error, params)
-    values (${t.turnId}, ${t.actorId}, ${t.agentId}, ${info.kind}, ${info.source.slice(0, 120) || 'agent'},
+    values (${t.turnId}, ${t.actorId}, ${t.agentId}, ${info.kind}, ${TRIGGER_OF[info.trigger] ?? (info.source.slice(0, 120) || 'agent')},
       (select id from leads where id = ${leadId}),
       (select id from discovery_briefs where id = ${briefId}),
       ${status}, ${totals.started_at ?? new Date()}, ${totals.steps}, ${info.acted},

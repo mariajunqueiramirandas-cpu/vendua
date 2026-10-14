@@ -12,6 +12,7 @@ import {
 import type { Sql } from '../../../platform/db.ts';
 import { CRM_AGENT_ID, LEAD_SUBJECT } from '../../../crm/jobs.ts';
 import { leadSubjectTx, workspaceTx, type LeadSubject, type Workspace } from './context.ts';
+import { available, offers, workspaceOf as workspace } from './availability.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { applyCrm, EMPTY_TURN, turn, turnOf, type TurnInfo } from './shared.ts';
 import {
@@ -65,7 +66,6 @@ export const CRM_STATES: Record<'triage' | 'reply' | 'outreach', string[]> = {
   outreach: [...LEAD_TOOLS, 'maps_lookup', 'instagram_profile', 'send_message', 'request_human'],
 };
 
-const workspace = (ctxTenant: Json) => ctxTenant as unknown as Workspace | null;
 const leadCtx = (ctxSubject: Json) => ctxSubject as unknown as LeadSubject | null;
 
 /** The tools a turn is offered: its state's, minus what this install can't run. */
@@ -73,16 +73,6 @@ export function offered(state: string, ws: Workspace | null): Set<string> {
   const names = CRM_STATES[state as keyof typeof CRM_STATES] ?? CRM_STATES.outreach;
   return new Set(names.filter((n) => !ws?.disabled[n]));
 }
-
-/** Refuses a tool whose provider isn't configured, if the model calls it anyway (`offers` hides it). */
-export const available: ToolGuard = {
-  id: 'available',
-  stage: 'tool',
-  run(call, { state }) {
-    const why = workspace(state.context.tenant)?.disabled[call.name];
-    return why ? block(`unavailable:${call.name}`, `${call.name} indisponível: ${why}`) : pass;
-  },
-};
 
 /** Reply and outreach end on something the lead or staff sees; one nudge, then it may stop. */
 export const mustAct: OutputGuard = {
@@ -160,8 +150,7 @@ export const crmAgent = defineAgent<Sql>({
   lane: 'followup',
   transport: 'crm-log',
   replies: false,
-  // a tool whose provider isn't configured stays out of the model's list
-  offers: (tool, s) => !workspace(s.context.tenant)?.disabled[tool],
+  offers,
   models: { default: 'strong', maxTokens: 4000, temperature: 0.4 },
   instructions: [
     {

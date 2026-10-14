@@ -109,7 +109,7 @@ Duá:  Hoje: 38 pedidos, R$ 1.912,40. Sexta passada no mesmo horário: R$ 1.640,
 | OTP by WhatsApp          | `startOtp` → `whatsappOtpSender` → `sendWhatsApp('55'+phone)` (`admin/auth.ts:107-170`)                                                                                                                                                                       | Possession of the WhatsApp number is already our sign-in proof      |
 | STT                      | `mediaProviders().transcribe(bytes, mime, {phrases})` (`vendedor/media.ts:147-230`), sidecar `STT_URL`                                                                                                                                                        | No tenant; phrases hint per store                                   |
 | CRM socket               | `agent/channels/whatsapp.ts` (Baileys v7, in the Core process, booted at `index.ts:196`); auth in `wa_auth_state` (unsealed); no lease                                                                                                                        | What Part A retires                                                 |
-| CRM inbound              | `onInboundMessage` / `onHistoryMessage` / `onLidMapping` callbacks (`index.ts:164-193`) → `ingestInbound` → `requestAgentTx`                                                                                                                                  | The same functions, fed from a table instead of callbacks           |
+| CRM inbound              | `onInboundMessage` / `onHistoryMessage` / `onLidMapping` callbacks (`index.ts:164-193`) → `ingestInbound` → `requestLeadTx` → `dispatchTx`                                                                                                                    | The same functions, fed from a table instead of callbacks           |
 | CRM outbound and notices | `sendWhatsApp` callers: `agent/send.ts:223` (claim → send outside tx: at most once), `admin/notify.ts:24` (`platformNotify`: invites, billing notices, alerts, fallbacks), `admin/auth.ts:116` (OTP), `modules/staff.ts:111` (staff notices)                  | Become outbox rows                                                  |
 | Socket state readers     | `waStatus()` (`agent/guardrails.ts:28,88`, `app.ts:464,2655`), `waIdentity()`, `whatsappRegistered()` (`agent/tools.ts:995`)                                                                                                                                  | Read the session row instead; the probe becomes a request row       |
 | Store gateway            | `wa-gateway.ts` + `store-whatsapp/`: separate process, Postgres-only channel, lease (`owner`, `lease_epoch`, `lease_until`), sealed auth (`store_wa_auth`), paced outbox (`store_wa_messages`, at least once, `messageIdFor(rowId)`), heartbeat `wa_gateways` | Every table keyed by `tenant_id` with tenant RLS                    |
@@ -128,7 +128,7 @@ Everything here has to survive the move:
   (`store-whatsapp/history.ts`, ADR 0033).
 - **LID mapping.** LID↔PN pairs re-key leads (`adoptLidMappings`, `modules/threads.ts:1040`).
 - **Inbound.** Messages go to `ingestInbound`, which drops team and merchant phones, writes leads,
-  threads and messages, and wakes the lead's inbox through `requestAgentTx`.
+  threads and messages, and wakes the lead's agent through `requestLeadTx` (`dispatchTx`).
 - **Outbound.** Agent messages are claimed, then sent outside the transaction. Platform notices
   send directly with no queue.
 - **Health.** `recordChannelState` `channel.down|up`, plus the outage watch.
@@ -182,7 +182,7 @@ callbacks:
     the Duá router (§5). When the person isn't eligible (Duá pelo WhatsApp off, role, or plan), they
     get one fixed reply per day pointing to the app instead of today's silent drop.
   - Everyone else, and all history, goes to `ingestInbound`, unchanged. It stays the only path into
-    `requestAgentTx` for the CRM agent, so the producer invariant holds.
+    `requestLeadTx` (`dispatchTx`) for the CRM agent, so the producer invariant holds.
 
 **Callers.** `sendWhatsApp(sql, wa, to, text)` becomes
 `enqueuePlatformWa(tx, { session, to, body, purpose, dedupeKey })`:

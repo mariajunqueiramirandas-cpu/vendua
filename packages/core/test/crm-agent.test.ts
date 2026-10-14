@@ -83,7 +83,7 @@ describe.skipIf(!OWNER_URL)('CRM agents on Runtime v3 (db)', () => {
     expect(await outbound(l.id)).toHaveLength(1);
 
     const [t] = await turns(l.id);
-    expect(t).toMatchObject({ kind: 'reply', status: 'done', acted: true, source: 'whatsapp' });
+    expect(t).toMatchObject({ kind: 'reply', status: 'done', acted: true, source: 'inbound' });
     expect(sent[0]!.agent_run_id).not.toBeNull();
     // the send booked the cadence follow-up on the lead's agenda
     const agenda = (await mail(l.id)).filter((m) => m.kind === 'timer.followup');

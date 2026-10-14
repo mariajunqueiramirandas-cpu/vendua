@@ -83,7 +83,7 @@ P-IDs point at [`competitor-parity.md`](../competitor-parity.md). Paths are unde
 | Store management from Claude and ChatGPT | MCP connector, "100+ actions", OAuth 2.1, CLI, skills, ChatGPT plugin                                                                                                   | declined (owner, 2026-10-01)                                                                      |
 | WhatsApp AI attendant ("Recepcionista")  | Answers questions, sends the menu link                                                                                                                                  | gap (P-017)                                                                                       |
 | WhatsApp AI sales agent ("Vendedor")     | Takes the order, delivery fee by neighbourhood, payment and change, summary before the "yes", order to board, printer and KDS                                           | gap (P-017)                                                                                       |
-| Agent understands media                  | Text, audio, up to 3 photos; replies by voice to voice; amounts always in text                                                                                          | gap: our sales agent receives audio only as `[áudio]` (`src/agent/channels/whatsapp.ts`)          |
+| Agent understands media                  | Text, audio, up to 3 photos; replies by voice to voice; amounts always in text                                                                                          | gap: our sales agent receives audio only as `[áudio]` (`src/crm/channels/whatsapp.ts`)            |
 | Pix in the chat                          | Copia-e-cola valid 10 min, through the store's Mercado Pago                                                                                                             | gap                                                                                               |
 | Price grounding                          | A value with no source in the system is blocked; the shopper gets the menu link                                                                                         | gap: our sales agent's `OFERTA` rule is prompt plus regex                                         |
 | Human handoff                            | Queue in the panel with "Assumir"; agent silent 20 min after the store replies; pause the bot                                                                           | gap                                                                                               |
@@ -522,26 +522,27 @@ only if we build the ERP modules. That is the scope decision, not an AI decision
 We already have an agent runtime more capable than anything Domínio shows in public. It points at
 leads (selling Venduá), not at stores:
 
-- **Jobs.** Five, each with a step budget and a finish gate (`src/agent/jobs.ts`). 22 tools
-  (`src/agent/tool-meta.ts`).
-- **Autonomy levels.** `off | copilot | supervised | autopilot` (`src/agent/policy.ts:20`), plus
-  code-enforced send gates: quiet hours, unanswered-send caps (`src/agent/guardrails.ts:314`).
-- **Scheduling.** Wakeups from 10 min to 90 days ahead (`src/agent/wakeups.ts:11`) on the
-  due-time scheduler (ADR 0017). Every run goes through `requestAgentTx` with a `source` (ADR 0016).
+- **Jobs.** Five, each with a step budget and a finish gate (`agent-host/agents/crm/index.ts`). 22 tools
+  (`agent-host/agents/crm/tools-*.ts`).
+- **Autonomy levels.** `off | copilot | supervised | autopilot` (`src/crm/policy.ts`), plus
+  code-enforced send gates: quiet hours, unanswered-send caps (`src/crm/guardrails.ts`).
+- **Scheduling.** Wakeups from 10 min to 90 days ahead (`src/crm/agenda.ts`) as timer
+  rows of Agent Runtime v3. Every turn starts as a mailbox row written by `dispatchTx` with a
+  `source` (ADR 0030).
 - **Memory.** A plan checklist, structured facts, segment and workspace learnings, and end-of-run
   debriefs (`src/modules/agent-memory.ts`).
 - **Cost caps.** A per-entity lifetime cap (`src/modules/integrations.ts:230`) and per-run caps on
   paid lookups.
 - **Providers.** gemini, openrouter, anthropic or openai, chosen per install
   (`src/modules/integrations.ts:25`).
-- **Evals.** `bun run sim` (LLM personas plus an LLM judge that penalises fabrication) and a
+- **Evals.** `bun run sims:crm` (LLM personas plus an LLM judge that penalises fabrication) and a
   scripted provider for CI evals.
 
 What caps a merchant copilot today:
 
 - **No tool surface.** There are no tool definitions over `/admin/v1`.
 - **No per-store WhatsApp.** Our WhatsApp channel is one platform number on an unofficial client
-  (`src/agent/channels/whatsapp.ts`), and inbound audio arrives only as the tag `[áudio]`.
+  (`src/crm/channels/whatsapp.ts`), and inbound audio arrives only as the tag `[áudio]`.
 - **One order channel.** No `source` on orders and no marketplace intake.
 - **Events nobody consumes.** Order transitions are written to `outbox` (`src/modules/orders.ts:274`)
   but nothing reads them, so shoppers get no status messages.
@@ -569,8 +570,8 @@ Six properties. Domínio has half of the first and half of the fifth:
 
 All of it stays inside the invariants in `CLAUDE.md`. Tools run through the same module code as
 the HTTP handlers, so tenant isolation (`SET LOCAL vendua.tenant_id`), the Idempotency-Key claim
-pattern, Core-computed money and bounded inputs come for free. Every run is requested through
-`requestAgentTx`.
+pattern, Core-computed money and bounded inputs come for free. Every turn is requested through
+`dispatchTx`.
 
 **A. An internal tool registry over `/admin/v1` (the foundation).** It is internal only, not a
 public API. Each tool declares:
@@ -650,7 +651,7 @@ PWA. Things Lis doesn't do:
 
 **E. A quality moat.**
 
-- Extend `bun run sim` with merchant personas and store fixtures. Scenarios: data questions,
+- Extend `bun run sims:crm` with merchant personas and store fixtures. Scenarios: data questions,
   risky requests, and prompt injection through a shopper message or a review.
 - Judge grounding, safety and outcome.
 - Add scripted-provider tests in CI for every write tool.

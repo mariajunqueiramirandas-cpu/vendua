@@ -2,7 +2,7 @@ import { defineAgent, type Json, type JsonObject } from '@vendua/agent-runtime';
 import type { Sql } from '../../../platform/db.ts';
 import { CRM_STRATEGIST_ID, REVIEW_SUBJECT } from '../../../crm/jobs.ts';
 import { reviewSubjectTx, workspaceTx, type Workspace } from './context.ts';
-import { available } from './index.ts';
+import { available, offers } from './availability.ts';
 import { buildSystemPrompt, type PromptMemory } from './prompts.ts';
 import { applyCrm, EMPTY_TURN, turn, turnOf } from './shared.ts';
 import { proposeBriefTool, rememberTool } from './tools-strategist.ts';
@@ -24,8 +24,7 @@ export const crmStrategist = defineAgent<Sql>({
   lane: 'background',
   transport: 'crm-log',
   replies: false,
-  // a tool whose provider isn't configured stays out of the model's list
-  offers: (tool, s) => !(s.context.tenant as unknown as Workspace | null)?.disabled[tool],
+  offers,
   models: { default: 'strong', maxTokens: 3000, temperature: 0.3 },
   instructions: [
     {

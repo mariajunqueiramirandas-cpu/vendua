@@ -10,7 +10,7 @@ import {
 import type { Sql } from '../../../platform/db.ts';
 import { CRM_DISCOVERY_ID, HUNT_SUBJECT } from '../../../crm/jobs.ts';
 import { huntSubjectTx, workspaceTx, type Workspace } from './context.ts';
-import { available } from './index.ts';
+import { available, offers } from './availability.ts';
 import { buildSystemPrompt, type PromptMemory } from './prompts.ts';
 import { applyCrm, EMPTY_TURN, turn, turnOf } from './shared.ts';
 import {
@@ -87,8 +87,7 @@ export const crmDiscovery = defineAgent<Sql>({
   lane: 'background',
   transport: 'crm-log',
   replies: false,
-  // a tool whose provider isn't configured stays out of the model's list
-  offers: (tool, s) => !workspace(s.context.tenant)?.disabled[tool],
+  offers,
   models: { default: 'strong', maxTokens: 4000, temperature: 0.3 },
   instructions: [
     {

@@ -44,3 +44,15 @@ export function jobOf(kind: string, payload: Json): JobKind {
   if (kind === 'timer.weekly') return 'strategist';
   return 'outreach';
 }
+
+/** Why a turn ran, in the activity list's words (the control's TRIGGER_LABEL): a mailbox kind. */
+export const TRIGGER_OF: Record<string, string> = {
+  'message.inbound': 'inbound',
+  'timer.callback': 'callback',
+  'timer.followup': 'followup',
+  'lead.first_contact': 'first_contact',
+  'staff.request': 'staff',
+  'staff.regenerate': 'regenerate',
+  'timer.daily': 'brief',
+  'timer.weekly': 'weekly',
+};

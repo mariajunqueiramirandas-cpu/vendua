@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE } from '../platform/http.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { controlTx } from '../modules/control.ts';
+import { TRIGGER_OF } from './jobs.ts';
 import { CRM_AGENTS } from './turns.ts';
 
 // The CRM's activity list on Runtime v3 (ADR 0030 steps 2–4), in the shape its screens already
@@ -15,6 +16,9 @@ const KIND_OF = `case m.kind
     when 'timer.weekly' then 'strategist'
     when 'staff.request' then coalesce(nullif(m.payload->>'kind', ''), 'outreach')
     else 'outreach' end`;
+const TRIGGER = `case m.kind ${Object.entries(TRIGGER_OF)
+  .map(([k, v]) => `when '${k}' then '${v}'`)
+  .join(' ')} else m.source end`;
 const LEAD_OF = `case when a.subject_kind = 'lead' then a.subject_id::uuid end`;
 const CRM_MAIL = `a.tenant_id = '${PLATFORM_TENANT_ID}'::uuid
     and a.agent_id in (${CRM_AGENTS.map((x) => `'${x}'`).join(', ')})
@@ -28,7 +32,7 @@ const RUNS = `
   from crm_turns t
   union all
   select distinct on (m.consumed_by_turn) m.consumed_by_turn, ${KIND_OF}, 'running', ${LEAD_OF},
-    m.payload->>'threadId', 0, 0, 0, null, m.created_at, m.deliver_at, null, null, m.source,
+    m.payload->>'threadId', 0, 0, 0, null, m.created_at, m.deliver_at, null, null, ${TRIGGER},
     false, m.payload
   from agent_mailbox m join agent_actors a on a.id = m.actor_id
   where ${CRM_MAIL} and m.consumed_by_turn is not null
@@ -36,7 +40,7 @@ const RUNS = `
     and not exists (select 1 from crm_turns x where x.turn_id = m.consumed_by_turn)
   union all
   select m.id, ${KIND_OF}, 'queued', ${LEAD_OF}, m.payload->>'threadId', 0, 0, 0, null,
-    m.created_at, null, null, case when m.deliver_at > now() then m.deliver_at end, m.source,
+    m.created_at, null, null, case when m.deliver_at > now() then m.deliver_at end, ${TRIGGER},
     -- a promise to the lead or a staff ask: the preset never holds it back
     m.kind in ('timer.callback', 'staff.request', 'staff.regenerate'), m.payload
   from agent_mailbox m join agent_actors a on a.id = m.actor_id

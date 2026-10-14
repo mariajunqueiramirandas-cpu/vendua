@@ -1,8 +1,8 @@
 # 18 — Agent Runtime v3
 
-> Status: Accepted, built (step 1) · Last reviewed: 2026-10-03 · Decision: [ADR 0030](../adr/0030-agent-runtime-v3.md) · Supersedes when the migration ends: the run machinery of
+> Status: Accepted, built (steps 1–4; the old tables drop in a later migration) · Last reviewed: 2026-10-14 · Decision: [ADR 0030](../adr/0030-agent-runtime-v3.md) · Supersedes when the migration ends: the run machinery of
 > ADRs [0014](../adr/0014-crm-agent-v2.md)–[0017](../adr/0017-due-time-scheduler.md) · First
-> user: the [Vendedor](../features/sales-agent.md) · Later: the CRM sales agent
+> user: the [Vendedor](../features/sales-agent.md) · Then: the CRM sales agent (`agent-host/agents/crm/`)
 
 A new runtime for every LLM agent Venduá runs, built for the Vendedor first and then the CRM
 agent, replacing `packages/core/src/agent/`. Not a refactor of the runner: a different model of
@@ -473,6 +473,11 @@ transport; the owner declined external assistant integrations on 2026-10-01.
    `leads`.
 5. **[ADR 0030](../adr/0030-agent-runtime-v3.md)** records the runtime and supersedes the run machinery of ADRs 0014–0017 once this step lands.
 
+Steps 2–4 landed together on 2026-10-14 (ADR 0030 "As built"): the three CRM agents live in
+`agent-host/agents/crm/`, their producers and projection in `src/crm/`, the sims in
+`bun run sims:crm`. What is left of step 4 is the drop migration, once no running Core reads the
+old tables.
+
 The agent invariant in `CLAUDE.md` changes twice. At step 1, when the first mailbox row is
 written, it names two producers: `requestAgentTx` for the old runtime and `dispatchTx` for v3,
 each the only way to start work on its side, with timers as rows of the same producer. At step
@@ -480,9 +485,9 @@ each the only way to start work on its side, with timers as rows of the same pro
 `source`, written by `dispatchTx` inside the transaction that caused it; nothing else creates
 turns; future touches are timer messages.
 
-CRM data is platform data with no `tenant_id` today. Before step 2 the owner picks between a
-reserved platform tenant (one RLS model everywhere) and a control-scoped variant of the three
-tables ([§14](#14-decisions)).
+CRM data is platform data with no `tenant_id`. The owner picked a reserved platform tenant
+(one RLS model everywhere) over control-scoped variants of the runtime's tables; the CRM's own
+tables stay control-scoped.
 
 ## 14. Decisions
 
@@ -513,7 +518,7 @@ Taken here as proposals, for the owner to accept:
 Open:
 
 1. **Own engine or DBOS**, after a one-week spike on each against the turn contract of §4.3.
-2. **CRM tenancy** for the port: a platform tenant or control-scoped tables.
+2. ~~**CRM tenancy** for the port.~~ Taken 2026-10-14: a reserved platform tenant.
 3. **Schema library** behind Standard Schema (Core validates by hand today).
 4. **Trace backend** for the OpenTelemetry export, or only the built-in inspector at first.
 5. **Retention** of model I/O bodies in the log (ties to sales-agent decision 4).
