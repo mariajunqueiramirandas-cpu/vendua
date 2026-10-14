@@ -210,6 +210,8 @@ export function mountShopperPlansAdmin(d: AdminDeps) {
     '/plans/:id',
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
+      // held first: a checkout subscribing to it meanwhile waits, then finds it gone
+      await tx`select 1 from shopper_plans where tenant_id = ${t.id} and id = ${id} for update`;
       const [has] = await tx`
         select 1 from plan_subscriptions where tenant_id = ${t.id} and plan_id = ${id} limit 1`;
       if (has)

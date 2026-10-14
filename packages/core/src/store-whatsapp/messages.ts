@@ -335,7 +335,7 @@ export function planConfirmText(
   const head = `${hi}Você assinou o plano semanal "${plan.name}" da ${o.storeName}: ${everyWeekday(plan.weekday)} a loja faz este pedido para você e avisa aqui antes.`;
   const tail = plan.active
     ? `A próxima entrega é ${ddmm(plan.nextOn)}. Para pular uma semana, responda PULAR. Para encerrar, responda CANCELAR PLANO.`
-    : 'Para confirmar, responda ASSINAR. Sem essa resposta o plano não começa (este pedido segue normal).';
+    : 'Para confirmar, responda ASSINAR. Sem essa resposta o plano não começa (este pedido segue normal). Se não foi você, é só ignorar esta mensagem.';
   return `${head}\n\n${tail}`;
 }
 

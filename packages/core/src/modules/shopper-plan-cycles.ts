@@ -62,6 +62,8 @@ async function placeCycleTx(
   tx: Sql,
   tenantId: string,
   subscriptionId: string,
+  /** the date the pass found due: another sweeper or a PULAR may have moved it since */
+  dueOn: string,
   now: Date,
   provider: PaymentProvider | undefined,
 ): Promise<boolean> {
@@ -73,7 +75,7 @@ async function placeCycleTx(
       join shopper_plans p on p.id = s.plan_id
       left join store_settings st on st.tenant_id = s.tenant_id
     where s.tenant_id = ${tenantId} and s.id = ${subscriptionId} and s.state = 'active'
-      and s.next_on is not null
+      and s.next_on = ${dueOn}
     for update of s`;
   if (!s) return false;
   // a date the store never got to (down, or closed every day before it): that week is gone
@@ -145,12 +147,18 @@ async function placeCycleTx(
 }
 
 /** A week that couldn't be placed: recorded, the next one set, and the shopper told why. */
-async function failCycleTx(tx: Sql, tenantId: string, subscriptionId: string, code: string) {
+async function failCycleTx(
+  tx: Sql,
+  tenantId: string,
+  subscriptionId: string,
+  dueOn: string,
+  code: string,
+) {
   const [s] = await tx<{ next_on: string; plan_name: string; phone: string }[]>`
     select s.next_on::text as next_on, p.name as plan_name, s.phone
     from plan_subscriptions s join shopper_plans p on p.id = s.plan_id
     where s.tenant_id = ${tenantId} and s.id = ${subscriptionId} and s.state = 'active'
-      and s.next_on is not null
+      and s.next_on = ${dueOn}
     for update of s`;
   if (!s) return;
   const [won] = await tx`
@@ -201,16 +209,21 @@ export async function planCyclePass(
     );
     if (status.status !== 'open') return [];
     const tz = settings.hours?.timezone || 'America/Sao_Paulo';
-    return tx<{ id: string }[]>`
-      select s.id from plan_subscriptions s join shopper_plans p on p.id = s.plan_id
+    return tx<{ id: string; next_on: string }[]>`
+      select s.id, s.next_on::text as next_on
+      from plan_subscriptions s join shopper_plans p on p.id = s.plan_id
       where s.tenant_id = ${tenantId} and s.state = 'active' and s.next_on is not null
         and s.next_on - p.lead_days <= (${now}::timestamptz at time zone ${tz})::date
       order by s.next_on limit ${PER_PASS}`;
   });
   let placed = 0;
-  for (const { id } of due) {
+  for (const { id, next_on } of due) {
     try {
-      if (await withTenant(sql, tenantId, (tx) => placeCycleTx(tx, tenantId, id, now, provider)))
+      if (
+        await withTenant(sql, tenantId, (tx) =>
+          placeCycleTx(tx, tenantId, id, next_on, now, provider),
+        )
+      )
         placed++;
     } catch (err) {
       // a checkout refusal is this week's answer; anything else is retried next minute
@@ -218,7 +231,7 @@ export async function planCyclePass(
         cycleLog.warn({ err, tenantId, subscriptionId: id }, 'plan week not placed');
         continue;
       }
-      await withTenant(sql, tenantId, (tx) => failCycleTx(tx, tenantId, id, err.code));
+      await withTenant(sql, tenantId, (tx) => failCycleTx(tx, tenantId, id, next_on, err.code));
     }
   }
   return placed;

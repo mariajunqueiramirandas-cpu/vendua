@@ -416,7 +416,7 @@ export function mountMarketing(d: AdminDeps) {
         await tx`
           update status_posts set state = ${state},
             shared_at = case when ${state} = 'shared' then coalesce(shared_at, now()) else shared_at end
-          where id = ${id}`;
+          where tenant_id = ${t.id} and id = ${id}`;
       }
       if (body.productIds !== undefined) {
         const ids = body.productIds;
@@ -424,7 +424,11 @@ export function mountMarketing(d: AdminDeps) {
           !Array.isArray(ids) ||
           ids.length < 1 ||
           ids.length > STATUS_PICKS ||
-          !ids.every((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x))
+          !ids.every(
+            (x) =>
+              typeof x === 'string' &&
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x),
+          )
         )
           throw new HttpError(422, 'BAD_REQUEST', `productIds must be 1–${STATUS_PICKS} ids`, {
             field: 'productIds',
@@ -444,7 +448,7 @@ export function mountMarketing(d: AdminDeps) {
           `${origin}/?ref=${post.ref_code}`,
         );
         await tx`update status_posts set product_ids = ${unique}::uuid[], caption = ${caption}
-                 where id = ${id}`;
+                 where tenant_id = ${t.id} and id = ${id}`;
       }
       await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: await statusViewTx(tx, t, d.storeDomain) };

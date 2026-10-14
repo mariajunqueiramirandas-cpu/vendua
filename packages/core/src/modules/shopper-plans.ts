@@ -195,7 +195,8 @@ export async function subscribeTx(
   const weekday = dayOfWeek(s.scheduledFor);
   const nextOn = addDays(s.scheduledFor, 7);
   const active = proven;
-  // a number that already has this plan keeps the one it has
+  // a number that already has this plan keeps the one it has; one still waiting for ASSINAR
+  // takes the latest checkout (a phone typed by someone else can't hold the owner's plan)
   const [row] = await tx<{ id: string }[]>`
     insert into plan_subscriptions (tenant_id, plan_id, phone, name, delivery, payment, notes,
                                     state, weekday, next_on, first_order_id, confirmed_at)
@@ -204,7 +205,12 @@ export async function subscribeTx(
             ${body.notes?.trim().slice(0, 500) || null},
             ${active ? 'active' : 'pending'}, ${weekday}, ${nextOn}, ${orderId},
             ${active ? new Date() : null})
-    on conflict (tenant_id, plan_id, phone) where state <> 'cancelled' do nothing
+    on conflict (tenant_id, plan_id, phone) where state <> 'cancelled' do update set
+      name = excluded.name, delivery = excluded.delivery, payment = excluded.payment,
+      notes = excluded.notes, state = excluded.state, weekday = excluded.weekday,
+      next_on = excluded.next_on, first_order_id = excluded.first_order_id,
+      confirmed_at = excluded.confirmed_at, created_at = now()
+    where plan_subscriptions.state = 'pending'
     returning id`;
   if (!row) return null;
   await emitAdminTx(tx, tenantId, 'catalog', 'plans');

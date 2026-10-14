@@ -5,6 +5,7 @@ import type { OrderView } from '../modules/orders.ts';
 import type { StoreSettingsRow } from '../modules/store.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { log } from '../platform/log.ts';
 import type { Merchant } from './context.ts';
 import { emitAdminTx } from './live.ts';
 import { delayOrderTx } from './routes-orders.ts';
@@ -18,6 +19,8 @@ import { delayOrderTx } from './routes-orders.ts';
 /** a promise this close starts the evaluation; being near is not being late */
 const LOOK_AHEAD_MINUTES = 15;
 const LATE_BY_MINUTES = 5;
+const lateLog = log.child({ mod: 'late-orders' });
+
 /** an apology per phone at most this often */
 const APOLOGY_EVERY_DAYS = 14;
 const APOLOGY_VALID_DAYS = 30;
@@ -72,8 +75,20 @@ export async function latePassTx(tx: Sql, tenantId: string, now: Date): Promise<
       values (${o.id}, ${tenantId}, ${minutes}, ${mode})
       on conflict do nothing returning order_id`;
     if (!won.length) continue;
-    if (mode === 'auto') {
-      await sendLateNoticeTx(tx, tenantId, FREIO_LATE_ACTOR, o.id);
+    // one order's notice failing (its coupon, its delay) must not undo the pass for the rest:
+    // the row stays, and the store is asked to tell the customer itself
+    const sent =
+      mode === 'auto' &&
+      (await (tx as unknown as { savepoint<T>(fn: (s: Sql) => Promise<T>): Promise<T> })
+        .savepoint((sp) => sendLateNoticeTx(sp, tenantId, FREIO_LATE_ACTOR, o.id))
+        .then(
+          () => true,
+          (err: unknown) => {
+            lateLog.warn({ err, tenantId, orderId: o.id }, 'late notice not sent');
+            return false;
+          },
+        ));
+    if (sent) {
       pushes.push({
         key: `late:${o.id}`,
         title: `#${o.number} vai atrasar ~${ceil5(minutes)} min`,
