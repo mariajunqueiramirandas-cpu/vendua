@@ -259,6 +259,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(store.body.paymentMethods).toContain('card_online');
   });
 
+  test('concurrent deliveries of one webhook settle it once; a stale fetch keeps the newer details', async () => {
+    const o = await place('pix');
+    expect(o.status).toBe(201);
+    expect((await pay(o.body.order.id, o.auth)).status).toBe(200);
+    const providerId = (await attempts(o.body.order.id))[0]!.provider_payment_id!;
+    fake.settle(providerId, 'approved');
+    const hooks = await Promise.all(Array.from({ length: 6 }, () => hook(providerId)));
+    expect(hooks.map((h) => h.status)).toEqual([200, 200, 200, 200, 200, 200]);
+    const order = await getOrder(o.body.order.id, o.auth);
+    expect(order.payment.status).toBe('paid');
+    // placed → pix attached → paid: one bump for the payment, however many deliveries
+    expect(order.version).toBe(3);
+    const rows = await sql<{ status: string; status_detail: string; net_cents: number }[]>`
+      select status, status_detail, net_cents from payments where provider_payment_id = ${providerId}
+    `;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'approved', status_detail: 'accredited' });
+
+    // a fetch that answers with the older state (it raced the approval) changes nothing
+    const p = fake.payments.get(providerId)!;
+    Object.assign(p, {
+      status: 'pending',
+      statusDetail: 'pending_waiting_transfer',
+      providerFeeCents: null,
+      netCents: null,
+    });
+    expect((await hook(providerId)).status).toBe(200);
+    const after = (
+      await sql<{ status: string; status_detail: string; net_cents: number }[]>`
+        select status, status_detail, net_cents from payments where provider_payment_id = ${providerId}
+      `
+    )[0]!;
+    expect(after).toEqual(rows[0]!);
+  });
+
   let paidPix = { id: '', auth: {} as Record<string, string>, providerId: '' };
 
   test('Pix: checkout → pay → QR → webhook approves → paid, version bumps; replay is a no-op', async () => {
