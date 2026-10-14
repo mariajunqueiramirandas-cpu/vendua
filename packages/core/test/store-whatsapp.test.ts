@@ -303,7 +303,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store whatsapp: gateway + admin
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {

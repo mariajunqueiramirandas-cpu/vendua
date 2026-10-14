@@ -19,7 +19,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('staff events: commerce (db)', (
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => void codes.set(phone, /(\d{6})/.exec(text)![1]!),

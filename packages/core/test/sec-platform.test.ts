@@ -201,7 +201,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('idempotency replay binding (db)
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('self-service booking cap (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-book', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-book' });
   afterAll(() => sql.end());
   const asStaff = <T>(fn: (tx: postgres.TransactionSql) => Promise<T>) =>
     sql.begin(async (tx) => {

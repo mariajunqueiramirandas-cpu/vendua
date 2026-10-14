@@ -33,7 +33,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       sql,
       sessionSecret: 's',
       controlSecret: 'ctl-secret',
-      autoDrain: false,
     });
     const nonce = crypto.randomUUID().slice(0, 8);
     const phone11 = () => `219${crypto.randomUUID().replace(/\D/g, '').padEnd(8, '7').slice(0, 8)}`;

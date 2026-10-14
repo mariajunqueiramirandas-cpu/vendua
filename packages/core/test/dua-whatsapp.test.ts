@@ -248,7 +248,6 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
     createApp({
       sql: appSql,
       sessionSecret: 's',
-      autoDrain: false,
       cepLookup: async () => null,
       storeDomain: 'vendua.test',
     });

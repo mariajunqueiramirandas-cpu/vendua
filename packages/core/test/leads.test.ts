@@ -169,7 +169,7 @@ describe('leadJson', () => {
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('lead list sort (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
   // A q-scoped prefix keeps the assertions blind to other suites' leads.
   const nonce = crypto.randomUUID().slice(0, 8);
   const pfx = `zzsrt-${nonce}`;

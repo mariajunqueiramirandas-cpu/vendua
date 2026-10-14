@@ -418,7 +418,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discord bot (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     discordFetch: fakeDiscord as never,
   });
   const deliver = () => deliverStaffEvents(sql, { fetch: fakeDiscord as never });

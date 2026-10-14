@@ -65,7 +65,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     otpSender: async () => {},
   });

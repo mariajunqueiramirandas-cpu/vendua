@@ -77,7 +77,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     sessionSecret: 's',
     controlSecret: 'ctl',
     publishSecret: 'pub-key',
-    autoDrain: false,
     storeDomain,
     notify,
     fleet: d,

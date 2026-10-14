@@ -32,7 +32,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('design per bundle (db)', () => 
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     storeDomain: 'vendua.test',
     notify,
     fleet,

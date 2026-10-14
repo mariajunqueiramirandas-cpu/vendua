@@ -127,7 +127,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       sql: appSql,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
       storeDomain,
       notify,
       fleet: d,

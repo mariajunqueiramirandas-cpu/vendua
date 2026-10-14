@@ -205,7 +205,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     geocoder: async (q) =>
       q.city || q.text ? { lat: -22.931, lng: -42.48, precision: 'street' } : null,
@@ -467,7 +466,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
       sql,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
       cepLookup: async () => null,
       router: async () => ({ meters: 3000, seconds: 400 }),
     });

@@ -447,7 +447,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
       sql,
       sessionSecret: 's',
       controlSecret: 'ctl-secret',
-      autoDrain: false,
     });
     const post = (body: unknown, opts: { sign?: boolean; ts?: number } = {}) => {
       const raw = JSON.stringify(body);

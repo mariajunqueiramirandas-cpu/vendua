@@ -285,8 +285,6 @@ export interface AppDeps {
   /** CI's storefront publish key: registers releases (POST /control/v1/fleet/releases) and
    *  nothing else — never a staff login, so the repo's secrets don't hold the staff key */
   publishSecret?: string | undefined;
-  /** tests pass false — a background drain mid-assertion races expectations */
-  autoDrain?: boolean | undefined;
   /** CEP → address; tests inject a stub (default: ViaCEP) */
   cepLookup?: CepLookup | undefined;
   /** address → approximate point for the pin maps (default: Nominatim); tests inject a stub */
@@ -552,7 +550,6 @@ export function createApp({
   sessionSecret,
   controlSecret,
   publishSecret,
-  autoDrain,
   cepLookup,
   geocoder,
   router,

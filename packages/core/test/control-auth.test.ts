@@ -8,7 +8,6 @@ const offline = createApp({
   sql: postgres('postgres://localhost:1/vendua'),
   sessionSecret: 's',
   controlSecret: 'ctl-secret',
-  autoDrain: false,
 });
 
 const loginOn = (app: typeof offline, key: string, headers: Record<string, string> = {}) =>
@@ -30,7 +29,6 @@ describe('control staff key', () => {
       sql: postgres('postgres://localhost:1/vendua'),
       sessionSecret: '',
       controlSecret: '',
-      autoDrain: false,
     });
     const header = await app.request('/control/v1/session', {
       headers: { 'x-vendua-control': '' },
@@ -71,7 +69,6 @@ describe('control staff key', () => {
       sql: postgres('postgres://localhost:1/vendua'),
       sessionSecret: 's',
       controlSecret: 'ctl-secret',
-      autoDrain: false,
     });
     for (let i = 0; i < 10; i++) {
       const res = await app.request('/control/v1/leads', {
@@ -90,7 +87,7 @@ describe('control staff key', () => {
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('control sessions (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
   afterAll(() => sql.end());
   const login = (key: string) => loginOn(app, key);
   const hashOf = (pair: string) => createHash('sha256').update(pair.split('=')[1]!).digest('hex');

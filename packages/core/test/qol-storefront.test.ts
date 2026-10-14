@@ -12,7 +12,7 @@ import { subscribeNotifyTx, wakeStoreWaitlist } from '../src/modules/storefront-
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('closed-store notify (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
   const nonce = crypto.randomUUID().slice(0, 8);
   const ids: string[] = [];
   // 09:00–18:00 every day, São Paulo

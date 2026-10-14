@@ -87,7 +87,6 @@ describe.skipIf(!OWNER_URL)('the merchant supervising Duá (db)', () => {
     sql: app,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
   });

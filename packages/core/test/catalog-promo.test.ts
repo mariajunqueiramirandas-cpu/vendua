@@ -14,7 +14,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('timed promotions and from-price
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {

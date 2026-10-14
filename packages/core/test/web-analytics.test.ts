@@ -37,7 +37,7 @@ describe('page view normalising', () => {
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
   // letters only: 4+ digits in a path segment would be normalised to :id
   const run = Array.from(
     { length: 8 },

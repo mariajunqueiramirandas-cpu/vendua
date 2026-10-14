@@ -15,7 +15,7 @@ import { migrate } from '../src/platform/db.ts';
 describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
   const MIGRATIONS = join(import.meta.dir, '../db/migrations');
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
   const nonce = crypto.randomUUID().slice(0, 8);
   const post = (path: string, body: unknown, key: string) =>
     app.request(path, {

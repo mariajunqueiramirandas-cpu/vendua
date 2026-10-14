@@ -59,7 +59,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {
@@ -224,7 +223,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       sql: appSql,
       sessionSecret: 's',
       controlSecret: 'ctl',
-      autoDrain: false,
       cepLookup: async () => null,
       adminHost: 'Painel.Example.com',
     });

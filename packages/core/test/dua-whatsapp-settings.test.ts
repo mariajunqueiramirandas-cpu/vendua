@@ -19,7 +19,6 @@ describe.skipIf(!OWNER_URL)('Duá pelo WhatsApp settings (db)', () => {
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    autoDrain: false,
     cepLookup: async () => null,
     storeDomain: 'vendua.test',
     otpSender: async (phone, text) => {

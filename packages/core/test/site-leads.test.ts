@@ -8,7 +8,7 @@ import { migrate } from '../src/platform/db.ts';
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('site leads (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
-  const mk = () => createApp({ sql, sessionSecret: 's', controlSecret: 'ctl', autoDrain: false });
+  const mk = () => createApp({ sql, sessionSecret: 's', controlSecret: 'ctl' });
   // the per-IP limit (5 in 10 minutes) lives in each app: each test gets its own budget
   let app = mk();
   const tail = String(Date.now()).slice(-8);

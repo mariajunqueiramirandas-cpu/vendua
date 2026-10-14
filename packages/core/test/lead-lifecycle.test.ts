@@ -52,8 +52,7 @@ describe('guardrails — cadence + stale-draft knobs', () => {
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  // autoDrain off: endpoint enqueues would claim queued runs mid-assertion
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
   // claims are durable across test runs — fresh keys, else replays mask
   // the asserted work
   const nonce = crypto.randomUUID().slice(0, 12);
