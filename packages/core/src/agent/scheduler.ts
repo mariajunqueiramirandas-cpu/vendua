@@ -20,6 +20,7 @@ import {
   drain,
   drainsSettled,
   flagCappedLeads,
+  releaseRunsInHand,
   RUN_LEASE_MIN,
   stopClaims,
   sweepBriefs,
@@ -626,10 +627,11 @@ export async function stopScheduler(graceMs = 25_000): Promise<void> {
   const inFlight = [s.work.running, s.jobs.running, drainsSettled()].filter(
     Boolean,
   ) as Promise<unknown>[];
-  await Promise.race([
-    Promise.allSettled(inFlight),
-    new Promise((r) => setTimeout(r, graceMs).unref?.()),
+  const settled = await Promise.race([
+    Promise.allSettled(inFlight).then(() => true),
+    new Promise<false>((r) => setTimeout(() => r(false), graceMs).unref?.()),
   ]);
+  if (!settled) await releaseRunsInHand(s.sql).catch(() => 0);
 }
 
 export interface Routine {

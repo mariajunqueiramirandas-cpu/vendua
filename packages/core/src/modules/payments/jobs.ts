@@ -1,5 +1,6 @@
 import type { MerchantNotify } from '../../admin/context.ts';
 import { withTenant, type Sql } from '../../platform/db.ts';
+import { ownsJob } from '../../platform/job-lease.ts';
 import { log } from '../../platform/log.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import { unseal } from '../../platform/secrets.ts';
@@ -316,7 +317,12 @@ export function startPaymentJobs(sql: Sql, o: PaymentJobDeps): () => void {
     await refreshConnections(sql, o);
     await notifyConnectionChanges(sql, o);
   });
-  const reconcile = guard('reconcile', () => reconcilePayments(sql, o));
+  // one Core reconciles: a second would ask Mercado Pago about the same payments again
+  const reconcile = guard('reconcile', async () => {
+    if (await ownsJob(sql, 'payments.reconcile', 3 * RECONCILE_EVERY_MS)) {
+      await reconcilePayments(sql, o);
+    }
+  });
   const timers = [
     setInterval(refresh, REFRESH_EVERY_MS),
     setInterval(reconcile, RECONCILE_EVERY_MS),

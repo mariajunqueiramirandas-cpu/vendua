@@ -10,6 +10,7 @@ import {
   requestTimeouts,
   warmPool,
 } from './platform/db.ts';
+import { releaseJobs } from './platform/job-lease.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
@@ -326,7 +327,11 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       server.stop(),
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
-    void Promise.all([drained, stopScheduler(), agentRuntime.stop(), stopVendedor()])
+    // budget under the stack's stop_grace_period (45s): 20s for work in hand (a CRM run still
+    // going is handed back, not left to its 10-min lease), 5s to close the pools
+    void Promise.all([drained, stopScheduler(20_000), agentRuntime.stop(20_000), stopVendedor()])
+      // the next Core takes the single-owner jobs on its next tick, not after their lease lapses
+      .then(() => releaseJobs(jobsSql).catch(() => undefined))
       .then(() => Promise.all([sql.end({ timeout: 5 }), jobsSql.end({ timeout: 5 })]))
       .finally(() => process.exit(0));
   });

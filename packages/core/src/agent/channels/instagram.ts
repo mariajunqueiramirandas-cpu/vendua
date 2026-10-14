@@ -7,6 +7,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import type { Sql } from '../../platform/db.ts';
+import { ownsJob } from '../../platform/job-lease.ts';
 import { HttpError } from '../../platform/http.ts';
 import { controlTx } from '../../modules/control.ts';
 import { emitControlEvent } from '../../modules/control-events.ts';
@@ -383,8 +384,10 @@ export function startInstagramReconcile(sql: Sql): () => void {
     // a slow sidecar would otherwise queue a tick behind reconcileTail every minute
     if (tickInFlight) return;
     tickInFlight = true;
-    void getIntegration(sql, 'instagram')
-      .then((i) => reconcileInstagram(sql, i))
+    void ownsJob(sql, 'instagram.reconcile', 180_000)
+      .then(async (mine) => {
+        if (mine) await reconcileInstagram(sql, await getIntegration(sql, 'instagram'));
+      })
       .catch((e) => igLog.error({ err: e }, 'instagram reconcile failed'))
       .finally(() => {
         tickInFlight = false;
