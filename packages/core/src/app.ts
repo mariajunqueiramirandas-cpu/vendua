@@ -44,6 +44,7 @@ import {
   constantTimeEqual,
   knownOrigin,
 } from './platform/http.ts';
+import { keyedGate } from './platform/keyed-gate.ts';
 import { TenantResolver, type Tenant } from './platform/tenancy.ts';
 import {
   CONTROL_SESSION_DAYS,
@@ -1218,13 +1219,16 @@ export function createApp({
     })(c);
   });
 
+  // a store's checkouts wait their turn here, not holding a pooled connection behind its
+  // advisory lock (keyed-gate.ts); two at once lets one prepare while the other holds the lock
+  const checkoutGate = keyedGate({ concurrency: 2, maxQueued: 200 });
   checkout.post('/checkout', async (c) => {
     const tenant = c.get('tenant');
     const peek = await peekBody(c);
     const d = peek?.delivery as Record<string, unknown> | undefined;
     // usually a cache hit: the quote and the address step already fetched this leg
     const route = d?.mode === 'delivery' ? await routeFor(c, tenant.id, d.lat, d.lng) : null;
-    return idempotency(sql, async (c, tx) => {
+    const placeOrder = idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       validateCheckoutShape(body);
@@ -1281,7 +1285,8 @@ export function createApp({
           customerTokenExpiresAt: customer.expiresAt,
         },
       };
-    })(c);
+    });
+    return checkoutGate(tenant.id, () => placeOrder(c), c.req.raw.signal);
   });
 
   // `?since=<version>&wait=<s>` holds the request (≤25s) until the order moves past

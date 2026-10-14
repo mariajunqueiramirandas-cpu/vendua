@@ -36,6 +36,15 @@ export function errorJson(err: unknown, c: Context) {
     if (err.details) (body.error as Record<string, unknown>).details = err.details;
     return c.json(body, err.status as 400);
   }
+  // the pool's statement/lock/idle-in-transaction ceilings (db.ts): the tx rolled back, so the
+  // same Idempotency-Key retries cleanly — a 503 to retry, not a 500 to report
+  const pgCode = (err as { code?: unknown } | null)?.code;
+  if (pgCode === '57014' || pgCode === '55P03' || pgCode === '25P03') {
+    httpLog.warn({ code: pgCode, method: c.req.method, path: c.req.path }, 'db timeout');
+    return c.json({ error: { code: 'INTERNAL', message: 'busy — retry in a moment' } }, 503, {
+      'retry-after': '2',
+    });
+  }
   httpLog.error(
     {
       err,

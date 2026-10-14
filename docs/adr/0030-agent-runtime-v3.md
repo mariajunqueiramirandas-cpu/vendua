@@ -130,7 +130,7 @@ built yet.
 
 Built together on 2026-10-14 rather than job by job; the old runner (`src/agent/`) is deleted.
 
-- **Tenancy.** Open decision 2 went to a reserved platform tenant (`0129_platform_tenant.sql`,
+- **Tenancy.** Open decision 2 went to a reserved platform tenant (`0131_platform_tenant.sql`,
   `PLATFORM_TENANT_ID`, status `platform`): no slug a resolver accepts, skipped by every store
   list. CRM tables stay control-scoped; the runtime's rows are this tenant's.
 - **Three agents** in `agent-host/agents/crm/`: `crm` (one actor per lead; statechart states
@@ -143,7 +143,7 @@ Built together on 2026-10-14 rather than job by job; the old runner (`src/agent/
   discovery's first contacts, the board's daily and weekly sweeps (`crm/board.ts`) and the
   agenda (`crm/agenda.ts`: a date is a `timer.followup` or `timer.callback` row) all go through
   them. `requestAgentTx`, the run queue, the inbox and the wakeup sweeper are gone.
-- **Projection.** `crm_turns` (`0130_crm_turns.sql`), written by the host's turn hooks
+- **Projection.** `crm_turns` (`0132_crm_turns.sql`), written by the host's turn hooks
   (`crm/turns.ts`), replaces `agent_runs` for the activity list (`crm/runs.ts`, which also lists
   waiting mailbox rows), metrics, Discord reports, forecasts and the lead cost cap. A turn
   failing past its retries is `agent.run_failed` (not `agent.turn_failed`) plus a `[humano]`

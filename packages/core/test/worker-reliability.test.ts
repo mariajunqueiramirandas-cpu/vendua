@@ -25,15 +25,18 @@ describe('admin sweeper', () => {
       return q(new Promise((r) => pending.push(r)));
     }) as unknown as Sql;
 
-    const stop = startAdminSweeper(sql);
+    const stop = startAdminSweeper(sql, {}, async () => true);
     jest.advanceTimersByTime(60_000);
+    await flush();
     expect(pending.length).toBe(1);
     jest.advanceTimersByTime(180_000);
+    await flush();
     expect(pending.length).toBe(1);
 
     pending[0]!([]);
     await flush();
     jest.advanceTimersByTime(60_000);
+    await flush();
     expect(pending.length).toBe(2);
 
     pending[1]!([]);

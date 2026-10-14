@@ -1,4 +1,5 @@
 import type { Sql } from '../../platform/db.ts';
+import { ownsJob } from '../../platform/job-lease.ts';
 import { runDomainChecks } from '../billing/jobs.ts';
 import {
   activateVerified,
@@ -65,7 +66,10 @@ export function startDomainJobs(sql: Sql, d: DomainJobDeps): () => void {
     if (running) return;
     running = true;
     try {
-      await runDomainJobs(sql, d, new Date());
+      // one Core drives the registrar and DNS steps at a time
+      if (await ownsJob(sql, 'domains.tick', 3 * TICK_MS)) await runDomainJobs(sql, d, new Date());
+    } catch (err) {
+      domainLog.error({ err }, 'domain tick failed');
     } finally {
       running = false;
     }

@@ -118,4 +118,12 @@ before the first test loads, so a shell with live keys can't change a result.
 - `SESSION_SECRET`, `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `PORT` are env
   vars; dev defaults are in `src/index.ts`. `DB_POOL_MAX` sizes the Postgres pool
   requests use, per process (default 10); `DB_JOBS_POOL_MAX` the separate one for background
-  jobs, the scheduler and agents (default 10).
+  jobs, the scheduler and agents (default 10). Both pools carry server-side timeouts
+  (`platform/db.ts`): requests `DB_STATEMENT_TIMEOUT_MS` 30s, `DB_LOCK_TIMEOUT_MS` 10s,
+  `DB_IDLE_IN_TX_TIMEOUT_MS` 60s; jobs the `DB_JOBS_*` ones, 120s / 30s / 15 min. A request
+  that hits one answers 503 with `Retry-After`, and its transaction has rolled back.
+- A store's checkouts run one at a time in Postgres (`placeOrderTx`'s advisory lock); in Core
+  they queue per store before taking a connection (`platform/keyed-gate.ts`, 2 at once, 200
+  waiting, then 429), so one store's burst never holds the pool the other stores use.
+- Jobs that must run in one Core at a time (a deploy's overlap, a second replica) ask
+  `ownsJob` (`platform/job-lease.ts`) each tick.

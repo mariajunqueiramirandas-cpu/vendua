@@ -268,7 +268,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       }),
     );
     expect((await catchErr(badRun))?.status).toBe(400);
-    // a turn id needs no row of its own: the FK to agent_runs is gone (0130)
+    // a turn id needs no row of its own: the FK to agent_runs is gone (0132)
     const unknownTurn = crypto.randomUUID();
     const kept = await controlTx(sql, (tx) =>
       rememberTx(tx, {

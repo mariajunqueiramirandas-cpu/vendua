@@ -1,4 +1,4 @@
--- 0130_crm_turns.sql — the CRM agent on Agent Runtime v3 (ADR 0030 steps 2–4): one row per
+-- 0132_crm_turns.sql — the CRM agent on Agent Runtime v3 (ADR 0030 steps 2–4): one row per
 -- finished turn of a CRM actor (crm, crm-discovery, crm-strategist), written by the host's turn
 -- hooks in the transaction that ends the turn. It is a projection of agent_events, rebuildable, and
 -- what the CRM's activity list, metrics, cost caps and reports read in place of agent_runs. Platform

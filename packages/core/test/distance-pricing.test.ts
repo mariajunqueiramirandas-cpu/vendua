@@ -47,8 +47,10 @@ describe('distance pricing (pure)', () => {
 
   test('no route (or one for another pin): straight line × detour factor', () => {
     const km = Math.round(haversineKm(STORE, NEAR) * DETOUR_FACTOR * 10) / 10;
+    // NEAR's estimate is past PRICING's 8 km max with the detour factor, so widen it here
+    const wide = { ...PRICING, maxKm: 12 };
     for (const route of [null, leg(FAR, 1000)]) {
-      const m = priceByDistance(PRICING, STORE, NEAR, route, 25)!;
+      const m = priceByDistance(wide, STORE, NEAR, route, 25)!;
       expect(m.distanceSource).toBe('estimate');
       expect(m.feeCents).toBe(500 + Math.ceil(km) * 150);
     }
@@ -82,7 +84,7 @@ describe('distance pricing (pure)', () => {
         eta_max_minutes: 50,
       },
     ];
-    const on = { pricing: PRICING, route: null, prepMinutes: 25 };
+    const on = { pricing: { ...PRICING, maxKm: 12 }, route: null, prepMinutes: 25 };
     expect(resolveDelivery(zones, { neighborhood: 'Centro' }, STORE, on)?.zone.id).toBe('z');
     expect(
       resolveDelivery(zones, { neighborhood: 'Centro', coords: NEAR }, STORE, on)?.zone.id,
@@ -97,6 +99,34 @@ describe('distance pricing (pure)', () => {
         prepMinutes: 25,
       })?.zone.id,
     ).toBe('z');
+  });
+
+  test('real Rio pins: the estimate never undercharges the road, and an outage never admits a pin the road refuses', () => {
+    // Maracanã store; road legs as OpenRouteService returned them for these landmarks
+    const MARACANA = { lat: -22.9121, lng: -43.2302 };
+    const IPANEMA = { lat: -22.9841, lng: -43.2 };
+    const NITEROI = { lat: -22.8925, lng: -43.1245 };
+    const RIO: DistancePricing = { ...PRICING, maxKm: 15 };
+    const ipanemaRoad = 12_610;
+    const est = priceByDistance(RIO, MARACANA, IPANEMA, null, 25)!;
+    expect(est.distanceSource).toBe('estimate');
+    expect(est.distanceKm!).toBeGreaterThanOrEqual(ipanemaRoad / 1000);
+    expect(est.feeCents).toBeGreaterThanOrEqual(
+      priceByDistance(
+        RIO,
+        MARACANA,
+        IPANEMA,
+        {
+          from: [MARACANA.lat, MARACANA.lng],
+          to: [IPANEMA.lat, IPANEMA.lng],
+          meters: ipanemaRoad,
+          seconds: 1500,
+        },
+        25,
+      )!.feeCents,
+    );
+    // ORS routes Niterói at 20.4 km (refused); the estimate must refuse it too, not admit it at 14.4 km
+    expect(priceByDistance(RIO, MARACANA, NITEROI, null, 25)).toBeNull();
   });
 
   test('routeMatches compares store and pin to ~1 m', () => {

@@ -578,10 +578,12 @@ export class Runtime<H = unknown> {
     );
     let res: ModelResponse;
     try {
-      res = await this.o.gateway.generate(compiled.request, {
-        meter,
-        hedge: def.lane === 'interactive',
-      });
+      res = await this.held(run, () =>
+        this.o.gateway.generate(compiled.request, {
+          meter,
+          hedge: def.lane === 'interactive',
+        }),
+      );
     } catch (e) {
       span.end(e);
       throw e;
@@ -1198,33 +1200,35 @@ export class Runtime<H = unknown> {
       dayStart: dayStart(this.now()),
     });
     run.lease = await this.keepLease(run.lease);
-    const res = await this.o.gateway.generate(
-      {
-        tier: 'fast',
-        system: [
-          {
-            id: step.startsWith('c') ? 'compaction' : 'consolidation',
-            tier: 'static',
-            text: instructions,
-            cache: true,
+    const res = await this.held(run, () =>
+      this.o.gateway.generate(
+        {
+          tier: 'fast',
+          system: [
+            {
+              id: step.startsWith('c') ? 'compaction' : 'consolidation',
+              tier: 'static',
+              text: instructions,
+              cache: true,
+            },
+          ],
+          messages: [
+            { role: 'user', parts: [{ type: 'text', text: `<conversa>\n${body}\n</conversa>` }] },
+          ],
+          volatile: null,
+          tools: [],
+          maxTokens,
+          temperature: 0,
+          meta: {
+            tenantId: run.actor.tenantId,
+            agentId: def.id,
+            actorId: run.actor.id,
+            turnId: run.turnId,
+            lane: 'background',
           },
-        ],
-        messages: [
-          { role: 'user', parts: [{ type: 'text', text: `<conversa>\n${body}\n</conversa>` }] },
-        ],
-        volatile: null,
-        tools: [],
-        maxTokens,
-        temperature: 0,
-        meta: {
-          tenantId: run.actor.tenantId,
-          agentId: def.id,
-          actorId: run.actor.id,
-          turnId: run.turnId,
-          lane: 'background',
         },
-      },
-      { meter },
+        { meter },
+      ),
     );
     run.usage = addUsage(run.usage, res.usage);
     const [e] = await this.commit(run, [
@@ -1351,6 +1355,30 @@ export class Runtime<H = unknown> {
   }
 
   // ── leases, time, telemetry ─────────────────────────────────────────────────
+
+  /** Renews the lease while `fn` runs. A model call can outlast the lease (the gateway's timeout is
+   *  120s, the lease 60s), and a lapsed lease lets another worker claim the actor and pay for the
+   *  same turn again; the fence only stops the second send. A lost lease surfaces at the next
+   *  fenced write, as it would without this. */
+  private async held<T>(run: TurnRun<H>, fn: () => Promise<T>): Promise<T> {
+    let beat = Promise.resolve();
+    let lost = false;
+    const timer = setInterval(() => {
+      beat = beat.then(async () => {
+        if (lost) return;
+        // a DB blip keeps the lease we have: the next beat or the fence decides
+        const r = await this.o.store.renew(run.lease, this.leaseMs).catch(() => run.lease);
+        if (r) run.lease = r;
+        else lost = true;
+      });
+    }, this.leaseMs / 3);
+    try {
+      return await fn();
+    } finally {
+      clearInterval(timer);
+      await beat;
+    }
+  }
 
   private async keepLease(lease: Lease): Promise<Lease> {
     if (lease.until.getTime() - this.now().getTime() > this.leaseMs / 2) return lease;

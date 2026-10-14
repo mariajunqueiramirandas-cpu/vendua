@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { defineAgent, Runtime, createGateway, LeaseLostError } from '../src/index.ts';
-import { drive, scriptedAdapter } from '../src/testing/index.ts';
+import { drive, FakeClock, MemoryStore, scriptedAdapter } from '../src/testing/index.ts';
 import { agentDef, call, reply, setup, TENANT, types } from './helpers.ts';
 
 describe('a turn', () => {
@@ -380,6 +380,44 @@ describe('durability', () => {
     await store.fenced(b!.lease, async (tx) =>
       tx.append(null, [{ type: 'x', payload: null }], agent.version),
     );
+  });
+
+  test('a model call longer than the lease keeps it: the turn is not run twice', async () => {
+    const clock = new FakeClock();
+    const store = new MemoryStore(clock);
+    let ticker: ReturnType<typeof setInterval> | undefined;
+    // the model takes 500ms while the clock runs 2x faster than the 300ms lease could cover
+    const adapter = scriptedAdapter(() => {
+      ticker = setInterval(() => clock.advance(50), 25);
+      return { toolCalls: [{ name: 'reply', args: { text: 'Oi!' } }], delayMs: 500 };
+    });
+    const runtime = new Runtime({
+      agents: [defineAgent(agentDef())],
+      store,
+      gateway: createGateway({
+        adapters: [adapter],
+        routes: { routes: async () => [{ provider: 'scripted', model: 'test', zdr: true }] },
+      }),
+      transports: [store.transport('memory')],
+      owner: 'w1',
+      clock,
+      leaseMs: 300,
+      memory: store.memoryPort(),
+    });
+    await store.dispatch({
+      actor: { tenantId: TENANT, agentId: 'seller', subject: { kind: 'thread', id: 's1' } },
+      kind: 'message.inbound',
+      source: 'test',
+      dedupeKey: 'in:s1:1',
+      payload: { text: 'oi' },
+    });
+    try {
+      await runtime.pump('interactive', { limit: 1, perTenantCap: 1 });
+    } finally {
+      clearInterval(ticker);
+    }
+    expect(adapter.requests).toHaveLength(1);
+    expect(store.outbox.map((m) => m.text)).toEqual(['Oi!']);
   });
 });
 

@@ -2,7 +2,15 @@ import { createApp } from './app.ts';
 import { AdminHub } from './admin/live.ts';
 import { startAdminSweeper, startPushNotifier } from './admin/workers.ts';
 import { log } from './platform/log.ts';
-import { createSql, jobsPoolMax, migrate, warmPool } from './platform/db.ts';
+import {
+  createSql,
+  jobsPoolMax,
+  jobsTimeouts,
+  migrate,
+  requestTimeouts,
+  warmPool,
+} from './platform/db.ts';
+import { releaseJobs } from './platform/job-lease.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './crm/inbound.ts';
 import { startScheduler, stopScheduler } from './crm/scheduler.ts';
@@ -85,12 +93,12 @@ if (migrationUrl) {
   await migrator.end();
 }
 
-const sql = createSql(databaseUrl);
+const sql = createSql(databaseUrl, undefined, requestTimeouts);
 void warmPool(sql);
 // Background work (jobs, the scheduler, agents, inbound messages) gets a small pool of its own: a
 // request never waits behind a job for a connection, and since a connection prepares each
 // statement once, the request pool stays on statements requests have already prepared.
-const jobsSql = createSql(databaseUrl, jobsPoolMax);
+const jobsSql = createSql(databaseUrl, jobsPoolMax, jobsTimeouts);
 const adminHub = new AdminHub(sql);
 // one provider for the API and the jobs: the fake driver keeps its state in memory
 const paymentProvider = createPaymentProvider();
@@ -323,7 +331,11 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       server.stop(),
       new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
     ]);
-    void Promise.all([drained, stopScheduler(), agentRuntime.stop(), stopVendedor()])
+    // budget under the stack's stop_grace_period (45s): 20s for turns in hand to finish, 5s to
+    // close the pools
+    void Promise.all([drained, stopScheduler(20_000), agentRuntime.stop(20_000), stopVendedor()])
+      // the next Core takes the single-owner jobs on its next tick, not after their lease lapses
+      .then(() => releaseJobs(jobsSql).catch(() => undefined))
       .then(() => Promise.all([sql.end({ timeout: 5 }), jobsSql.end({ timeout: 5 })]))
       .finally(() => process.exit(0));
   });

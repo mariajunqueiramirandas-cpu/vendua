@@ -32,8 +32,9 @@ admin (`GET /admin/v1/geocode` from the store's address, then a tap on the map).
 
 **Road distance from a free hosted router, with a straight-line fallback.** Core asks
 OpenRouteService's free API (`ORS_API_KEY`, driving-car) for store → pin. Without a key, while
-the free quota is exhausted, or when the provider fails, Core uses the straight line × 1.3
-(`DETOUR_FACTOR`) and marks the distance `'estimate'`. A failure pauses calls for a minute, and
+the free quota is exhausted, or when the provider fails, Core uses the straight line × 1.5
+(`DETOUR_FACTOR`, raised from 1.3 so an estimate never undercharges or admits an address the road
+would refuse) and marks the distance `'estimate'`. A failure pauses calls for a minute, and
 legs are cached in memory for 30 days. Routing never blocks checkout.
 
 **One store-level price rule.** `store_settings.distance_pricing` with `delivery_base_fee_cents`,

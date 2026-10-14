@@ -2,7 +2,7 @@ import type { Sql } from './db.ts';
 import { log } from './log.ts';
 import { slugFromStoreHost } from './store-origin.ts';
 
-/** Venduá's own tenant (migration 0129): owns the CRM agent's runtime rows; never a store. */
+/** Venduá's own tenant (migration 0131): owns the CRM agent's runtime rows; never a store. */
 export const PLATFORM_TENANT_ID = '00000000-0000-4000-8000-000000000001';
 
 export interface Tenant {
