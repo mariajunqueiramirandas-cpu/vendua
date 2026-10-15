@@ -88,17 +88,19 @@
     gap: 28px 16px;
   }
   .tile {
+    position: relative;
     display: grid;
     align-content: start;
     row-gap: 6px;
     color: var(--ink);
   }
   .tile :global(svg) {
-    width: 76px;
+    width: 84px;
     height: auto;
     margin-bottom: 2px;
+    transition: translate var(--duration-smooth) var(--ease-soft);
   }
-  /* each kind has its own page: the name is the link */
+  /* each kind has its own page: the name is the link, and the whole tile is its hit area */
   .tile a {
     text-decoration-line: underline;
     text-decoration-color: color-mix(in srgb, var(--ink) 28%, transparent);
@@ -106,8 +108,17 @@
     text-underline-offset: 5px;
     border-radius: 4px;
   }
-  .tile a:hover {
+  .tile a::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: var(--radius-md);
+  }
+  .tile:hover a {
     text-decoration-color: currentColor;
+  }
+  .tile:hover :global(svg) {
+    translate: 0 -4px;
   }
   .more {
     margin-top: clamp(24px, 3vw, 36px);
@@ -137,7 +148,7 @@
       gap: 40px;
     }
     .tile :global(svg) {
-      width: 120px;
+      width: 136px;
     }
     .how {
       font-size: 1rem;

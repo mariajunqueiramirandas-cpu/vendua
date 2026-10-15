@@ -23,8 +23,13 @@ links the rest in a line under them), the partner program (`/parceiros/`, ADR 00
 ## Launch decisions the copy encodes
 
 - Sign-up is open. The only call to action is `<Start/>` ("Criar minha loja"), a plain link to
-  `<PUBLIC_ADMIN_URL>/admin/comecar?plano=bandeira` (works without JS): in the header, and in the
-  closing. Not in the hero, where it would sit right under the header's. The price block links each
+  `<PUBLIC_ADMIN_URL>/admin/comecar?plano=bandeira` (works without JS): in the header, in the hero
+  and in the closing. In the hero it comes after the lede as `<StartPitch/>` (2026-10-15, for
+  conversion: the first screen had no action and no offer), with the trial beside the button and,
+  under it, what comes after ("Depois, a partir de R$ 69,90 por mês, e nenhuma taxa da Venduá por
+  pedido"): both lines come from `src/lib/plans/pitch.ts`, which reads the live catalog, so the
+  cheapest open plan and the trial follow the CRM. The same `<StartPitch/>` opens the dawn band of
+  every `/para/<kind>/` page, where an ad or a search lands. The price block links each
   open plan to the same page with `?plano=mirim` or `?plano=bandeira` (and `?plano=pangolim` once it
   opens, see below). No WhatsApp or
   contact link on the site; Instagram only in the footer (and at most one line near the closing

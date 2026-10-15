@@ -51,8 +51,13 @@
     margin-bottom: clamp(52px, 7vw, 80px);
   }
   @media (min-width: 1024px) {
+    /* the strip hugs its words at the right, a sticker rather than a band of empty lime */
     .top {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .trial {
+      justify-self: end;
+      max-width: 30rem;
     }
   }
   .head {

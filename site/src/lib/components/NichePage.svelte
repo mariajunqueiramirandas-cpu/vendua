@@ -42,6 +42,7 @@
   import Phone from './Phone.svelte';
   import Screen from './Screen.svelte';
   import Seo from './Seo.svelte';
+  import StartPitch from './StartPitch.svelte';
 
   // A page for one kind of shop (/para/<kind>/): the dawn band, the store's day told for that
   // kitchen next to the real admin screens, what Bandeira adds, the questions that kitchen asks,
@@ -80,8 +81,10 @@
 <Header home={false} overlay />
 
 <main id="conteudo">
+  <!-- an ad or a search lands here: the way in is in the band, not only at the sunset -->
   <Band crumbs={[{ name: 'Início', path: '/' }]} title={c.title} lede={c.lede}>
     {#snippet art()}<KindArt kind={c.kind} />{/snippet}
+    <StartPitch />
   </Band>
 
   <div class="wrap day">

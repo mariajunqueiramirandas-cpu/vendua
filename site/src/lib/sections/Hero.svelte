@@ -4,6 +4,7 @@
   import Phone from '$lib/components/Phone.svelte';
   import Screen from '$lib/components/Screen.svelte';
   import Section from '$lib/components/Section.svelte';
+  import StartPitch from '$lib/components/StartPitch.svelte';
   import { push, store } from '$lib/content';
 
   const order = store.newOrder;
@@ -38,9 +39,14 @@
   </h1>
 
   <div class="grid">
-    <p class="t-lede lede">
-      {#each lede as w, i (i)}<span class="w" style="--i: {i}">{w}</span>{' '}{/each}
-    </p>
+    <div class="pitch">
+      <p class="t-lede lede">
+        {#each lede as w, i (i)}<span class="w" style="--i: {i}">{w}</span>{' '}{/each}
+      </p>
+      <!-- the decision, right where the visitor made up their mind: the trial and what comes after,
+           far enough under the bar's own button not to double it -->
+      <div class="go"><StartPitch /></div>
+    </div>
 
     <div class="stage">
       <div class="back" aria-hidden="true">
@@ -247,6 +253,11 @@
       margin-top: 24px;
     }
   }
+  .pitch {
+    display: grid;
+    gap: clamp(22px, 3vw, 32px);
+    align-content: start;
+  }
   .lede {
     max-width: 40ch;
     /* body copy at 7:1 on the dawn sky; plain --ink-muted sits near 5.5:1 here */
@@ -325,6 +336,10 @@
     .w {
       display: inline-block;
       animation: word 0.8s var(--spring) calc(0.8s + var(--i) * 0.026s) both;
+    }
+    /* the button comes last of the words, as the paragraph's last line */
+    .go {
+      animation: show 0.7s var(--ease-soft) 1.55s both;
     }
     .back {
       animation: phone 1.1s var(--spring) 1.3s both;
