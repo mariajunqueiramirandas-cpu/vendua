@@ -231,8 +231,14 @@ export function ActionBar({
           <div className="flex items-center gap-2 md:gap-3">
             {back ? (
               hidePrimary ? (
-                // alone (a tap answers), "voltar" keeps its word
-                <Button variant="ghost" icon={<ArrowLeft />} onClick={back} className="-ml-3">
+                // alone (a tap answers), "voltar" keeps its word, starting on the column's edge
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ArrowLeft />}
+                  onClick={back}
+                  className="-ml-3.5"
+                >
                   voltar
                 </Button>
               ) : (

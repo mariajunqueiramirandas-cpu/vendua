@@ -62,7 +62,11 @@ export function Say({
   const line = (
     <p
       role={praise ? 'status' : undefined}
-      className="t-body-lg min-w-0 max-w-[34rem] text-pretty text-muted"
+      className={cn(
+        't-body-lg min-w-0 max-w-[34rem] text-pretty text-muted',
+        // the first line's middle on the face's middle (26 px line, 36 px disc)
+        face && 'pt-1',
+      )}
     >
       {praise ? <strong className="font-semibold text-ink">{praise} </strong> : null}
       {children}
@@ -74,7 +78,7 @@ export function Say({
       <span
         aria-hidden
         className={cn(
-          'dua-disc mt-0.5 grid size-9 shrink-0 place-items-center bg-spark-soft',
+          'dua-disc grid size-9 shrink-0 place-items-center bg-spark-soft',
           praise && 'animate-pop',
         )}
       >

@@ -515,9 +515,10 @@ Duá's line under it, the answer. The line is his (its sentence already speaks i
 given gets his praise in front of it ("Quero Pudim… que nome bonito! Pode ser uma foto tirada
 agora."). A question with one answer in words (the name, the phrase, the WhatsApp) is answered on
 a line, not in a box: the title is the label, the answer is set big in the display face over a
-rule that turns forest as it's typed on, with the lime under it. With a mouse and keyboard the
-bar says "ou Enter ↵" beside the main button on a typed question. The questions come in four
-parts:
+rule that turns forest as it's typed on, with the lime under it. Every answer spans the column,
+the logo's too: one row with the app icon's square the photo lands in and the words beside it,
+never a lone tile in a corner. With a mouse and keyboard the bar says "ou Enter ↵" beside the
+main button on a typed question. The questions come in four parts:
 
 - **A cara da loja**: what it sells (only if nobody asked), import from another menu app, the
   name (only if signup didn't ask), logo, the store's colour (swatches, the logo's first),

@@ -25,7 +25,7 @@ import { StepFrame } from '../../ui/StepFrame.tsx';
 import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { fromWeek, TimeRangeField, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { AnswerLine, AnswerPhone } from './Answer.tsx';
+import { AnswerLine, AnswerLogo, AnswerPhone } from './Answer.tsx';
 import { Say } from './Guide.tsx';
 import type { Draft } from './MiniStore.tsx';
 import { SegmentPicker } from './SegmentPicker.tsx';
@@ -83,7 +83,8 @@ export function Frame({
       }
       aside={
         onSkip ? (
-          <Button variant="ghost" onClick={onSkip} className="-mr-3 text-muted">
+          // its padding hangs in the gutter, so the words end on the column's edge
+          <Button variant="ghost" size="sm" onClick={onSkip} className="-mr-3.5 text-muted">
             {skipLabel}
           </Button>
         ) : (
@@ -167,19 +168,13 @@ export function LogoStep({ draft, patch, save, next, back, skip }: StepProps) {
       onSkip={draft.logoUrl ? undefined : skip}
       onSubmit={() => next('Ficou lindo!')}
     >
-      <div className="w-44">
-        <PhotoField
-          label="logo"
-          aspect="1:1"
-          max={1}
-          photos={draft.logoUrl ? [{ url: draft.logoUrl }] : []}
-          onChange={async (p) => {
-            const logoUrl = p[0]?.url ?? null;
-            patch({ logoUrl });
-            await save({ profile: { logoUrl } });
-          }}
-        />
-      </div>
+      <AnswerLogo
+        url={draft.logoUrl}
+        onChange={async (logoUrl) => {
+          patch({ logoUrl });
+          await save({ profile: { logoUrl } });
+        }}
+      />
     </Frame>
   );
 }

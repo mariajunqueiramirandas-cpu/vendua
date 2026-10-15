@@ -661,21 +661,26 @@ function Flow({
           <nav
             aria-label="todas as perguntas"
             // its rows' text on the track's edge, their highlight in the gutter
+            // the first part's row on the title's first line (the same breath above both)
             className="hidden lg:sticky lg:top-[5.5rem] lg:-mx-2 lg:block lg:self-start lg:pt-2"
           >
-            <p className="t-caption mb-2 px-2 text-muted">
+            <StepMap rail steps={steps} mark={mark} onJump={jump} />
+            <p className="t-caption mt-4 px-2 text-muted">
               <span className="tnum font-semibold text-ink">
                 {questions.filter(settled).length} de {questions.length}
               </span>{' '}
               respondidas
             </p>
-            <StepMap rail steps={steps} mark={mark} onJump={jump} />
           </nav>
-        ) : (
-          <span aria-hidden className="hidden lg:block" />
-        )}
+        ) : null}
 
-        <main className="mx-auto flex w-full max-w-xl flex-col lg:mx-0 lg:max-w-none lg:pt-2">
+        <main
+          className={cn(
+            'mx-auto flex w-full max-w-xl flex-col lg:mx-0 lg:pt-2',
+            // the welcome and the finale have no map: they take its track too, a little wider
+            question ? 'lg:max-w-none' : 'lg:col-span-2 lg:max-w-[44rem]',
+          )}
+        >
           {step === 'pronto' ? (
             <div className="mb-6 lg:hidden">
               <FinaleHero name={name} live={!hold} phone={preview()} accent={draft.accent} />
