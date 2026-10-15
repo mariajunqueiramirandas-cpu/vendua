@@ -1409,7 +1409,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     const told = whatsapps.filter((w) => w.phone === ownerPhone);
     expect(told).toHaveLength(1);
     expect(told[0]!.text).toContain('desconectada do Mercado Pago');
-    expect(told[0]!.text).toContain('https://painel.test/admin/pagamentos');
+    expect(told[0]!.text).toContain('https://painel.test/admin/loja/pagamentos');
     expect((await owner('GET', '/payments')).body.mercadoPago.status).toBe('disconnected');
   });
 

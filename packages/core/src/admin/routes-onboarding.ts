@@ -66,7 +66,7 @@ export async function setupChecklist(
       label: 'Chave Pix para receber',
       // a store that doesn't take Pix has no key to set
       done: !!s.pix_key || !(s.payment_methods ?? ['pix']).includes('pix'),
-      href: '/pagamentos/formas',
+      href: '/loja/pagamentos',
     },
     {
       id: 'menu',

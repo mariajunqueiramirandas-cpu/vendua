@@ -2,11 +2,13 @@ import { ArrowRight, CookingPot, Moped, Timer } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type Freio, type FreioLevel, type FreioMode } from '../../lib/api.ts';
-import { clock, money, num } from '../../lib/format.ts';
+import { clock, money, num, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
+import { ChoiceCards, type Choice } from '../../ui/Choice.tsx';
+import { MoreOptions } from '../../ui/Disclosure.tsx';
 import { cn } from '../../ui/cn.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, MoneyField, SavedStepper } from '../../ui/fields.tsx';
@@ -192,26 +194,43 @@ export function FreioCard({ className = '' }: { className?: string }) {
   );
 }
 
-const MODES: { value: FreioMode; label: string }[] = [
-  { value: 'off', label: 'Desligado' },
-  { value: 'suggest', label: 'Sugerir' },
-  { value: 'auto', label: 'Automático' },
+const MODES: Choice<FreioMode>[] = [
+  {
+    value: 'off',
+    title: 'Desligado',
+    hint: 'A loja promete os tempos de sempre e não pausa nada sozinha.',
+  },
+  {
+    value: 'suggest',
+    title: 'Sugerir',
+    hint: 'Promete o tempo real da fila e pergunta antes de pausar as entregas.',
+  },
+  {
+    value: 'auto',
+    title: 'Automático',
+    hint: 'Promete o tempo real e pausa as entregas sozinho. Você recebe um aviso e pode desfazer.',
+  },
 ];
 
-const MODE_WORDS: Record<FreioMode, string> = {
-  off: 'A loja promete os tempos de sempre e não pausa nada sozinha.',
-  suggest:
-    'A loja promete o tempo real da fila. Quando a cozinha enche, a gente pergunta se pode pausar as entregas.',
-  auto: 'A loja promete o tempo real da fila e pausa as entregas sozinha quando a cozinha enche. Você recebe um aviso e pode desfazer.',
-};
+const LATE: Choice<FreioMode>[] = [
+  { value: 'off', title: 'Não avisar', hint: 'Ninguém é avisado de atraso antes de perguntar.' },
+  {
+    value: 'suggest',
+    title: 'Avisar você',
+    hint: 'Você recebe um aviso para mandar o novo horário ao cliente.',
+  },
+  {
+    value: 'auto',
+    title: 'Avisar o cliente',
+    hint: 'O cliente recebe o novo horário pelo WhatsApp da loja.',
+  },
+];
 
-const LATE_WORDS: Record<FreioMode, string> = {
-  off: 'Ninguém é avisado de atraso antes de perguntar.',
-  suggest: 'Quando um pedido vai atrasar, a gente avisa você para mandar o novo horário.',
-  auto: 'Quando um pedido vai atrasar, o cliente recebe o novo horário pelo WhatsApp da loja.',
-};
-
-/** Loja › Freio automático */
+/**
+ * Loja › Tempo de preparo: what the store does when the kitchen fills up, and when an order
+ * will be late. Each is one choice read off its card; the tuning and the apology coupon fold
+ * under it, with what's set there said on the fold.
+ */
 export function FreioSettings() {
   const manager = useCan('manager');
   const owner = useCan('owner');
@@ -233,139 +252,143 @@ export function FreioSettings() {
   if (!manager || !data) return null;
   const st = data.settings;
   const ready = Math.round(data.auto.readyRate * 100);
+  const autoLock =
+    !data.auto.unlocked && st.mode !== 'auto'
+      ? `Libera quando a cozinha marca como pronto 8 de cada 10 pedidos da semana${
+          data.auto.orders ? ` (agora: ${ready}% de ${num(data.auto.orders)})` : ''
+        }.`
+      : null;
+  const tuning = `${plural(st.capacity, 'pedido', 'pedidos')} ao mesmo tempo · moto sai em ${st.bufferMinutes} min · espera até ${st.maxPromiseMinutes} min`;
+  const coupon = !st.apologyBudgetCents
+    ? 'Sem cupom: o aviso vai só com o novo horário'
+    : `${st.apologyKind === 'fixed' ? `${money(st.apologyValueCents)} de desconto` : 'Entrega grátis'} · até ${money(st.apologyBudgetCents)} por mês`;
   return (
-    <Section
-      id="freio"
-      title="Freio automático"
-      hint="Quando a cozinha enche, a loja promete o tempo de verdade e, se precisar, segura as entregas por um tempo."
-    >
-      <Card className="space-y-5 p-5">
-        <Field label="Modo">
-          {owner ? (
-            <Chips
-              label="modo do freio"
-              value={st.mode}
-              options={MODES}
-              onChange={(v) => patch.mutate({ mode: v })}
-            />
-          ) : (
-            <p className="font-semibold">{MODES.find((m) => m.value === st.mode)?.label}</p>
-          )}
-        </Field>
-        <p className="t-body -mt-2 text-muted">{MODE_WORDS[st.mode]}</p>
-        {!data.auto.unlocked && st.mode !== 'auto' ? (
-          <p className="t-caption -mt-2 text-muted">
-            O Automático libera quando a cozinha marca como pronto 8 de cada 10 pedidos da semana
-            {data.auto.orders ? ` (agora: ${ready}% de ${num(data.auto.orders)})` : ''}. Assim o
-            freio sabe quanto a fila anda de verdade.
-          </p>
-        ) : null}
-        {st.mode !== 'off' ? (
-          <div className="grid gap-5 border-t border-line pt-4 sm:grid-cols-2">
-            <Field
-              label="Pedidos ao mesmo tempo"
-              helper="Quantos pedidos a cozinha prepara de uma vez."
-            >
-              <SavedStepper
-                label="pedidos ao mesmo tempo"
-                value={st.capacity}
-                min={1}
-                max={20}
-                onSave={(v) => save({ capacity: v }).catch(() => undefined)}
-              />
-            </Field>
-            <Field label="Até o entregador sair" helper="Do pronto até a moto sair com o pedido.">
-              <SavedStepper
-                label="tempo até o entregador sair"
-                value={st.bufferMinutes}
-                min={0}
-                max={60}
-                step={5}
-                suffix=" min"
-                onSave={(v) => save({ bufferMinutes: v }).catch(() => undefined)}
-              />
-            </Field>
-            <Field
-              label="Maior espera aceitável"
-              helper="Passou disso, o freio considera a cozinha cheia."
-            >
-              <SavedStepper
-                label="maior espera aceitável"
-                value={st.maxPromiseMinutes}
-                min={30}
-                max={240}
-                step={10}
-                suffix=" min"
-                onSave={(v) => save({ maxPromiseMinutes: v }).catch(() => undefined)}
-              />
-            </Field>
-          </div>
-        ) : null}
-        <div className="space-y-3 border-t border-line pt-4">
-          <Field label="Pedido que vai atrasar">
-            {owner ? (
-              <Chips
-                label="aviso de atraso"
-                value={st.lateMode}
-                options={MODES}
-                onChange={(v) => patch.mutate({ lateMode: v })}
-              />
-            ) : (
-              <p className="font-semibold">{MODES.find((m) => m.value === st.lateMode)?.label}</p>
-            )}
-          </Field>
-          <p className="t-body text-muted">{LATE_WORDS[st.lateMode]}</p>
-        </div>
-        {st.lateMode !== 'off' && owner ? (
-          <div className="space-y-4 rounded-md p-4 ring-1 ring-line">
-            <div>
-              <p className="font-semibold">Cupom de desculpas</p>
-              <p className="t-caption text-muted">
+    <>
+      <Section
+        id="freio"
+        title="Quando a cozinha enche"
+        hint="A loja pode prometer o tempo de verdade e segurar as entregas por um tempo."
+      >
+        <Card className="space-y-5 p-5">
+          <ChoiceCards
+            label="quando a cozinha enche"
+            columns={3}
+            value={st.mode}
+            readOnly={!owner}
+            onChange={(v) => patch.mutate({ mode: v })}
+            options={MODES.map((m) => (m.value === 'auto' ? { ...m, locked: autoLock } : m))}
+          />
+          {owner ? null : <p className="t-caption text-muted">Só quem é dono da loja muda isto.</p>}
+          {st.mode !== 'off' ? (
+            <MoreOptions label="Ajustar a cozinha" summary={tuning}>
+              <div className="grid gap-5 sm:grid-cols-3">
+                <Field
+                  label="Pedidos ao mesmo tempo"
+                  helper="Quantos pedidos a cozinha prepara de uma vez."
+                >
+                  <SavedStepper
+                    label="pedidos ao mesmo tempo"
+                    value={st.capacity}
+                    min={1}
+                    max={20}
+                    onSave={(v) => save({ capacity: v }).catch(() => undefined)}
+                  />
+                </Field>
+                <Field label="Até o entregador sair" helper="Do pronto até a moto sair.">
+                  <SavedStepper
+                    label="tempo até o entregador sair"
+                    value={st.bufferMinutes}
+                    min={0}
+                    max={60}
+                    step={5}
+                    suffix=" min"
+                    onSave={(v) => save({ bufferMinutes: v }).catch(() => undefined)}
+                  />
+                </Field>
+                <Field
+                  label="Maior espera aceitável"
+                  helper="Passou disso, a cozinha conta como cheia."
+                >
+                  <SavedStepper
+                    label="maior espera aceitável"
+                    value={st.maxPromiseMinutes}
+                    min={30}
+                    max={240}
+                    step={10}
+                    suffix=" min"
+                    onSave={(v) => save({ maxPromiseMinutes: v }).catch(() => undefined)}
+                  />
+                </Field>
+              </div>
+            </MoreOptions>
+          ) : null}
+        </Card>
+      </Section>
+
+      <Section
+        id="atraso"
+        title="Pedido que vai atrasar"
+        hint="Quem fica sabendo quando um pedido vai passar do horário prometido."
+      >
+        <Card className="space-y-5 p-5">
+          <ChoiceCards
+            label="pedido que vai atrasar"
+            columns={3}
+            value={st.lateMode}
+            readOnly={!owner}
+            onChange={(v) => patch.mutate({ lateMode: v })}
+            options={LATE}
+          />
+          {st.lateMode !== 'off' && owner ? (
+            <MoreOptions label="Cupom de desculpas" summary={coupon}>
+              <p className="t-caption -mt-2 text-muted">
                 Vai junto com o aviso de atraso: uso único, só para aquele cliente, vale 30 dias. No
                 máximo um a cada 14 dias por cliente.
               </p>
-            </div>
-            <Field label="O cupom dá">
-              <Chips
-                label="o que o cupom dá"
-                value={st.apologyKind}
-                options={[
-                  { value: 'free_delivery', label: 'Entrega grátis' },
-                  { value: 'fixed', label: 'Desconto em reais' },
-                ]}
-                onChange={(v) => patch.mutate({ apologyKind: v })}
-              />
-            </Field>
-            {st.apologyKind === 'fixed' ? (
-              <Field label="Valor do desconto" htmlFor="apology-value">
-                <MoneyField
-                  id="apology-value"
-                  cents={st.apologyValueCents || null}
-                  validate={(c) => (c > 10_000 ? `Até ${money(10_000)}.` : null)}
-                  onCommit={(c) => patch.mutate({ apologyValueCents: c ?? 0 })}
+              <Field label="O cupom dá">
+                <Chips
+                  label="o que o cupom dá"
+                  value={st.apologyKind}
+                  options={[
+                    { value: 'free_delivery', label: 'Entrega grátis' },
+                    { value: 'fixed', label: 'Desconto em reais' },
+                  ]}
+                  onChange={(v) => patch.mutate({ apologyKind: v })}
                 />
               </Field>
-            ) : null}
-            <Field
-              label="Até quanto por mês"
-              htmlFor="apology-budget"
-              helper={
-                st.apologyBudgetCents
-                  ? `Neste mês: ${money(data.apology.spentCents)} usados, ${money(data.apology.leftCents)} sobrando.`
-                  : 'Vazio = o aviso vai sem cupom.'
-              }
-            >
-              <MoneyField
-                id="apology-budget"
-                allowEmpty
-                cents={st.apologyBudgetCents || null}
-                validate={(c) => (c > 1_000_000 ? `Até ${money(1_000_000)}.` : null)}
-                onCommit={(c) => patch.mutate({ apologyBudgetCents: c ?? 0 })}
-              />
-            </Field>
-          </div>
-        ) : null}
-      </Card>
-    </Section>
+              <div className="grid gap-5 sm:grid-cols-2">
+                {st.apologyKind === 'fixed' ? (
+                  <Field label="Valor do desconto" htmlFor="apology-value">
+                    <MoneyField
+                      id="apology-value"
+                      cents={st.apologyValueCents || null}
+                      validate={(c) => (c > 10_000 ? `Até ${money(10_000)}.` : null)}
+                      onCommit={(c) => patch.mutate({ apologyValueCents: c ?? 0 })}
+                    />
+                  </Field>
+                ) : null}
+                <Field
+                  label="Até quanto por mês"
+                  htmlFor="apology-budget"
+                  helper={
+                    st.apologyBudgetCents
+                      ? `Neste mês: ${money(data.apology.spentCents)} usados, ${money(data.apology.leftCents)} sobrando.`
+                      : 'Vazio = o aviso vai sem cupom.'
+                  }
+                >
+                  <MoneyField
+                    id="apology-budget"
+                    allowEmpty
+                    cents={st.apologyBudgetCents || null}
+                    validate={(c) => (c > 1_000_000 ? `Até ${money(1_000_000)}.` : null)}
+                    onCommit={(c) => patch.mutate({ apologyBudgetCents: c ?? 0 })}
+                  />
+                </Field>
+              </div>
+            </MoreOptions>
+          ) : null}
+        </Card>
+      </Section>
+    </>
   );
 }

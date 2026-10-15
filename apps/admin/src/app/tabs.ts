@@ -15,10 +15,6 @@ export const TABS = {
     { to: '/cardapio/festa', label: 'Festa' },
     { to: '/cardapio/planos', label: 'Planos' },
   ],
-  pagamentos: [
-    { to: '/pagamentos', label: 'Recebimentos' },
-    { to: '/pagamentos/formas', label: 'Formas de pagamento' },
-  ],
   marketing: [
     { to: '/marketing', label: 'Ofertas' },
     { to: '/marketing/divulgar', label: 'Divulgar' },

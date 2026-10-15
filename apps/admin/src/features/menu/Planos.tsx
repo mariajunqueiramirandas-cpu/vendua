@@ -139,7 +139,7 @@ export default function Planos() {
                 title="Cadastre a chave Pix da loja"
                 icon={<QrCode />}
                 action={
-                  <ButtonLink to="/pagamentos/formas" size="sm" variant="secondary">
+                  <ButtonLink to="/loja/pagamentos" size="sm" variant="secondary">
                     cadastrar a chave
                   </ButtonLink>
                 }

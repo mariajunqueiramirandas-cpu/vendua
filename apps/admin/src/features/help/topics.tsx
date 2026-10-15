@@ -172,8 +172,13 @@ export const TOPICS: Record<TopicId, Topic> = {
   },
   loja: {
     title: 'Loja',
-    intro: 'Horários, entrega, tempo de preparo, encomendas e como a loja se apresenta.',
+    intro:
+      'Todos os ajustes da loja, num lugar só: horários, entrega, preparo, pagamento, aparência, WhatsApp, impressoras, equipe e plano.',
     items: [
+      {
+        q: 'Onde fica cada ajuste?',
+        a: 'Tudo o que muda como a loja funciona fica em Loja, em quatro grupos. Cada linha diz o que está ajustado agora e ganha um alerta quando algo impede a loja de vender. Não achou? Busque pela palavra no campo do topo, como frete, pix ou impressora.',
+      },
       {
         q: 'Como mudo os horários?',
         a: 'Em Horários, toque no dia para mudar a hora ou use a chave para abrir ou fechar. Para um feriado, use “Feriados e dias especiais”: não mexe na semana.',
@@ -218,11 +223,16 @@ export const TOPICS: Record<TopicId, Topic> = {
   },
   pagamentos: {
     title: 'Pagamentos',
-    intro: 'Como seus clientes pagam e o que chegou.',
+    intro: 'O que chegou e o que falta conferir. As formas de pagamento ficam em Loja.',
     items: [
       {
         q: 'Como ligo ou desligo uma forma de pagamento?',
-        a: 'Em Formas de pagamento, use a chave de cada uma. Só aparecem na loja as que estão ligadas.',
+        a: (
+          <>
+            Em <L to="/loja/pagamentos">Loja › Formas de pagamento</L>, use a chave de cada uma. Só
+            aparecem na loja as que estão ligadas.
+          </>
+        ),
       },
       {
         q: 'Pix: automático ou conferido por mim?',

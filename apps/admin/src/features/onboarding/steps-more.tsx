@@ -483,7 +483,7 @@ export function PixStep({ pay, next, back, skip, eyebrow, me, s }: StepProps & {
         title={noPix ? 'Sem Pix por enquanto' : 'Seu Pix já está pronto'}
         hint={
           noPix
-            ? 'Você deixou o Pix de fora. Quando quiser aceitar, é em Pagamentos.'
+            ? 'Você deixou o Pix de fora. Quando quiser aceitar, é em Loja › Formas de pagamento.'
             : `A chave ${pay.pix!.key} recebe os pedidos. O cliente vê o Pix com o valor já preenchido.`
         }
         back={back}

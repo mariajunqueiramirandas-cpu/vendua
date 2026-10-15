@@ -310,7 +310,7 @@ const ROUTES: RouteDef[] = [
     id: 'store',
     match: /^\/loja$/,
     chunk: chunks.store,
-    data: (qc) => q(qc, qk.store, api.store),
+    data: (qc) => Promise.all([q(qc, qk.store, api.store), q(qc, qk.payments, api.payments)]),
   },
   {
     id: 'storeProfile',
@@ -357,7 +357,7 @@ const ROUTES: RouteDef[] = [
   },
   {
     id: 'paymentMethods',
-    match: /^\/pagamentos\/formas$/,
+    match: /^\/loja\/pagamentos$/,
     chunk: chunks.payments,
     data: (qc) => q(qc, qk.payments, api.payments),
   },

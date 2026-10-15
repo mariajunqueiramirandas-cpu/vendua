@@ -8,6 +8,7 @@ import {
   MagnifyingGlass,
   MapPin,
   Moped,
+  Path,
   PencilSimple,
   Plus,
   Polygon,
@@ -20,10 +21,12 @@ import { instagramHandle, whatsappDigits } from '@vendua/kernel/rules';
 import { api, ApiError, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { useLandOnHash } from '../../lib/hash.ts';
-import { dateShort, hhmm, isoDate, money, phone } from '../../lib/format.ts';
+import { dateShort, hhmm, isoDate, money, phone, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
+import { ChoiceCards } from '../../ui/Choice.tsx';
+import { Disclosure, MoreOptions } from '../../ui/Disclosure.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
@@ -697,87 +700,172 @@ function Delivery({
     }
   };
   const neighborhoodZones = zones.filter((z) => z.kind === 'neighborhood');
+  const byDistance = s.distancePricing.enabled;
+  const zoneMin = zones.some((z) => z.minOrderCents > 0);
+  // the areas: what each one charges, a tap from its sheet
+  const zoneRows = (
+    <>
+      {zones.length ? null : (
+        <p className="t-body p-4 text-muted">
+          {byDistance
+            ? 'Nenhuma área de reserva. Sem ela, um endereço sem o local no mapa não recebe entrega.'
+            : 'Nenhuma área ainda. Crie a primeira: um raio a partir da loja, uma lista de bairros ou uma área desenhada no mapa.'}
+        </p>
+      )}
+      {zones.map((z) => (
+        <button
+          key={z.id}
+          type="button"
+          onClick={() => setEdit(z)}
+          className="flex min-h-18 w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover"
+        >
+          {z.kind === 'radius' ? (
+            <MapPin className="size-6 shrink-0 text-muted" />
+          ) : z.kind === 'polygon' ? (
+            <Polygon className="size-6 shrink-0 text-muted" />
+          ) : (
+            <Moped className="size-6 shrink-0 text-muted" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold">
+              {z.name}
+              {!z.active ? <span className="t-caption ml-2 text-muted">(pausada)</span> : null}
+            </span>
+            <span className="t-caption block truncate text-muted">
+              {z.kind === 'radius'
+                ? `até ${z.maxDistanceKm} km`
+                : z.kind === 'polygon'
+                  ? 'desenhada no mapa'
+                  : z.neighborhoods.join(', ')}{' '}
+              · {z.etaMin}–{z.etaMax} min
+            </span>
+          </span>
+          <span className="tnum shrink-0 text-right">
+            <span className="block font-semibold">{z.feeCents ? money(z.feeCents) : 'grátis'}</span>
+            {z.freeDeliveryOverCents ? (
+              <span className="t-caption text-muted">
+                grátis acima de {money(z.freeDeliveryOverCents)}
+              </span>
+            ) : null}
+          </span>
+          <PencilSimple className="size-5 shrink-0 text-muted" />
+        </button>
+      ))}
+      <div className="p-3">
+        <Button variant="ghost" block icon={<Plus />} onClick={() => setEdit('new')}>
+          {byDistance ? 'nova área de reserva' : 'nova área de entrega'}
+        </Button>
+      </div>
+    </>
+  );
   return (
     <>
-      <Section id="entrega" title="Como o cliente recebe">
-        <Card className="space-y-2 p-5">
-          <Toggle
-            checked={o.pickupEnabled}
-            onChange={(v) => patch({ operations: { pickupEnabled: v } })}
-            label="Retirada na loja"
-            description={
-              o.pickupEnabled
-                ? 'O cliente busca o pedido no endereço abaixo.'
-                : 'Deixe o cliente buscar o pedido.'
-            }
-          />
-          {o.pickupEnabled ? (
-            <div className="animate-fade-up space-y-4 rounded-md p-4 ring-1 ring-line">
-              <Field
-                label="Onde retirar"
-                htmlFor="pk-addr"
-                helper="Aparece para quem escolhe retirar, na loja e no pedido."
-              >
-                <CommitInput
-                  id="pk-addr"
-                  maxLength={200}
-                  autoComplete="off"
-                  value={o.pickupAddress ?? ''}
-                  placeholder={s.profile.address ?? 'Ex.: Rua das Flores, 120 — Centro'}
-                  onCommit={(v) => patch({ operations: { pickupAddress: v || null } })}
-                />
-              </Field>
-              {!o.pickupAddress && s.profile.address ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="-mt-2"
-                  onClick={() => patch({ operations: { pickupAddress: s.profile.address } })}
-                >
-                  usar o endereço da loja
-                </Button>
-              ) : null}
-              <Field
-                label="Como retirar"
-                optional
-                htmlFor="pk-how"
-                helper="Um recado curto: onde parar, a quem chamar, que horas."
-              >
-                <CommitInput
-                  id="pk-how"
-                  multiline
-                  maxLength={400}
-                  value={o.pickupInstructions ?? ''}
-                  placeholder="Ex.: Toque o interfone da casa 2. Retiradas até as 18h."
-                  onCommit={(v) => patch({ operations: { pickupInstructions: v || null } })}
-                />
-              </Field>
-            </div>
-          ) : null}
-          <Toggle
-            checked={o.deliveryEnabled}
-            onChange={(v) => patch({ operations: { deliveryEnabled: v } })}
-            label="Entrega"
-            description={
-              s.distancePricing.enabled
-                ? 'Pela distância até a porta do cliente.'
-                : 'Nos bairros ou raio abaixo.'
-            }
-          />
-          {!o.pickupEnabled && !o.deliveryEnabled ? (
-            <Notice tone="danger" title="Ninguém consegue pedir" role="alert">
-              Com retirada e entrega desligadas, a loja não aceita pedidos. Ligue pelo menos uma das
-              duas.
-            </Notice>
-          ) : null}
-          {o.deliveryEnabled || o.pickupEnabled ? (
-            <div className="grid gap-5 border-t border-line pt-4 sm:grid-cols-2">
-              {o.deliveryEnabled ? (
+      <Section
+        id="entrega"
+        title="Como o cliente recebe"
+        hint="Ligue uma ou as duas. Cada uma tem o seu pedido mínimo."
+      >
+        <div className="grid gap-4 md:grid-cols-2 [&>*]:min-w-0">
+          <Card className="space-y-2 p-5">
+            <Toggle
+              checked={o.pickupEnabled}
+              onChange={(v) => patch({ operations: { pickupEnabled: v } })}
+              label={
+                <span className="inline-flex items-center gap-2">
+                  <Storefront weight="duotone" className="size-5" /> Retirada na loja
+                </span>
+              }
+              description={
+                o.pickupEnabled
+                  ? 'O cliente busca o pedido na loja.'
+                  : 'Deixe o cliente buscar o pedido.'
+              }
+            />
+            {o.pickupEnabled ? (
+              <div className="animate-fade-up space-y-5 border-t border-line pt-4">
                 <Field
-                  label={o.pickupEnabled ? 'Pedido mínimo na entrega' : 'Pedido mínimo'}
+                  label="Onde retirar"
+                  htmlFor="pk-addr"
+                  helper="Aparece para quem escolhe retirar, na loja e no pedido."
+                >
+                  <CommitInput
+                    id="pk-addr"
+                    maxLength={200}
+                    autoComplete="off"
+                    value={o.pickupAddress ?? ''}
+                    placeholder={s.profile.address ?? 'Ex.: Rua das Flores, 120 — Centro'}
+                    onCommit={(v) => patch({ operations: { pickupAddress: v || null } })}
+                  />
+                </Field>
+                {!o.pickupAddress && s.profile.address ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="-mt-2"
+                    onClick={() => patch({ operations: { pickupAddress: s.profile.address } })}
+                  >
+                    usar o endereço da loja
+                  </Button>
+                ) : null}
+                <Field
+                  label="Pedido mínimo"
+                  htmlFor="minorder-pickup"
+                  helper="Deixe vazio para não ter mínimo."
+                >
+                  <MoneyField
+                    id="minorder-pickup"
+                    allowEmpty
+                    cents={o.pickupMinOrderCents || null}
+                    onCommit={(v) => patch({ operations: { pickupMinOrderCents: v ?? 0 } })}
+                  />
+                </Field>
+                <MoreOptions
+                  label="Recado para quem retira"
+                  summary={o.pickupInstructions ? `“${o.pickupInstructions}”` : 'Nenhum recado'}
+                >
+                  <Field
+                    label="Como retirar"
+                    optional
+                    htmlFor="pk-how"
+                    helper="Um recado curto: onde parar, a quem chamar, que horas."
+                  >
+                    <CommitInput
+                      id="pk-how"
+                      multiline
+                      maxLength={400}
+                      value={o.pickupInstructions ?? ''}
+                      placeholder="Ex.: Toque o interfone da casa 2. Retiradas até as 18h."
+                      onCommit={(v) => patch({ operations: { pickupInstructions: v || null } })}
+                    />
+                  </Field>
+                </MoreOptions>
+              </div>
+            ) : null}
+          </Card>
+          <Card className="space-y-2 p-5">
+            <Toggle
+              checked={o.deliveryEnabled}
+              onChange={(v) => patch({ operations: { deliveryEnabled: v } })}
+              label={
+                <span className="inline-flex items-center gap-2">
+                  <Moped weight="duotone" className="size-5" /> Entrega
+                </span>
+              }
+              description={
+                o.deliveryEnabled
+                  ? byDistance
+                    ? 'A taxa sai pela distância até a porta do cliente.'
+                    : 'Cada área de entrega com a sua taxa.'
+                  : 'Leve o pedido até o cliente.'
+              }
+            />
+            {o.deliveryEnabled ? (
+              <div className="animate-fade-up space-y-5 border-t border-line pt-4">
+                <Field
+                  label="Pedido mínimo"
                   htmlFor="minorder"
                   helper={
-                    zones.some((z) => z.minOrderCents > 0)
+                    zoneMin
                       ? 'Deixe vazio para não ter mínimo. Algumas áreas pedem mais.'
                       : 'Deixe vazio para não ter mínimo.'
                   }
@@ -789,41 +877,67 @@ function Delivery({
                     onCommit={(v) => patch({ operations: { minOrderCents: v ?? 0 } })}
                   />
                 </Field>
-              ) : null}
-              {o.pickupEnabled ? (
-                <Field
-                  label={o.deliveryEnabled ? 'Pedido mínimo na retirada' : 'Pedido mínimo'}
-                  htmlFor="minorder-pickup"
-                  helper="Deixe vazio para não ter mínimo."
+                <a
+                  href="#areas"
+                  className="t-label inline-flex min-h-11 items-center gap-1.5 text-muted underline underline-offset-2 hover:text-ink"
                 >
-                  <MoneyField
-                    id="minorder-pickup"
-                    allowEmpty
-                    cents={o.pickupMinOrderCents || null}
-                    onCommit={(v) => patch({ operations: { pickupMinOrderCents: v ?? 0 } })}
-                  />
-                </Field>
-              ) : null}
-            </div>
-          ) : null}
-        </Card>
+                  <MapPin className="size-4" aria-hidden />
+                  {byDistance
+                    ? `até ${s.distancePricing.maxKm.toLocaleString('pt-BR')} km, pela distância`
+                    : zones.length
+                      ? `${plural(zones.length, 'área', 'áreas')} de entrega`
+                      : 'definir onde a loja entrega'}
+                </a>
+              </div>
+            ) : null}
+          </Card>
+        </div>
+        {!o.pickupEnabled && !o.deliveryEnabled ? (
+          <Notice tone="danger" title="Ninguém consegue pedir" role="alert" className="mt-4">
+            Com retirada e entrega desligadas, a loja não aceita pedidos. Ligue pelo menos uma das
+            duas.
+          </Notice>
+        ) : null}
       </Section>
 
       {o.deliveryEnabled ? (
-        <Section
-          id="areas"
-          title="Onde a loja entrega"
-          hint="Cada área com a sua taxa e o seu tempo."
-        >
+        <Section id="areas" title="Onde a loja entrega" hint="E quanto custa a entrega até lá.">
           <div className="space-y-4">
+            <Card className="space-y-4 p-5">
+              <p className="t-label font-semibold">Como cobrar a entrega</p>
+              <ChoiceCards
+                label="como cobrar a entrega"
+                columns={2}
+                value={byDistance ? 'distance' : 'areas'}
+                onChange={(v) => patch({ distancePricing: { enabled: v === 'distance' } })}
+                options={[
+                  {
+                    value: 'areas',
+                    Icon: Polygon,
+                    title: 'Por área',
+                    hint: 'Bairros, um raio da loja ou uma área desenhada, cada uma com sua taxa.',
+                  },
+                  {
+                    value: 'distance',
+                    Icon: Path,
+                    title: 'Pela distância',
+                    hint: 'Uma taxa de saída mais um valor por km, pelo caminho de carro.',
+                    locked:
+                      !s.location && !byDistance
+                        ? 'Marque a loja no mapa para cobrar pela distância.'
+                        : null,
+                  },
+                ]}
+              />
+            </Card>
             <Card className="overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <div className="min-w-0 flex-1 basis-60">
-                  <p className="font-semibold">Área de entrega</p>
+                  <p className="font-semibold">Onde fica a loja</p>
                   <p className="t-caption text-muted">
                     {!s.location
-                      ? 'Marque onde fica a loja para entregar por distância.'
-                      : s.distancePricing.enabled
+                      ? 'Marque a loja no mapa: é de lá que a entrega sai.'
+                      : byDistance
                         ? 'O pino da loja é de onde a distância é medida.'
                         : 'Os círculos e as áreas desenhadas mostram até onde vai cada taxa.'}
                   </p>
@@ -867,70 +981,32 @@ function Delivery({
                 />
               </Suspense>
             </Card>
-            <DistancePricing s={s} patch={patch} run={run} />
-            {s.distancePricing.enabled ? (
-              <div className="px-1 pt-2">
-                <p className="font-semibold">Áreas de reserva</p>
-                <p className="t-caption text-muted">
-                  Valem só quando o endereço chega sem o local no mapa.
-                </p>
-              </div>
-            ) : null}
-            <Card className="divide-y divide-line">
-              {zones.map((z) => (
-                <button
-                  key={z.id}
-                  type="button"
-                  onClick={() => setEdit(z)}
-                  className="flex min-h-18 w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover"
+            {byDistance ? (
+              <>
+                <DistancePricing s={s} patch={patch} run={run} />
+                <Disclosure
+                  title="Áreas de reserva"
+                  icon={<Polygon />}
+                  summary={
+                    zones.length
+                      ? `${plural(zones.length, 'área', 'áreas')} · valem quando o endereço chega sem o local no mapa`
+                      : 'Valem quando o endereço chega sem o local no mapa'
+                  }
                 >
-                  {z.kind === 'radius' ? (
-                    <MapPin className="size-6 shrink-0 text-muted" />
-                  ) : z.kind === 'polygon' ? (
-                    <Polygon className="size-6 shrink-0 text-muted" />
-                  ) : (
-                    <Moped className="size-6 shrink-0 text-muted" />
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold">
-                      {z.name}
-                      {!z.active ? (
-                        <span className="t-caption ml-2 text-muted">(pausada)</span>
-                      ) : null}
-                    </span>
-                    <span className="t-caption block truncate text-muted">
-                      {z.kind === 'radius'
-                        ? `até ${z.maxDistanceKm} km`
-                        : z.kind === 'polygon'
-                          ? 'desenhada no mapa'
-                          : z.neighborhoods.join(', ')}{' '}
-                      · {z.etaMin}–{z.etaMax} min
-                    </span>
-                  </span>
-                  <span className="tnum shrink-0 text-right">
-                    <span className="block font-semibold">
-                      {z.feeCents ? money(z.feeCents) : 'grátis'}
-                    </span>
-                    {z.freeDeliveryOverCents ? (
-                      <span className="t-caption text-muted">
-                        grátis acima de {money(z.freeDeliveryOverCents)}
-                      </span>
-                    ) : null}
-                  </span>
-                  <PencilSimple className="size-5 shrink-0 text-muted" />
-                </button>
-              ))}
-              <div className="p-3">
-                <Button variant="ghost" block icon={<Plus />} onClick={() => setEdit('new')}>
-                  nova área de entrega
-                </Button>
-              </div>
-            </Card>
-            {neighborhoodZones.length ? (
-              <p className="t-caption px-1 text-muted">
-                Áreas por bairro valem pelo nome do bairro que o cliente informa.
-              </p>
-            ) : null}
+                  {/* flush with the fold: a card in a card reads as a second screen */}
+                  <div className="-mx-4 -mb-4 -mt-4 divide-y divide-line">{zoneRows}</div>
+                </Disclosure>
+              </>
+            ) : (
+              <>
+                <Card className="divide-y divide-line">{zoneRows}</Card>
+                {neighborhoodZones.length ? (
+                  <p className="t-caption px-1 text-muted">
+                    Áreas por bairro valem pelo nome do bairro que o cliente informa.
+                  </p>
+                ) : null}
+              </>
+            )}
           </div>
         </Section>
       ) : null}
@@ -964,7 +1040,10 @@ function Delivery({
 const FEE_MAX = 100_000;
 const feeRule = (c: number) => (c > FEE_MAX ? `Até ${money(FEE_MAX)}.` : null);
 
-/** ADR 0024: base + R$/started km from the store's pin, Core computes every fee. */
+/**
+ * ADR 0024: base + R$/started km from the store's pin, Core computes every fee. The three every
+ * store sets up front; a floor and free delivery folded under them.
+ */
 function DistancePricing({
   s,
   patch,
@@ -985,85 +1064,84 @@ function DistancePricing({
   ]
     .filter(Boolean)
     .join(', ');
+  const extras = [
+    d.minFeeCents ? `taxa mínima ${money(d.minFeeCents)}` : null,
+    d.freeOverCents ? `grátis acima de ${money(d.freeOverCents)}` : null,
+  ].filter((x): x is string => !!x);
   return (
-    <Card className="space-y-2 p-5">
-      <Toggle
-        checked={d.enabled}
-        disabled={!s.location && !d.enabled}
-        onChange={(v) => set({ enabled: v })}
-        label="Cobrar pela distância"
-        description={
-          !s.location
-            ? 'Marque a loja no mapa acima para cobrar pela distância.'
-            : 'O cliente confirma no mapa onde entregar, e a taxa sai pelo caminho de carro da loja até lá.'
+    <Card className="space-y-5 p-5">
+      <div className="grid gap-5 sm:grid-cols-3">
+        <Field label="Taxa de saída" htmlFor="dp-base" helper="Cobrada em toda entrega.">
+          <MoneyField
+            id="dp-base"
+            cents={d.baseFeeCents}
+            validate={feeRule}
+            onCommit={(v) => set({ baseFeeCents: v ?? 0 })}
+          />
+        </Field>
+        <Field label="Por km" htmlFor="dp-km" helper="Cada km começado conta inteiro.">
+          <MoneyField
+            id="dp-km"
+            cents={d.feePerKmCents}
+            validate={feeRule}
+            onCommit={(v) => set({ feePerKmCents: v ?? 0 })}
+          />
+        </Field>
+        <Field label="Entrega até" helper="Mais longe, a loja não entrega.">
+          <SavedStepper
+            label="distância máxima"
+            value={d.maxKm}
+            min={1}
+            max={50}
+            suffix=" km"
+            onSave={(v) => run({ distancePricing: { maxKm: v } }).catch(() => undefined)}
+          />
+        </Field>
+      </div>
+      <p className="t-body rounded-md bg-sunken px-4 py-3 text-muted">
+        A entrega fica em {rule}. Sem caminho de carro disponível na hora, a distância em linha reta
+        conta com 30% a mais.
+      </p>
+      <MoreOptions
+        summary={
+          extras.length ? cap(extras.join(' · ')) : 'Taxa mínima e entrega grátis acima de um valor'
         }
-      />
-      {d.enabled ? (
-        <div className="animate-fade-up space-y-4 rounded-md p-4 ring-1 ring-line">
-          <div className="grid gap-5 sm:grid-cols-2">
-            <Field label="Taxa de saída" htmlFor="dp-base" helper="Cobrada em toda entrega.">
-              <MoneyField
-                id="dp-base"
-                cents={d.baseFeeCents}
-                validate={feeRule}
-                onCommit={(v) => set({ baseFeeCents: v ?? 0 })}
-              />
-            </Field>
-            <Field label="Por km" htmlFor="dp-km" helper="Cada km começado conta inteiro.">
-              <MoneyField
-                id="dp-km"
-                cents={d.feePerKmCents}
-                validate={feeRule}
-                onCommit={(v) => set({ feePerKmCents: v ?? 0 })}
-              />
-            </Field>
-            <Field
-              label="Taxa mínima"
-              optional
-              htmlFor="dp-min"
-              helper="Nenhuma entrega sai por menos que isso."
-            >
-              <MoneyField
-                id="dp-min"
-                allowEmpty
-                cents={d.minFeeCents || null}
-                validate={feeRule}
-                onCommit={(v) => set({ minFeeCents: v ?? 0 })}
-              />
-            </Field>
-            <Field
-              label="Grátis acima de"
-              optional
-              htmlFor="dp-free"
-              helper="Pedidos a partir desse valor não pagam entrega."
-            >
-              <MoneyField
-                id="dp-free"
-                allowEmpty
-                cents={d.freeOverCents}
-                onCommit={(v) => set({ freeOverCents: v })}
-              />
-            </Field>
-            <Field label="Entrega até" helper="Mais longe que isso, a loja não entrega.">
-              <SavedStepper
-                label="distância máxima"
-                value={d.maxKm}
-                min={1}
-                max={50}
-                suffix=" km"
-                onSave={(v) => run({ distancePricing: { maxKm: v } }).catch(() => undefined)}
-              />
-            </Field>
-          </div>
-          <p className="t-caption text-muted">
-            A entrega fica em {rule}. Sem caminho de carro disponível na hora, a distância em linha
-            reta conta com 30% a mais.
-          </p>
+      >
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field
+            label="Taxa mínima"
+            optional
+            htmlFor="dp-min"
+            helper="Nenhuma entrega sai por menos que isso."
+          >
+            <MoneyField
+              id="dp-min"
+              allowEmpty
+              cents={d.minFeeCents || null}
+              validate={feeRule}
+              onCommit={(v) => set({ minFeeCents: v ?? 0 })}
+            />
+          </Field>
+          <Field
+            label="Grátis acima de"
+            optional
+            htmlFor="dp-free"
+            helper="Pedidos a partir desse valor não pagam entrega."
+          >
+            <MoneyField
+              id="dp-free"
+              allowEmpty
+              cents={d.freeOverCents}
+              onCommit={(v) => set({ freeOverCents: v })}
+            />
+          </Field>
         </div>
-      ) : null}
+      </MoreOptions>
     </Card>
   );
 }
+
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 const POLYGON_MAX = 200;
 type Ring = [number, number][];

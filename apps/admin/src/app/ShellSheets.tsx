@@ -31,19 +31,12 @@ function MoreSheet({
           ? `${vendedor.waiting} ${vendedor.waiting === 1 ? 'precisa' : 'precisam'} de você`
           : 'vendas no WhatsApp';
     const mk = qc.getQueryData<{ coupons: { active: boolean }[] }>(qk.marketing);
-    const pay = qc.getQueryData<{ pix: unknown }>(qk.payments);
+    const pay = qc.getQueryData<{ review?: unknown[] }>(qk.payments);
     if (to === '/marketing' && mk) {
       const n = mk.coupons.filter((c) => c.active).length;
       return n ? `${n} ${n === 1 ? 'cupom ativo' : 'cupons ativos'}` : 'crie um cupom';
     }
-    if (to === '/pagamentos' && pay) return pay.pix ? 'Pix configurado' : 'configure seu Pix';
-    const wa = qc.getQueryData<{ state: string }>(qk.whatsapp);
-    if (to === '/whatsapp' && wa)
-      return wa.state === 'open'
-        ? 'avisando seus clientes'
-        : ['logged_out', 'banned', 'error'].includes(wa.state)
-          ? 'precisa de você'
-          : 'avise seus clientes';
+    if (to === '/pagamentos' && pay?.review?.length) return `${pay.review.length} para conferir`;
     const status = qc.getQueryData<{ incidents: Incident[] }>(qk.helpStatus);
     if (to === '/ajuda' && status?.incidents.some((i) => !i.resolvedAt && i.severity !== 'info'))
       return 'um problema na Venduá agora';
@@ -97,15 +90,11 @@ function MoreSheet({
 }
 
 const HINTS: Record<string, string> = {
-  '/loja': 'horários, entrega e perfil',
+  '/loja': 'todos os ajustes da loja',
+  '/pagamentos': 'o dinheiro que entrou',
   '/cozinha': 'tela da cozinha',
   '/clientes': 'quem compra de você',
-  '/whatsapp': 'avisos aos clientes',
-  '/impressoras': 'comanda na cozinha',
-  '/aparencia': 'página e cores',
   '/relatorios': 'vendas e horários',
-  '/equipe': 'quem ajuda na loja',
-  '/conta': 'plano e faturas',
   '/ajuda': 'fale com a Venduá',
 };
 

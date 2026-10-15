@@ -123,11 +123,16 @@ Cardápio · Mais: the Vendedor carries the "precisa de você" count as its badg
 and Loja moves to the top of "Mais"; its everyday tasks stay in the status pill ([ADR 0031](adr/0031-vendedor.md),
 [sales-agent-ux §2](features/sales-agent-ux.md#2-where-it-lives)).
 
-Every area sits in one of four groups, the same on the sidebar, the rail and
-"Mais" (`app/nav.ts`): **Dia a dia** (Início, Pedidos, PDV, Cozinha, Copiloto),
-**Sua loja** (Cardápio, Loja, Aparência, Pagamentos), **Vender mais** (Duá,
-Clientes, Marketing, Relatórios) and **Ajustes** (WhatsApp, Impressoras, Equipe,
-Conta e plano), with Ajuda last on its own.
+Every area sits in one of three groups, the same on the sidebar, the rail and
+"Mais" (`app/nav.ts`): **Dia a dia** (Início, Pedidos, PDV, Cozinha, Copiloto,
+Pagamentos), **Sua loja** (Cardápio, Loja) and **Vender mais** (Duá, Clientes,
+Marketing, Relatórios), with Ajuda last on its own. The nav holds places to
+work in; **every setting of the store lives in Loja**, so "where do I change
+X?" has one answer. Pagamentos is the money that came in (checking a Pix is
+daily work); how the store gets paid is a setting, in Loja › Formas de
+pagamento. Meu perfil (the person's own name, sound, alerts and devices) is
+the one exception: it belongs to the person, not the store, and opens from
+their avatar.
 
 "Mais" opens a sheet with every area the bar doesn't hold, under those group
 headings, as large tiles with a live hint each ("3 cupons ativos", "Mercado
@@ -147,22 +152,31 @@ by what the area is:
 
 - **Tabs** when an area has sibling views of the same thing: Pedidos (Agora ·
   Encomendas · Histórico), Cardápio (Produtos · Estoque · Festa · Planos),
-  Pagamentos (Recebimentos · Formas de pagamento), Marketing (Ofertas ·
-  Divulgar · Lembretes), Equipe (Pessoas · Atividade), Meu perfil (Você ·
-  Avisos · Aparelhos). Each tab is its own address (`app/tabs.ts`), shown as an
+  Marketing (Ofertas · Divulgar · Lembretes), Equipe (Pessoas · Atividade),
+  Meu perfil (Você · Avisos · Aparelhos). Each tab is its own address (`app/tabs.ts`), shown as an
   underlined strip so it never reads as a filter; tabs swap in place, so back
   leaves the area. A count rides on the tab that has work waiting.
 - **A hub** when an area is many settings: Loja is a list of its parts, each
   row saying what is set there now ("Hoje: 9h às 22h"; a part that keeps the
-  store from selling says why in warning colour), and each part is its own
-  screen with a back to Loja: Horários, Entrega e retirada, Tempo de preparo,
-  Encomendas, Perfil da loja, Site e endereço.
+  store from selling, or from telling its customers, says why in warning
+  colour), with a search over every setting at the top. Each part is its own
+  screen whose back goes to Loja and which keeps Loja lit in the nav, also
+  the ones that kept their old address (/aparencia, /whatsapp, /impressoras,
+  /equipe, /conta: Core's pushes and e-mails link to them).
 - **Section chips** when a page is long but one subject (Relatórios, Conta e
   plano): chips under the header that stay while the page scrolls, the section
   in view lit, a tap jumping to it.
 
 Old addresses keep working: a moved section's link lands on its new screen
 (`movedTo` in `app/nav.ts`).
+
+**A settings screen shows what every store sets; the rest folds.** A choice
+between ways of working is a set of cards that each say what they do (cobrar
+por área · pela distância; freio desligado · sugerir · automático), and only
+the chosen way's fields show. Fields most stores never touch fold under
+"mais opções" inside their card, and the fold says what is set in there
+("taxa mínima R$ 8 · grátis acima de R$ 80"), so a fold never hides a choice
+someone made.
 
 **Scrolling says so.** A page much taller than the screen shows a thin scroll
 rail at the right edge on touch screens, and a themed scrollbar with a pointer.
@@ -553,6 +567,8 @@ over realistic data. No screen uses a raw element where a component exists.
 | `SectionNav`                              | a long page's sticky section chips; the section in view lit                                                                  |
 | `LinkRow`, `LinkList`                     | a row that opens a screen: icon, title, what is set there now (warning colour when it blocks sales), chevron                 |
 | `ScrollRail`                              | the touch scroll indicator for pages much taller than the screen                                                             |
+| `ChoiceCards`                             | one of a few ways to work, each card saying what it does; a locked one says why; arrow keys move                             |
+| `MoreOptions`                             | the fields most stores never touch, folded inside a card under a summary of what is set there                                |
 | `Toggle`, `Segmented`, `Chips`, `Stepper` | 48 px min height on touch; haptic tick                                                                                       |
 | `Field` family                            | label above, helper below, inline validation after blur, per-field "salvo" state                                             |
 | `Toast`                                   | bottom on phones, bottom-right on desktop; undo action; stacks max 2                                                         |
@@ -626,15 +642,25 @@ each with a one-line summary when collapsed ("2 grupos, 7 opções").
 
 ### Loja
 
-A hub: the store as the customer meets it (logo, name, link to copy), then
-rows in three groups, each opening its own screen. **Funcionamento**: Horários
-(TimeRangeField week view, special days, and the pause and closed messages
-with previews), Entrega e retirada (how the customer receives, then where the
-store delivers: ZoneMap, fees, minimum order), Tempo de preparo (prep time,
-accept target, "muitos pedidos agora", the automatic brake) and Encomendas.
-**Como a loja aparece**: Perfil da loja (logo, name, contacts, address),
-Aparência, Site e endereço (the store's addresses, custom domain, site sob
-medida). **Recebimento**: Formas de pagamento.
+Every setting of the store, as a hub: the store as the customer meets it
+(logo, name, link to copy) beside a search over the settings, then rows in
+four groups (two columns on desktop), each opening its own screen.
+**Como a loja vende**: Horários (TimeRangeField week view, special days, and
+the pause and closed messages with previews), Entrega e retirada, Tempo de
+preparo, Encomendas, Formas de pagamento. **Como a loja aparece**: Perfil da
+loja (logo, name, contacts, address), Aparência, Site e endereço (the store's
+addresses, custom domain, site sob medida). **Mensagens e impressão**:
+WhatsApp da loja, Impressoras. **Equipe e conta**: Equipe, Conta e plano
+(owners).
+
+Entrega e retirada: a card per mode (retirada, entrega), each with its own
+minimum and only its own fields; then, while the store delivers, how it
+charges (por área · pela distância, as ChoiceCards), the map with the store's
+pin, and that mode's fields only: the areas, or the distance fee (saída, por
+km, até quantos km; taxa mínima and grátis acima folded) with the areas as a
+folded reserve. Tempo de preparo: the prep and accept times, then "Quando a
+cozinha enche" and "Pedido que vai atrasar" as one ChoiceCards each, the
+kitchen's tuning and the apology coupon folded under them.
 
 ### Aparência
 

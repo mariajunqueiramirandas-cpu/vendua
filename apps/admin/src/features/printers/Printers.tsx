@@ -109,6 +109,7 @@ export default function Printers() {
     <PageBody wide>
       <PageHeader
         title="Impressoras"
+        back="/loja"
         subtitle="O pedido sai impresso na cozinha, sem ninguém precisar apertar nada."
         actions={
           devices.length > 0 ? (

@@ -15,6 +15,8 @@ import type { Order, Plan, Product, Session } from '../../lib/api.ts';
 import { setTheme } from '../../lib/theme.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
+import { ChoiceCards } from '../../ui/Choice.tsx';
+import { MoreOptions } from '../../ui/Disclosure.tsx';
 import { ColumnChart, Funnel, Heatmap, RankBars, Sparkline } from '../../ui/charts.tsx';
 import { DuaNote, EmptyState, Hint, Skeleton } from '../../ui/feedback.tsx';
 import {
@@ -431,6 +433,10 @@ export default function UiReference() {
             <SaveMark state="error" />
           </p>
         </div>
+      </Block>
+
+      <Block title="Escolhas e mais opções">
+        <ChoiceDemo />
       </Block>
 
       <Block title="Início: o card vivo">
@@ -1004,6 +1010,48 @@ function PdvReference({ now }: { now: number }) {
         </Keypad>
       </div>
     </Block>
+  );
+}
+
+/** A way of working picked by reading its card, and the rarely touched fields folded under it. */
+function ChoiceDemo() {
+  const [how, setHow] = useState<'areas' | 'distance'>('areas');
+  const [mode, setMode] = useState<'off' | 'suggest' | 'auto'>('suggest');
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card className="space-y-4 p-5">
+        <ChoiceCards
+          label="como cobrar a entrega"
+          columns={2}
+          value={how}
+          onChange={setHow}
+          options={[
+            { value: 'areas', title: 'Por área', hint: 'Cada área com a sua taxa.' },
+            { value: 'distance', title: 'Pela distância', hint: 'Saída mais um valor por km.' },
+          ]}
+        />
+        <MoreOptions summary="Taxa mínima R$ 8,00 · grátis acima de R$ 80,00">
+          <p className="t-body text-muted">Os campos que poucas lojas mexem.</p>
+        </MoreOptions>
+      </Card>
+      <Card className="space-y-4 p-5">
+        <ChoiceCards
+          label="quando a cozinha enche"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'off', title: 'Desligado', hint: 'Não pausa nada sozinha.' },
+            { value: 'suggest', title: 'Sugerir', hint: 'Pergunta antes de pausar.' },
+            {
+              value: 'auto',
+              title: 'Automático',
+              hint: 'Pausa sozinho, e você pode desfazer.',
+              locked: 'Libera quando a cozinha marca como pronto 8 de cada 10 pedidos.',
+            },
+          ]}
+        />
+      </Card>
+    </div>
   );
 }
 

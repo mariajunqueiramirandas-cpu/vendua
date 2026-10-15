@@ -68,6 +68,7 @@ export default function Team() {
     <PageBody>
       <PageHeader
         title="Equipe"
+        back="/loja"
         subtitle="Quem ajuda a tocar a loja. Cada pessoa entra com o próprio celular."
         actions={
           owner ? (
@@ -655,7 +656,7 @@ function linkOf(e: ActivityEntry): string | null {
     case 'loyalty':
       return '/marketing';
     case 'payments':
-      return '/pagamentos/formas';
+      return '/loja/pagamentos';
     case 'account':
     case 'invoice':
       return '/conta';
@@ -679,6 +680,7 @@ export function TeamActivity() {
     <PageBody>
       <PageHeader
         title="Equipe"
+        back="/loja"
         subtitle="Tudo o que a equipe mudou no painel, de quem e quando."
       />
       <PageTabs tabs={TABS.equipe} label="Equipe" />

@@ -199,7 +199,7 @@ export default function Account() {
   if (!owner)
     return (
       <PageBody>
-        <PageHeader title="Conta e plano" />
+        <PageHeader title="Conta e plano" back="/loja" />
         <DuaNote pose="seguranca" title="Conta e plano é com quem é dono da loja">
           O plano, as faturas e o endereço da loja ficam com o dono. Som, avisos e tema do painel
           estão no seu perfil.
@@ -215,7 +215,11 @@ export default function Account() {
     );
   return (
     <PageBody>
-      <PageHeader title="Conta e plano" subtitle={data ? session.store.name : undefined} />
+      <PageHeader
+        title="Conta e plano"
+        back="/loja"
+        subtitle={data ? session.store.name : undefined}
+      />
       {!data ? <PlanCardSkeleton /> : <AccountView a={data} />}
     </PageBody>
   );

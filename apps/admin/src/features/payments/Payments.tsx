@@ -7,6 +7,7 @@ import {
   Lock,
   Money,
   PixLogo,
+  Wallet,
   WarningCircle,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -32,9 +33,8 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { payError, REVIEW } from '../../ui/PaymentChip.tsx';
 import { PixQr } from '../../ui/PixCode.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
-import { PageTabs } from '../../ui/Tabs.tsx';
+import { LinkList, LinkRow } from '../../ui/LinkRow.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { TABS } from '../../app/tabs.ts';
 import { useMarkPaid } from '../orders/actions.ts';
 import { AdjustmentLine } from './Adjustments.tsx';
 import { MercadoPagoCard, mpLive, useMpArrival } from './MercadoPago.tsx';
@@ -65,19 +65,26 @@ const METHOD: Record<PayMethod, { label: string; Icon: typeof PixLogo; hint: str
   cash: { label: 'Dinheiro', Icon: Money, hint: 'Na entrega ou retirada.' },
 };
 
-// Pagamentos in two views: Recebimentos (what needs a look today and what came in) and Formas
-// de pagamento (how the store gets paid: the methods, the Pix key, Mercado Pago).
+// Pagamentos is the money that came in (what needs a look today, the month); how the store gets
+// paid (the methods, the Pix key, Mercado Pago) is a setting, so it lives in Loja › Formas de
+// pagamento, a row away from the rest of the store's setup.
 
 function usePayments() {
   return useQuery({ queryKey: qk.payments, queryFn: api.payments });
 }
 
 function PaymentsFrame({
+  title,
+  subtitle,
+  back,
   data,
   error,
   retry,
   children,
 }: {
+  title: string;
+  subtitle: string;
+  back?: string;
   data: PaymentsData | undefined;
   error: unknown;
   retry: () => void;
@@ -85,8 +92,7 @@ function PaymentsFrame({
 }) {
   return (
     <PageBody wide>
-      <PageHeader title="Pagamentos" subtitle="Como sua loja recebe, e o que já chegou." />
-      <PageTabs tabs={TABS.pagamentos} label="Pagamentos" />
+      <PageHeader title={title} subtitle={subtitle} {...(back ? { back } : {})} />
       {error && !data ? (
         <ErrorState error={error} retry={retry} />
       ) : !data ? (
@@ -102,14 +108,21 @@ export default function Payments() {
   const [search] = useSearchParams();
   const { data, error, refetch } = usePayments();
   // Mercado Pago sends the owner back to /pagamentos: the connection lives in Formas
-  if (search.get('mp')) return <Navigate to={`/pagamentos/formas?${search}`} replace />;
+  if (search.get('mp')) return <Navigate to={`/loja/pagamentos?${search}`} replace />;
   return (
-    <PaymentsFrame data={data} error={error} retry={() => void refetch()}>
+    <PaymentsFrame
+      title="Pagamentos"
+      subtitle="O que já chegou, e o que falta conferir."
+      data={data}
+      error={error}
+      retry={() => void refetch()}
+    >
       {(d) => {
         // the month only tells something once money can arrive through Mercado Pago
         const showMonth = d.mercadoPago.status !== 'not_connected' || d.month.count > 0;
         // nothing set to receive with yet: the way there before anything else
         const unset = !d.pix && !mpLive(d.mercadoPago);
+        const trouble = MP_TROUBLE[d.mercadoPago.status];
         return (
           <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
             <div className="space-y-8">
@@ -118,16 +131,36 @@ export default function Payments() {
                   tone="warning"
                   title="Falta dizer como a loja recebe"
                   action={
-                    <ButtonLink to="/pagamentos/formas" replace state={{ vt: 'fade' }} size="sm">
+                    <ButtonLink to="/loja/pagamentos" size="sm">
                       configurar
                     </ButtonLink>
                   }
                 >
                   Cadastre a chave Pix ou conecte o Mercado Pago para receber pelo site.
                 </Notice>
+              ) : trouble ? (
+                <Notice
+                  tone="warning"
+                  title={trouble.title}
+                  action={
+                    <ButtonLink to="/loja/pagamentos" size="sm">
+                      reconectar
+                    </ButtonLink>
+                  }
+                >
+                  {trouble.body}
+                </Notice>
               ) : null}
               <Review data={d} />
               <Awaiting data={d} />
+              <LinkList label="formas de pagamento">
+                <LinkRow
+                  to="/loja/pagamentos"
+                  Icon={Wallet}
+                  title="Formas de pagamento"
+                  line="O que a loja aceita, a chave Pix e o Mercado Pago"
+                />
+              </LinkList>
             </div>
             <div className="space-y-8">
               {showMonth ? (
@@ -165,7 +198,14 @@ export function PaymentMethods() {
   const owner = useCan('owner');
   useMpArrival();
   return (
-    <PaymentsFrame data={data} error={error} retry={() => void refetch()}>
+    <PaymentsFrame
+      title="Formas de pagamento"
+      subtitle="Como o cliente paga, e onde o dinheiro chega."
+      back="/loja"
+      data={data}
+      error={error}
+      retry={() => void refetch()}
+    >
       {(d) => {
         const pixSection = (
           <Section
@@ -203,6 +243,24 @@ export function PaymentMethods() {
     </PaymentsFrame>
   );
 }
+
+// the Mercado Pago notices (payments/jobs.ts) link here: say what happened, a tap from fixing it
+const MP_TROUBLE: Partial<
+  Record<PaymentsData['mercadoPago']['status'], { title: string; body: string }>
+> = {
+  expiring: {
+    title: 'A conexão com o Mercado Pago vence em breve',
+    body: 'Reconecte para continuar recebendo Pix e cartão pelo site.',
+  },
+  disconnected: {
+    title: 'O Mercado Pago desconectou',
+    body: 'Os pedidos seguem com o Pix da sua chave e o pagamento na entrega. Reconecte para voltar a receber pelo site.',
+  },
+  restricted: {
+    title: 'O Mercado Pago limitou a conta',
+    body: 'Os pagamentos pelo site estão pausados. Veja o aviso no app do Mercado Pago e depois reconecte.',
+  },
+};
 
 function summary30(d: PaymentsData) {
   return d.last30TotalCents

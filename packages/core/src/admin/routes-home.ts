@@ -488,7 +488,7 @@ async function platformAttention(
         count: 1,
         title: 'A conexão com o Mercado Pago vai expirar',
         detail: 'Reconecte para continuar recebendo Pix e cartão online',
-        href: '/pagamentos/formas',
+        href: '/loja/pagamentos',
       });
     else if (mp === 'disconnected')
       out.push({
@@ -496,7 +496,7 @@ async function platformAttention(
         count: 1,
         title: 'O Mercado Pago foi desconectado',
         detail: 'Pix automático e cartão online ficam desligados até você reconectar',
-        href: '/pagamentos/formas',
+        href: '/loja/pagamentos',
       });
     else if (mp === 'restricted')
       out.push({
@@ -504,7 +504,7 @@ async function platformAttention(
         count: 1,
         title: 'O Mercado Pago restringiu sua conta',
         detail: 'Veja no app do Mercado Pago o que falta resolver',
-        href: '/pagamentos/formas',
+        href: '/loja/pagamentos',
       });
   }
   const missed = missedRows[0]!.n;

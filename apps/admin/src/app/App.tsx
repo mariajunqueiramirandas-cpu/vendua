@@ -228,7 +228,7 @@ export default function App() {
                   <Route path="loja/encomendas" element={<StoreEncomendas />} />
                   <Route path="loja/site" element={<StoreSite />} />
                   <Route path="pagamentos" element={<Payments />} />
-                  <Route path="pagamentos/formas" element={<PaymentMethods />} />
+                  <Route path="loja/pagamentos" element={<PaymentMethods />} />
                   <Route path="whatsapp" element={<Whatsapp />} />
                   <Route path="impressoras" element={<Printers />} />
                   <Route path="impressoras/parear" element={<Printers />} />

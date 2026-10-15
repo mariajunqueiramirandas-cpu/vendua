@@ -109,7 +109,7 @@ export default function Whatsapp() {
       <PageHeader
         title="WhatsApp"
         subtitle="Seus clientes recebem cada passo do pedido pelo número da loja."
-        {...(dua ? { back: dua } : {})}
+        back={dua ?? '/loja'}
       />
       {dua && data?.state === 'open' ? (
         <Notice

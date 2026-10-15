@@ -30,7 +30,7 @@ import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
-import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { HeaderBack, PageBody, PageHeader } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { AppearanceSkeleton, EditorFrame } from '../../ui/skeletons.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
@@ -89,7 +89,7 @@ export default function Appearance() {
   if (!data)
     return (
       <EditorFrame>
-        <PageHeader title="Aparência" />
+        <PageHeader title="Aparência" back="/loja" />
         <AppearanceSkeleton />
       </EditorFrame>
     );
@@ -575,6 +575,7 @@ function Editor({
     // from tablets up the editor is the screen: each column scrolls on its own
     <div className="mx-auto flex h-dvh w-full max-w-[1600px] flex-col px-8 pb-6 pt-6">
       <header className="mb-2 flex items-center gap-1 md:mb-4 md:gap-2">
+        <HeaderBack to="/loja" />
         {ed.phase === 'live' ? (
           <Mascote
             pose="publicar"
