@@ -1,6 +1,7 @@
 # ADR 0044: The merchant admin as an iOS and Android app, from the same code
 
-- Status: Proposed
+- Status: Proposed (no code yet; the open decisions were settled by the user on 2026-10-15, at the
+  end)
 - Date: 2026-10-15
 - Amends: [ADR 0020](0020-merchant-identity.md) (a session can also travel as a bearer token) and,
   in its last phase, [ADR 0027](0027-print-agents.md) (the Android print agent moves into the app)
@@ -82,6 +83,7 @@ realistic.
   - `stream`: the SSE reader
   - `push`: enable, disable, current, and the action callbacks
   - `haptic`, `keepAwake`, `share` (text, link, files), `print(html)`, `speak(text)`
+  - `canPay`: whether the plan can be paid here (`false` on native, decision 1)
   - `openExternal(url)` (Mercado Pago and other trips out), `publicUrl(path)` (links for other
     people)
   - `updates`: check, apply, the banner state; `lifecycle`: resume, pause, back button
@@ -273,7 +275,7 @@ Each phase ships on its own and leaves the web better or the same.
   number, which takes days to weeks. An organization Play account also skips the 12-tester rule
   for personal accounts.
 - APNs key, Firebase project for FCM, the Play signing key.
-- The open decisions below.
+- The listing's visibility (decision 2), before Phase 4.
 
 **Phase 1: the seam, on the web only (≈1 week).**
 
@@ -290,7 +292,8 @@ Each phase ships on its own and leaves the web better or the same.
 - `push_devices`, `nativepush.ts` and the `workers.ts` fan-out.
 - The bundle manifest and zip, and the version floor.
 - `/.well-known/` in Core and the edge.
-- Migrations are additive (a new table only).
+- The review sign-in (decision 3).
+- Migrations are additive (a new table and a new column only).
 - The invariant review runs here: this phase touches auth, tenancy, idempotency and a migration.
 
 **Phase 3: the shell (≈1.5 weeks).**
@@ -306,7 +309,8 @@ Each phase ships on its own and leaves the web better or the same.
 
 - Listings in pt-BR, with screenshots from `scripts/shots.ts` on the native build.
 - The privacy questionnaires, matching ADR 0028's no-tracking stance.
-- A review sign-in (below), and fixes for what review sends back.
+- The listing's visibility (decision 2), the review sign-in's code handed to App Review, and fixes
+  for what review sends back.
 
 **Phase 5: later, each its own change.**
 
@@ -321,25 +325,33 @@ Each phase ships on its own and leaves the web better or the same.
 
 Total: about four to five weeks of work from Phase 1 to submission, plus Phase 0's waiting.
 
-## Open decisions (the user's)
+## Decisions taken (the user, 2026-10-15)
 
-1. **Paying for the plan inside the app.** Today signup, the first plan payment (`PlanPay`, card
-   via Mercado Pago or Pix) and invoice payment (`Account`) all live in the admin.
+1. **Paying stays on the web.** Today signup, the first plan payment (`PlanPay`, card via Mercado
+   Pago or Pix) and invoice payment (`Account`) all live in the admin.
    - Apple (3.1.1) and Google Play require their own billing for a digital subscription bought
      inside an app, and both restrict links that steer to outside payment. The details have moved
      under regulators, Brazil's included, so re-check at submission.
-   - Recommendation: the native build signs in only (signup stays on the web). It shows the plan's
-     state but no buy, pay or upgrade buttons and no link to them.
+   - So the native build signs in only, and signup, which ends in the first payment, stays on the
+     web. The app shows the plan's state but no buy, pay or upgrade buttons and no link to them.
+     `platform.canPay` is `false` on native and hides `PlanPay`, the invoice actions and the plan
+     change in `Account`.
    - This also keeps Apple's in-app account-deletion rule (5.1.1(v), triggered by in-app account
-     creation) out of v1. The words on that screen state a plan, so they need your call.
-2. **App name and listing** ("Venduá", "Venduá Painel", …), and whether the listing is public from
-   day one or invite-only (unlisted on iOS, a closed track on Play) during the pilot.
-3. **The review sign-in.** App Review can't receive a WhatsApp code.
-   - Proposal: `VENDUA_REVIEW_LOGIN=<phone>:<code>`, honored only for one phone on one demo store,
-     rate-limited, rotated after each review.
-   - That's a fixed code on a production login, scoped to a demo store, so it needs your yes.
-4. **Phase 5's print agent merge**, and whether the APK on GitHub Releases keeps shipping for
-   tablets without Play.
+     creation) out of v1. The words on the plan-state screen still state a plan, so the user
+     approves them when that screen is built.
+2. **The app is called "Venduá"** in both stores. Whether the listing is public from day one or
+   invite-only during the pilot (unlisted on iOS, a closed track on Play) is still open; it is
+   decided at Phase 4.
+3. **A review sign-in is built**, in Phase 2. App Review can't receive a WhatsApp code.
+   - `VENDUA_REVIEW_LOGIN=<phone>:<code>` makes `/auth/otp/verify` accept that fixed code for
+     that one phone. The phone must belong only to a demo store (`tenants.is_demo`, added in the
+     same migration), so the code can never open a real store.
+   - Same per-IP and per-code attempt limits as every sign-in. Unset means off.
+   - The code is rotated after each review, and every sign-in through it is a
+     `recordStaffEventTx` event under the demo store's `tenantId`, so the team sees each use. The
+     event data carries no phone.
+4. **The print agent moves into the app later** (Phase 5), not in v1. Until then the Android
+   print agent keeps shipping as an APK on GitHub Releases (ADR 0027), unchanged.
 
 ## Consequences
 
