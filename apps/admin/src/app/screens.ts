@@ -133,7 +133,7 @@ export const SCREENS: ScreenEntry[] = [
     to: '/loja/perfil',
     label: 'Perfil da loja',
     where: 'Loja',
-    words: 'perfil nome logo descricao whatsapp instagram email endereco cidade contato',
+    words: 'perfil nome logo descricao whatsapp instagram email endereco cep cidade contato',
     min: 'manager',
   },
   {
