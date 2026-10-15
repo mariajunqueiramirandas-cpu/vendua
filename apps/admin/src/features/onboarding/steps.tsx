@@ -64,6 +64,7 @@ export function Frame({
   return (
     <StepFrame
       enter={false}
+      big
       {...p}
       aside={
         onSkip ? (

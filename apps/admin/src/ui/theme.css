@@ -80,6 +80,11 @@
   --store-accent: #d9f875;
   /* the leading edge of a screen sliding over another (push / pop) */
   --edge-shadow: -6px 0 24px rgb(18 60 50 / 0.12);
+  /* the onboarding's shop window (features/onboarding/Vitrine.tsx): the store, lit, on forest */
+  --stage: #123c32;
+  --on-stage: #f7f4ea;
+  --on-stage-muted: #afc4b8;
+  --stage-line: rgb(247 244 234 / 0.12);
 
   color-scheme: light;
 }
@@ -139,6 +144,10 @@
   --highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --counter-shade: rgb(0 0 0 / 0.55);
   --edge-shadow: -6px 0 28px rgb(0 0 0 / 0.5);
+  --stage: #12221b;
+  --on-stage: #f7f4ea;
+  --on-stage-muted: #a3b9ac;
+  --stage-line: rgb(247 244 234 / 0.1);
 
   color-scheme: dark;
 }
@@ -175,6 +184,10 @@
   --color-on-whatsapp: var(--on-whatsapp);
   --color-qr: var(--qr-dark);
   --color-qr-paper: var(--qr-light);
+  --color-stage: var(--stage);
+  --color-on-stage: var(--on-stage);
+  --color-on-stage-muted: var(--on-stage-muted);
+  --color-stage-line: var(--stage-line);
 
   --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
   --font-moment: 'Instrument Serif', Georgia, serif;
@@ -935,6 +948,24 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
 .animate-spark-ring {
   animation: spark-ring 1.1s ease-out 200ms both;
 }
+/* the shop window's light swells once when an answer changed the store */
+@keyframes lamp {
+  0% {
+    opacity: 0.55;
+    scale: 1;
+  }
+  30% {
+    opacity: 1;
+    scale: 1.08;
+  }
+  100% {
+    opacity: 0.55;
+    scale: 1;
+  }
+}
+.animate-lamp {
+  animation: lamp 1.4s var(--ease-soft) 150ms both;
+}
 /* ── the kitchen (features/kitchen) ── */
 /* a bumped ticket's undo window drains left to right */
 @keyframes drain {
@@ -1046,6 +1077,7 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
   .animate-ring,
   .animate-beckon,
   .animate-spark-ring,
+  .animate-lamp,
   .fuse-late,
   .skeleton {
     animation: none !important;

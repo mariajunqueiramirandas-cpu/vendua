@@ -7,6 +7,7 @@ import { cn } from '../../ui/cn.ts';
 import { fromWeek } from '../../ui/TimeRangeField.tsx';
 import type { Spot } from './flow.ts';
 import type { Draft } from './MiniStore.tsx';
+import { glowOf } from './Vitrine.tsx';
 
 /** "Hoje: 9h–18h" for the store's own day, or "Sáb: fechado". */
 export function todayLine(draft: Draft, timeZone: string, specialDays: SpecialDay[]) {
@@ -22,9 +23,10 @@ export function todayLine(draft: Draft, timeZone: string, specialDays: SpecialDa
 }
 
 /**
- * The store, live, at the top of every question on phones and tablets: what the customer sees
- * first (avatar, name, a line under it). The part the open question changes wears a lime
- * marker, and an answer that changed the store sparks its edge. A tap opens the whole store.
+ * The shop window on phones and tablets: a forest strip under the header with the store as the
+ * customer meets it (its icon, its name, a line under it). The part the open question changes
+ * wears a lime highlighter, and an answer that changed the store lights it up. A tap opens the
+ * whole store.
  */
 export function StoreCard({
   draft,
@@ -42,7 +44,7 @@ export function StoreCard({
   timeZone: string;
   specialDays: SpecialDay[];
   spot: Spot | null;
-  /** changes when an answer changed the store: the card lights up once */
+  /** changes when an answer changed the store: the strip lights up once */
   spark: number;
   onOpen: () => void;
 }) {
@@ -69,7 +71,7 @@ export function StoreCard({
             ? mark(
                 'whatsapp',
                 <span className="inline-flex items-center gap-1">
-                  <WhatsappLogo weight="fill" className="size-3.5 text-success" />
+                  <WhatsappLogo weight="fill" className="size-3.5" />
                   {whatsapp ? 'Fale com a gente' : 'Seu WhatsApp aqui'}
                 </span>,
               )
@@ -80,52 +82,63 @@ export function StoreCard({
                     ? `${products} ${products === 1 ? 'produto' : 'produtos'} no cardápio`
                     : 'Seu cardápio aqui',
                 )
-              : draft.tagline.trim() || today || 'Toque para ver a loja inteira';
+              : spot === 'pay'
+                ? mark('pay', 'Pagamento na sacola')
+                : draft.tagline.trim() || today || 'Toque para ver a loja inteira';
+  const lit = spot === 'logo' || spot === 'color';
   return (
     <button
       type="button"
       onClick={onOpen}
       aria-label={`Sua loja ao vivo: ${name || 'sem nome ainda'}. Ver a loja inteira`}
-      className="press relative flex w-full items-center gap-3 rounded-lg bg-surface py-3 pl-3 pr-2 text-left ring-1 ring-line depth-1"
+      className="relative block w-full overflow-hidden bg-stage text-left text-on-stage"
     >
-      {spark ? (
+      <span className="press relative isolate mx-auto flex max-w-xl items-center gap-3.5 px-4 py-3.5 md:px-0">
+        {/* the store's colour as the light behind its icon; it swells when an answer lands */}
         <span
           key={spark}
           aria-hidden
-          className="animate-spark-ring pointer-events-none absolute inset-0 rounded-lg"
+          className={cn(
+            'pointer-events-none absolute -left-20 top-1/2 -z-10 size-56 -translate-y-1/2 rounded-full opacity-55',
+            spark > 0 && 'animate-lamp',
+          )}
+          style={{
+            background: `radial-gradient(closest-side, color-mix(in srgb, ${glowOf(draft.accent)} 45%, transparent), transparent)`,
+          }}
         />
-      ) : null}
-      <span
-        className={cn(
-          'grid size-12 shrink-0 place-items-center overflow-hidden rounded-full font-display text-lg font-semibold transition-[background-color,box-shadow] duration-(--duration-smooth)',
-          (spot === 'logo' || spot === 'color') &&
-            'ring-2 ring-spark ring-offset-2 ring-offset-surface',
-          !draft.accent && 'bg-primary text-on-primary',
-        )}
-        style={draft.accent ? { background: draft.accent, color: draft.onAccent ?? undefined } : {}}
-        aria-hidden
-      >
-        {draft.logoUrl ? (
-          <img src={draft.logoUrl} alt="" className="size-full object-cover" />
-        ) : (
-          (name.slice(0, 1) || '?').toUpperCase()
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="t-caption flex items-center gap-1.5 text-muted">
-          <span
-            aria-hidden
-            className="animate-pulse-dot size-1.5 shrink-0 rounded-full bg-[var(--chart)]"
-          />
-          sua loja, ao vivo
+        <span
+          aria-hidden
+          className={cn(
+            'grid size-12 shrink-0 place-items-center overflow-hidden rounded-[15px] font-display text-[1.375rem] font-semibold tracking-[-0.04em] transition-[background-color,box-shadow] duration-(--duration-smooth)',
+            lit && 'ring-2 ring-spark ring-offset-2 ring-offset-stage',
+            !draft.accent && 'bg-spark text-on-spark',
+          )}
+          style={
+            draft.accent ? { background: draft.accent, color: draft.onAccent ?? undefined } : {}
+          }
+        >
+          {draft.logoUrl ? (
+            <img src={draft.logoUrl} alt="" className="size-full bg-white object-cover" />
+          ) : (
+            (name.slice(0, 1) || '?').toUpperCase()
+          )}
         </span>
-        <span className="mt-0.5 block truncate font-display text-[1.0625rem] font-semibold leading-6">
-          {mark('name', name || <span className="text-muted">Nome da loja</span>)}
+        <span className="min-w-0 flex-1">
+          <span className="t-caption flex items-center gap-1.5 text-on-stage-muted">
+            <span
+              aria-hidden
+              className="animate-pulse-dot size-1.5 shrink-0 rounded-full bg-spark"
+            />
+            sua loja, ao vivo
+          </span>
+          <span className="mt-0.5 block truncate font-display text-[1.125rem] font-semibold leading-6 tracking-[-0.015em]">
+            {mark('name', name || <span className="text-on-stage-muted">Nome da loja</span>)}
+          </span>
+          <span className="t-caption block truncate text-on-stage-muted">{line}</span>
         </span>
-        <span className="t-caption block truncate text-muted">{line}</span>
-      </span>
-      <span className="t-label inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sunken py-1.5 pl-3 pr-2">
-        ver <CaretRight weight="bold" className="size-3.5" aria-hidden />
+        <span className="t-label inline-flex shrink-0 items-center gap-0.5 rounded-full bg-on-stage/10 py-1.5 pl-3 pr-2 text-on-stage">
+          ver <CaretRight weight="bold" className="size-3.5" aria-hidden />
+        </span>
       </span>
     </button>
   );

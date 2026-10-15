@@ -1,5 +1,6 @@
 import { CheckCircle } from '@phosphor-icons/react';
 import { useEffect, useState, type ReactNode } from 'react';
+import { cn } from '../../ui/cn.ts';
 import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 
 // The friendly voice of the wizard: the mascot that bobs beside a speech bubble. It "types"
@@ -45,20 +46,40 @@ export function Guide({ turn, pose, children }: { turn: string; pose: Pose; chil
 /**
  * Duá reacting to the answer just given, above the next question: a small face and one line.
  * Only after an answer (a question opened from the map or by "voltar" has nothing to react
- * to), so the question itself stays the one thing to read.
+ * to), so the question itself stays the one thing to read. When the answer opened a new part,
+ * Duá shows up in that part's pose instead (the brush for the look, the parcel for the service…).
  */
-export function Reaction({ children, done }: { children: ReactNode; done?: string | null }) {
+export function Reaction({
+  children,
+  done,
+  pose,
+}: {
+  children: ReactNode;
+  done?: string | null;
+  /** a part begins: Duá at work on it */
+  pose?: Pose | null;
+}) {
   return (
-    <div className="flex items-center gap-2.5">
+    <div className={cn('flex gap-3', pose ? 'items-end' : 'items-center')}>
       <span
         aria-hidden
-        className="dua-disc animate-pop grid size-11 shrink-0 place-items-center bg-spark-soft"
+        className={cn(
+          'dua-disc animate-pop grid shrink-0 place-items-center bg-spark-soft',
+          pose ? 'size-[5.5rem] sm:size-24' : 'size-12',
+        )}
       >
-        <Mascote pose="avatar-feliz" size={44} className="size-10" />
+        <Mascote
+          pose={pose ?? 'avatar-feliz'}
+          size={pose ? 96 : 48}
+          className={pose ? 'size-[5rem] sm:size-[5.5rem]' : 'size-11'}
+        />
       </span>
       <p
         role="status"
-        className="t-body min-w-0 rounded-lg rounded-bl-sm bg-surface px-3.5 py-2 depth-1"
+        className={cn(
+          't-body min-w-0 rounded-lg bg-surface px-4 py-2.5 depth-1',
+          pose ? 'mb-2 rounded-bl-sm' : 'rounded-bl-sm',
+        )}
       >
         {done ? (
           <span className="t-caption mb-0.5 flex items-center gap-1 font-semibold text-success">

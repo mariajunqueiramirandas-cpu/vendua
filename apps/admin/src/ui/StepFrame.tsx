@@ -25,6 +25,7 @@ export function StepFrame({
   solidBar,
   hidePrimary,
   enter = true,
+  big,
 }: {
   title: ReactNode;
   /** a small line above the title: which part of a longer flow this is */
@@ -49,6 +50,8 @@ export function StepFrame({
   hidePrimary?: boolean;
   /** off when the screen around it already animates the change of step */
   enter?: boolean;
+  /** the question is the whole screen (the onboarding): a larger title */
+  big?: boolean;
 }) {
   const head = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -69,11 +72,22 @@ export function StepFrame({
         <h1
           ref={head}
           tabIndex={-1}
-          className="t-title-1 text-balance outline-none focus-visible:shadow-none md:text-[2rem] md:leading-[2.5rem]"
+          className={cn(
+            't-title-1 text-balance outline-none focus-visible:shadow-none',
+            big
+              ? 'text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]'
+              : 'md:text-[2rem] md:leading-[2.5rem]',
+          )}
         >
           {title}
         </h1>
-        {hint ? <p className="t-body-lg mt-2 text-pretty text-muted">{hint}</p> : null}
+        {hint ? (
+          <p
+            className={cn('t-body-lg text-pretty text-muted', big ? 'mt-3 max-w-[34rem]' : 'mt-2')}
+          >
+            {hint}
+          </p>
+        ) : null}
       </div>
       {children}
       {hidePrimary && !back && !aside ? null : (

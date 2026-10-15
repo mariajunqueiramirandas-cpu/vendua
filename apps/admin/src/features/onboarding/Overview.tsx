@@ -162,14 +162,14 @@ export function Welcome({
         </div>
       </div>
       <div>
-        <h1 className="t-title-1 text-balance md:text-[2.25rem] md:leading-[2.75rem]">
+        <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]">
           {complete
             ? 'Sua loja já está montada'
             : resume
               ? 'Bora continuar a sua loja?'
               : 'Vamos montar a sua loja?'}
         </h1>
-        <p className="t-body-lg mt-2 text-pretty text-muted">
+        <p className="t-body-lg mt-3 max-w-[34rem] text-pretty text-muted">
           {complete
             ? later
               ? `Você passou por todas as perguntas, e ${later} ${later === 1 ? 'ficou' : 'ficaram'} para depois: o final mostra ${later === 1 ? 'qual' : 'quais'}. Dá para rever qualquer resposta.`
