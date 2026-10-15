@@ -486,7 +486,7 @@ function Flow({
   const header =
     step === 'pronto' ? (
       <JourneyBar
-        wide
+        align="center-wide"
         phase="abrir"
         progress={hold ? 0.5 : 1}
         status={hold ? 'falta o plano' : 'no ar!'}
@@ -494,13 +494,14 @@ function Flow({
       />
     ) : (
       <JourneyBar
-        wide
+        align={step === 'oi' ? 'center' : 'rail'}
         phase="loja"
         progress={questions.filter(settled).length / questions.length}
         status={step === 'oi' ? 'começando' : where}
         parts={step === 'oi' ? undefined : parts}
         onStatus={step === 'oi' ? undefined : () => setMap(true)}
-        exit={<Exit leave={leave} />}
+        // only beside a question, on a wide screen, does the header leave the way out room for words
+        exit={<Exit leave={leave} worded={step !== 'oi'} />}
       />
     );
 
@@ -642,7 +643,9 @@ function Flow({
   return (
     // the counter (the questions) and, from 1200 px, the shop window beside it, full height
     <div className="min-h-dvh overflow-x-clip lg:grid lg:grid-cols-[minmax(0,1fr)_34vw] xl:grid-cols-[minmax(0,1fr)_38vw]">
-      <div className="min-w-0">
+      {/* a column as tall as the screen, so a question's bar can hold the bottom on phones (not
+          while typing: the keyboard covers the bottom) */}
+      <div className="flex min-h-dvh min-w-0 flex-col kb:min-h-0">
         {header}
         {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
         {step === 'pronto' ? (
@@ -671,15 +674,21 @@ function Flow({
         ) : null}
         <div
           className={cn(
-            'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-6 md:px-8 md:pt-10 lg:pt-14',
+            'mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)] gap-10 px-4 pt-6 md:px-8 md:pt-10 lg:pt-14',
+            // a question's bar keeps the screen's bottom edge (ActionBar `pinned`), scrolled or not
+            question
+              ? 'pb-[var(--kb,0px)] lg:pb-[calc(1rem+var(--kb,0px))]'
+              : 'pb-[calc(1rem+var(--kb,0px))]',
+            // the same tracks as the header's (JourneyBar align="rail"), so both line up
             question &&
-              'lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14.5rem_minmax(0,1fr)] xl:gap-14',
+              'lg:grid-cols-[13rem_minmax(0,36rem)] lg:justify-center xl:grid-cols-[14.5rem_minmax(0,36rem)] xl:gap-14',
           )}
         >
           {question ? (
             <nav
               aria-label="todas as perguntas"
-              className="hidden lg:sticky lg:top-28 lg:block lg:self-start"
+              // its rows' text on the track's edge, their highlight in the gutter
+              className="hidden lg:sticky lg:top-28 lg:-mx-2 lg:block lg:self-start"
             >
               <p className="t-label mb-2 px-2 text-muted">
                 <span className="tnum">
@@ -693,14 +702,17 @@ function Flow({
 
           <main
             className={cn(
-              'mx-auto w-full max-w-xl space-y-6',
-              step === 'pronto' && 'max-w-2xl',
+              'mx-auto flex w-full flex-col',
+              step === 'pronto' ? 'max-w-2xl' : 'max-w-xl',
               question && 'lg:mx-0',
             )}
           >
             <div
               key={step}
-              className={cn('space-y-6', dir === 'back' ? 'animate-step-back' : 'animate-step-fwd')}
+              className={cn(
+                'flex flex-1 flex-col space-y-6',
+                dir === 'back' ? 'animate-step-back' : 'animate-step-fwd',
+              )}
             >
               {question && said ? (
                 <Reaction done={said.done} pose={said.pose}>
@@ -761,16 +773,17 @@ function Flow({
   );
 }
 
-function Exit({ leave, done }: { leave: () => void; done?: boolean }) {
+function Exit({ leave, done, worded }: { leave: () => void; done?: boolean; worded?: boolean }) {
   return (
     <Link
       to="/"
       onClick={done ? undefined : leave}
-      className="t-label inline-flex min-h-11 items-center gap-1 rounded-md px-3 text-muted hover:bg-hover"
+      // -mr-3: the X sits on the column's right edge
+      className="t-label -mr-3 inline-flex min-h-11 items-center gap-1 whitespace-nowrap rounded-md px-3 text-muted hover:bg-hover"
       aria-label={done ? 'ir para o painel' : 'sair e continuar depois'}
     >
-      <X className="size-5" />{' '}
-      <span className="hidden sm:inline">{done ? 'ir ao painel' : 'continuar depois'}</span>
+      <X className="size-5" />
+      {worded ? <span className="hidden min-[1400px]:inline">continuar depois</span> : null}
     </Link>
   );
 }

@@ -100,11 +100,10 @@ export function ColorsStep({
                 setPicked(t);
                 patch({ accent: t.color.accent, onAccent: t.color.onAccent });
               }}
+              // the ring is drawn over the cover, inside the tile's edges
               className={cn(
-                'press overflow-hidden rounded-lg bg-surface text-left transition-[box-shadow] duration-(--duration-quick)',
-                on
-                  ? 'ring-2 ring-primary ring-offset-2 ring-offset-bg'
-                  : 'ring-1 ring-line-strong hover:ring-line-strong/80',
+                'press relative overflow-hidden rounded-lg bg-surface text-left after:pointer-events-none after:absolute after:inset-0 after:rounded-lg after:ring-inset',
+                on ? 'after:ring-2 after:ring-primary' : 'after:ring-1 after:ring-line-strong',
               )}
             >
               <span

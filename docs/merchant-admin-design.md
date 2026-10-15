@@ -530,6 +530,13 @@ merchant is; any of them is one tap away. From 1200 px the same map is a rail be
 question. Moving on slides the next question in from the right, "voltar" from the left. When a
 part ends, Duá ticks it off ("Parte 1 de 4 pronta") and introduces the next.
 
+**One column, one set of edges.** The header's bar, the question, its answers and its buttons
+share the question column's edges (the header uses the page's grid tracks), and answer cards
+draw their rings inside their edges. The buttons are one row: "voltar" as a square arrow, then the
+main button, with "deixar para depois" at the column's right edge (above the row on phones).
+Below 1200 px that bar holds the bottom of the screen on every question, short or scrolled, so
+the main button never moves between questions.
+
 **The store builds itself, in a shop window.** The screen is two places: the counter (paper),
 where Duá asks one question in big type, and the window (`--stage`, forest; a deep forest-night in
 Noite), where the store stands lit. Each answer visibly assembles the storefront, drawn like the

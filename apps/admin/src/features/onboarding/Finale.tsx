@@ -63,7 +63,7 @@ export function FinaleHero({
           background: `radial-gradient(closest-side, color-mix(in srgb, ${glowOf(accent)} 45%, transparent), transparent)`,
         }}
       />
-      <div className="relative mx-auto max-w-xl px-5 pt-8 md:px-0">
+      <div className="relative mx-auto max-w-2xl px-4 pt-8 md:px-0">
         <h1 className="t-moment text-[2.5rem] leading-[2.75rem] text-balance">{titleOf(live)}</h1>
         <p className="t-body-lg mt-2 text-pretty text-on-stage-muted">{lineOf(live, name)}</p>
       </div>
@@ -227,7 +227,7 @@ export function Finale({
       </Card>
 
       {pending.length ? (
-        <Card className="p-4">
+        <Card className="p-5">
           <p className="t-title-2">Ficou para depois</p>
           <p className="t-body mt-1 text-muted">Sem pressa. Quando der, é só tocar.</p>
           <ul className="mt-3">
@@ -235,7 +235,7 @@ export function Finale({
               <li key={p.id}>
                 <Link
                   to={p.to}
-                  className="press-row flex min-h-12 items-center justify-between gap-3 rounded-md px-2 hover:bg-hover"
+                  className="press-row -mx-2 flex min-h-12 items-center justify-between gap-3 rounded-md px-2 hover:bg-hover"
                 >
                   {p.label} <ArrowRight className="size-4 text-faint" />
                 </Link>

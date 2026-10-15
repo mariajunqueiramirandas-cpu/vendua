@@ -6,6 +6,21 @@ import { cn } from '../../ui/cn.ts';
 // header: what's done, where the merchant is, what's left. Inside "Sua loja" the bar splits into
 // the onboarding's chapters, and on phones those chapters are all it shows.
 
+/**
+ * Lines the header up with the page under it, from 768 px: the bar over the page's centred
+ * column (36rem, or 42rem for the finale), and from 1200 px with the map of questions, the logo
+ * over the map and the bar over the question (the same tracks as the page's grid).
+ */
+export type HeaderAlign = 'center' | 'center-wide' | 'rail';
+
+// the side tracks share one floor (the logo's width), so a tight bar still sits in the middle
+const GRID: Record<HeaderAlign, string> = {
+  center: 'md:grid md:grid-cols-[minmax(4rem,1fr)_minmax(0,36rem)_minmax(4rem,1fr)] md:gap-6',
+  'center-wide':
+    'md:grid md:grid-cols-[minmax(4rem,1fr)_minmax(0,42rem)_minmax(4rem,1fr)] md:gap-6',
+  rail: 'md:grid md:grid-cols-[minmax(4rem,1fr)_minmax(0,36rem)_minmax(4rem,1fr)] md:gap-6 lg:grid-cols-[13rem_minmax(0,36rem)] lg:justify-center lg:gap-10 xl:grid-cols-[14.5rem_minmax(0,36rem)] xl:gap-14',
+};
+
 export type Phase = 'conta' | 'loja' | 'abrir';
 
 const PHASES: { id: Phase; label: string }[] = [
@@ -30,7 +45,7 @@ export function JourneyBar({
   exit,
   parts,
   onStatus,
-  wide,
+  align,
 }: {
   phase: Phase;
   /** 0..1 inside the current part */
@@ -42,8 +57,7 @@ export function JourneyBar({
   parts?: { label: string; fill: number }[] | undefined;
   /** the status opens the map of questions */
   onStatus?: (() => void) | undefined;
-  /** the onboarding's three columns (map, question, preview) */
-  wide?: boolean;
+  align?: HeaderAlign | undefined;
 }) {
   const at = PHASES.findIndex((p) => p.id === phase);
   const fill = Math.min(1, Math.max(0, progress));
@@ -68,69 +82,85 @@ export function JourneyBar({
     <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm kb:static">
       <div
         className={cn(
-          'mx-auto flex items-center gap-3 px-4 py-2.5 sm:py-3 md:px-8',
-          wide ? 'max-w-7xl' : 'max-w-6xl',
+          'mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5 sm:py-3 md:px-8',
+          align && GRID[align],
         )}
       >
-        <p className="font-display text-lg font-semibold">venduá</p>
-        <div className="flex min-w-0 flex-1 flex-col items-center">
-          {/* the bars are the progressbar; the labels under them stay outside it, since one
-              of them is a button */}
+        <p className="font-display text-lg font-semibold md:justify-self-start">venduá</p>
+        {/* with the map beside the question, the bar and the way out share the question's track */}
+        <div
+          className={cn(
+            'contents',
+            align === 'rail' && 'lg:flex lg:min-w-0 lg:items-center lg:gap-3',
+          )}
+        >
           <div
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={overall}
-            aria-valuetext={`${PHASES[at]!.label}: ${status}`}
-            aria-label="andamento"
-            className={cn('grid w-full max-w-xl gap-1.5', cols)}
+            className={cn(
+              'flex min-w-0 flex-1 flex-col items-center',
+              align && 'md:w-full',
+              align === 'rail' && 'lg:items-start',
+            )}
           >
-            {PHASES.map((p, i) => {
-              const now = i === at;
-              return (
-                <span key={p.id} className={cn('min-w-0', split && !now && 'hidden sm:block')}>
-                  {now && split ? (
-                    <span className="grid grid-flow-col gap-1">
-                      {parts!.map((c) => (
-                        <Fill key={c.label} value={c.fill} />
-                      ))}
-                    </span>
-                  ) : (
-                    <Fill value={i < at ? 1 : now ? Math.max(fill, 0.06) : 0} />
-                  )}
-                </span>
-              );
-            })}
-          </div>
-          <div className={cn('mt-1 grid w-full max-w-xl gap-1.5', cols)}>
-            {PHASES.map((p, i) => {
-              const done = i < at || (i === at && fill >= 1);
-              const now = i === at;
-              const chapters = now && split;
-              return (
-                <span
-                  key={p.id}
-                  className={cn(
-                    't-caption min-w-0 items-center gap-1',
-                    chapters ? 'flex justify-center sm:justify-start' : 'hidden sm:flex',
-                    now ? 'font-semibold text-ink' : 'text-muted',
-                  )}
-                >
-                  {done ? <Check weight="bold" className="size-3.5 shrink-0 text-success" /> : null}
-                  {chapters ? null : <span className="truncate">{p.label}</span>}
-                  {now && !done ? (
-                    chapters ? (
-                      label
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={overall}
+              aria-valuetext={`${PHASES[at]!.label}: ${status}`}
+              aria-label="andamento"
+              className={cn('grid w-full gap-1.5', !align && 'max-w-xl', cols)}
+            >
+              {PHASES.map((p, i) => {
+                const now = i === at;
+                return (
+                  <span key={p.id} className={cn('min-w-0', split && !now && 'hidden sm:block')}>
+                    {now && split ? (
+                      <span className="grid grid-flow-col gap-1">
+                        {parts!.map((c) => (
+                          <Fill key={c.label} value={c.fill} />
+                        ))}
+                      </span>
                     ) : (
-                      <span className="tnum truncate font-normal text-muted">· {status}</span>
-                    )
-                  ) : null}
-                </span>
-              );
-            })}
+                      <Fill value={i < at ? 1 : now ? Math.max(fill, 0.06) : 0} />
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+            <div className={cn('mt-1 grid w-full gap-1.5', !align && 'max-w-xl', cols)}>
+              {PHASES.map((p, i) => {
+                const done = i < at || (i === at && fill >= 1);
+                const now = i === at;
+                const chapters = now && split;
+                return (
+                  <span
+                    key={p.id}
+                    className={cn(
+                      't-caption min-w-0 items-center gap-1',
+                      chapters ? 'flex justify-center sm:justify-start' : 'hidden sm:flex',
+                      now ? 'font-semibold text-ink' : 'text-muted',
+                    )}
+                  >
+                    {done ? (
+                      <Check weight="bold" className="size-3.5 shrink-0 text-success" />
+                    ) : null}
+                    {chapters ? null : <span className="truncate">{p.label}</span>}
+                    {now && !done ? (
+                      chapters ? (
+                        label
+                      ) : (
+                        <span className="tnum truncate font-normal text-muted">· {status}</span>
+                      )
+                    ) : null}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+          <div className="md:justify-self-end">
+            {exit ?? <span className="block w-11" aria-hidden />}
           </div>
         </div>
-        {exit ?? <span className="w-11" aria-hidden />}
       </div>
     </header>
   );
