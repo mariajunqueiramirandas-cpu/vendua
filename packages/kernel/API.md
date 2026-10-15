@@ -585,6 +585,21 @@ caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot th
   with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
   in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
 
+### Minimum order and payment methods per mode (Kernel 1.27)
+
+Additive — no storefront edit. A store sets pickup's minimum apart from delivery's (none at all,
+say) and turns a payment method off for delivery or for pickup (Loja › Entrega e retirada,
+Pagamentos). Core enforces both at checkout (`ORDER_MIN_NOT_MET`, `PAYMENT_METHOD_UNAVAILABLE`).
+
+- `StoreProfile.minOrderCents` is delivery's (a zone may ask more); `pickupMinOrderCents`
+  (optional, 0 = none) is pickup's. Absent on an older Core: pickup's is `minOrderCents`.
+- `StoreProfile.paymentMethodsByMode` (`{ delivery: string[]; pickup: string[] }`, optional):
+  `paymentMethods` less the ones off for that mode, never empty. Checkout offers the chosen
+  mode's and moves the choice when it isn't among them; a table keeps its own list.
+- `CartTotals.minOrderCents` / `belowMinOrder` are the cart's mode's, delivery's before one is
+  picked. `CartTotals.belowEveryMinOrder` (optional): below both modes' minimums, the only time
+  `CheckoutButton` blocks on the minimum (absent = `belowMinOrder`).
+
 ### "O de sempre" (Kernel 1.26)
 
 Additive — no storefront edit, no new runtime export. A store may remind a shopper who asked of

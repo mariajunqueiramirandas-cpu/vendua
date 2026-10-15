@@ -370,6 +370,15 @@ export const setPaymentTool = defineTool<
         `A loja não aceita essa forma. Aceita: ${p.payments.map((m) => m.label).join(', ')}.`,
       );
     const cart = await viewCart(ctx, t);
+    const only = p.payments.find((m) => m.id === method)!.only;
+    const mode = cart?.delivery?.mode;
+    if (only && (mode === 'delivery' || mode === 'pickup') && mode !== only)
+      throw new ToolError(
+        `Na ${mode === 'pickup' ? 'retirada' : 'entrega'} a loja não aceita essa forma. Aceita: ${p.payments
+          .filter((m) => !m.only || m.only === mode)
+          .map((m) => m.label)
+          .join(', ')}.`,
+      );
     const total = cart?.totals.totalCents ?? 0;
     checkPaymentGuards(ctx, method, total);
     const cancelled =

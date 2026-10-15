@@ -65,6 +65,7 @@ const LABEL: Record<string, string> = {
   prepTimeMinutes: 'tempo de preparo',
   acceptTargetMinutes: 'tempo para aceitar',
   minOrderCents: 'pedido mínimo',
+  pickupMinOrderCents: 'pedido mínimo da retirada',
   pickupEnabled: 'retirada',
   pickupAddress: 'endereço de retirada',
   pickupInstructions: 'instruções de retirada',

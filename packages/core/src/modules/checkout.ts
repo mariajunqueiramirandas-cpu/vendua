@@ -12,8 +12,8 @@ import {
   type RouteQuote,
   type ZoneLike,
 } from './geo.ts';
-import { isPaymentMethod, offeredMethods, type PaymentMethod } from './payment-adjustments.ts';
-import type { DerivedStatus, StoreSettingsRow } from './store.ts';
+import { isPaymentMethod, methodsForMode, type PaymentMethod } from './payment-adjustments.ts';
+import { pickupMinOrderCents, type DerivedStatus, type StoreSettingsRow } from './store.ts';
 
 export interface CheckoutInput {
   customer: { name: string; phone: string };
@@ -141,15 +141,11 @@ export function validateCheckout<Z extends ZoneLike>(
   if (input.delivery.mode === 'pickup' && !(settings?.pickup_enabled ?? true)) {
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
-  // the merchant turns methods off in the admin; absent setting = the three offline ones (pre-0052 rows)
-  const methods = offeredMethods(settings);
   // at a table: the comanda, or the store's online payments (checked against its provider in
-  // placeOrderTx)
+  // placeOrderTx); otherwise what the store takes for this mode (0133), turned off in the admin
   const offered = atTable
     ? input.payment.method === 'tab' || input.payment.method === 'pix' || online.card
-    : input.payment.method === 'card_online'
-      ? online.card && methods.includes('card_online')
-      : methods.includes(input.payment.method as PaymentMethod);
+    : methodsForMode(settings, input.delivery.mode, online.card).includes(input.payment.method);
   if (!offered) {
     throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'this payment method is not accepted', {
       field: 'payment.method',
@@ -225,7 +221,7 @@ export function validateCheckout<Z extends ZoneLike>(
   }
   // the minimum order is for orders that travel; a table's are eaten here
   if (atTable) return { zone: null, distanceKm: null, feeCents: 0 };
-  const minOrder = settings?.min_order_cents ?? 0;
+  const minOrder = pickupMinOrderCents(settings);
   if (cart.totals.subtotalCents < minOrder) {
     throw new HttpError(422, 'ORDER_MIN_NOT_MET', `minimum order is ${minOrder} cents`, {
       minOrderCents: minOrder,

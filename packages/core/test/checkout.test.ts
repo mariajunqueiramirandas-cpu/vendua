@@ -230,6 +230,37 @@ describe('validateCheckout', () => {
     );
     expect(validateCheckout(open, settings, cart(1600), delivery, zones).zone?.id).toBe('z1');
   });
+  test("pickup's own minimum (0133): 0 = none, delivery keeps the store's", () => {
+    const s = { ...settings, pickup_min_order_cents: 0 };
+    expect(validateCheckout(open, s, cart(500), pickup, zones).zone).toBeNull();
+    expect(code(() => validateCheckout(open, s, cart(1200), delivery, zones))).toBe(
+      'ORDER_MIN_NOT_MET',
+    );
+    const higher = { ...settings, pickup_min_order_cents: 3000 };
+    expect(code(() => validateCheckout(open, higher, cart(2000), pickup, zones))).toBe(
+      'ORDER_MIN_NOT_MET',
+    );
+  });
+  test('payment methods per mode (0133): off for one mode, still taken by the other', () => {
+    const s = {
+      ...settings,
+      payment_methods: ['pix', 'cash', 'card_on_delivery'],
+      payment_methods_off: { pickup: ['cash'], delivery: ['pix'] },
+    };
+    const pay = (i: CheckoutInput, method: string) =>
+      ({ ...i, payment: { method } }) as CheckoutInput;
+    expect(code(() => validateCheckout(open, s, cart(2000), pay(pickup, 'cash'), zones))).toBe(
+      'PAYMENT_METHOD_UNAVAILABLE',
+    );
+    expect(code(() => validateCheckout(open, s, cart(2000), pay(delivery, 'pix'), zones))).toBe(
+      'PAYMENT_METHOD_UNAVAILABLE',
+    );
+    expect(validateCheckout(open, s, cart(2000), pay(pickup, 'pix'), zones).zone).toBeNull();
+    expect(validateCheckout(open, s, cart(2000), pay(delivery, 'cash'), zones).zone?.id).toBe('z1');
+    // exclusions that would leave a mode with nothing fall back to the store's list
+    const all = { ...s, payment_methods_off: { pickup: ['pix', 'cash', 'card_on_delivery'] } };
+    expect(validateCheckout(open, all, cart(2000), pay(pickup, 'cash'), zones).zone).toBeNull();
+  });
 });
 
 describe('order state machine', () => {

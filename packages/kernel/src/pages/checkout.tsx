@@ -473,8 +473,10 @@ export function CheckoutPage() {
     : encomenda && !atTable
       ? schedule!.paymentMethods.join(',')
       : '';
-  // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
-  const accepted = store?.paymentMethods?.join(',') ?? '';
+  // the store's own list (Kernel 1.4), for this mode (1.27); absent on an older Core = the three
+  // offline ones
+  const forMode = atTable ? undefined : store?.paymentMethodsByMode?.[mode];
+  const accepted = (forMode ?? store?.paymentMethods)?.join(',') ?? '';
   const online = store?.onlinePayments;
   const pixOnline = online?.pix === true;
   const cardOnline = online?.card !== false;

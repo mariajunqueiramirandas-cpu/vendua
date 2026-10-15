@@ -38,7 +38,7 @@ import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
 import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
 import { newSinal, sinalApplies, sinalRule } from './sinal.ts';
-import type { StoreSettingsRow } from './store.ts';
+import { pickupMinOrderCents, type StoreSettingsRow } from './store.ts';
 
 /**
  * Server-side carts (non-negotiable — docs/architecture/01-core.md): all
@@ -174,6 +174,9 @@ export interface CartTotals {
   /** cents short of the minimum order (Core owns money math) */
   remainingMinOrderCents: number;
   belowMinOrder: boolean;
+  /** below the minimum of delivery and of pickup alike (0133: each has its own) — the checkout
+   *  button waits on this; `belowMinOrder` is the cart's chosen mode's */
+  belowEveryMinOrder?: boolean;
   /** the matched zone's free-delivery threshold, when it has one */
   freeDeliveryThresholdCents: number | null;
   /** cents short of free delivery; 0 once reached; null without a threshold */
@@ -796,7 +799,18 @@ export async function loadCartView(
   const subtotal = items.reduce((s, i) => s + i.lineTotalCents, 0);
 
   let deliveryFee = 0;
-  let effectiveMinOrder = delivery?.mode === 'dine_in' ? 0 : (settings?.min_order_cents ?? 0);
+  // delivery's minimum is the store's and the zone's; pickup has its own (0133); a table's none.
+  // Before a mode is picked the cart reads as delivery when the store delivers.
+  const storeMin = settings?.min_order_cents ?? 0;
+  const pickupMin = pickupMinOrderCents(settings);
+  const deliveryOn = settings?.delivery_enabled ?? true;
+  const pickupOn = settings?.pickup_enabled ?? true;
+  let effectiveMinOrder =
+    delivery?.mode === 'dine_in'
+      ? 0
+      : delivery?.mode === 'pickup' || (!delivery?.mode && !deliveryOn)
+        ? pickupMin
+        : storeMin;
   let match: ZoneMatch<ZoneRow | DistanceZone> | null = null;
   if (delivery?.mode === 'delivery') {
     match = resolveDelivery(
@@ -895,6 +909,16 @@ export async function loadCartView(
     match?.zone.free_delivery_over_cents ?? null,
     paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
   );
+  // the checkout button waits only while no way of getting the order would take it
+  const lowestMin =
+    delivery?.mode === 'dine_in'
+      ? 0
+      : Math.min(
+          deliveryOn ? (delivery?.mode === 'delivery' ? effectiveMinOrder : storeMin) : Infinity,
+          pickupOn ? pickupMin : Infinity,
+          deliveryOn || pickupOn ? Infinity : effectiveMinOrder,
+        );
+  totals.belowEveryMinOrder = totals.itemCount > 0 && subtotal < lowestMin;
   // Festa calculada F2 (0128): what placeOrderTx will ask as a sinal once a date is picked
   const rule = plan ? null : sinalRule(settings);
   const sinal = sinalApplies(rule, { party: !!cart.party, totalCents: totals.totalCents })
