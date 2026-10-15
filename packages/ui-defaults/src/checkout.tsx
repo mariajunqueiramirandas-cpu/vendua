@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import {
   adjustmentKind,
@@ -190,6 +190,117 @@ function Field({
   );
 }
 
+/** "Rua" with the streets Core found for what is typed (Kernel 1.28): an ARIA 1.2 combobox */
+function StreetInput({
+  value,
+  onChange,
+  invalid,
+  suggestions,
+  onPick,
+}: {
+  value: string;
+  onChange: (street: string) => void;
+  invalid: Record<string, unknown>;
+  suggestions: { id: string; label: string; detail?: string }[] | undefined;
+  onPick: ((id: string) => void) | undefined;
+}) {
+  // open only once the shopper types: a form filled from a CEP or a saved address stays quiet
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const closing = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const list = onPick ? (suggestions ?? []) : [];
+  const shown = open && list.length > 0;
+  useEffect(() => setActive(-1), [suggestions]);
+  useEffect(() => () => clearTimeout(closing.current), []);
+  const pick = (id: string) => {
+    setOpen(false);
+    setActive(-1);
+    onPick?.(id);
+  };
+  return (
+    <>
+      <input
+        id="checkout-street"
+        name="street"
+        className="v-input"
+        autoComplete="address-line1"
+        maxLength={120}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        {...(onPick
+          ? {
+              role: 'combobox',
+              'aria-autocomplete': 'list' as const,
+              'aria-expanded': shown,
+              'aria-controls': 'checkout-street-list',
+              ...(shown && active >= 0
+                ? { 'aria-activedescendant': `checkout-street-option-${active}` }
+                : {}),
+              // a tap on a row lands before the list goes away
+              onBlur: () => {
+                closing.current = setTimeout(() => setOpen(false), 150);
+              },
+              onFocus: () => clearTimeout(closing.current),
+              onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+                if (!list.length) return;
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setOpen(true);
+                  const n = list.length;
+                  setActive((i) => (e.key === 'ArrowDown' ? (i + 1) % n : i <= 0 ? n - 1 : i - 1));
+                } else if (e.key === 'Enter' && shown && active >= 0) {
+                  e.preventDefault();
+                  pick(list[active]!.id);
+                } else if (e.key === 'Escape' && shown) {
+                  e.preventDefault();
+                  setOpen(false);
+                }
+              },
+            }
+          : {})}
+        {...invalid}
+      />
+      {onPick ? (
+        <div className="v-suggest" data-part="street-suggestions" hidden={!shown}>
+          <ul className="v-suggest-list" role="listbox" id="checkout-street-list" aria-label="Ruas">
+            {list.map((s, i) => (
+              <li
+                key={s.id}
+                id={`checkout-street-option-${i}`}
+                className="v-suggest-option"
+                data-part="street-suggestion"
+                role="option"
+                aria-selected={i === active}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => pick(s.id)}
+              >
+                <span className="v-suggest-label">{s.label}</span>
+                {s.detail ? <span className="v-suggest-detail">{s.detail}</span> : null}
+              </li>
+            ))}
+          </ul>
+          <p className="v-suggest-credit" aria-hidden="true">
+            © OpenStreetMap
+          </p>
+        </div>
+      ) : null}
+      {onPick ? (
+        <span className="v-suggest-status" role="status">
+          {shown
+            ? list.length === 1
+              ? '1 rua encontrada'
+              : `${list.length} ruas encontradas`
+            : ''}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 export function AddressForm({
   value,
   onChange,
@@ -205,6 +316,8 @@ export function AddressForm({
   savedAddressId,
   onPickAddress,
   nameOnly,
+  streetSuggestions,
+  onPickStreet,
 }: SlotProps['checkout.AddressForm']) {
   const err = (k: keyof typeof errors) => errors[k];
   const aria = (k: keyof typeof errors) =>
@@ -374,15 +487,12 @@ export function AddressForm({
       </Field>
       <div className="v-field-row">
         <Field id="checkout-street" label="Rua" error={err('street')}>
-          <input
-            id="checkout-street"
-            name="street"
-            className="v-input"
-            autoComplete="address-line1"
-            maxLength={120}
+          <StreetInput
             value={value.street}
-            onChange={(e) => onChange({ street: e.target.value })}
-            {...aria('street')}
+            onChange={(street) => onChange({ street })}
+            invalid={aria('street')}
+            suggestions={streetSuggestions}
+            onPick={onPickStreet}
           />
         </Field>
         <Field id="checkout-number" label="Número" error={err('number')}>

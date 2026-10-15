@@ -54,7 +54,13 @@ import {
   verifyCustomerToken,
 } from './customer.ts';
 import { normalizeCep, parsePolygon, resolveZone, type CepLookup, type LatLng } from './geo.ts';
-import type { Geocoder } from './geocode.ts';
+import {
+  PLACE_QUERY_MAX,
+  PLACE_QUERY_MIN,
+  storeNearby,
+  type Geocoder,
+  type PlaceSearch,
+} from './geocode.ts';
 import type { OrderHub } from './order-live.ts';
 import type { LiveSlots } from './storefront-live.ts';
 import {
@@ -112,6 +118,8 @@ interface Deps {
   cepLookup: CepLookup;
   /** address → approximate point for the checkout's pin map (ADR 0024) */
   geocode: Geocoder;
+  /** street suggestions while the address is typed (Photon) */
+  places: PlaceSearch;
   orderHub: OrderHub;
   /** open order streams and long-polls — each re-reads the order on every wake */
   orderWatch: LiveSlots;
@@ -204,6 +212,19 @@ export function mountCommerce(d: Deps) {
     );
     if (point) c.header('cache-control', 'public, max-age=86400');
     return c.json({ point });
+  });
+
+  // street suggestions while the shopper types the address, the store's area first
+  const nearStore = storeNearby(sql, d.geocode);
+  storefront.use('/places', limiter(60));
+  storefront.get('/places', async (c) => {
+    const tenant = c.get('tenant') as Tenant;
+    const text = c.req.query('q')?.trim() ?? '';
+    if (text.length > PLACE_QUERY_MAX) throw new HttpError(400, 'BAD_REQUEST', 'q is too long');
+    if (text.length < PLACE_QUERY_MIN) return c.json({ places: [] });
+    const places = await d.places({ text, near: await nearStore(tenant.id) }, ipOf(c));
+    if (places.length) c.header('cache-control', 'public, max-age=3600');
+    return c.json({ places });
   });
 
   // waitlist (roadmap 2c) — same subscriptions as notify-me; answers how many wait

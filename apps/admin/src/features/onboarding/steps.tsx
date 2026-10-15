@@ -9,8 +9,8 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { whatsappDigits } from '@vendua/kernel/rules';
-import { api, withRetryScope, type Category, type StoreView } from '../../lib/api.ts';
-import { money, phone as fmtPhone } from '../../lib/format.ts';
+import { api, ApiError, withRetryScope, type Category, type StoreView } from '../../lib/api.ts';
+import { maskCep, money, phone as fmtPhone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -29,6 +29,7 @@ import {
 } from '../../ui/fields.tsx';
 import { PhotoField, type Photo } from '../../ui/PhotoField.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
+import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { fromWeek, TimeRangeField, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import type { Draft } from './MiniStore.tsx';
@@ -259,6 +260,133 @@ export function WhatsappStep({ s, save, next, back, eyebrow, me }: StepProps) {
         helper={shown && !ok ? 'Faltam números: DDD + o número, como (22) 99999-0000.' : undefined}
       >
         <PhoneInput id="ob-wa" value={shown} onChange={(v) => setShown(v)} />
+      </Field>
+    </Frame>
+  );
+}
+
+export function AddressStep({ s, save, next, back, skip, eyebrow }: StepProps) {
+  const p = s.profile;
+  const [cep, setCep] = useState(maskCep(p.cep ?? ''));
+  const [city, setCity] = useState(p.city ?? '');
+  const [address, setAddress] = useState(p.address ?? '');
+  const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [busy, run] = useBusy();
+  const looked = useRef<string | null>(null);
+  const digits = cep.replace(/\D/g, '');
+
+  // a CEP fills what's still blank: the city, and the street with its bairro
+  const lookUp = async (d: string) => {
+    looked.current = d;
+    setNote({ text: 'Buscando o CEP…' });
+    try {
+      const a = (await api.cep(d)).address;
+      if (looked.current !== d) return;
+      if (a.city) setCity((c) => c.trim() || a.city!);
+      if (a.street)
+        setAddress((x) => x.trim() || [a.street, a.neighborhood].filter(Boolean).join(' · '));
+      setNote({
+        text: [
+          [a.street, a.neighborhood].filter(Boolean).join(' · '),
+          a.city && a.state ? `${a.city} – ${a.state}` : a.city,
+        ]
+          .filter(Boolean)
+          .join(', '),
+      });
+    } catch (e) {
+      if (looked.current !== d) return;
+      setNote(
+        e instanceof ApiError && e.code === 'CEP_NOT_FOUND'
+          ? { text: 'Esse CEP não existe. Confira os números.', bad: true }
+          : { text: 'A busca de CEP não respondeu agora. Preencha a cidade e o endereço.' },
+      );
+    }
+  };
+
+  const street = useStreetSuggest((x) => {
+    setAddress(
+      [x.number ? `${x.street}, ${x.number}` : x.street, x.neighborhood]
+        .filter(Boolean)
+        .join(' · '),
+    );
+    if (x.city) setCity((c) => c.trim() || x.city!);
+  });
+
+  const cepOk = digits.length === 0 || (digits.length === 8 && !note?.bad);
+  const changed: Record<string, string | null> = {};
+  if ((digits || null) !== (p.cep ?? null)) changed.cep = digits || null;
+  if ((city.trim() || null) !== (p.city ?? null)) changed.city = city.trim() || null;
+  if ((address.trim() || null) !== (p.address ?? null)) changed.address = address.trim() || null;
+  const filled = !!(digits || city.trim() || address.trim());
+  return (
+    <Frame
+      eyebrow={eyebrow}
+      title="Onde fica a sua loja?"
+      hint="Comece pelo CEP: eu preencho a cidade e a rua para você. Daqui sai a entrega e é aqui que o cliente busca."
+      back={back}
+      busy={busy}
+      disabled={!filled || !cepOk}
+      onSkip={skip}
+      onSubmit={() =>
+        void run(
+          (Object.keys(changed).length ? save({ profile: changed }) : Promise.resolve(true)).then(
+            (ok) => ok && next('Anotado!'),
+          ),
+        )
+      }
+    >
+      <Field label="CEP" htmlFor="ob-cep">
+        <TextInput
+          id="ob-cep"
+          inputMode="numeric"
+          autoComplete="postal-code"
+          placeholder="00000-000"
+          className="tnum max-w-44"
+          value={cep}
+          aria-invalid={note?.bad || undefined}
+          aria-describedby="ob-cep-note"
+          onChange={(e) => {
+            const v = maskCep(e.target.value);
+            setCep(v);
+            const d = v.replace(/\D/g, '');
+            if (d.length === 8) void lookUp(d);
+            else {
+              looked.current = null;
+              setNote(null);
+            }
+          }}
+        />
+        <p
+          id="ob-cep-note"
+          role="status"
+          className={cn('t-caption', note?.bad ? 'text-danger' : 'text-muted')}
+        >
+          {note?.text ?? ''}
+        </p>
+      </Field>
+      <Field label="Cidade" htmlFor="ob-city">
+        <TextInput
+          id="ob-city"
+          maxLength={80}
+          autoComplete="address-level2"
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+        />
+      </Field>
+      <Field label="Endereço" htmlFor="ob-addr">
+        <TextInput
+          id="ob-addr"
+          maxLength={300}
+          autoComplete="off"
+          placeholder="Rua, número · bairro"
+          value={address}
+          {...street.input}
+          onChange={(e) => {
+            setAddress(e.target.value);
+            street.typing(e.target.value);
+          }}
+        />
+        {street.list}
       </Field>
     </Frame>
   );

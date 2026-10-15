@@ -1,7 +1,8 @@
 import type { ModelGateway } from '@vendua/agent-runtime';
 import type { MediaProviders } from '../vendedor/media.ts';
 import type { Context, Hono } from 'hono';
-import type { Geocoder } from '../modules/geocode.ts';
+import type { CepLookup } from '../modules/geo.ts';
+import type { Geocoder, PlaceSearch } from '../modules/geocode.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -43,6 +44,10 @@ export interface AdminDeps {
   publicOrigin: (c: Context) => string;
   /** address → approximate point, to place the store's pin (ADR 0024) */
   geocode: Geocoder;
+  /** street suggestions while an address is typed (Photon) */
+  places: PlaceSearch;
+  /** CEP → street, bairro, city (ViaCEP) */
+  cepLookup: CepLookup;
   /** may a visitor sign up now (modules/billing/signup-gate.ts) */
   signupReady: () => Promise<SignupReadiness>;
   /** the registrar, DNS host and probes behind own domains (ADR 0038) */

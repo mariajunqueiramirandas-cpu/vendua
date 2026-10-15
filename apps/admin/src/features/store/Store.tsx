@@ -21,7 +21,7 @@ import { instagramHandle, whatsappDigits } from '@vendua/kernel/rules';
 import { api, ApiError, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { useLandOnHash } from '../../lib/hash.ts';
-import { dateShort, hhmm, isoDate, money, phone, plural } from '../../lib/format.ts';
+import { dateShort, hhmm, isoDate, maskCep, money, phone, plural } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -47,6 +47,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
+import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useHeld } from '../menu/held.ts';
@@ -677,7 +678,7 @@ function Delivery({
     const line = [s.profile.address, s.profile.city].filter(Boolean).join(', ');
     setFinding(true);
     try {
-      const { point } = await api.geocode(line);
+      const { point } = await api.geocode(line, s.profile.cep);
       if (!point) {
         toast.error('Não achamos esse endereço no mapa. Toque em “marcar loja” e marque à mão.');
         return;
@@ -943,7 +944,7 @@ function Delivery({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {s.profile.address && !locating ? (
+                  {(s.profile.address || s.profile.cep) && !locating ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1441,6 +1442,134 @@ const CONTACT_ERROR = {
   instagram: 'Use o @ da loja ou o link do perfil.',
 };
 
+/** The store's CEP, city and address. A CEP fills the city and the address still blank
+ *  (ViaCEP), and typing the address suggests streets (OpenStreetMap). The pin stays the
+ *  merchant's: "pelo endereço" or a tap on the map. */
+function StoreAddress({
+  p,
+  patch,
+  run,
+}: {
+  p: StoreView['profile'];
+  patch: (b: Record<string, unknown>) => void;
+  run: (b: Record<string, unknown>) => Promise<StoreView>;
+}) {
+  const [cep, setCep] = useState(maskCep(p.cep ?? ''));
+  const [cepNote, setCepNote] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [addr, setAddr] = useState(p.address ?? '');
+  useEffect(() => setCep(maskCep(p.cep ?? '')), [p.cep]);
+  useEffect(() => setAddr(p.address ?? ''), [p.address]);
+
+  const saveCep = async (digits: string) => {
+    setCepNote({ text: 'Buscando o CEP…' });
+    const profile: Record<string, unknown> = { cep: digits };
+    try {
+      const a = (await api.cep(digits)).address;
+      if (!p.city?.trim() && a.city) profile.city = a.city;
+      if (!p.address?.trim() && a.street)
+        profile.address = [a.street, a.neighborhood].filter(Boolean).join(' · ');
+      setCepNote({
+        text: [
+          [a.street, a.neighborhood].filter(Boolean).join(' · '),
+          a.city && a.state ? `${a.city} – ${a.state}` : a.city,
+        ]
+          .filter(Boolean)
+          .join(', '),
+      });
+    } catch (e) {
+      setCepNote(
+        e instanceof ApiError && e.code === 'CEP_NOT_FOUND'
+          ? { text: 'Esse CEP não existe. Confira os números.', bad: true }
+          : { text: 'A busca de CEP não respondeu agora. O CEP foi salvo mesmo assim.' },
+      );
+      if (e instanceof ApiError && e.code === 'CEP_NOT_FOUND') return;
+    }
+    await run({ profile }).catch(() => undefined);
+  };
+
+  const street = useStreetSuggest((s) => {
+    const line = [s.number ? `${s.street}, ${s.number}` : s.street, s.neighborhood]
+      .filter(Boolean)
+      .join(' · ');
+    setAddr(line);
+    patch({ profile: { address: line, ...(!p.city?.trim() && s.city ? { city: s.city } : {}) } });
+  });
+  const commitAddr = () => {
+    const v = addr.trim();
+    if (v !== (p.address ?? '').trim()) patch({ profile: { address: v || null } });
+  };
+
+  return (
+    <>
+      <div className="grid gap-5 sm:grid-cols-[12rem_minmax(0,1fr)]">
+        <Field label="CEP" optional htmlFor="pf-cep">
+          <TextInput
+            id="pf-cep"
+            inputMode="numeric"
+            autoComplete="postal-code"
+            placeholder="00000-000"
+            className="tnum"
+            value={cep}
+            aria-invalid={cepNote?.bad || undefined}
+            aria-describedby="pf-cep-note"
+            onChange={(e) => {
+              const v = maskCep(e.target.value);
+              setCep(v);
+              const d = v.replace(/\D/g, '');
+              if (d.length === 8 && d !== p.cep) void saveCep(d);
+              else if (d.length < 8) setCepNote(null);
+            }}
+            onBlur={() => {
+              const d = cep.replace(/\D/g, '');
+              if (d === '' && p.cep) patch({ profile: { cep: null } });
+              else if (d.length > 0 && d.length < 8)
+                setCepNote({ text: 'O CEP tem 8 números.', bad: true });
+            }}
+          />
+          <p
+            id="pf-cep-note"
+            role="status"
+            className={cn('t-caption', cepNote?.bad ? 'text-danger' : 'text-muted')}
+          >
+            {cepNote?.text ?? ''}
+          </p>
+        </Field>
+        <Field label="Cidade" optional htmlFor="pf-city">
+          <CommitInput
+            id="pf-city"
+            maxLength={80}
+            value={p.city ?? ''}
+            onCommit={(v) => patch({ profile: { city: v || null } })}
+          />
+        </Field>
+      </div>
+      <Field label="Endereço da loja" optional htmlFor="pf-addr">
+        <TextInput
+          id="pf-addr"
+          maxLength={300}
+          autoComplete="off"
+          placeholder="Rua, número · bairro"
+          value={addr}
+          {...street.input}
+          onChange={(e) => {
+            setAddr(e.target.value);
+            street.typing(e.target.value);
+          }}
+          onBlur={() => {
+            street.input.onBlur();
+            commitAddr();
+          }}
+          onKeyDown={(e) => {
+            street.input.onKeyDown(e);
+            if (e.key === 'Enter' && !e.defaultPrevented) (e.target as HTMLInputElement).blur();
+          }}
+        />
+        {street.list}
+      </Field>
+    </>
+  );
+}
+
 function Profile({
   s,
   patch,
@@ -1559,23 +1688,8 @@ function Profile({
                 onCommit={(v) => patch({ profile: { email: v || null } })}
               />
             </Field>
-            <Field label="Cidade" optional htmlFor="pf-city">
-              <CommitInput
-                id="pf-city"
-                maxLength={80}
-                value={p.city ?? ''}
-                onCommit={(v) => patch({ profile: { city: v || null } })}
-              />
-            </Field>
           </div>
-          <Field label="Endereço da loja" optional htmlFor="pf-addr">
-            <CommitInput
-              id="pf-addr"
-              maxLength={300}
-              value={p.address ?? ''}
-              onCommit={(v) => patch({ profile: { address: v || null } })}
-            />
-          </Field>
+          <StoreAddress p={p} patch={patch} run={run} />
         </Card>
         <p className="t-caption mt-2 flex items-center gap-1.5 px-1 text-muted">
           <Storefront className="size-4" /> Mudanças no perfil aparecem na loja na hora.

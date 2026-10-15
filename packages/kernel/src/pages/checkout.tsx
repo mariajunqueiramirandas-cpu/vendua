@@ -34,7 +34,14 @@ import type {
 } from '../slot-props.ts';
 
 type SlotPropsOf<K extends keyof SlotProps> = SlotProps[K];
-import type { CartTotals, GeoPoint, LatLng, PaymentAdjustment, QuoteResult } from '../api.ts';
+import type {
+  CartTotals,
+  GeoPoint,
+  LatLng,
+  PaymentAdjustment,
+  PlaceSuggestion,
+  QuoteResult,
+} from '../api.ts';
 import { deliveryWords } from '../rules/delivery.ts';
 import { changeMessage, couponMessage, isCouponError } from '../rules/errors.ts';
 import { formatCents, LOCALE } from '../rules/format.ts';
@@ -88,6 +95,20 @@ function adjustmentLabel(a: PaymentAdjustment, currency: string): PaymentMethod[
   const kind = adjustmentKind(a);
   const label = adjustmentShort(a, currency);
   return kind && label ? { label, kind } : undefined;
+}
+
+const PRECISION_RANK: Record<GeoPoint['precision'], number> = {
+  area: 0,
+  postcode: 1,
+  street: 2,
+  address: 3,
+};
+
+/** "Ponte Preta, Campinas – SP" */
+function placeDetail(s: PlaceSuggestion): { detail?: string } {
+  const where = s.city ? (s.state ? `${s.city} – ${s.state}` : s.city) : null;
+  const detail = [s.neighborhood, where].filter(Boolean).join(', ');
+  return detail ? { detail } : {};
 }
 
 type PinStatus = SlotPropsOf<'checkout.LocationPicker'>['status'];
@@ -322,6 +343,11 @@ export function CheckoutPage() {
   const [cepPlace, setCepPlace] = useState<{ city: string | null; state: string | null } | null>(
     null,
   );
+  // Kernel 1.28: what the shopper is typing in "Rua" (only typing asks), and the streets for it
+  const [streetQuery, setStreetQuery] = useState('');
+  const [places, setPlaces] = useState<PlaceSuggestion[]>([]);
+  // a picked street placed the map: the geocoder's answer moves it only if it is closer
+  const picked = useRef<GeoPoint['precision'] | null>(null);
   const [mode, setMode] = useState<'pickup' | 'delivery'>(() =>
     restored && (restored.mode === 'pickup' || deliveryOk)
       ? restored.mode
@@ -670,7 +696,11 @@ export function CheckoutPage() {
           ...(uf ? { state: uf } : {}),
         })
         .then((r) => {
-          if (live && r.point)
+          if (
+            live &&
+            r.point &&
+            !(picked.current && PRECISION_RANK[r.point.precision] < PRECISION_RANK[picked.current])
+          )
             setMapAt({
               center: { lat: r.point.lat, lng: r.point.lng },
               precision: r.point.precision,
@@ -683,6 +713,28 @@ export function CheckoutPage() {
       clearTimeout(t);
     };
   }, [pinWanted, pinned, street, number, cepDigits, city, uf, api]);
+  useEffect(() => {
+    const q = streetQuery.trim();
+    if (deliveryMode !== 'delivery' || q.length < 3) {
+      setPlaces([]);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      api.places(q).then(
+        (r) => {
+          if (live) setPlaces(r.places);
+        },
+        () => {
+          if (live) setPlaces([]);
+        },
+      );
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [streetQuery, deliveryMode, api]);
   // a remembered pin: Core prices it again (the store's prices may have changed)
   useEffect(() => {
     if (pinWanted && coords && !pinHint && pinStatus === 'confirmed') void confirmPin(coords);
@@ -717,6 +769,10 @@ export function CheckoutPage() {
       setPinHint(undefined);
       setPinStatus('idle');
     }
+    if ('street' in p) {
+      setStreetQuery(p.street ?? '');
+      picked.current = null;
+    }
     setDraft((d) => ({ ...d, ...p }));
     setErrors((e) => {
       const next = { ...e };
@@ -747,11 +803,28 @@ export function CheckoutPage() {
     setErrors({});
     setZoneHint(undefined);
     setCepPlace(null);
+    setStreetQuery('');
+    picked.current = null;
     setLocateStatus('idle');
     setCoords(pin);
     setPinHint(undefined);
     setPinError(undefined);
     setPinStatus(pin ? 'confirmed' : 'idle');
+  };
+
+  const pickStreet = (id: string) => {
+    const s = places[Number(id)];
+    if (!s) return;
+    patch({
+      street: s.street,
+      ...(s.number && !draft.number.trim() ? { number: s.number } : {}),
+      ...(s.neighborhood && !draft.neighborhood.trim() ? { neighborhood: s.neighborhood } : {}),
+    });
+    setStreetQuery('');
+    setPlaces([]);
+    if (s.city) setCepPlace((c) => c ?? { city: s.city, state: s.state });
+    picked.current = s.precision;
+    if (byDistance) setMapAt({ center: { lat: s.lat, lng: s.lng }, precision: s.precision });
   };
 
   const onCep = async (cep: string) => {
@@ -1063,6 +1136,12 @@ export function CheckoutPage() {
                     errors={errors}
                     neighborhoods={neighborhoods}
                     onCep={(cep) => void onCep(cep)}
+                    streetSuggestions={places.map((s, i) => ({
+                      id: String(i),
+                      label: s.number ? `${s.street}, ${s.number}` : s.street,
+                      ...placeDetail(s),
+                    }))}
+                    onPickStreet={pickStreet}
                     cepStatus={
                       cepLookup.pending
                         ? 'pending'

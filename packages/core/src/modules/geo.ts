@@ -343,8 +343,13 @@ export const viaCep: CepLookup = async (cep) => {
   }
   if (Date.now() - cepWindow.at >= 60_000) cepWindow = { at: Date.now(), n: 0 };
   if (++cepWindow.n > CEP_PER_MIN) throw new Error('viacep budget spent');
-  const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
-    signal: AbortSignal.timeout(3500),
+  const ask = () =>
+    fetch(`https://viacep.com.br/ws/${cep}/json/`, { signal: AbortSignal.timeout(3500) });
+  // a kept-alive socket the other end already closed fails at once: one fresh try (not on a
+  // timeout, and never on an HTTP status)
+  const res = await ask().catch((err: unknown) => {
+    if ((err as { name?: unknown } | null)?.name === 'TimeoutError') throw err;
+    return ask();
   });
   if (!res.ok) throw new Error(`viacep ${res.status}`);
   const body = (await res.json()) as Record<string, string | boolean>;

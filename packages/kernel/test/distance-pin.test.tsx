@@ -112,6 +112,33 @@ function distanceCore() {
         totals: { ...cart.totals, deliveryFeeCents: 1550, totalCents: 6250 },
       });
     if (url.pathname === '/checkout/v1/cart/delivery') return json(200, { cart });
+    if (url.pathname === '/storefront/v1/places')
+      return json(200, {
+        places: [
+          {
+            street: 'Rua Antônio Oliveira',
+            number: null,
+            neighborhood: 'Bacaxá',
+            city: 'Saquarema',
+            state: 'RJ',
+            cep: '28993000',
+            lat: -22.8992,
+            lng: -42.4701,
+            precision: 'street',
+          },
+          {
+            street: 'Rua Antônio Vignol',
+            number: null,
+            neighborhood: null,
+            city: 'Saquarema',
+            state: 'RJ',
+            cep: null,
+            lat: -22.9,
+            lng: -42.47,
+            precision: 'street',
+          },
+        ],
+      });
     return null;
   });
 }
@@ -186,6 +213,52 @@ describe('checkout — distance pricing pin', () => {
     await flush();
     expect(button('Local confirmado')).toBeNull();
     expect(button('Confirmar local')).not.toBeNull();
+  });
+
+  test('typing the street suggests streets; picking one fills the form', async () => {
+    const c = distanceCore();
+    m = await mount({ path: '/checkout', session: 'tok' });
+    await act(async () => {
+      setValue('#checkout-name', 'Ana');
+      setValue('#checkout-phone', '(22) 99999-0001');
+    });
+    await submitForm();
+    await flush();
+    const input = $('#checkout-street') as HTMLInputElement;
+    expect(input.getAttribute('role')).toBe('combobox');
+    expect(input.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => setValue('#checkout-street', 'Rua Ant'));
+    await wait(400);
+    await flush();
+    expect(c.calls.filter((x) => x.path.startsWith('/storefront/v1/places'))).toEqual([
+      { method: 'GET', path: '/storefront/v1/places?q=Rua%20Ant', body: undefined },
+    ]);
+    expect(input.getAttribute('aria-expanded')).toBe('true');
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+    expect(options).toEqual([
+      'Rua Antônio OliveiraBacaxá, Saquarema – RJ',
+      'Rua Antônio VignolSaquarema – RJ',
+    ]);
+    const key = (k: string) =>
+      act(async () => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      });
+    await key('ArrowDown');
+    expect(input.getAttribute('aria-activedescendant')).toBe('checkout-street-option-0');
+    await key('Enter');
+    await flush();
+    expect(input.value).toBe('Rua Antônio Oliveira');
+    expect(($('#checkout-neighborhood') as HTMLInputElement).value).toBe('Bacaxá');
+    expect(input.getAttribute('aria-expanded')).toBe('false');
+    // the pick asks nothing more; the number then places the door as before
+    await wait(400);
+    expect(c.calls.filter((x) => x.path.startsWith('/storefront/v1/places'))).toHaveLength(1);
+    await act(async () => setValue('#checkout-number', '10'));
+    await wait(800);
+    await flush();
+    const geo = c.calls.find((x) => x.path.startsWith('/storefront/v1/geocode'));
+    expect(geo?.path).toContain('street=Rua+Ant%C3%B4nio+Oliveira');
+    expect(geo?.path).toContain('city=Saquarema');
   });
 
   test('the map draws the tiles that cover it and moves with the keyboard', async () => {

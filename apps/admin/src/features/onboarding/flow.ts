@@ -15,6 +15,7 @@ export type StepId =
   | 'cores'
   | 'frase'
   | 'whatsapp'
+  | 'endereco'
   | 'horarios'
   | 'como'
   | 'retirada'
@@ -44,9 +45,9 @@ export const CHAPTERS: {
   {
     id: 'atendimento',
     label: 'Atendimento',
-    blurb: 'WhatsApp, horários, retirada e entrega',
+    blurb: 'WhatsApp, endereço, horários, retirada e entrega',
     Icon: Motorcycle,
-    steps: ['whatsapp', 'horarios', 'como', 'retirada', 'entrega'],
+    steps: ['whatsapp', 'endereco', 'horarios', 'como', 'retirada', 'entrega'],
   },
   {
     id: 'pagamentos',
@@ -88,6 +89,7 @@ export const LINE: Record<StepId, string> = {
   cores: 'Que tal as cores da loja?',
   frase: 'Um toque de personalidade.',
   whatsapp: 'Como os clientes vão falar com você?',
+  endereco: 'Agora, onde a sua loja fica.',
   horarios: 'Hora de dizer quando você trabalha.',
   como: 'Como o pedido chega até o cliente?',
   retirada: 'Onde o cliente busca o pedido?',
@@ -108,6 +110,7 @@ export const POSE: Record<StepId, Pose> = {
   cores: 'personalizar',
   frase: 'avatar-feliz',
   whatsapp: 'avatar-pensando',
+  endereco: 'loja',
   horarios: 'horarios',
   como: 'entrega',
   retirada: 'loja',
@@ -174,6 +177,8 @@ export function answered(
       return !!x.s.profile.tagline;
     case 'whatsapp':
       return !!x.s.profile.whatsapp;
+    case 'endereco':
+      return !!(x.s.profile.cep || x.s.profile.city || x.s.profile.address);
     case 'horarios':
       return x.s.hours.windows.length > 0;
     case 'como':
@@ -206,7 +211,7 @@ export const STEP_FOR_ITEM: Record<string, StepId> = {
 
 /** Questions a detour (`?passo=`) carries on to when they're still open. */
 export const FOLLOWS: Partial<Record<StepId, StepId[]>> = {
-  logo: ['whatsapp'],
+  logo: ['whatsapp', 'endereco'],
   como: ['retirada', 'entrega'],
   retirada: ['entrega'],
 };
