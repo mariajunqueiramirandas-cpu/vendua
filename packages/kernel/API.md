@@ -1013,9 +1013,11 @@ only when the parent's origin is `StateEnvelope.adminOrigin`, and it stays inert
 reports one — renders those
 draft templates and tokens over the live ones (each validated like Core does), outlines
 `selected`'s section and posts `{ type: 'vendua:preview-select', id }` when a section is
-tapped. It announces itself with `{ type: 'vendua:preview-ready', tokens, paths }` (the tokens in
-force and the store's routes, posted only to that origin) and sends no analytics. The merchant admin's
-Aparência editor is the only caller.
+tapped. It announces itself with `{ type: 'vendua:preview-ready', tokens, paths, templates,
+schemas }` (the tokens in force, the store's routes and, since 1.29, what each page renders when
+Core has no template for it — the build's own over `DEFAULT_TEMPLATES` — and the store's own
+`store:*` section and block schemas by type, as JSON; posted only to that origin) and sends no
+analytics. The merchant admin's Aparência editor is the only caller.
 
 ## Styling API (Contract surface)
 

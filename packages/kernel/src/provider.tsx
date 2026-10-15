@@ -1,5 +1,6 @@
 import { injectedTokens } from './injected.ts';
 import { reportPreview, usePreviewTokens } from './preview.ts';
+import { DEFAULT_TEMPLATES } from './sdk/defaults.ts';
 import {
   createContext,
   useContext,
@@ -20,7 +21,7 @@ import {
 } from './config.ts';
 import { setStatusRefresher, showError, showInfo } from './errors.ts';
 import { beacon } from './telemetry.ts';
-import type { StorefrontBundle } from './composition/registry.ts';
+import { storeSchemas, type StorefrontBundle } from './composition/registry.ts';
 import { setThemeColor } from './theme-color.ts';
 import { takeTableLink } from './table.ts';
 
@@ -326,7 +327,17 @@ export function VenduaProvider({
   // Inside the admin's editor frame, its draft colours win (Kernel 1.4 preview).
   const draftTokens = usePreviewTokens();
   const shown = draftTokens ?? tokens;
-  useEffect(() => reportPreview(tokens, resolvePaths(config)), [tokens, config]);
+  const ownSchemas = useMemo(() => storeSchemas(storefront.sections), [storefront]);
+  useEffect(
+    () =>
+      reportPreview({
+        tokens,
+        paths: resolvePaths(config),
+        templates: { ...DEFAULT_TEMPLATES, ...storefront.snapshot.templates },
+        schemas: ownSchemas,
+      }),
+    [tokens, config, storefront, ownSchemas],
+  );
   useEffect(() => {
     const root = document.documentElement;
     const vars = tokensToVars(shown);

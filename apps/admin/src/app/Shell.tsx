@@ -115,6 +115,14 @@ export function Shell({ children }: { children: ReactNode }) {
     document.documentElement.dataset.bare = '';
     return () => void delete document.documentElement.dataset.bare;
   }, [bare]);
+  // Aparência is a full-screen editor on phones, with its own header and back: the store's
+  // preview and the form under it need the room the two bars take (tablets keep the rail)
+  const editor = loc.pathname === '/aparencia';
+  useEffect(() => {
+    if (!editor) return;
+    document.documentElement.dataset.editor = '';
+    return () => void delete document.documentElement.dataset.editor;
+  }, [editor]);
 
   // Duá Copilot (managers and owners; a plan without it opens the upsell): the phone header's
   // Duá and the rail's button open /copiloto; from 1200 px the button docks it beside the screen
@@ -343,7 +351,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <header
           className={cn(
             'vt-top chrome sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden kb:static',
-            bare && 'hidden!',
+            (bare || editor) && 'hidden!',
           )}
         >
           {placeOf(loc.pathname)?.depth ? (
@@ -427,7 +435,7 @@ export function Shell({ children }: { children: ReactNode }) {
         aria-label="principal"
         className={cn(
           'vt-tabs chrome glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line md:hidden',
-          bare && 'hidden!',
+          (bare || editor) && 'hidden!',
         )}
       >
         <ul className="mx-auto flex max-w-lg">

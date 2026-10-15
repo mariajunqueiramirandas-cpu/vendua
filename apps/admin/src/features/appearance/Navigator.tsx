@@ -35,6 +35,8 @@ export function Navigator({
       <Row
         key={`${tpl}:${x.id}`}
         sec={x}
+        name={sectionName(x.type, ed.schemas)}
+        summary={sectionSummary(x.type, x.settings, ed.schemas)}
         on={ed.sel?.kind === 'section' && ed.sel.tpl === tpl && ed.sel.id === x.id}
         changed={ed.dirtySection(tpl, x)}
         first={i === 0}
@@ -136,6 +138,8 @@ const ChangedDot = () => (
 
 function Row({
   sec,
+  name,
+  summary: s,
   on,
   changed,
   first,
@@ -145,6 +149,8 @@ function Row({
   onToggle,
 }: {
   sec: TemplateSection;
+  name: string;
+  summary: string | null;
   on: boolean;
   changed: boolean;
   first: boolean;
@@ -153,8 +159,6 @@ function Row({
   onMove: (d: -1 | 1) => void;
   onToggle: () => void;
 }) {
-  const name = sectionName(sec.type);
-  const s = sectionSummary(sec.settings);
   const summary = s && s !== name ? s : null;
   return (
     <li>

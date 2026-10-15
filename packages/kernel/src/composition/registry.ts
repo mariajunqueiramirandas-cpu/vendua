@@ -46,6 +46,17 @@ function isModule(m: unknown): m is ComponentModule {
   );
 }
 
+/** The store's own section and block schemas by type, as the editor preview reports them
+ *  (Kernel 1.29): only what `buildRegistry` would register. */
+export function storeSchemas(
+  storeModules: Record<string, unknown>,
+): Record<string, SectionSchema | BlockSchema> {
+  const out: Record<string, SectionSchema | BlockSchema> = {};
+  for (const m of Object.values(storeModules))
+    if (isModule(m) && m.schema.type.startsWith('store:')) out[m.schema.type] = m.schema;
+  return out;
+}
+
 /** Store modules may only register `store:*` types — the `sdk:` namespace is the Kernel's. */
 export function buildRegistry(
   sdk: RegisteredComponent[],

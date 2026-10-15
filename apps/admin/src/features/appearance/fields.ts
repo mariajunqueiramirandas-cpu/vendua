@@ -2,17 +2,20 @@ import { resolveSettings, SDK_SCHEMAS } from '@vendua/kernel/sdk-catalog';
 import type { ComponentType } from '@vendua/templates';
 
 // What the page editor knows about a section's settings. SDK sections carry their
-// real schemas (the Kernel's catalog — pure data). A store's own sections publish
-// only their areas, so their fields are inferred from the values the template holds:
-// the merchant edits copy, photos and links there, never the section's code (§A5).
+// real schemas (the Kernel's catalog — pure data). A store's own sections are told by its
+// preview frame (Kernel 1.29); a frame built before that says nothing, so their fields are
+// inferred from the values the template holds. Either way the merchant edits copy, photos,
+// links and picks there, never the section's code (§A5).
 
 export type FieldSpec = (
-  | { kind: 'text'; key: string; label: string; max: number; long: boolean }
+  | { kind: 'text'; key: string; label: string; max: number; long: boolean; def?: string }
   | { kind: 'number'; key: string; label: string; min: number; max: number; def?: number }
   | { kind: 'boolean'; key: string; label: string; def?: boolean }
   | { kind: 'select'; key: string; label: string; options: readonly string[]; def?: string }
   | { kind: 'image'; key: string; label: string }
   | { kind: 'url'; key: string; label: string }
+  | { kind: 'product'; key: string; label: string }
+  | { kind: 'category'; key: string; label: string }
   | { kind: 'list'; key: string; label: string; max: number; of: FieldSpec[] }
   | { kind: 'skip'; key: string }
 ) & { help?: string };
@@ -39,6 +42,12 @@ const STORE_SECTION_NAMES: Record<string, string> = {
   'store:catalog-browser': 'Cardápio',
   'store:product-figure': 'Foto do produto',
   'store:product-perks': 'Vantagens do produto',
+  // the default bundle's (storefronts/_template)
+  'store:menu-hero': 'Capa da loja',
+  'store:menu-rail': 'Vitrine',
+  'store:menu': 'Cardápio',
+  'store:intro': 'Apresentação',
+  'store:dish-media': 'Foto do prato',
   // blocks inside a section, should one ever be named on its own
   'sdk:recent-order': 'Seu último pedido',
   'sdk:party-cta': 'Monte sua festa',
@@ -51,13 +60,60 @@ const STORE_SECTION_NAMES: Record<string, string> = {
   'sdk:loyalty-teaser': 'Cartão fidelidade',
 };
 
-export const sectionName = (type: string) =>
+/** A store's own part as its preview frame reports it (Kernel 1.29). */
+export type StoreSchema = {
+  kind: 'section' | 'block';
+  settings: Record<string, SchemaField>;
+  /** the names of the places it holds blocks in, in its own order */
+  areas?: string[];
+  title?: string;
+  addable?: boolean;
+};
+export type StoreSchemas = Record<string, StoreSchema>;
+
+/** What the frame says about the store's own parts, kept where it reads like a schema. */
+export function readSchemas(raw: unknown): StoreSchemas {
+  const out: StoreSchemas = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [type, s] of Object.entries(raw)) {
+    if (!type.startsWith('store:') || !s || typeof s !== 'object') continue;
+    const { kind, settings, areas, title, addable } = s as Record<string, unknown>;
+    if (kind !== 'section' && kind !== 'block') continue;
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) continue;
+    out[type] = {
+      kind,
+      settings: settings as Record<string, SchemaField>,
+      ...(areas && typeof areas === 'object' && !Array.isArray(areas)
+        ? { areas: Object.keys(areas) }
+        : {}),
+      ...(typeof title === 'string' && title.trim() ? { title: title.trim().slice(0, 60) } : {}),
+      ...(kind === 'section' && addable === true ? { addable: true } : {}),
+    };
+  }
+  return out;
+}
+
+/** A store that names its own part knows it better than the admin's guess. */
+export const sectionName = (type: string, store?: StoreSchemas) =>
   SDK_TITLES.get(type) ??
+  store?.[type]?.title ??
   STORE_SECTION_NAMES[type] ??
   `Seção ${type.replace(/^(sdk|store):/, '').replace(/-/g, ' ')}`;
 
 /** SDK sections a merchant can add to a page (the schemas' `addable`). */
 export const ADDABLE: ComponentType[] = SDK_SECTIONS.filter((s) => s.addable).map((s) => s.type);
+
+/** A part's block areas in the order it renders them (a template's are jsonb: alphabetical). */
+export function areaOrder(type: string, store?: StoreSchemas): string[] {
+  return SDK_AREAS.get(type) ?? store?.[type]?.areas ?? [];
+}
+const SDK_AREAS = new Map(SDK_SECTIONS.map((s) => [s.type as string, Object.keys(s.areas ?? {})]));
+
+/** What the add sheet offers: the Kernel's, then the store's own that say they may be added. */
+export const addable = (store?: StoreSchemas): ComponentType[] => [
+  ...ADDABLE,
+  ...Object.entries(store ?? {}).flatMap(([type, s]) => (s.addable ? [type as ComponentType] : [])),
+];
 
 /** One line on what an addable section is for, in the add sheet. */
 export const ADD_HINT: Record<string, string> = {
@@ -74,10 +130,16 @@ export const ADD_HINT: Record<string, string> = {
     'Um convite para os planos semanais: o cliente escolhe uma cesta e recebe toda semana.',
 };
 
-/** The words a merchant recognises a section by: its own title or first line of copy. */
-export function sectionSummary(settings: Record<string, unknown> | undefined): string | null {
-  for (const k of ['title', 'eyebrow', 'brand', 'text', 'body', 'note', 'label']) {
-    const v = settings?.[k];
+/** The words a merchant recognises a section by: its own title or first line of copy, else the
+ *  one its store prints when the template sets none. */
+export function sectionSummary(
+  type: string,
+  settings: Record<string, unknown> | undefined,
+  store?: StoreSchemas,
+): string | null {
+  const schema = SDK.get(type) ?? store?.[type];
+  for (const k of ['title', 'eyebrow', 'kicker', 'brand', 'text', 'body', 'note', 'label']) {
+    const v = settings?.[k] ?? schema?.settings[k]?.default;
     if (typeof v === 'string' && v.trim()) return v.trim();
   }
   return null;
@@ -116,7 +178,8 @@ const KEY_NAMES: Record<string, string> = {
   steps: 'Passos',
   icon: 'Ícone',
   limit: 'Quantos produtos',
-  category: 'Categoria (endereço)',
+  category: 'Categoria',
+  product: 'Produto',
   numbered: 'Numerar os produtos',
   showStatus: 'Mostrar se está aberta',
   showHours: 'Mostrar horários',
@@ -150,6 +213,62 @@ const KEY_NAMES: Record<string, string> = {
   figSub: 'Sublegenda da foto',
   anchor: 'Âncora',
   proof: 'Selos (separe cada um com |)',
+  cover: 'Foto de capa',
+  kicker: 'Chamada acima do título',
+  subtitle: 'Subtítulo',
+  blurb: 'Texto curto sobre a loja',
+  text2: 'Segundo parágrafo',
+  quote: 'Citação',
+  signature: 'Assinatura',
+  slogan: 'Slogan',
+  hint: 'Dica',
+  question: 'Pergunta',
+  answer: 'Resposta',
+  handle: 'Seu @ no Instagram',
+  cta: 'Texto do botão',
+  feature: 'Cartões grandes, deitados',
+  fileName: 'Nome do arquivo do QR code',
+  qrLabel: 'Texto do link do QR code',
+  qrHref: 'Link do QR code',
+  contactsTitle: 'Título dos contatos',
+  featuredLabel: 'Título dos destaques',
+  whatsappLabel: 'Botão do WhatsApp',
+  threshold: 'Mostrar quando restarem até',
+  // the small words a store's own part prints
+  openLabel: 'Quando está aberta',
+  closedLabel: 'Quando está fechada',
+  pausedLabel: 'Quando está pausada',
+  untilLabel: 'Antes da hora de fechar',
+  opensLabel: 'Antes da hora de abrir',
+  todayLabel: 'Hoje',
+  everyDayLabel: 'Aberta todos os dias',
+  closedDayLabel: 'Dia em que fecha',
+  moreLabel: 'Link de endereço e horários',
+  deliveryLabel: 'Entrega',
+  fromLabel: 'Antes da menor taxa',
+  freeDeliveryLabel: 'Entrega grátis',
+  someFreeLabel: 'Grátis só em algumas regiões',
+  freeOverLabel: 'Grátis acima de um valor',
+  pickupLabel: 'Retirada',
+  minOrderLabel: 'Pedido mínimo',
+  soldOutLabel: 'Quando esgotado',
+  lowStockLabel: 'Quando restam poucas unidades',
+  preorderLabel: 'Sob encomenda',
+  inBagLabel: 'Já na sacola',
+  allInBagLabel: 'Todas as unidades na sacola',
+  prevLabel: 'Seta para trás (para leitores de tela)',
+  nextLabel: 'Seta para a frente (para leitores de tela)',
+  categoriesLabel: 'Lista de categorias (para leitores de tela)',
+  newTabLabel: 'Aviso de que abre em nova aba (para leitores de tela)',
+  searchPlaceholder: 'Dica dentro da busca',
+  resultsLabel: 'Título dos resultados da busca',
+  emptyTitle: 'Título com o cardápio vazio',
+  noMatchTitle: 'Quando a busca não acha nada',
+  resetLabel: 'Botão de limpar a busca',
+  errorTitle: 'Quando o cardápio não carrega',
+  retryLabel: 'Botão de tentar de novo',
+  itemSingular: 'Um produto se chama',
+  itemPlural: 'Vários produtos se chamam',
 };
 
 /** One line under a setting whose name alone doesn't say what the shopper sees. */
@@ -161,6 +280,14 @@ const KEY_HELP: Record<string, string> = {
   showNote: 'O cliente deixa uma observação no item, como “sem cebola”, e ela chega à cozinha.',
   showMinOrder: 'Como estão nas suas áreas de entrega.',
   storeTitle: 'Quando a loja está fechada, o cliente pede um aviso para quando ela abrir.',
+  untilLabel: 'Como em “até 22h”.',
+  opensLabel: 'Como em “abre 18h”.',
+  fromLabel: 'Como em “a partir de R$ 5”.',
+  freeOverLabel: 'Como em “grátis acima de R$ 80”.',
+  lowStockLabel: 'Como em “restam 3”.',
+  itemSingular: 'Vazio usa a palavra do seu cardápio, como “pudim”.',
+  itemPlural: 'Vazio usa a palavra do seu cardápio, como “pudins”.',
+  feature: 'Bom para kits e combos.',
 };
 
 const OPTION_NAMES: Record<string, string> = {
@@ -179,6 +306,13 @@ const OPTION_NAMES: Record<string, string> = {
   stay: 'continuar na página',
   filter: 'mostrar só a categoria',
   jump: 'rolar até a categoria',
+  // the icons a store's own part may pick
+  heart: 'coração',
+  snowflake: 'gelado',
+  truck: 'entrega',
+  utensils: 'talheres',
+  shield: 'segurança',
+  bag: 'sacola',
 };
 export const optionName = (o: string) => OPTION_NAMES[o] ?? o;
 
@@ -192,35 +326,45 @@ type SchemaField = {
   default?: unknown;
   max?: number;
   min?: number;
-  options?: readonly string[];
+  options?: readonly unknown[];
   of?: Record<string, SchemaField>;
 };
 
+/** Where a part links within its own page (a menu's "nossa história"): moving it breaks that. */
+const TECHNICAL = new Set(['anchor', 'storyAnchor']);
+
 function fromSchema(key: string, f: SchemaField): FieldSpec {
+  if (!f || typeof f !== 'object' || TECHNICAL.has(key)) return { kind: 'skip', key };
   const spec = fromKind(key, f);
   return KEY_HELP[key] ? { ...spec, help: KEY_HELP[key] } : spec;
 }
 
+// a store's schema arrives from its frame: a value that isn't what it should be is left out
+const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+
 function fromKind(key: string, f: SchemaField): FieldSpec {
   // the admin's own words first (they match its other switches), then the Kernel's
-  const label = KEY_NAMES[key] ?? f.label ?? keyName(key);
+  const label = KEY_NAMES[key] ?? (typeof f.label === 'string' && f.label ? f.label : keyName(key));
   switch (f.kind) {
     case 'text':
-    case 'richText':
+    case 'richText': {
+      const max = Math.max(1, num(f.max, 200));
       return {
         kind: 'text',
         key,
         label,
-        max: f.max ?? 200,
-        long: f.kind === 'richText' || (f.max ?? 0) > 120,
+        max,
+        long: f.kind === 'richText' || max > 120,
+        ...(typeof f.default === 'string' && f.default ? { def: f.default } : {}),
       };
+    }
     case 'number':
       return {
         kind: 'number',
         key,
         label,
-        min: f.min ?? 0,
-        max: f.max ?? 100,
+        min: num(f.min, 0),
+        max: num(f.max, 100),
         ...(typeof f.default === 'number' ? { def: f.default } : {}),
       };
     case 'boolean':
@@ -235,23 +379,30 @@ function fromKind(key: string, f: SchemaField): FieldSpec {
         kind: 'select',
         key,
         label,
-        options: f.options ?? [],
+        options: Array.isArray(f.options)
+          ? f.options.filter((o): o is string => typeof o === 'string')
+          : [],
         ...(typeof f.default === 'string' ? { def: f.default } : {}),
       };
     case 'image':
       return { kind: 'image', key, label };
     case 'url':
       return { kind: 'url', key, label };
+    case 'product':
+    case 'category':
+      return { kind: f.kind, key, label };
     case 'list':
       return {
         kind: 'list',
         key,
         label,
-        max: f.max ?? 8,
-        of: Object.entries(f.of ?? {}).map(([k, v]) => fromSchema(k, v)),
+        max: num(f.max, 8),
+        of:
+          f.of && typeof f.of === 'object'
+            ? Object.entries(f.of).map(([k, v]) => fromSchema(k, v))
+            : [],
       };
     default:
-      // product/category pickers: the storefront falls back to its own default
       return { kind: 'skip', key };
   }
 }
@@ -266,7 +417,8 @@ function infer(key: string, v: unknown): FieldSpec {
   if (typeof v === 'string') {
     if (/image|photo|logo|foto/i.test(key) || IMG_RE.test(v)) return { kind: 'image', key, label };
     if (/href$/i.test(key) || /^(https?:\/\/|\/)/.test(v)) return { kind: 'url', key, label };
-    if (key === 'anchor' || key === 'icon' || key === 'category') return { kind: 'skip', key };
+    if (key === 'category' || key === 'product') return { kind: key, key, label };
+    if (TECHNICAL.has(key) || key === 'icon') return { kind: 'skip', key };
     return {
       kind: 'text',
       key,
@@ -346,17 +498,40 @@ const rank = (k: string) => {
   return i < 0 ? READING.length : i;
 };
 
-export type FieldGroup = { label: string | null; fields: FieldSpec[] };
+/** `folded`: under "mais textos", closed until asked for */
+export type FieldGroup = { label: string | null; fields: FieldSpec[]; folded?: boolean };
 
 const GROUPS: [string, (f: FieldSpec) => boolean][] = [
   ['Fotos', (f) => f.kind === 'image' || /^(image|logo|fig)/i.test(f.key)],
-  ['Botões e links', (f) => f.kind === 'url' || /^(cta|secondary|link|cardCta)/i.test(f.key)],
-  ['Opções', (f) => f.kind === 'boolean' || f.kind === 'select' || f.kind === 'number'],
+  ['Botões e links', (f) => f.kind === 'url' || BUTTONS.test(f.key)],
+  [
+    'Opções',
+    (f) =>
+      f.kind === 'boolean' ||
+      f.kind === 'select' ||
+      f.kind === 'number' ||
+      f.kind === 'product' ||
+      f.kind === 'category',
+  ],
 ];
 
-/** Long forms read in chunks (textos, fotos, botões, opções); a short one stays one list. */
+// the small words a part prints (aberto agora, esgotado, na sacola, limpar busca), each with
+// the store's own default: most stores never change them, and a dozen of them would bury the
+// title and the photo
+const SMALL = /(Label|Placeholder)$|^(empty|noMatch|error|results)[A-Z]/;
+const BUTTONS = /^(cta|secondary|link|cardCta)/i;
+const FOLD_FROM = 4;
+
+/** Long forms read in chunks (textos, fotos, botões, opções, mais textos); a short one stays
+ *  one list. */
 export function groupFields(fields: FieldSpec[]): FieldGroup[] {
-  const shown = fields.filter((f) => f.kind !== 'skip');
+  const all = fields.filter((f) => f.kind !== 'skip');
+  const small = all.filter((f) => f.kind === 'text' && SMALL.test(f.key) && !BUTTONS.test(f.key));
+  const folded = small.length >= FOLD_FROM ? small : [];
+  const shown = all.filter((f) => !folded.includes(f));
+  const more: FieldGroup[] = folded.length
+    ? [{ label: 'Mais textos', fields: folded, folded: true }]
+    : [];
   const out: FieldGroup[] = [{ label: 'Textos', fields: [] }];
   for (const f of shown) {
     // a list is a group of its own, titled by its field
@@ -366,16 +541,27 @@ export function groupFields(fields: FieldSpec[]): FieldGroup[] {
     else out.push({ label: name, fields: [f] });
   }
   const groups = out.filter((g) => g.fields.length);
-  if (shown.length <= 3 || groups.length < 2) return [{ label: null, fields: shown }];
-  return groups;
+  if (shown.length <= 3 || groups.length < 2)
+    return [...(shown.length ? [{ label: null, fields: shown }] : []), ...more];
+  return [...groups, ...more];
 }
 
+/**
+ * A part's fields: the Kernel's schema for its own, the store's (from its frame) for the
+ * store's, else inferred from the template. On the product page a product pick is left out: the
+ * page shows the product in its address, and a pick there would show one product on all of them.
+ */
 export function fieldsFor(
   type: string,
   settings: Record<string, unknown> | undefined,
+  ctx: { store?: StoreSchemas; page?: string } = {},
 ): FieldSpec[] {
-  const sdk = SDK.get(type);
-  if (sdk) return Object.entries(sdk.settings).map(([k, f]) => fromSchema(k, f));
+  const schema = SDK.get(type) ?? ctx.store?.[type];
+  if (schema)
+    return Object.entries(schema.settings).map(([k, f]) => {
+      const spec = fromSchema(k, f);
+      return spec.kind === 'product' && ctx.page === 'product' ? { kind: 'skip', key: k } : spec;
+    });
   return Object.entries(settings ?? {})
     .sort(([a], [b]) => rank(a) - rank(b))
     .map(([k, v]) => infer(k, v));

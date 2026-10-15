@@ -203,7 +203,7 @@
     },
     "packages/kernel": {
       "name": "@vendua/kernel",
-      "version": "1.28.0",
+      "version": "1.29.0",
       "dependencies": {
         "@vendua/templates": "workspace:*",
         "@vendua/ui-defaults": "workspace:*",

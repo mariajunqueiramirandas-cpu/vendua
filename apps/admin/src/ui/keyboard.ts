@@ -23,8 +23,9 @@ function scrollerOf(el: HTMLElement): HTMLElement | null | undefined {
  * variant) unpins headers and step buttons and hides the tab bar and floating action bars, and
  * `--kb` is the height an overlaying keyboard covers (iOS; Chrome with resizes-content shrinks the
  * page instead), so the end of the page can still scroll above it and sheets and composers sit on
- * top of it. `--vvh` is the height left visible. Focusing a field scrolls it into view together
- * with its form's actions (`data-kb-reveal`) when both fit.
+ * top of it. `--vvh` is the height left visible and `--vvt` where it starts (iOS can pan the page
+ * under the keyboard), so a full-screen layer can fit it exactly. Focusing a field scrolls it into
+ * view together with its form's actions (`data-kb-reveal`) when both fit.
  */
 export function useKeyboard() {
   useEffect(() => {
@@ -91,6 +92,7 @@ export function useKeyboard() {
       const covered = on ? Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop)) : 0;
       root.style.setProperty('--kb', `${covered}px`);
       root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+      root.style.setProperty('--vvt', `${on ? Math.round(vv.offsetTop) : 0}px`);
       if (was && !on) realign();
       // scroll events fire continuously while reveal() scrolls: only a resize may trigger it
       if (on && e?.type === 'resize') reveal();
@@ -119,6 +121,7 @@ export function useKeyboard() {
       root.removeAttribute('data-kb');
       root.style.removeProperty('--kb');
       root.style.removeProperty('--vvh');
+      root.style.removeProperty('--vvt');
     };
   }, []);
 }

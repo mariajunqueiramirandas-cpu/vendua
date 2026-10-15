@@ -18,31 +18,46 @@ function useDesktop() {
   return d;
 }
 
+/** a closed sheet's entry is on its way out: history.back() lands after the next one opens */
+let leaving = false;
+if (typeof window !== 'undefined')
+  addEventListener('popstate', () => void (leaving = false), { capture: true });
+
 /**
  * The back button (Android, the browser, a swipe from the edge) closes the sheet
- * instead of leaving the screen: an open sheet is one history entry.
+ * instead of leaving the screen: an open sheet is one history entry. One that opens as another
+ * closes (a sheet's button opening the next) puts its entry in once the other's is gone, or
+ * that pop would close it too.
  */
-function useBackToClose(open: boolean, close: () => void) {
+export function useBackToClose(open: boolean, close: () => void) {
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
     if (!open) return;
     const id = Math.random().toString(36).slice(2);
     let pushed = false;
-    // deferred: StrictMode's mount-unmount-mount must not leave entries behind
-    const t = setTimeout(() => {
+    let waiting = leaving;
+    const push = () => {
       history.pushState({ ...history.state, vSheet: id }, '');
       pushed = true;
-    });
+    };
+    // deferred: StrictMode's mount-unmount-mount must not leave entries behind
+    const t = waiting ? undefined : setTimeout(push);
     const onPop = () => {
-      if ((history.state as { vSheet?: string } | null)?.vSheet !== id) closeRef.current();
+      if (waiting) {
+        waiting = false;
+        push();
+      } else if ((history.state as { vSheet?: string } | null)?.vSheet !== id) closeRef.current();
     };
     window.addEventListener('popstate', onPop);
     return () => {
       clearTimeout(t);
       window.removeEventListener('popstate', onPop);
       // closed from the UI: drop our entry (unless a navigation already moved past it)
-      if (pushed && (history.state as { vSheet?: string } | null)?.vSheet === id) history.back();
+      if (pushed && (history.state as { vSheet?: string } | null)?.vSheet === id) {
+        leaving = true;
+        history.back();
+      }
     };
   }, [open]);
 }

@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { DEFAULT_TEMPLATES } from '@vendua/kernel/sdk-catalog';
-import type { ComponentType } from '@vendua/templates';
+import { validateTemplate, type ComponentType } from '@vendua/templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
@@ -14,6 +14,7 @@ import { qk, useMutation } from '../../lib/query.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { readable } from './Colors.tsx';
+import { readSchemas, type StoreSchemas } from './fields.ts';
 
 // The page editor's state: one document (every template + the colours) with undo/redo,
 // what's selected, and publishing. Edits are drafts in this tab (and in localStorage, so
@@ -82,23 +83,49 @@ function readSaved(storeId: string): Saved | null {
 
 export function useEditor(data: AppearanceData, storeId: string) {
   const qc = useQueryClient();
+  const [kept] = useState(() => readSaved(storeId));
+  // a page the store never saved renders its build's own template, which only the preview frame
+  // knows (Kernel 1.29 says it when it loads; the default bundle's isn't the Kernel's defaults).
+  // Until it does, a draft kept in this browser says what it was made on, else the Kernel's
+  // defaults stand in
+  const [frameTpls, setFrameTpls] = useState<Partial<Record<TplId, PageTemplate>>>(() => {
+    const out: Partial<Record<TplId, PageTemplate>> = {};
+    for (const t of TPLS) {
+      const s = kept?.pages[t];
+      if (s?.version === 0 && s.base) out[t] = s.base;
+    }
+    return out;
+  });
+  const setFrameTemplates = useCallback((raw: Record<string, unknown>) => {
+    const next: Partial<Record<TplId, PageTemplate>> = {};
+    for (const t of TPLS) {
+      const v = validateTemplate(raw[t], t);
+      if (v.ok) next[t] = v.template as PageTemplate;
+    }
+    setFrameTpls((cur) => (same(cur, next) ? cur : next));
+  }, []);
   const base = useMemo(() => {
     const out = {} as Record<TplId, { version: number; template: PageTemplate }>;
     for (const t of TPLS) {
       const row = data.pages.find((x) => x.page === t);
       out[t] = row
         ? { version: row.version, template: row.template }
-        : // the Kernel's own fallback for a page the store never customized
-          { version: 0, template: DEFAULT_TEMPLATES[t]! };
+        : { version: 0, template: frameTpls[t] ?? DEFAULT_TEMPLATES[t]! };
     }
     return out;
-  }, [data.pages]);
+  }, [data.pages, frameTpls]);
   const [frameTokens, setFrameTokens] = useState<StoreTokens | null>(null);
+  // the store's own parts' fields, which only its frame knows (Kernel 1.29)
+  const [schemas, setSchemas] = useState<StoreSchemas>({});
+  const setFrameSchemas = useCallback((raw: unknown) => {
+    const next = readSchemas(raw);
+    setSchemas((cur) => (same(cur, next) ? cur : next));
+  }, []);
   const baseTokens = data.tokens?.tokens ?? frameTokens;
 
   // drafts left in this browser come back while the page they were made on is still current
   const [restored] = useState(() => {
-    const saved = readSaved(storeId);
+    const saved = kept;
     const pages: TplId[] = [];
     const drafts = Object.fromEntries(
       TPLS.map((t) => {
@@ -213,6 +240,17 @@ export function useEditor(data: AppearanceData, storeId: string) {
   const tokensDirty = !!tokens && !same(tokens, baseTokens);
   const dirty = dirtyTpls.length > 0 || tokensDirty;
   const tokensOk = !tokens || readable(tokens);
+  // what the preview is sent: a page whose starting point is only the Kernel's stand-in (a frame
+  // built before 1.29 doesn't say its own) is left to the frame's own until it's edited
+  const previewDrafts = useMemo(
+    () =>
+      Object.fromEntries(
+        TPLS.filter(
+          (t) => base[t].version > 0 || !!frameTpls[t] || !same(drafts[t], base[t].template),
+        ).map((t) => [t, drafts[t]]),
+      ) as Partial<Drafts>,
+    [drafts, base, frameTpls],
+  );
   /** a section changed since it was published (a new one counts) */
   const dirtySection = (t: TplId, s: TemplateSection) =>
     !same(
@@ -285,11 +323,13 @@ export function useEditor(data: AppearanceData, storeId: string) {
     ...parts.page.map((sec) => ({ tpl: page, sec })),
     ...parts.bottom.map((sec) => ({ tpl: 'layout' as const, sec })),
   ];
+  const at =
+    sel?.kind === 'section' ? order.findIndex((x) => x.tpl === sel.tpl && x.sec.id === sel.id) : -1;
+  /** where the selected part sits in reading order (the 2nd of 9) */
+  const position = at < 0 ? null : { n: at + 1, of: order.length };
   /** the part before or after the selected one, in reading order */
   const neighbour = (d: -1 | 1): Selection => {
-    if (sel?.kind !== 'section') return null;
-    const i = order.findIndex((x) => x.tpl === sel.tpl && x.sec.id === sel.id);
-    const n = i < 0 ? undefined : order[i + d];
+    const n = at < 0 ? undefined : order[at + d];
     return n ? { kind: 'section', tpl: n.tpl, id: n.sec.id } : null;
   };
 
@@ -338,7 +378,7 @@ export function useEditor(data: AppearanceData, storeId: string) {
   };
   const add = (type: ComponentType, where: 'page' | 'layout') => {
     const t: TplId = where === 'layout' ? 'layout' : page;
-    const id = `${type.replace(/^sdk:/, '')}-${Math.random().toString(36).slice(2, 6)}`;
+    const id = `${type.replace(/^(sdk|store):/, '')}-${Math.random().toString(36).slice(2, 6)}`;
     setSections(t, (ss) => {
       // in the layout, a new part goes above the page's own content
       const at = t === 'layout' ? ss.findIndex((x) => x.type === 'sdk:page-content') : ss.length;
@@ -356,10 +396,25 @@ export function useEditor(data: AppearanceData, storeId: string) {
     setSel({ kind: 'section', tpl: t, id });
   };
   const setSettings = (t: TplId, id: string, v: Record<string, unknown>) =>
+    setSections(t, (ss) => ss.map((x) => (x.id === id ? withSettings(x, v) : x)), `s:${t}:${id}`);
+  /** a block's own settings, inside a part's area (the product page's "últimas unidades") */
+  const setBlockSettings = (
+    t: TplId,
+    id: string,
+    area: string,
+    blockId: string,
+    v: Record<string, unknown>,
+  ) =>
     setSections(
       t,
-      (ss) => ss.map((x) => (x.id === id ? { ...x, settings: v } : x)),
-      `s:${t}:${id}`,
+      (ss) =>
+        ss.map((x) => {
+          const blocks = x.id === id ? x.blocks?.[area] : undefined;
+          if (!blocks) return x;
+          const next = blocks.map((b) => (b.id === blockId ? withSettings(b, v) : b));
+          return { ...x, blocks: { ...x.blocks, [area]: next } };
+        }),
+      `b:${t}:${id}:${area}:${blockId}`,
     );
   const setTokens = (next: StoreTokens) => change((d) => ({ ...d, tokens: next }), 'tokens');
   const discard = () => {
@@ -407,6 +462,10 @@ export function useEditor(data: AppearanceData, storeId: string) {
     tokens,
     baseTokens,
     setFrameTokens,
+    setFrameTemplates,
+    schemas,
+    setFrameSchemas,
+    previewDrafts,
     restored: restored.any,
     page,
     setPage,
@@ -415,12 +474,14 @@ export function useEditor(data: AppearanceData, storeId: string) {
     selected,
     locate,
     parts,
+    position,
     neighbour,
     move,
     toggle,
     remove,
     add,
     setSettings,
+    setBlockSettings,
     setTokens,
     discard,
     undo,
@@ -438,6 +499,16 @@ export function useEditor(data: AppearanceData, storeId: string) {
   };
 }
 export type Editor = ReturnType<typeof useEditor>;
+
+/** No settings left is no `settings`: clearing the one field typed into leaves the part as it
+ *  was published, not a change. */
+function withSettings<T extends { settings?: Record<string, unknown> }>(
+  x: T,
+  v: Record<string, unknown>,
+): T {
+  const { settings: _drop, ...rest } = x;
+  return Object.keys(v).length ? ({ ...rest, settings: v } as T) : (rest as T);
+}
 
 /** `disabled` is present only when true — templates stay minimal. */
 function hidden(s: TemplateSection, on: boolean): TemplateSection {

@@ -65,6 +65,42 @@ test('drafts are taken only from the admin origin Core reported', () => {
   expect(drafts).toEqual({});
 });
 
+test("ready carries what each page falls back to and the store's own schemas", () => {
+  const home = { version: 1, page: 'home', sections: [{ id: 'hero', type: 'store:menu-hero' }] };
+  const hero = { kind: 'section', type: 'store:menu-hero', settings: { cover: { kind: 'image' } } };
+  act(() =>
+    preview.reportPreview({
+      tokens: {} as never,
+      paths: { catalog: '/cardapio' },
+      templates: { home } as never,
+      schemas: { 'store:menu-hero': hero },
+    }),
+  );
+  expect(sent.at(-1)).toMatchObject({
+    target: ADMIN,
+    data: {
+      type: 'vendua:preview-ready',
+      paths: { catalog: '/cardapio' },
+      templates: { home },
+      schemas: { 'store:menu-hero': hero },
+    },
+  });
+});
+
+test("a schema that can't be cloned doesn't keep the frame from announcing itself", () => {
+  const before = sent.length;
+  act(() =>
+    preview.reportPreview({
+      tokens: {} as never,
+      paths: {},
+      templates: {},
+      schemas: { 'store:x': { kind: 'section', settings: {}, nope: 1n } },
+    }),
+  );
+  expect(sent.length).toBe(before + 1);
+  expect(sent.at(-1)).toMatchObject({ data: { type: 'vendua:preview-ready', schemas: null } });
+});
+
 test('an unusable origin turns the preview off again', () => {
   act(() => preview.setPreviewOrigin('not a url'));
   const before = sent.length;

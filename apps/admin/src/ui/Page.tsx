@@ -1,7 +1,7 @@
-import { ArrowLeft, Question } from '@phosphor-icons/react';
+import { ArrowLeft, CaretLeft, Question } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { prevIs } from '../app/Router.tsx';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { prevIs, useBack } from '../app/Router.tsx';
 import { cn } from './cn.ts';
 import { Button, IconButton } from './Button.tsx';
 import { openHelp } from './help.ts';
@@ -69,6 +69,20 @@ export function HeaderBack({ to, className }: { to: string | true; className?: s
       onClick={() => (to === true || prevIs(to) ? nav(-1) : nav(to, { state: { vt: 'pop' } }))}
     >
       <ArrowLeft />
+    </IconButton>
+  );
+}
+
+/**
+ * The way back on a screen that's full-screen on phones (Aparência: the Shell hides its top bar
+ * there): where the top bar's "‹" would go, to where you came from or the screen's parent.
+ */
+export function ScreenBack({ className }: { className?: string }) {
+  const { pathname } = useLocation();
+  const { label, back } = useBack(pathname);
+  return (
+    <IconButton label={`voltar para ${label}`} className={cn('shrink-0', className)} onClick={back}>
+      <CaretLeft weight="bold" />
     </IconButton>
   );
 }

@@ -726,13 +726,26 @@ column scrolls on its own. Wide screens (1400 px and up) show the outline left,
 preview center, settings right, with a "what do you want to change?" start in
 place of an empty panel. Tablets and laptops show the preview beside one panel:
 the outline, or what was picked from it, with a back arrow. Phones show the
-editor as one fixed screen (no page scroll to fight the preview's own): the
-store edge to edge at the phone's own width, and a bottom bar with partes (the
-outline, in a sheet), cores and publicar. A tap on the preview only selects:
-the part's name replaces the bar, with ‹ › to step to its neighbours, so a
-mis-tap on a small screen costs nothing. "Editar" splits the screen, preview
-on top and the form under it, with undo and "pronto" in place of the title and
-page tabs; with the keyboard up the preview steps aside for the field.
+editor full screen, like a native editor: the app's top bar and tab bar step
+aside (the editor has its own back), nothing behind it scrolls, and it fits
+exactly what the keyboard leaves visible. The store fills it edge to edge at
+the phone's own width, over a bottom bar with partes (the outline, in a sheet),
+cores and publicar. A tap on a part opens its form at once: the preview shrinks
+to the top of the screen with the part in view, the part's name sits over the
+form with ‹ › to its neighbours (a mis-tap costs one tap) and "2 de 11" to say
+where it is, and undo and "pronto" replace the title and page tabs. "Pronto",
+or the phone's back, closes the form and brings back the whole page and
+publicar. With the keyboard up the field takes the room, and the preview, kept
+out of sight, is still on the part when the keyboard goes.
+
+Every part is editable, the store's own included: the preview tells the editor
+each part's fields (Kernel 1.29), so a form lists all of them with the store's
+default greyed in an empty field, not only the ones the template happens to
+set. A category or product is picked from the menu by name. What a part holds
+(the product page's "últimas unidades", "avise quando voltar") has its own
+fields under "dentro desta parte". The dozen small words a part prints (aberto
+agora, esgotado, na sacola) fold under "mais textos", whose summary says how
+many are the merchant's own.
 
 ### Relatórios
 

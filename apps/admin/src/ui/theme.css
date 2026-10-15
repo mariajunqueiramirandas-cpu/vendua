@@ -401,6 +401,13 @@
     --tabbar-h: 0px;
   }
 }
+/* Aparência is a full-screen editor on phones (app/Shell.tsx): no bars, only the insets */
+@media (max-width: 767px) {
+  :root[data-editor] {
+    --tabbar-h: env(safe-area-inset-bottom);
+    --topbar-h: 0px;
+  }
+}
 :root[data-kb] {
   --tabbar-h: 0px;
 }
