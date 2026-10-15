@@ -329,7 +329,8 @@ export function photonPlaces(
     try {
       const res = await fetchImpl(`${base}/api/?${params}`, {
         headers: { 'user-agent': agent, accept: 'application/json' },
-        signal: AbortSignal.timeout(2500),
+        // the public instance can take ~2 s; a slow list beats none (a miss isn't cached)
+        signal: AbortSignal.timeout(4000),
       });
       if (!res.ok) return [];
       const body = (await res.json()) as { features?: PhotonFeature[] };

@@ -34,12 +34,15 @@ import { DEPOSIT_POLICY_MAX } from '../modules/sinal.ts';
 import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
+import { log } from '../platform/log.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { normalizeCep, parsePolygon, type LatLng } from '../modules/geo.ts';
 import { PLACE_QUERY_MAX, PLACE_QUERY_MIN, storeNearby } from '../modules/geocode.ts';
 
 /** encomendas: the offline methods a preorder may be limited to */
 const METHODS = ['pix', 'card_on_delivery', 'cash', 'meal_voucher'] as const;
+
+const storeLog = log.child({ mod: 'admin-store' });
 
 export async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow> {
   let row = (
@@ -428,7 +431,8 @@ export function mountStore(d: AdminDeps) {
     let found;
     try {
       found = await d.cepLookup(cep);
-    } catch {
+    } catch (err) {
+      storeLog.warn({ err, cep }, 'cep lookup failed');
       throw new HttpError(503, 'CEP_UNAVAILABLE', 'cep lookup is unavailable — type the address');
     }
     if (!found) throw new HttpError(404, 'CEP_NOT_FOUND', 'unknown cep');

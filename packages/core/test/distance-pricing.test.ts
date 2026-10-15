@@ -9,6 +9,7 @@ import {
   priceByDistance,
   resolveDelivery,
   routeMatches,
+  viaCep,
   type DistancePricing,
   type RouteQuote,
 } from '../src/modules/geo.ts';
@@ -361,6 +362,35 @@ describe('providers', () => {
       throw new Error('timeout');
     });
     expect(await broken({ text: 'rua a' })).toEqual([]);
+  });
+
+  test('viaCep: a closed socket gets one fresh try, a timeout none', async () => {
+    const real = globalThis.fetch;
+    let calls = 0;
+    try {
+      globalThis.fetch = (async () => {
+        if (++calls === 1) throw new TypeError('The socket connection was closed unexpectedly');
+        return new Response(
+          JSON.stringify({
+            logradouro: 'Rua A',
+            bairro: 'Centro',
+            localidade: 'Saquarema',
+            uf: 'RJ',
+          }),
+        );
+      }) as unknown as typeof fetch;
+      expect(await viaCep('28990901')).toMatchObject({ street: 'Rua A', city: 'Saquarema' });
+      expect(calls).toBe(2);
+      calls = 0;
+      globalThis.fetch = (async () => {
+        calls++;
+        throw new DOMException('timed out', 'TimeoutError');
+      }) as unknown as typeof fetch;
+      await expect(viaCep('28990902')).rejects.toThrow('timed out');
+      expect(calls).toBe(1);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 
   test('mapTilesFromEnv: https XYZ templates only', () => {

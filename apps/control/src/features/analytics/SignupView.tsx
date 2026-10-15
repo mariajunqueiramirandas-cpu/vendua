@@ -26,6 +26,7 @@ const SETUP: Record<string, string> = {
   cores: 'cores',
   frase: 'frase',
   whatsapp: 'WhatsApp da loja',
+  endereco: 'endereço da loja',
   horarios: 'horários',
   como: 'retirada ou entrega',
   retirada: 'retirada',
