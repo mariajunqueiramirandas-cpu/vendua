@@ -444,7 +444,13 @@ function Editor({
         <div
           className={cn(
             'relative min-h-0 border-y border-line',
-            editing ? 'h-[38%] shrink-0 kb:invisible kb:absolute kb:inset-x-0 kb:top-0' : 'flex-1',
+            // colours are judged by eye: the store keeps more of the screen than a part's form
+            editing
+              ? cn(
+                  'shrink-0 kb:invisible kb:absolute kb:inset-x-0 kb:top-0',
+                  sel?.kind === 'style' ? 'h-[46%]' : 'h-[38%]',
+                )
+              : 'flex-1',
           )}
         >
           {preview}

@@ -65,6 +65,7 @@ export function Inspector({
           <Colors
             value={ed.tokens}
             onChange={ed.setTokens}
+            published={ed.baseTokens}
             logoUrl={logoUrl}
             sample={!previewShown}
           />

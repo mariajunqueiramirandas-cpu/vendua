@@ -259,3 +259,60 @@ describe('findArea ordering', () => {
     expect(Object.keys(r.template.sections[0]!.blocks ?? {})).toEqual(['after-price']);
   });
 });
+
+import {
+  readableAccent,
+  readableColors,
+  TONES,
+  toneOf,
+  withAccent,
+  withNeutrals,
+  type Tone,
+} from '../src/index.ts';
+
+describe('palette: main colour and tone', () => {
+  const ACCENTS = ['#AC5E10', '#123C32', '#8E2C48', '#2456B0', '#6B3FA0', '#B3261E', '#F2C94C'];
+
+  test('every tone reads at AA with every main colour the editor offers', () => {
+    for (const tone of Object.keys(TONES) as Tone[])
+      for (const a of ACCENTS) {
+        const color = withAccent(withNeutrals(TOKENS.color, TONES[tone]), readableAccent(a));
+        expect({ tone, a, problems: contrastProblems({ ...TOKENS, color }) }).toEqual({
+          tone,
+          a,
+          problems: [],
+        });
+      }
+  });
+
+  test('one choice never undoes the other', () => {
+    const dark = withNeutrals(TOKENS.color, TONES.escuro);
+    expect(dark.accent).toBe(TOKENS.color.accent);
+    expect(toneOf(dark)).toBe('escuro');
+    const blue = withAccent(dark, '#2456b0');
+    expect(blue.accent).toBe('#2456B0');
+    expect(toneOf(blue)).toBe('escuro');
+    // the store's own page colours aren't a tone
+    expect(toneOf(TOKENS.color)).toBeNull();
+  });
+
+  test('readableColors fixes whatever a merchant picks, by the least change', () => {
+    const picks = [
+      { text: '#BBBBBB', muted: '#DDDDDD', accent: '#F2C94C', onAccent: '#FFFFFF' },
+      { bg: '#101010', surface: '#202020', text: '#333333', muted: '#444444', danger: '#550000' },
+      { bg: '#777777', surface: '#808080', text: '#888888', muted: '#7A7A7A' },
+      { accent: '#FFFF00', onAccent: '#FFFF00' },
+    ];
+    for (const p of picks) {
+      const color = readableColors({ ...TOKENS.color, ...p });
+      expect(contrastProblems({ ...TOKENS, color })).toEqual([]);
+      // the page's backgrounds are the merchant's and stay
+      expect([color.bg, color.surface]).toEqual([
+        p.bg ?? TOKENS.color.bg,
+        p.surface ?? TOKENS.color.surface,
+      ]);
+    }
+    // a set that already reads is left alone
+    expect(readableColors(TOKENS.color)).toEqual(TOKENS.color);
+  });
+});

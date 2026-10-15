@@ -492,9 +492,15 @@ up/down, grouped as textos, fotos, botões e links, opções. Changes appear in 
 preview as they're typed. The list of what's on the page reads top to bottom
 like the page: the shared top ("em todas as páginas"), the page's own parts
 (each with its own title as a second line, so two Vitrines tell apart), the
-shared footer. Colors are one more entry in that list, chosen from palettes
-generated from the store's logo, with the contrast check shown as one friendly
-"tudo fácil de ler ✓" or the rows that aren't, never a ratio. Every edit can be
+shared footer. Colors are one more entry in that list, as two choices made
+apart so one never undoes the other: the main colour (the store's logo's, a few
+presets, or the brand's own code typed in) and the tone of the page around it
+(claro, creme, escuro). The store's current look is always one of the choices,
+one tap away, and "ajuste fino" holds the rest colour by colour, each with its
+code. The contrast check shows as one friendly "tudo fácil de ler ✓" or the rows
+that aren't, with "deixar fácil de ler" to fix them by the least change, never a
+ratio. On phones the store keeps more of the screen while colours are open.
+Every edit can be
 undone (desfazer/refazer, ⌘Z), "descartar" goes back to what's live, and
 unpublished work is kept in the browser, so leaving the screen loses nothing.
 "Publicar" shows "publicando…" and then "no ar ✓" with the live URL.
