@@ -285,11 +285,13 @@ export function useEditor(data: AppearanceData, storeId: string) {
     ...parts.page.map((sec) => ({ tpl: page, sec })),
     ...parts.bottom.map((sec) => ({ tpl: 'layout' as const, sec })),
   ];
+  const at =
+    sel?.kind === 'section' ? order.findIndex((x) => x.tpl === sel.tpl && x.sec.id === sel.id) : -1;
+  /** where the selected part sits in reading order (the 2nd of 9) */
+  const position = at < 0 ? null : { n: at + 1, of: order.length };
   /** the part before or after the selected one, in reading order */
   const neighbour = (d: -1 | 1): Selection => {
-    if (sel?.kind !== 'section') return null;
-    const i = order.findIndex((x) => x.tpl === sel.tpl && x.sec.id === sel.id);
-    const n = i < 0 ? undefined : order[i + d];
+    const n = at < 0 ? undefined : order[at + d];
     return n ? { kind: 'section', tpl: n.tpl, id: n.sec.id } : null;
   };
 
@@ -415,6 +417,7 @@ export function useEditor(data: AppearanceData, storeId: string) {
     selected,
     locate,
     parts,
+    position,
     neighbour,
     move,
     toggle,

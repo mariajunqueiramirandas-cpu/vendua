@@ -16,7 +16,7 @@ import { Button, IconButton } from '../../ui/Button.tsx';
 import { Colors } from './Colors.tsx';
 import { fieldsFor, sectionName } from './fields.ts';
 import { SettingsEditor } from './SettingsEditor.tsx';
-import { tplLabel, type Editor } from './useEditor.ts';
+import { tplLabel, type Editor, type TplId } from './useEditor.ts';
 
 /**
  * What's selected, ready to edit: a part's copy and photos, or the store's colours.
@@ -30,6 +30,7 @@ export function Inspector({
   previewShown,
   onBack,
   noExit,
+  noHead,
   onAdd,
 }: {
   ed: Editor;
@@ -40,6 +41,8 @@ export function Inspector({
   onBack?: () => void;
   /** phones: the screen's own bar has "pronto", so the panel shows no way out of its own */
   noExit?: boolean;
+  /** phones: the screen names the part in its own bar, with the way to its neighbours */
+  noHead?: boolean;
   onAdd: () => void;
 }) {
   const close = onBack ?? (() => ed.setSel(null));
@@ -48,14 +51,16 @@ export function Inspector({
   if (sel?.kind === 'style')
     return (
       <div className="space-y-5">
-        <Head
-          over="Loja toda"
-          title="Cores e cantos"
-          onBack={onBack}
-          noExit={noExit}
-          onClose={close}
-          note="Você vê na prévia na hora. Os clientes veem depois de publicar."
-        />
+        {noHead ? null : (
+          <Head
+            over="Loja toda"
+            title="Cores e cantos"
+            onBack={onBack}
+            noExit={noExit}
+            onClose={close}
+            note="Você vê na prévia na hora. Os clientes veem depois de publicar."
+          />
+        )}
         {ed.tokens ? (
           <Colors
             value={ed.tokens}
@@ -80,13 +85,15 @@ export function Inspector({
     const i = list.findIndex((x) => x.id === sec.id);
     return (
       <div className="space-y-5">
-        <Head
-          over={sel.tpl === 'layout' ? 'Em todas as páginas' : `Página ${tplLabel(sel.tpl)}`}
-          title={sectionName(sec.type)}
-          onBack={onBack}
-          noExit={noExit}
-          onClose={close}
-        />
+        {noHead ? null : (
+          <Head
+            over={partPlace(sel.tpl)}
+            title={sectionName(sec.type)}
+            onBack={onBack}
+            noExit={noExit}
+            onClose={close}
+          />
+        )}
         {sec.disabled ? (
           <div className="flex items-center gap-3 rounded-md bg-warning-soft p-3 text-warning">
             <EyeSlash className="size-5 shrink-0" />
@@ -175,6 +182,10 @@ export function Inspector({
     </div>
   );
 }
+
+/** where a part shows: on one page, or on all of them (the shared top and footer) */
+export const partPlace = (tpl: TplId) =>
+  tpl === 'layout' ? 'Em todas as páginas' : `Página ${tplLabel(tpl)}`;
 
 function Head({
   over,

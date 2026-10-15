@@ -84,7 +84,7 @@ export function SettingsEditor({
                     maxLength={f.max}
                     value={(v as string) ?? ''}
                     onChange={(e) => set(f.key, e.target.value)}
-                    className="min-h-24"
+                    className="field-sizing-content max-h-80 min-h-24"
                   />
                 ) : (
                   <TextInput
@@ -158,7 +158,7 @@ export function SettingsEditor({
               <Field key={f.key} label={f.label}>
                 <div className="space-y-3">
                   {items.map((it, i) => (
-                    <div key={i} className="rounded-md bg-sunken p-3">
+                    <div key={i} className="rounded-md p-3 ring-1 ring-line">
                       <div className="mb-2 flex items-center">
                         <span className="t-caption flex-1 font-semibold text-muted">
                           {i + 1}º item

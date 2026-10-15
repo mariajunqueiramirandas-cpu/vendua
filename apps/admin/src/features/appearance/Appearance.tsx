@@ -11,17 +11,15 @@ import {
   HandTap,
   ListBullets,
   Palette,
-  PencilSimple,
   Plus,
   RocketLaunch,
-  X,
 } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { catalogHref, productHref } from '@vendua/kernel/rules';
 import { PREVIEW_MESSAGE, PREVIEW_QUERY_PARAM } from '@vendua/kernel/sdk-catalog';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, type Appearance as AppearanceData, type StoreTokens } from '../../lib/api.ts';
-import { usePollWhenOffline } from '../../lib/live.ts';
+import { useLiveState, usePollWhenOffline } from '../../lib/live.ts';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
@@ -30,14 +28,14 @@ import { cn } from '../../ui/cn.ts';
 import { ErrorState } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
-import { HeaderBack, PageBody, PageHeader } from '../../ui/Page.tsx';
-import { Sheet } from '../../ui/Sheet.tsx';
+import { HeaderBack, PageBody, PageHeader, ScreenBack } from '../../ui/Page.tsx';
+import { Sheet, useBackToClose } from '../../ui/Sheet.tsx';
 import { AppearanceSkeleton, EditorFrame } from '../../ui/skeletons.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { ADD_HINT, ADDABLE, sectionName } from './fields.ts';
 import { HistorySheet } from './HistorySheet.tsx';
-import { Inspector } from './Inspector.tsx';
+import { Inspector, partPlace } from './Inspector.tsx';
 import { Navigator } from './Navigator.tsx';
 import { Preview } from './Preview.tsx';
 import { SiteSwitch } from './SiteSwitch.tsx';
@@ -45,8 +43,9 @@ import { PAGES, tplLabel, useEditor, type PageId, type Selection } from './useEd
 
 // Aparência, the edit-what-you-see editor (design §6.7). Wide screens: the list of what's on
 // the page, the live storefront, the selected thing's settings. Tablets: the storefront beside
-// one panel (the list, or what's picked from it). Phones: the storefront on top, pinned while
-// something is being edited, and the panel under it, so every change shows as it's made.
+// one panel (the list, or what's picked from it). Phones: a full-screen editor (the Shell hides
+// its bars here). The storefront fills it; a tap on a part opens its form under a smaller
+// preview, so every change shows as it's made, and "pronto" goes back to the whole page.
 
 type StorefrontPaths = Parameters<typeof catalogHref>[0]['paths'];
 /** three columns need this much room beside the app's own side bar */
@@ -82,9 +81,12 @@ export default function Appearance() {
   });
   if (error && !data)
     return (
-      <PageBody>
-        <ErrorState error={error} retry={() => void refetch()} />
-      </PageBody>
+      <div className="pt-[env(safe-area-inset-top)] md:pt-0">
+        <PageBody>
+          <ScreenBack className="-ml-3 mb-2 md:hidden" />
+          <ErrorState error={error} retry={() => void refetch()} />
+        </PageBody>
+      </div>
     );
   if (!data)
     return (
@@ -127,9 +129,9 @@ function Editor({
   const [paths, setPaths] = useState<StorefrontPaths | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
-  // phones: a tap in the preview selects a part; "editar" opens its settings under the preview
-  const [editingOn, setEditing] = useState(false);
-  const editing = editingOn && !!ed.sel;
+  // phones: whatever is selected has its form open under the preview, and back closes it
+  const editing = !tablet && !!ed.sel;
+  useBackToClose(editing, () => ed.setSel(null));
   const [tapped, setTapped] = useState(() => {
     try {
       return localStorage.getItem(TAPPED) === '1';
@@ -156,11 +158,7 @@ function Editor({
     });
   });
 
-  /** a deliberate choice (the list, "cores", a new part) opens its settings at once */
-  const pick = (sel: Selection) => {
-    ed.setSel(sel);
-    setEditing(true);
-  };
+  const pick = (sel: Selection) => ed.setSel(sel);
   const back = () => ed.setSel(null);
 
   // ── the frame ────────────────────────────────────────────────────────────
@@ -201,11 +199,9 @@ function Editor({
     if (d?.type === PREVIEW_MESSAGE.select && d.id) {
       const sel = ed.locate(d.id);
       if (!sel) return;
-      // a tap only selects: on a small screen it's easy to hit the wrong part, so the name
-      // shows first (and ‹ › walk to the neighbours) before anything opens. While the form is
-      // open, a tap switches it to the tapped part.
+      // on a phone this opens the part's form, and a tap while it's open switches it. A wrong
+      // part (easy on a small screen) is one tap on ‹ › away: the form names it over its fields
       ed.setSel(sel);
-      if (!editing) setEditing(false);
       if (!tapped) {
         setTapped(true);
         try {
@@ -263,7 +259,7 @@ function Editor({
   };
 
   const navigator = <Navigator ed={ed} onPick={pick} onAdd={openAdd} />;
-  const inspector = (exit: 'close' | 'back' | 'done') => (
+  const inspector = (exit: 'close' | 'back' | 'phone') => (
     <Inspector
       ed={ed}
       origin={origin}
@@ -271,7 +267,7 @@ function Editor({
       previewShown={frameReady}
       onAdd={openAdd}
       {...(exit === 'back' ? { onBack: back } : {})}
-      {...(exit === 'done' ? { noExit: true } : {})}
+      {...(exit === 'phone' ? { noExit: true, noHead: true } : {})}
     />
   );
   const undoRedo = (
@@ -284,12 +280,6 @@ function Editor({
       </IconButton>
     </>
   );
-  // phones: editing is a layer over the selection, and "pronto" lifts it (the colours have no
-  // place in the preview to stay selected on)
-  const done = () => {
-    setEditing(false);
-    if (ed.sel?.kind === 'style') ed.setSel(null);
-  };
   // tablets: one panel, the list or what was picked from it
   const single = ed.sel ? inspector('back') : navigator;
   const siteSwitch = data.site ? (
@@ -365,7 +355,6 @@ function Editor({
                 onClick={() => {
                   ed.add(t, where);
                   setSheet(null);
-                  setEditing(true);
                 }}
                 className="press-row flex min-h-16 w-full items-center gap-3 rounded-md bg-surface px-4 py-2 text-left ring-1 ring-line hover:bg-hover"
               >
@@ -390,170 +379,124 @@ function Editor({
   );
 
   if (!tablet) {
-    const sec = ed.selected;
     const prev = ed.neighbour(-1);
     const next = ed.neighbour(1);
+    const sel = ed.sel;
+    const pageTabs = (
+      <Segmented
+        label="página"
+        value={ed.page}
+        onChange={ed.setPage}
+        className="w-full"
+        options={PAGES.map((p) => ({
+          value: p.id,
+          label: ed.dirtyTpl(p.id) ? (
+            <span className="inline-flex items-center gap-1.5">
+              {p.label}
+              <span className="size-1.5 rounded-full bg-primary" aria-hidden />
+              <span className="sr-only">(mudou)</span>
+            </span>
+          ) : (
+            p.label
+          ),
+        }))}
+      />
+    );
     return (
-      // phones: the editor is the screen (no page scroll to fight the preview's own), until
-      // the keyboard comes up and the field gets the room
+      // phones: the editor is the whole screen, sized to what the keyboard leaves visible (iOS
+      // can pan the page under it), so nothing behind it scrolls and the form keeps its place
       <div
         data-no-pull
-        className="flex h-[calc(100dvh-var(--topbar-h)-var(--tabbar-h))] flex-col kb:h-auto"
+        className="fixed inset-0 z-[45] flex flex-col overflow-hidden bg-bg kb:bottom-auto kb:top-(--vvt) kb:h-(--vvh)"
       >
-        <div className="shrink-0 px-4 pt-2">
-          {editing ? (
-            // while editing, the form gets the room the title and page tabs took
-            <div className="mb-2 flex items-center gap-1">
-              {undoRedo}
-              <div className="flex-1" />
-              <Button variant="secondary" icon={<Check />} onClick={done}>
-                pronto
-              </Button>
-            </div>
-          ) : (
-            <>
-              <header className="mb-2 flex items-center gap-1 md:mb-4 md:gap-2">
-                {ed.phase === 'live' ? (
-                  <Mascote
-                    pose="publicar"
-                    size={64}
-                    className="animate-pop size-16 shrink-0 max-md:hidden"
-                  />
-                ) : null}
-                <div className="min-w-0 flex-1">
-                  <h1 className="t-title-2 md:t-title-1">Aparência</h1>
-                  <Status ed={ed} data={data} onFix={() => pick({ kind: 'style' })} />
-                </div>
-                {undoRedo}
-                <IconButton
-                  label="versões publicadas"
-                  className="md:hidden"
-                  onClick={() => setSheet('history')}
-                >
-                  <ClockCounterClockwise />
-                </IconButton>
-                <span className="hidden md:contents">
-                  <Button
-                    variant="ghost"
-                    icon={<ClockCounterClockwise />}
-                    onClick={() => setSheet('history')}
-                  >
-                    versões
-                  </Button>
-                  {ed.dirty ? (
-                    <Button variant="secondary" onClick={ed.discard}>
-                      descartar
-                    </Button>
-                  ) : null}
-                  <Button
-                    icon={<RocketLaunch />}
-                    disabled={!canPublish}
-                    loading={publishing}
-                    onClick={publish}
-                  >
-                    publicar
-                  </Button>
-                </span>
-              </header>
-
-              {siteSwitch ? <div className="mb-2">{siteSwitch}</div> : null}
-              <div className="mb-2 flex items-center gap-2 md:mb-4">
-                <Segmented
-                  label="página"
-                  value={ed.page}
-                  onChange={ed.setPage}
-                  className="min-w-0 flex-1 md:max-w-md"
-                  options={PAGES.map((p) => ({
-                    value: p.id,
-                    label: ed.dirtyTpl(p.id) ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        {p.label}
-                        <span className="size-1.5 rounded-full bg-primary" aria-hidden />
-                        <span className="sr-only">(mudou)</span>
-                      </span>
-                    ) : (
-                      p.label
-                    ),
-                  }))}
-                />
-                <Segmented
-                  label="aparelho"
-                  value={device}
-                  onChange={setDevice}
-                  className="hidden shrink-0 md:flex"
-                  options={[
-                    {
-                      value: 'phone',
-                      label: <DeviceMobile className="size-5" aria-label="celular" />,
-                    },
-                    {
-                      value: 'desktop',
-                      label: <Desktop className="size-5" aria-label="computador" />,
-                    },
-                  ]}
-                />
+        {editing ? (
+          <div className="flex shrink-0 items-center gap-1 pb-1 pl-1 pr-3 pt-[calc(env(safe-area-inset-top)+0.25rem)]">
+            <h1 className="sr-only">Aparência</h1>
+            {undoRedo}
+            <div className="flex-1" />
+            <Button variant="secondary" icon={<Check />} onClick={back}>
+              pronto
+            </Button>
+          </div>
+        ) : (
+          <>
+            <header className="flex shrink-0 items-center gap-0.5 pl-1 pr-1 pt-[calc(env(safe-area-inset-top)+0.25rem)]">
+              <ScreenBack />
+              <div className="min-w-0 flex-1">
+                <h1 className="t-title-2">Aparência</h1>
+                <Status ed={ed} data={data} onFix={() => pick({ kind: 'style' })} />
               </div>
-            </>
-          )}
-        </div>
+              {undoRedo}
+              <IconButton label="versões publicadas" onClick={() => setSheet('history')}>
+                <ClockCounterClockwise />
+              </IconButton>
+            </header>
+            {siteSwitch ? <div className="shrink-0 px-4 pt-2">{siteSwitch}</div> : null}
+            <div className="shrink-0 px-4 py-2">{pageTabs}</div>
+          </>
+        )}
+        {/* while typing the field gets the room, but the store stays laid out out of sight:
+            a frame taken out of the layout loses its place on the part being edited */}
         <div
           className={cn(
             'relative min-h-0 border-y border-line',
-            editing ? 'h-[40%] shrink-0 kb:hidden' : 'flex-1',
+            editing ? 'h-[38%] shrink-0 kb:invisible kb:absolute kb:inset-x-0 kb:top-0' : 'flex-1',
           )}
         >
           {preview}
-          {!ed.sel && !tapped && frameReady ? (
+          {!sel && !tapped && frameReady ? (
             <p className="t-label pointer-events-none absolute inset-x-0 bottom-4 mx-auto flex w-fit items-center gap-2 rounded-full bg-ink px-4 py-2.5 text-bg depth-2">
               <HandTap className="size-5" /> Toque em uma parte para editar
             </p>
           ) : null}
         </div>
         {editing ? (
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface px-4 pb-8 pt-4 kb:overflow-visible">
-            {inspector('done')}
-          </div>
-        ) : sec && ed.sel?.kind === 'section' ? (
-          <div
-            className="flex shrink-0 items-center gap-1 px-2 py-2"
-            role="toolbar"
-            aria-label="parte escolhida"
-          >
-            <IconButton
-              label="parte anterior"
-              disabled={!prev}
-              onClick={() => prev && ed.setSel(prev)}
+          <>
+            <div
+              role="toolbar"
+              aria-label="parte aberta"
+              className="flex shrink-0 items-center gap-1 border-b border-line bg-surface px-1 py-1 kb:hidden"
             >
-              <CaretLeft />
-            </IconButton>
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              className="press flex min-h-14 min-w-0 flex-1 items-center gap-2.5 rounded-md bg-primary px-3 text-left text-on-primary depth-1"
-            >
-              <PencilSimple className="size-5 shrink-0" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-semibold leading-tight">
-                  {sectionName(sec.type)}
-                </span>
-                <span className="t-caption block truncate opacity-80">
-                  {sec.disabled ? 'escondida · editar' : 'editar'}
-                </span>
-              </span>
-            </button>
-            <IconButton
-              label="próxima parte"
-              disabled={!next}
-              onClick={() => next && ed.setSel(next)}
-            >
-              <CaretRight />
-            </IconButton>
-            <IconButton label="tirar a seleção" onClick={() => ed.setSel(null)}>
-              <X />
-            </IconButton>
-          </div>
+              {sel?.kind === 'section' ? (
+                <IconButton
+                  label="parte anterior"
+                  disabled={!prev}
+                  onClick={() => prev && ed.setSel(prev)}
+                >
+                  <CaretLeft />
+                </IconButton>
+              ) : null}
+              <div className="min-w-0 flex-1 px-2 py-1 text-center">
+                <p className="t-caption truncate text-muted">
+                  {sel?.kind === 'section'
+                    ? `${partPlace(sel.tpl)}${ed.position ? ` · ${ed.position.n} de ${ed.position.of}` : ''}`
+                    : 'Loja toda'}
+                </p>
+                <h2 className="truncate font-semibold leading-tight">
+                  {ed.selected ? sectionName(ed.selected.type) : 'Cores e cantos'}
+                </h2>
+              </div>
+              {sel?.kind === 'section' ? (
+                <IconButton
+                  label="próxima parte"
+                  disabled={!next}
+                  onClick={() => next && ed.setSel(next)}
+                >
+                  <CaretRight />
+                </IconButton>
+              ) : null}
+            </div>
+            {/* relative: the form's visually hidden inputs (a photo's file picker) are placed in
+                here, not past the screen's end */}
+            <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface px-4 pb-[calc(env(safe-area-inset-bottom)+2rem)] pt-5">
+              {inspector('phone')}
+            </div>
+          </>
         ) : (
-          <div className="flex shrink-0 gap-2 px-4 py-2">
+          <div
+            data-action-bar
+            className="flex shrink-0 gap-2 px-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2"
+          >
             <BarButton icon={<ListBullets />} label="partes" onClick={() => setSheet('parts')} />
             <BarButton icon={<Palette />} label="cores" onClick={() => pick({ kind: 'style' })} />
             <BarButton
@@ -660,10 +603,12 @@ function Editor({
         )}
       >
         {wide ? (
-          <aside className="-m-1 overflow-y-auto overscroll-contain p-1 pb-6">{navigator}</aside>
+          <aside className="relative -m-1 overflow-y-auto overscroll-contain p-1 pb-6">
+            {navigator}
+          </aside>
         ) : null}
         {preview}
-        <aside className="overflow-y-auto overscroll-contain rounded-lg">
+        <aside className="relative overflow-y-auto overscroll-contain rounded-lg">
           <Card className="p-5">{wide ? inspector('close') : single}</Card>
         </aside>
       </div>
@@ -681,19 +626,25 @@ function Status({
   data: AppearanceData;
   onFix: () => void;
 }) {
+  // phones cover the Shell's offline banner with the editor: the line says it instead
+  const online = useLiveState().online;
   const areas = [...ed.dirtyTpls.map(tplLabel), ...(ed.tokensDirty ? ['cores'] : [])];
   const text =
     ed.phase === 'publishing'
-      ? 'publicando…'
+      ? online
+        ? 'publicando…'
+        : 'sem conexão: publica quando voltar'
       : ed.phase === 'live'
         ? 'no ar ✓'
         : !ed.tokensOk
           ? null
-          : data.publish.state === 'publishing'
-            ? 'cores sendo aplicadas na loja…'
-            : ed.dirty
-              ? `não publicado: ${areas.join(', ')}`
-              : 'tudo publicado';
+          : !online
+            ? 'sem conexão'
+            : data.publish.state === 'publishing'
+              ? 'cores sendo aplicadas na loja…'
+              : ed.dirty
+                ? `não publicado: ${areas.join(', ')}`
+                : 'tudo publicado';
   return (
     <p
       className="t-caption md:t-body flex min-w-0 items-center gap-1.5 text-muted"

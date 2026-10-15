@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Card } from './Card.tsx';
 import { cn } from './cn.ts';
 import { Skeleton } from './feedback.tsx';
+import { ScreenBack } from './Page.tsx';
 
 // Loading states shaped like the screen that's coming (§11): the same grid, cards and rows,
 // so nothing jumps when the data lands. The page title is real text when it's known.
@@ -410,28 +411,51 @@ export function ProductSkeleton() {
 /** Aparência: the list of what's on the page, the storefront preview, the settings panel. */
 export function AppearanceSkeleton() {
   return (
-    <SkeletonGroup>
-      <div className="mb-4 flex gap-2">
-        <Skeleton className="h-12 flex-1 rounded-full md:max-w-md" delay={0} />
-        <Skeleton className="hidden h-12 w-24 rounded-full md:block" />
-      </div>
-      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] min-[1400px]:grid-cols-[320px_minmax(0,1fr)_380px]">
-        <div className="space-y-2 max-[1399px]:hidden">
-          {Array.from({ length: 7 }, (_, i) => (
-            <Skeleton key={i} className="h-14 rounded-md" />
-          ))}
+    <>
+      {/* phones: the full-screen editor (the Shell hides its bars there), with its way back */}
+      <div className="fixed inset-0 z-[45] flex flex-col bg-bg md:hidden">
+        <div className="flex shrink-0 items-center gap-0.5 pl-1 pr-4 pt-[calc(env(safe-area-inset-top)+0.25rem)]">
+          <ScreenBack />
+          <div className="min-w-0 flex-1">
+            <p className="t-title-2">Aparência</p>
+            <Bone className="mt-1.5 h-3 w-28" />
+          </div>
         </div>
-        <Skeleton
-          className="mx-auto h-[56dvh] w-full rounded-lg md:aspect-[9/19] md:h-auto md:max-w-[340px] md:rounded-[44px]"
-          delay={0}
-        />
-        <Card className="space-y-2 p-4 md:p-5">
-          {Array.from({ length: 5 }, (_, i) => (
-            <Skeleton key={i} className="h-14 rounded-md" />
-          ))}
-        </Card>
+        <SkeletonGroup className="flex min-h-0 flex-1 flex-col">
+          <div className="shrink-0 px-4 py-2">
+            <Skeleton className="h-12 rounded-full" delay={0} />
+          </div>
+          <Skeleton className="min-h-0 flex-1 rounded-none" delay={0} />
+          <div className="flex shrink-0 gap-2 px-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="h-14 flex-1 rounded-md" />
+            ))}
+          </div>
+        </SkeletonGroup>
       </div>
-    </SkeletonGroup>
+      <SkeletonGroup className="max-md:hidden">
+        <div className="mb-4 flex gap-2">
+          <Skeleton className="h-12 flex-1 rounded-full md:max-w-md" delay={0} />
+          <Skeleton className="hidden h-12 w-24 rounded-full md:block" />
+        </div>
+        <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] min-[1400px]:grid-cols-[320px_minmax(0,1fr)_380px]">
+          <div className="space-y-2 max-[1399px]:hidden">
+            {Array.from({ length: 7 }, (_, i) => (
+              <Skeleton key={i} className="h-14 rounded-md" />
+            ))}
+          </div>
+          <Skeleton
+            className="mx-auto h-[56dvh] w-full rounded-lg md:aspect-[9/19] md:h-auto md:max-w-[340px] md:rounded-[44px]"
+            delay={0}
+          />
+          <Card className="space-y-2 p-4 md:p-5">
+            {Array.from({ length: 5 }, (_, i) => (
+              <Skeleton key={i} className="h-14 rounded-md" />
+            ))}
+          </Card>
+        </div>
+      </SkeletonGroup>
+    </>
   );
 }
 

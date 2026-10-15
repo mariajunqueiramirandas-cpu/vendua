@@ -106,7 +106,9 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   autofocus until it has slid up, or iOS scrolls to where the field was mid-slide). Touch feedback is `press` (scale) and
   `press-row` (rows darken), never hover; offsets above the tab bar use `--tabbar-h`.
   `vite.config.ts` strips Phosphor's unused thin/light weights (re-add one there before
-  using it).
+  using it). Aparência is full screen on phones (`html[data-editor]`, set by the Shell): no top
+  bar or tab bar, its own back (`ScreenBack`), and a layer sized to `--vvt`/`--vvh` while the
+  keyboard is up, so iOS panning the page can't push its bar out of view.
 - **Install art** (`scripts/pwa-assets.ts`, committed to `public/`): the badge, shortcut
   icons and the iOS splash screens (`scripts/splash-devices.ts`; the `<link>`s are
   written at build). `--screenshots` recaptures the store screenshots from a running app.
