@@ -8,8 +8,10 @@ never need a storefront edit; a major only ships with a Contract major.
 The editor preview's `vendua:preview-ready` also carries `templates`: what each page renders when
 Core has no template for it (the build's own, the Kernel's defaults under them). A store that never
 saved a page (every new store on the default bundle) used to open Aparência on `DEFAULT_TEMPLATES`,
-so the preview lost the store's own sections and a first "publicar" replaced them. Additive: no
-storefront edit, no new export.
+so the preview lost the store's own sections and a first "publicar" replaced them. It also carries
+`schemas`: the store's own section and block schemas by type (what the registry takes, as JSON), so
+the editor shows every field of a store's own parts with its default, name and kind instead of
+guessing from the values a template holds. Additive: no storefront edit, no new export.
 
 ## 1.28.0
 

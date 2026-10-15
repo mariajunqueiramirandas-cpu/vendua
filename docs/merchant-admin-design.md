@@ -738,6 +738,15 @@ or the phone's back, closes the form and brings back the whole page and
 publicar. With the keyboard up the field takes the room, and the preview, kept
 out of sight, is still on the part when the keyboard goes.
 
+Every part is editable, the store's own included: the preview tells the editor
+each part's fields (Kernel 1.29), so a form lists all of them with the store's
+default greyed in an empty field, not only the ones the template happens to
+set. A category or product is picked from the menu by name. What a part holds
+(the product page's "últimas unidades", "avise quando voltar") has its own
+fields under "dentro desta parte". The dozen small words a part prints (aberto
+agora, esgotado, na sacola) fold under "mais textos", whose summary says how
+many are the merchant's own.
+
 ### Relatórios
 
 Period chips (hoje · 7 dias · 30 dias · personalizado) → headline KPIs with

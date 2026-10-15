@@ -37,6 +37,9 @@ note, assets {logo, photos[]}, branch, base, label, marker, maxFixPushes, dueAt`
   no `fetch`, no cart or price math, no product URLs built by hand: commerce goes through Kernel
   hooks and primitives. CSS never targets `.v-*` or `[data-vendua]`. At most 5 slot overrides.
   No hard-coded copy over 4 words: copy lives in section settings in the templates (K12).
+  The merchant edits those settings in Aparência, which reads your schema: give each section a
+  pt-BR `title` and each setting a pt-BR `label` (what the merchant sees over the field), and
+  every text the default the store prints, which the editor shows greyed in an empty field.
 - Tokens live in `storefronts/<slug>/tokens.json` (the `StorefrontTokens` shape: color bg,
   surface, text, muted, accent, onAccent, danger, success; font display/body/mono; radius;
   space; motion). `vendua.config.ts` imports them: `import tokens from './tokens.json';` and

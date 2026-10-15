@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import type { TemplateSet } from '@vendua/templates';
 import { defineBlock, defineSection, text, BlockArea, useAnalytics } from '../src/index.ts';
+import { storeSchemas } from '../src/composition/registry.ts';
 import { TOKENS, flush, mockCore, mount, reports, type Mounted } from './harness.tsx';
 
 let m: Mounted | null = null;
@@ -215,6 +216,18 @@ describe('StorefrontRoutes (Contract 2)', () => {
     console.warn = warn;
     expect(warned.some((w) => w.includes("store sections must use a 'store:' type"))).toBe(true);
     expect($('.v-header')).not.toBeNull();
+  });
+
+  test("the editor is told only the store's own schemas, as the registry takes them", () => {
+    const hero = defineSection({ type: 'store:hero', settings: { title: text({ max: 60 }) } });
+    const badge = defineBlock({ type: 'store:badge', category: 'badge', settings: {} });
+    const own = storeSchemas({
+      '/sections/hero.tsx': { schema: hero, default: () => null },
+      '/sections/badge.tsx': { schema: badge, default: () => null },
+      '/sections/fake.tsx': { schema: defineSection({ type: 'sdk:header', settings: {} }) },
+      '/sections/util.ts': { helper: 1 },
+    });
+    expect(own).toEqual({ 'store:hero': hero, 'store:badge': badge });
   });
 });
 

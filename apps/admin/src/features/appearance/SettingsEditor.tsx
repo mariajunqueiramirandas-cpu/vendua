@@ -1,8 +1,13 @@
 import { ArrowDown, ArrowUp, Plus, Trash } from '@phosphor-icons/react';
+import { useQuery } from '@tanstack/react-query';
 import { DEFAULT_PATHS } from '@vendua/kernel/rules';
 import { useState } from 'react';
+import { api } from '../../lib/api.ts';
+import { plural } from '../../lib/format.ts';
+import { qk } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
-import { Chips, Field, TextArea, TextInput, Toggle, Stepper } from '../../ui/fields.tsx';
+import { MoreOptions } from '../../ui/Disclosure.tsx';
+import { Chips, Field, Select, TextArea, TextInput, Toggle, Stepper } from '../../ui/fields.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { groupFields, keepsUrl, optionName, type FieldSpec } from './fields.ts';
 
@@ -51,22 +56,37 @@ export function SettingsEditor({
   if (grouped)
     return (
       <div className="space-y-7">
-        {groupFields(shown).map((g, i) => (
-          <section key={g.label ?? `g${i}`} aria-label={g.label ?? undefined}>
-            {g.label ? (
-              <h3 className="t-caption mb-3 font-semibold uppercase tracking-wide text-muted">
-                {g.label}
-              </h3>
-            ) : null}
-            <SettingsEditor
-              fields={g.fields}
-              value={value}
-              onChange={onChange}
-              idPrefix={idPrefix}
-              origin={origin}
-            />
-          </section>
-        ))}
+        {groupFields(shown).map((g, i) =>
+          g.folded ? (
+            <MoreOptions key={g.label} label={g.label} summary={foldSummary(g.fields, value)}>
+              <p className="t-caption text-muted">
+                Em branco, a loja mostra o texto padrão, que aparece em cinza.
+              </p>
+              <SettingsEditor
+                fields={g.fields}
+                value={value}
+                onChange={onChange}
+                idPrefix={idPrefix}
+                origin={origin}
+              />
+            </MoreOptions>
+          ) : (
+            <section key={g.label ?? `g${i}`} aria-label={g.label ?? undefined}>
+              {g.label ? (
+                <h3 className="t-caption mb-3 font-semibold uppercase tracking-wide text-muted">
+                  {g.label}
+                </h3>
+              ) : null}
+              <SettingsEditor
+                fields={g.fields}
+                value={value}
+                onChange={onChange}
+                idPrefix={idPrefix}
+                origin={origin}
+              />
+            </section>
+          ),
+        )}
       </div>
     );
   return (
@@ -82,6 +102,7 @@ export function SettingsEditor({
                   <TextArea
                     id={id}
                     maxLength={f.max}
+                    placeholder={f.def}
                     value={(v as string) ?? ''}
                     onChange={(e) => set(f.key, e.target.value)}
                     className="field-sizing-content max-h-80 min-h-24"
@@ -90,6 +111,7 @@ export function SettingsEditor({
                   <TextInput
                     id={id}
                     maxLength={f.max}
+                    placeholder={f.def}
                     value={(v as string) ?? ''}
                     onChange={(e) => set(f.key, e.target.value)}
                   />
@@ -138,6 +160,19 @@ export function SettingsEditor({
                   options={f.options.map((o) => ({ value: o, label: optionName(o) }))}
                 />
               </Field>
+            );
+          case 'product':
+          case 'category':
+            return (
+              <MenuPick
+                key={f.key}
+                id={id}
+                kind={f.kind}
+                label={f.label}
+                help={f.help}
+                value={typeof v === 'string' ? v : ''}
+                onChange={(slug) => set(f.key, slug)}
+              />
             );
           case 'image':
             return (
@@ -222,6 +257,74 @@ export function SettingsEditor({
         }
       })}
     </div>
+  );
+}
+
+/** Folded small words say whether any is the merchant's own, so a fold never hides a choice. */
+function foldSummary(fields: FieldSpec[], value: Values) {
+  const own = fields.filter((f) => typeof value[f.key] === 'string' && value[f.key] !== '').length;
+  return own
+    ? `${plural(own, 'mudado', 'mudados')} de ${fields.length}`
+    : `${fields.length} avisos e botões, no padrão da loja`;
+}
+
+/** A category or a product from the store's own menu, by the slug the storefront looks it up by.
+ *  One no longer on the menu stays listed under its slug, so the pick isn't lost unseen. */
+function MenuPick({
+  id,
+  kind,
+  label,
+  help,
+  value,
+  onChange,
+}: {
+  id: string;
+  kind: 'product' | 'category';
+  label: string;
+  help?: string | undefined;
+  value: string;
+  onChange: (slug: string) => void;
+}) {
+  const { data, isError } = useQuery({ queryKey: qk.catalog, queryFn: api.catalog });
+  const cats = data?.categories ?? [];
+  const options =
+    kind === 'category'
+      ? cats.map((c) => ({ value: c.slug, label: c.name }))
+      : cats.flatMap((c) =>
+          c.products
+            .filter((p) => p.status !== 'archived' || p.slug === value)
+            .map((p) => ({ value: p.slug, label: `${p.name} · ${c.name}` })),
+        );
+  const known = !value || options.some((o) => o.value === value);
+  return (
+    <Field
+      label={label}
+      htmlFor={id}
+      helper={help}
+      error={
+        isError
+          ? 'Não deu para carregar o cardápio agora.'
+          : data && !known
+            ? kind === 'category'
+              ? 'Essa categoria não está mais no cardápio.'
+              : 'Esse produto não está mais no cardápio.'
+            : null
+      }
+    >
+      <Select
+        id={id}
+        value={value}
+        onChange={onChange}
+        options={[
+          {
+            value: '',
+            label: kind === 'category' ? 'Todo o cardápio' : 'Escolha um produto',
+          },
+          ...(known ? [] : [{ value, label: value }]),
+          ...options,
+        ]}
+      />
+    </Field>
   );
 }
 

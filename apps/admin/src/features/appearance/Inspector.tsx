@@ -14,7 +14,7 @@ import { DEFAULT_TOKENS } from '@vendua/templates';
 import type { ReactNode } from 'react';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Colors } from './Colors.tsx';
-import { fieldsFor, sectionName } from './fields.ts';
+import { areaOrder, fieldsFor, sectionName } from './fields.ts';
 import { SettingsEditor } from './SettingsEditor.tsx';
 import { tplLabel, type Editor, type TplId } from './useEditor.ts';
 
@@ -83,12 +83,25 @@ export function Inspector({
   if (sel?.kind === 'section' && sec) {
     const list = ed.drafts[sel.tpl].sections;
     const i = list.findIndex((x) => x.id === sec.id);
+    const ctx = { store: ed.schemas, page: sel.tpl };
+    const own = fieldsFor(sec.type, sec.settings, ctx);
+    // what sits inside the part (the product page's stock counter, a promo badge), each with
+    // its own fields; one with nothing to say for itself isn't listed
+    const order = areaOrder(sec.type, ed.schemas);
+    const rank = (a: string) => (order.includes(a) ? order.indexOf(a) : order.length);
+    const areas = Object.entries(sec.blocks ?? {}).sort(([a], [b]) => rank(a) - rank(b));
+    const inside = areas.flatMap(([area, bs]) =>
+      bs.flatMap((b) => {
+        const fields = fieldsFor(b.type, b.settings, ctx);
+        return fields.some((f) => f.kind !== 'skip') ? [{ area, b, fields }] : [];
+      }),
+    );
     return (
       <div className="space-y-5">
         {noHead ? null : (
           <Head
             over={partPlace(sel.tpl)}
-            title={sectionName(sec.type)}
+            title={sectionName(sec.type, ed.schemas)}
             onBack={onBack}
             noExit={noExit}
             onClose={close}
@@ -103,14 +116,40 @@ export function Inspector({
             </Button>
           </div>
         ) : null}
-        <SettingsEditor
-          grouped
-          origin={origin}
-          idPrefix={sec.id}
-          fields={fieldsFor(sec.type, sec.settings)}
-          value={sec.settings ?? {}}
-          onChange={(v) => ed.setSettings(sel.tpl, sec.id, v)}
-        />
+        {/* a part whose fields are all in what it holds (the product page) is just those */}
+        {own.some((f) => f.kind !== 'skip') || !inside.length ? (
+          <SettingsEditor
+            grouped
+            origin={origin}
+            idPrefix={sec.id}
+            fields={own}
+            value={sec.settings ?? {}}
+            onChange={(v) => ed.setSettings(sel.tpl, sec.id, v)}
+          />
+        ) : null}
+        {inside.length ? (
+          <div className="space-y-4 border-t border-line pt-5">
+            <h3 className="t-caption font-semibold uppercase tracking-wide text-muted">
+              Dentro desta parte
+            </h3>
+            {inside.map(({ area, b, fields }) => (
+              <section
+                key={`${area}:${b.id}`}
+                aria-label={sectionName(b.type, ed.schemas)}
+                className="space-y-4 rounded-md p-4 ring-1 ring-line"
+              >
+                <h4 className="font-semibold">{sectionName(b.type, ed.schemas)}</h4>
+                <SettingsEditor
+                  origin={origin}
+                  idPrefix={`${sec.id}-${b.id}`}
+                  fields={fields}
+                  value={b.settings ?? {}}
+                  onChange={(v) => ed.setBlockSettings(sel.tpl, sec.id, area, b.id, v)}
+                />
+              </section>
+            ))}
+          </div>
+        ) : null}
         <div className="space-y-3 border-t border-line pt-5">
           <h3 className="t-caption font-semibold uppercase tracking-wide text-muted">Na página</h3>
           <div className="flex flex-wrap gap-2">

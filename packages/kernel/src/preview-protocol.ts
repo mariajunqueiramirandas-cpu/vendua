@@ -7,7 +7,7 @@ export const PREVIEW_QUERY_PARAM = 'vendua-preview';
 export const PREVIEW_MESSAGE = {
   /** parent → frame: `{ type, templates?, tokens?, selected? }` */
   draft: 'vendua:preview',
-  /** frame → parent: `{ type, tokens, paths, templates }` (`templates` since 1.29) */
+  /** frame → parent: `{ type, tokens, paths, templates, schemas }` (the last two since 1.29) */
   ready: 'vendua:preview-ready',
   /** frame → parent: `{ type, id }` — a section was tapped */
   select: 'vendua:preview-select',

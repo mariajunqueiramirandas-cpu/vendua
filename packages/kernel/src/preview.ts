@@ -12,11 +12,13 @@ import { PREVIEW_MESSAGE, PREVIEW_QUERY_PARAM } from './preview-protocol.ts';
 // `?vendua-preview=1` and posts draft templates, so edits show before "publicar".
 // Only a framed page opted in by the query listens; drafts never leave this tab.
 // Messages: parent → { type: 'vendua:preview', templates?, tokens?, selected? };
-//           frame  → { type: 'vendua:preview-ready', tokens, paths, templates }
+//           frame  → { type: 'vendua:preview-ready', tokens, paths, templates, schemas }
 //                  | { type: 'vendua:preview-select', id }.
 // `tokens` in ready are the ones in force, so the editor starts from the real look, and
 // `templates` (1.29) what each page renders when Core has none: the build's own, the Kernel's
 // defaults under them. A store that never saved a page edits that, not the Kernel's defaults.
+// `schemas` (1.29) are the store's own section and block schemas by type, so the editor shows
+// their real fields, defaults and names instead of guessing from the values a template holds.
 // Any page can frame a store with the query, so drafts are taken only from the merchant
 // admin's origin, which Core reports (setPreviewOrigin); until then the frame stays inert.
 
@@ -30,6 +32,7 @@ let draftTokens: StorefrontTokens | null = null;
 let current: StorefrontTokens | null = null;
 let paths: Record<string, string> | null = null;
 let bundled: TemplateSet | null = null;
+let schemas: Record<string, unknown> | null = null;
 let adminOrigin: string | null = null;
 const listeners = new Set<() => void>();
 let started = false;
@@ -99,7 +102,7 @@ function start() {
 function announce() {
   if (!adminOrigin) return;
   window.parent.postMessage(
-    { type: PREVIEW_MESSAGE.ready, tokens: current, paths, templates: bundled },
+    { type: PREVIEW_MESSAGE.ready, tokens: current, paths, templates: bundled, schemas },
     adminOrigin,
   );
 }
@@ -118,16 +121,25 @@ export function setPreviewOrigin(origin: string | null | undefined) {
   if (started) announce();
 }
 
-/** The provider reports the tokens in force, the store's routes and the templates a page falls
- *  back to without Core's; the editor starts from them. */
-export function reportPreview(
-  t: StorefrontTokens,
-  p: Record<string, string>,
-  templates: TemplateSet,
-) {
-  current = t;
-  paths = p;
-  bundled = templates;
+/** The provider reports the tokens in force, the store's routes, the templates a page falls
+ *  back to without Core's and its own sections' schemas; the editor starts from them. */
+export function reportPreview(r: {
+  tokens: StorefrontTokens;
+  paths: Record<string, string>;
+  templates: TemplateSet;
+  schemas: Record<string, unknown>;
+}) {
+  if (!active) return;
+  current = r.tokens;
+  paths = r.paths;
+  bundled = r.templates;
+  // a schema is data, but nothing stops a store from putting a function in one, and a message
+  // that can't be cloned would never announce the frame
+  try {
+    schemas = JSON.parse(JSON.stringify(r.schemas)) as Record<string, unknown>;
+  } catch {
+    schemas = null;
+  }
   // effects run child-first, so the frame may have announced itself before this
   if (started) announce();
 }

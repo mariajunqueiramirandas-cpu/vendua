@@ -33,7 +33,7 @@ import { Sheet, useBackToClose } from '../../ui/Sheet.tsx';
 import { AppearanceSkeleton, EditorFrame } from '../../ui/skeletons.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { ADD_HINT, ADDABLE, sectionName } from './fields.ts';
+import { ADD_HINT, addable, sectionName } from './fields.ts';
 import { HistorySheet } from './HistorySheet.tsx';
 import { Inspector, partPlace } from './Inspector.tsx';
 import { Navigator } from './Navigator.tsx';
@@ -190,12 +190,14 @@ function Editor({
       tokens?: StoreTokens | null;
       paths?: StorefrontPaths;
       templates?: Record<string, unknown> | null;
+      schemas?: unknown;
     };
     if (d?.type === PREVIEW_MESSAGE.ready) {
       setFrameReady(true);
       if (d.tokens) ed.setFrameTokens(d.tokens);
       if (d.paths) setPaths(d.paths);
       if (d.templates && typeof d.templates === 'object') ed.setFrameTemplates(d.templates);
+      if (d.schemas !== undefined) ed.setFrameSchemas(d.schemas);
       post();
     }
     if (d?.type === PREVIEW_MESSAGE.select && d.id) {
@@ -350,7 +352,7 @@ function Editor({
           ]}
         />
         <ul className="grid gap-2">
-          {ADDABLE.map((t) => (
+          {addable(ed.schemas).map((t) => (
             <li key={t}>
               <button
                 type="button"
@@ -361,7 +363,7 @@ function Editor({
                 className="press-row flex min-h-16 w-full items-center gap-3 rounded-md bg-surface px-4 py-2 text-left ring-1 ring-line hover:bg-hover"
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block font-semibold">{sectionName(t)}</span>
+                  <span className="block font-semibold">{sectionName(t, ed.schemas)}</span>
                   {ADD_HINT[t] ? (
                     <span className="t-caption block text-muted">{ADD_HINT[t]}</span>
                   ) : null}
@@ -475,7 +477,7 @@ function Editor({
                     : 'Loja toda'}
                 </p>
                 <h2 className="truncate font-semibold leading-tight">
-                  {ed.selected ? sectionName(ed.selected.type) : 'Cores e cantos'}
+                  {ed.selected ? sectionName(ed.selected.type, ed.schemas) : 'Cores e cantos'}
                 </h2>
               </div>
               {sel?.kind === 'section' ? (

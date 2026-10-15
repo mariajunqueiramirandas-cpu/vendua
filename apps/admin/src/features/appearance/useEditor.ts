@@ -14,6 +14,7 @@ import { qk, useMutation } from '../../lib/query.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { readable } from './Colors.tsx';
+import { readSchemas, type StoreSchemas } from './fields.ts';
 
 // The page editor's state: one document (every template + the colours) with undo/redo,
 // what's selected, and publishing. Edits are drafts in this tab (and in localStorage, so
@@ -114,6 +115,12 @@ export function useEditor(data: AppearanceData, storeId: string) {
     return out;
   }, [data.pages, frameTpls]);
   const [frameTokens, setFrameTokens] = useState<StoreTokens | null>(null);
+  // the store's own parts' fields, which only its frame knows (Kernel 1.29)
+  const [schemas, setSchemas] = useState<StoreSchemas>({});
+  const setFrameSchemas = useCallback((raw: unknown) => {
+    const next = readSchemas(raw);
+    setSchemas((cur) => (same(cur, next) ? cur : next));
+  }, []);
   const baseTokens = data.tokens?.tokens ?? frameTokens;
 
   // drafts left in this browser come back while the page they were made on is still current
@@ -371,7 +378,7 @@ export function useEditor(data: AppearanceData, storeId: string) {
   };
   const add = (type: ComponentType, where: 'page' | 'layout') => {
     const t: TplId = where === 'layout' ? 'layout' : page;
-    const id = `${type.replace(/^sdk:/, '')}-${Math.random().toString(36).slice(2, 6)}`;
+    const id = `${type.replace(/^(sdk|store):/, '')}-${Math.random().toString(36).slice(2, 6)}`;
     setSections(t, (ss) => {
       // in the layout, a new part goes above the page's own content
       const at = t === 'layout' ? ss.findIndex((x) => x.type === 'sdk:page-content') : ss.length;
@@ -389,10 +396,25 @@ export function useEditor(data: AppearanceData, storeId: string) {
     setSel({ kind: 'section', tpl: t, id });
   };
   const setSettings = (t: TplId, id: string, v: Record<string, unknown>) =>
+    setSections(t, (ss) => ss.map((x) => (x.id === id ? withSettings(x, v) : x)), `s:${t}:${id}`);
+  /** a block's own settings, inside a part's area (the product page's "últimas unidades") */
+  const setBlockSettings = (
+    t: TplId,
+    id: string,
+    area: string,
+    blockId: string,
+    v: Record<string, unknown>,
+  ) =>
     setSections(
       t,
-      (ss) => ss.map((x) => (x.id === id ? { ...x, settings: v } : x)),
-      `s:${t}:${id}`,
+      (ss) =>
+        ss.map((x) => {
+          const blocks = x.id === id ? x.blocks?.[area] : undefined;
+          if (!blocks) return x;
+          const next = blocks.map((b) => (b.id === blockId ? withSettings(b, v) : b));
+          return { ...x, blocks: { ...x.blocks, [area]: next } };
+        }),
+      `b:${t}:${id}:${area}:${blockId}`,
     );
   const setTokens = (next: StoreTokens) => change((d) => ({ ...d, tokens: next }), 'tokens');
   const discard = () => {
@@ -441,6 +463,8 @@ export function useEditor(data: AppearanceData, storeId: string) {
     baseTokens,
     setFrameTokens,
     setFrameTemplates,
+    schemas,
+    setFrameSchemas,
     previewDrafts,
     restored: restored.any,
     page,
@@ -457,6 +481,7 @@ export function useEditor(data: AppearanceData, storeId: string) {
     remove,
     add,
     setSettings,
+    setBlockSettings,
     setTokens,
     discard,
     undo,
@@ -474,6 +499,16 @@ export function useEditor(data: AppearanceData, storeId: string) {
   };
 }
 export type Editor = ReturnType<typeof useEditor>;
+
+/** No settings left is no `settings`: clearing the one field typed into leaves the part as it
+ *  was published, not a change. */
+function withSettings<T extends { settings?: Record<string, unknown> }>(
+  x: T,
+  v: Record<string, unknown>,
+): T {
+  const { settings: _drop, ...rest } = x;
+  return Object.keys(v).length ? ({ ...rest, settings: v } as T) : (rest as T);
+}
 
 /** `disabled` is present only when true — templates stay minimal. */
 function hidden(s: TemplateSection, on: boolean): TemplateSection {
