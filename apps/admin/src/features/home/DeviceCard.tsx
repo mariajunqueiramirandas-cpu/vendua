@@ -111,7 +111,7 @@ export function DeviceCard({ className }: { className?: string }) {
                     toast('Os avisos ligaram, mas o de teste não chegou.', {
                       tone: 'error',
                       ms: 8000,
-                      action: { label: 'ver avisos', run: () => nav('/perfil#avisos') },
+                      action: { label: 'ver avisos', run: () => nav('/perfil/avisos') },
                     });
                   else toast('Avisos ligados. Mandamos um de teste: ele deve tocar agora.');
                 } else if (r === 'denied')

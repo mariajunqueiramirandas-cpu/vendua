@@ -43,20 +43,9 @@ export function PageHeader({
   /** the "ajuda" button for this screen's help; off on Ajuda itself */
   help?: boolean;
 }) {
-  const nav = useNavigate();
   return (
     <header className={cn('mb-5 flex items-start gap-2 md:mb-7', className)}>
-      {back ? (
-        <IconButton
-          label="voltar"
-          className="-ml-3 shrink-0 max-md:hidden"
-          onClick={() =>
-            back === true || prevIs(back) ? nav(-1) : nav(back, { state: { vt: 'pop' } })
-          }
-        >
-          <ArrowLeft />
-        </IconButton>
-      ) : null}
+      {back ? <HeaderBack to={back} /> : null}
       <div className="min-w-0 flex-1 pt-1.5">
         <h1 className="t-title-1">{title}</h1>
         {subtitle ? <p className="t-body mt-1 text-muted">{subtitle}</p> : null}
@@ -67,20 +56,40 @@ export function PageHeader({
   );
 }
 
+/**
+ * The header's back arrow from tablets up (phones have the top bar's): to where you came from
+ * when that's `to`, else to `to` itself, the screen's home (a screen of Loja: Loja).
+ */
+export function HeaderBack({ to, className }: { to: string | true; className?: string }) {
+  const nav = useNavigate();
+  return (
+    <IconButton
+      label="voltar"
+      className={cn('-ml-3 shrink-0 max-md:hidden', className)}
+      onClick={() => (to === true || prevIs(to) ? nav(-1) : nav(to, { state: { vt: 'pop' } }))}
+    >
+      <ArrowLeft />
+    </IconButton>
+  );
+}
+
 export function PageBody({
   children,
   className,
   wide,
+  full,
 }: {
   children: ReactNode;
   className?: string;
   wide?: boolean;
+  /** the order board's width, for the views beside it (Pedidos' tabs) */
+  full?: boolean;
 }) {
   return (
     <div
       className={cn(
         'mx-auto w-full px-4 pb-32 pt-4 md:px-8 md:pb-16 md:pt-8',
-        wide ? 'max-w-[1320px]' : 'max-w-[880px]',
+        full ? 'max-w-[1600px]' : wide ? 'max-w-[1320px]' : 'max-w-[880px]',
         className,
       )}
     >

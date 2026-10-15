@@ -197,7 +197,7 @@ interface PaymentsView {
 
 const MP: Record<string, string> = {
   connected: 'conectado',
-  expiring: 'conectado, conexão vencendo (reconectar em Pagamentos)',
+  expiring: 'conectado, conexão vencendo (reconectar em Loja › Formas de pagamento)',
   restricted: 'com restrição do lado do Mercado Pago',
   disconnected: 'desconectado',
   not_connected: 'não conectado',

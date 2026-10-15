@@ -19,8 +19,10 @@ import {
   RowsSkeleton,
   SectionsSkeleton,
   StatTilesSkeleton,
+  TabsSkeleton,
   TilesSkeleton,
 } from '../ui/skeletons.tsx';
+import { TABS, type Area } from './tabs.ts';
 
 import { matchRoute, type RouteId } from './routes.ts';
 
@@ -42,10 +44,13 @@ const Body = ({ wide, children }: { wide?: boolean; children: ReactNode }) => (
 const page = (
   title: string,
   body: ReactNode,
-  opts: { wide?: boolean; subtitle?: boolean } = {},
+  opts: { wide?: boolean; subtitle?: boolean; tabs?: [Area, number] } = {},
 ) => (
   <Body {...(opts.wide ? { wide: true } : {})}>
     <HeaderSkeleton title={title} subtitle={opts.subtitle ?? true} />
+    {opts.tabs ? (
+      <TabsSkeleton labels={TABS[opts.tabs[0]].map((t) => t.label)} active={opts.tabs[1]} />
+    ) : null}
     {body}
   </Body>
 );
@@ -58,21 +63,22 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   ),
   history: () =>
     page(
-      'Histórico de pedidos',
+      'Pedidos',
       <div className="space-y-4">
         <FieldSkeleton />
         <ChipsSkeleton count={4} />
         <RowsSkeleton rows={7} avatar={false} />
       </div>,
-      { subtitle: false },
+      { subtitle: false, tabs: ['pedidos', 2] },
     ),
   scheduled: () =>
     page(
-      'Encomendas',
+      'Pedidos',
       <div className="grid gap-5 lg:grid-cols-2">
         <CalendarSkeleton />
         <RowsSkeleton rows={3} avatar={false} />
       </div>,
+      { subtitle: false, tabs: ['pedidos', 1] },
     ),
   order: () => page('Pedido', <DetailSkeleton />, { subtitle: false }),
   orders: () => (
@@ -112,20 +118,40 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
   pdvReport: () => page('Fechamento do caixa', <DetailSkeleton />),
   pickup: () => <KitchenSkeleton pickup />,
   product: () => page('Produto', <ProductSkeleton />, { subtitle: false }),
-  menu: () => page('Cardápio', <MenuSkeleton />, { wide: true, subtitle: false }),
+  menu: () =>
+    page('Cardápio', <MenuSkeleton />, { wide: true, subtitle: false, tabs: ['cardapio', 0] }),
   importMenu: () => page('Importar cardápio', <FieldSkeleton />),
-  festa: () => page('Calculadora de festa', <RowsSkeleton rows={2} />),
-  planos: () => page('Planos semanais', <RowsSkeleton rows={3} />),
+  festa: () =>
+    page('Cardápio', <RowsSkeleton rows={2} />, {
+      wide: true,
+      subtitle: false,
+      tabs: ['cardapio', 2],
+    }),
+  planos: () =>
+    page('Cardápio', <RowsSkeleton rows={3} />, {
+      wide: true,
+      subtitle: false,
+      tabs: ['cardapio', 3],
+    }),
   stock: () =>
     page(
-      'Estoque',
+      'Cardápio',
       <div className="space-y-4">
         <ChipsSkeleton count={3} />
         <RowsSkeleton rows={6} />
       </div>,
+      { wide: true, subtitle: false, tabs: ['cardapio', 1] },
     ),
-  store: () => page('Loja', <SectionsSkeleton columns={2} />, { wide: true }),
+  store: () => page('Loja', <RowsSkeleton rows={6} />, { wide: true }),
+  storeProfile: () => page('Perfil da loja', <SectionsSkeleton />),
+  storeHours: () => page('Horários', <SectionsSkeleton />),
+  storeDelivery: () => page('Entrega e retirada', <SectionsSkeleton />),
+  storePrep: () => page('Tempo de preparo', <SectionsSkeleton />),
+  storeEncomendas: () => page('Encomendas', <SectionsSkeleton />),
+  storeSite: () => page('Site e endereço', <SectionsSkeleton />),
   payments: () => page('Pagamentos', <SectionsSkeleton columns={2} />, { wide: true }),
+  paymentMethods: () =>
+    page('Formas de pagamento', <SectionsSkeleton columns={2} />, { wide: true }),
   whatsapp: () => page('WhatsApp', <SectionsSkeleton columns={2} />, { wide: true }),
   printers: () => page('Impressoras', <SectionsSkeleton columns={2} />, { wide: true }),
   customer: () => page('Cliente', <DetailSkeleton />),
@@ -138,7 +164,12 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
         <RowsSkeleton rows={6} />
       </div>,
     ),
-  marketing: () => page('Marketing', <SectionsSkeleton columns={2} />, { wide: true }),
+  marketing: () =>
+    page('Marketing', <SectionsSkeleton />, { subtitle: false, tabs: ['marketing', 0] }),
+  marketingShare: () =>
+    page('Marketing', <SectionsSkeleton />, { subtitle: false, tabs: ['marketing', 1] }),
+  marketingReminders: () =>
+    page('Marketing', <SectionsSkeleton />, { subtitle: false, tabs: ['marketing', 2] }),
   bagCard: () => page('Cartão da sacola', <TilesSkeleton count={1} />),
   statusDoDia: () => page('Status do dia', <SectionsSkeleton columns={2} />, { wide: true }),
   appearance: () => (
@@ -148,17 +179,22 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
     </EditorFrame>
   ),
   reports: () => page('Relatórios', <ReportsSkeleton />, { wide: true }),
-  team: () =>
+  team: () => page('Equipe', <RowsSkeleton rows={3} />, { subtitle: false, tabs: ['equipe', 0] }),
+  teamActivity: () =>
     page(
       'Equipe',
-      <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-        <RowsSkeleton rows={3} />
-        <RowsSkeleton rows={5} avatar={false} />
+      <div className="space-y-4">
+        <ChipsSkeleton count={4} />
+        <RowsSkeleton rows={6} avatar={false} />
       </div>,
-      { wide: true },
+      { subtitle: false, tabs: ['equipe', 1] },
     ),
   account: () => page('Conta e plano', <PlanCardSkeleton />, { subtitle: false }),
-  profile: () => page('Meu perfil', <SectionsSkeleton />, { subtitle: false }),
+  profile: () => page('Meu perfil', <SectionsSkeleton />, { subtitle: false, tabs: ['perfil', 0] }),
+  profileAlerts: () =>
+    page('Meu perfil', <SectionsSkeleton />, { subtitle: false, tabs: ['perfil', 1] }),
+  profileDevices: () =>
+    page('Meu perfil', <RowsSkeleton rows={3} />, { subtitle: false, tabs: ['perfil', 2] }),
   help: () => page('Ajuda', <RowsSkeleton rows={5} avatar={false} trailing={false} />),
   vendedorHome: () =>
     page(

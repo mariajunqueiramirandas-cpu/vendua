@@ -145,7 +145,9 @@ function fallback(conn: ConnectionRow, now: Date, code: string): [ConnectionStat
 }
 
 function message(status: ConnectionStatus, store: string, origin: string | null) {
-  const where = origin ? `${origin}/admin/pagamentos` : 'no painel da Venduá, em Pagamentos';
+  const where = origin
+    ? `${origin}/admin/loja/pagamentos`
+    : 'no painel da Venduá, em Loja › Formas de pagamento';
   switch (status) {
     case 'expiring':
       return `Venduá: a conexão da ${store} com o Mercado Pago vence em breve. Reconecte em ${where} para continuar recebendo Pix e cartão online.`;

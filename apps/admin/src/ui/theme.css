@@ -38,6 +38,9 @@
   --hover: rgb(18 60 50 / 0.05);
   --press: rgb(18 60 50 / 0.09);
   --glass: rgb(247 244 234 / 0.92);
+  /* scrollbars and the touch ScrollRail's thumb */
+  --scrollbar: rgb(18 60 50 / 0.3);
+  --scrollbar-hover: rgb(18 60 50 / 0.5);
 
   /* order states: fill + ink, every pair AA+ (spec §4.2) */
   --st-novo: #f0fcc9;
@@ -108,6 +111,8 @@
   --hover: rgb(247 244 234 / 0.05);
   --press: rgb(247 244 234 / 0.09);
   --glass: rgb(10 16 13 / 0.9);
+  --scrollbar: rgb(247 244 234 / 0.26);
+  --scrollbar-hover: rgb(247 244 234 / 0.42);
 
   --st-novo: #26330d;
   --st-novo-ink: #d9f875;
@@ -164,6 +169,8 @@
   --color-info-soft: var(--info-soft);
   --color-hover: var(--hover);
   --color-press: var(--press);
+  --color-scrollbar: var(--scrollbar);
+  --color-scrollbar-hover: var(--scrollbar-hover);
   --color-whatsapp: var(--whatsapp);
   --color-on-whatsapp: var(--on-whatsapp);
   --color-qr: var(--qr-dark);
@@ -247,8 +254,78 @@
   line-height: 1.125rem;
   font-weight: 500;
 }
+/* ── scrolling you can see ───────────────────────────────────────────────
+ * Mouse and trackpad: themed bars that stay drawn (a styled ::-webkit-scrollbar shows even where
+ * the OS hides overlay bars). Touch: the page's ScrollRail (app/ScrollRail.tsx). Either way an
+ * inner scroller fades at the edge where more is waiting: scroll-row sideways, scroll-fade-b
+ * below. The fades ride a scroll timeline, so a box with nothing to scroll gets none. */
+@property --fade-a {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --fade-b {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes fade-edges {
+  0% {
+    --fade-a: 0px;
+    --fade-b: 32px;
+  }
+  12% {
+    --fade-a: 32px;
+  }
+  88% {
+    --fade-b: 32px;
+  }
+  100% {
+    --fade-a: 32px;
+    --fade-b: 0px;
+  }
+}
+@keyframes fade-end {
+  0% {
+    --fade-b: 40px;
+  }
+  85% {
+    --fade-b: 40px;
+  }
+  100% {
+    --fade-b: 0px;
+  }
+}
+@layer base {
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--scrollbar) padding-box;
+      border: 3px solid transparent;
+      border-radius: 999px;
+      min-height: 40px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scrollbar-hover);
+    }
+    @supports not selector(::-webkit-scrollbar) {
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar) transparent;
+      }
+    }
+  }
+}
+
 /* Horizontal pill rows: no scrollbar, and block padding so rings/shadows aren't clipped
-   (overflow-x forces overflow-y to clip too). */
+   (overflow-x forces overflow-y to clip too). The side that has more fades out. */
 @utility scroll-row {
   overflow-x: auto;
   scrollbar-width: none;
@@ -256,6 +333,25 @@
   margin-block: -4px;
   &::-webkit-scrollbar {
     display: none;
+  }
+  @supports (animation-timeline: scroll()) {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--fade-a),
+      #000 calc(100% - var(--fade-b)),
+      transparent
+    );
+    animation: fade-edges linear both;
+    animation-timeline: scroll(self inline);
+  }
+}
+/* a vertical scroller (a sheet's body, the sidebar) fades at the bottom while more is below */
+@utility scroll-fade-b {
+  @supports (animation-timeline: scroll()) {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-b)), transparent);
+    animation: fade-end linear both;
+    animation-timeline: scroll(self block);
   }
 }
 @utility tnum {
@@ -472,6 +568,14 @@
 /* the phone status pill slides aside for the back button instead of ghosting */
 .vt-pill {
   view-transition-name: pill;
+}
+/* the touch scroll rail (app/ScrollRail.tsx) moves to the next screen's place, not with the page */
+.vt-scroll {
+  view-transition-name: scroll-rail;
+}
+/* a page with a sticky SectionNav: a jump to one of its sections lands below the nav */
+html:has([data-section-nav]) section[id] {
+  scroll-margin-top: calc(var(--topbar-h) + 76px);
 }
 html[data-kb] .vt-tabs {
   transform: translateY(100%);

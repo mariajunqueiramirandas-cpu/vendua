@@ -362,7 +362,7 @@ const operations: KindDef<OperationsInput, StoreSnap> = {
       : after.demand === 'high'
         ? 'A loja avisa que há muitos pedidos'
         : 'Aviso de muitos pedidos tirado',
-  link: () => '/loja',
+  link: () => '/loja/preparo',
   basis: (b, i) => ({
     ...(i.prepTimeMinutes !== undefined ? { prepTimeMinutes: b.prepTimeMinutes } : {}),
     ...(i.demand !== undefined ? { demand: b.demand } : {}),
@@ -405,7 +405,7 @@ const specialDay: KindDef<SpecialDayInput, StoreSnap> = {
     i.closed
       ? `A loja fica fechada em ${dayLabel(i.date)}`
       : `Horário especial em ${dayLabel(i.date)}`,
-  link: () => '/loja',
+  link: () => '/loja/horarios',
   basis: (b, i) => b.specialDays.find((d) => d.date === i.date) ?? null,
 };
 
@@ -645,7 +645,7 @@ const siteBuild: KindDef<SiteBuildInput, SiteSnap | null> = {
   title: () => 'Montar o site sob medida',
   lines: (_b, _a, i) => specLines(i.spec).map((l) => ({ label: l.label, from: null, to: l.to })),
   done: (after, _i, c) => ready('o site', after, c),
-  link: () => '/conta',
+  link: () => '/loja/site#site',
   basis: siteBasis,
 };
 
@@ -664,7 +664,7 @@ const siteRevise: KindDef<SiteReviseInput, SiteSnap | null> = {
     return [{ label: 'Ajuste', from: null, to: i.note }, ...changed];
   },
   done: (after, _i, c) => ready('o ajuste', after, c),
-  link: () => '/conta',
+  link: () => '/loja/site#site',
   basis: siteBasis,
 };
 

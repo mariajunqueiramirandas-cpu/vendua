@@ -1,7 +1,6 @@
 import {
   ArrowDown,
   ArrowUp,
-  CaretRight,
   ClipboardText,
   DotsThree,
   DownloadSimple,
@@ -10,14 +9,11 @@ import {
   GridFour,
   ListBullets,
   MagnifyingGlass,
-  Package,
   PencilSimple,
   Plus,
   Selection,
   Trash,
   X,
-  Basket,
-  Confetti,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -27,7 +23,7 @@ import { money, plural } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { reducedMotion, SPRING, springEasing } from '../../lib/spring.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
-import { Button, ButtonLink, IconButton } from '../../ui/Button.tsx';
+import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
@@ -49,6 +45,7 @@ import {
   BulkStockSheet,
 } from './BulkSheets.tsx';
 import { useHeld } from './held.ts';
+import { MenuTabs } from './MenuTabs.tsx';
 
 type View = 'grade' | 'lista';
 type Avail = 'available' | 'sold_out_today' | 'sold_out' | 'hidden';
@@ -302,10 +299,6 @@ export default function Menu() {
 
   const all = cats.flatMap((c) => c.products);
   const total = all.length;
-  const restock = all.filter(
-    (p) =>
-      p.status !== 'archived' && p.stockQuantity != null && (p.stockQuantity === 0 || p.lowStock),
-  ).length;
   // what the search and the filter leave; dragging to reorder waits for the whole list
   const needle = fold(q.trim());
   const matches = (p: Product) => !needle || fold(p.name).includes(needle);
@@ -352,6 +345,7 @@ export default function Menu() {
           </>
         }
       />
+      <MenuTabs />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Segmented
@@ -398,33 +392,6 @@ export default function Menu() {
           >
             categorias
           </Button>
-          <ButtonLink
-            to="/cardapio/estoque"
-            variant="ghost"
-            className="max-md:hidden"
-            icon={<Package />}
-            {...preloadRoute('/cardapio/estoque')}
-          >
-            estoque
-          </ButtonLink>
-          <ButtonLink
-            to="/cardapio/festa"
-            variant="ghost"
-            className="max-md:hidden"
-            icon={<Confetti />}
-            {...preloadRoute('/cardapio/festa')}
-          >
-            festa
-          </ButtonLink>
-          <ButtonLink
-            to="/cardapio/planos"
-            variant="ghost"
-            className="max-md:hidden"
-            icon={<Basket />}
-            {...preloadRoute('/cardapio/planos')}
-          >
-            planos
-          </ButtonLink>
         </div>
       </div>
 
@@ -482,27 +449,6 @@ export default function Menu() {
             </div>
           </div>
         </div>
-      ) : null}
-
-      {total && !narrowed ? (
-        <Link
-          to="/cardapio/estoque"
-          {...preloadRoute('/cardapio/estoque')}
-          className="press-row mb-4 flex min-h-16 w-full items-center gap-3 rounded-lg bg-surface px-4 py-3 depth-1 md:hidden"
-        >
-          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
-            <Package className="size-5" aria-hidden />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block font-semibold">Estoque</span>
-            <span className={cn('t-caption block', restock ? 'text-warning' : 'text-muted')}>
-              {restock
-                ? `${restock} ${restock === 1 ? 'produto para repor' : 'produtos para repor'}`
-                : 'Conte e reponha tudo numa tela só'}
-            </span>
-          </span>
-          <CaretRight className="size-5 shrink-0 text-muted" aria-hidden />
-        </Link>
       ) : null}
 
       {cats.length > 1 && !narrowed ? (

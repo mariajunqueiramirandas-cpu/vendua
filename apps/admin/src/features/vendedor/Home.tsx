@@ -614,7 +614,7 @@ function Demand({ data, manager }: { data: Data; manager: boolean }) {
           </dl>
           {manager ? (
             <ButtonLink
-              to="/loja#entrega"
+              to="/loja/entrega"
               variant="ghost"
               size="sm"
               className="-ml-3.5 mt-2 h-12"

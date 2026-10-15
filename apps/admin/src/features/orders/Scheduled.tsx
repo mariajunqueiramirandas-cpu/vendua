@@ -1,4 +1,4 @@
-import { CaretLeft, CaretRight } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, GearSix } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { api } from '../../lib/api.ts';
@@ -9,15 +9,19 @@ import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
+import { LinkList, LinkRow } from '../../ui/LinkRow.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
+import { useCan } from '../../lib/session.ts';
 import { OrderRowView } from './OrderRowView.tsx';
+import { OrdersTabs } from './OrdersTabs.tsx';
 import { useStoreQuery } from '../store/StatusPill.tsx';
 
 const WEEK = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 /** Encomendas as a month calendar: tap a day for its orders (§8 Pedidos). */
 export default function Scheduled() {
+  const manager = useCan('manager');
   // the store's today, not the device's
   const today = isoDate(new Date(), useStoreQuery().data?.hours.timezone);
   // untouched, they follow `today`, which moves once the store's timezone loads
@@ -58,8 +62,12 @@ export default function Scheduled() {
   const monthLabel = monthName.charAt(0).toUpperCase() + monthName.slice(1);
   const list = byDay.get(day) ?? [];
   return (
-    <PageBody>
-      <PageHeader title="Encomendas" subtitle="Pedidos agendados para uma data." back="/pedidos" />
+    <PageBody full>
+      <PageHeader
+        title="Pedidos"
+        subtitle="Encomendas: os pedidos agendados, no dia escolhido pelo cliente."
+      />
+      <OrdersTabs />
       <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
         <Card className="p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -156,6 +164,16 @@ export default function Scheduled() {
           )}
         </section>
       </div>
+      {manager ? (
+        <LinkList label="ajustes das encomendas" className="mt-8 lg:max-w-[calc(50%-10px)]">
+          <LinkRow
+            to="/loja/encomendas"
+            Icon={GearSix}
+            title="Como a loja aceita encomendas"
+            line="Até quando, limite por dia, sinal e lembrete na véspera."
+          />
+        </LinkList>
+      ) : null}
     </PageBody>
   );
 }

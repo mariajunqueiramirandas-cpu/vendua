@@ -274,7 +274,7 @@ describe.skipIf(!OWNER_URL)('Duá Copilot: site sob medida (db)', () => {
       title: 'Montar o site sob medida',
       status: 'proposed',
       money: false,
-      link: '/conta',
+      link: '/loja/site#site',
     });
     expect(card.lines).toEqual(cardLines(SPEC));
     // the dry run left nothing behind

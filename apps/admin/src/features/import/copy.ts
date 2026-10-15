@@ -163,17 +163,17 @@ export function lostLine(l: ImportLost, platform: string | null): string {
     case 'dine_in':
       return 'O consumo no local não vem: aqui é entrega e retirada.';
     case 'online_payment':
-      return `O pagamento online do ${from} não vem. Para cartão online, conecte o Mercado Pago em Pagamentos.`;
+      return `O pagamento online do ${from} não vem. Para cartão online, conecte o Mercado Pago em Loja › Formas de pagamento.`;
     case 'payment_method':
       return `A forma de pagamento ${q(d)} não tem igual aqui e ficou de fora.`;
     case 'payment_adjustment':
       if (d === 'retirada')
-        return 'O desconto para quem retira na loja não vem: aqui o desconto é por forma de pagamento, em Pagamentos.';
-      return `O desconto ou acréscimo para pagar com ${d ?? 'uma forma de pagamento'} não vem igual${d === 'cartão' ? ' (aqui débito e crédito são uma forma só)' : ''}. Configure em Pagamentos.`;
+        return 'O desconto para quem retira na loja não vem: aqui o desconto é por forma de pagamento, em Loja › Formas de pagamento.';
+      return `O desconto ou acréscimo para pagar com ${d ?? 'uma forma de pagamento'} não vem igual${d === 'cartão' ? ' (aqui débito e crédito são uma forma só)' : ''}. Configure em Loja › Formas de pagamento.`;
     case 'pix_unreadable':
-      return 'Não conseguimos ler a chave Pix. Cadastre em Pagamentos.';
+      return 'Não conseguimos ler a chave Pix. Cadastre em Loja › Formas de pagamento.';
     case 'pix_beneficiary_shortened':
-      return `O nome de quem recebe o Pix vai até 25 letras: ${d ? q(d) : 'o nome'} foi encurtado. Confira em Pagamentos.`;
+      return `O nome de quem recebe o Pix vai até 25 letras: ${d ? q(d) : 'o nome'} foi encurtado. Confira em Loja › Formas de pagamento.`;
     case 'pix_city_shortened':
       return 'A cidade do Pix vai até 15 letras e foi encurtada.';
     case 'delivery_fees_unreadable':

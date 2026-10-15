@@ -213,7 +213,7 @@ export function mountHome(d: AdminDeps) {
             count: w.n,
             title: `${w.n} ${w.n === 1 ? 'pessoa quer' : 'pessoas querem'} ${w.name}`,
             detail: 'Avise quando voltar',
-            href: '/marketing',
+            href: '/marketing/lembretes',
             productId: w.id,
           });
         // with WhatsApp linked they hear it on opening; without it only the store can tell them
@@ -488,7 +488,7 @@ async function platformAttention(
         count: 1,
         title: 'A conexão com o Mercado Pago vai expirar',
         detail: 'Reconecte para continuar recebendo Pix e cartão online',
-        href: '/pagamentos',
+        href: '/loja/pagamentos',
       });
     else if (mp === 'disconnected')
       out.push({
@@ -496,7 +496,7 @@ async function platformAttention(
         count: 1,
         title: 'O Mercado Pago foi desconectado',
         detail: 'Pix automático e cartão online ficam desligados até você reconectar',
-        href: '/pagamentos',
+        href: '/loja/pagamentos',
       });
     else if (mp === 'restricted')
       out.push({
@@ -504,7 +504,7 @@ async function platformAttention(
         count: 1,
         title: 'O Mercado Pago restringiu sua conta',
         detail: 'Veja no app do Mercado Pago o que falta resolver',
-        href: '/pagamentos',
+        href: '/loja/pagamentos',
       });
   }
   const missed = missedRows[0]!.n;

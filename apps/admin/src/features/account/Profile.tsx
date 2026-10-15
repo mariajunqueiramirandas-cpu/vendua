@@ -46,11 +46,27 @@ import {
   useSaveState,
 } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { PageTabs } from '../../ui/Tabs.tsx';
+import { TABS } from '../../app/tabs.ts';
 import { toast } from '../../ui/Toast.tsx';
 import { resetClient } from '../../lib/persist.ts';
 import { isIOS, standalone } from '../../lib/pwa.ts';
 
+type View = 'voce' | 'avisos' | 'aparelhos';
+
+// Meu perfil in three views: who you are (and how the panel looks to you), what calls you
+// (sound, push, the WhatsApp fallback, the alerts check) and where you're signed in.
 export default function Profile() {
+  return <ProfileView view="voce" />;
+}
+export function ProfileAlerts() {
+  return <ProfileView view="avisos" />;
+}
+export function ProfileDevices() {
+  return <ProfileView view="aparelhos" />;
+}
+
+function ProfileView({ view }: { view: View }) {
   const s = useSession();
   const qc = useQueryClient();
   const save = useSaveState();
@@ -91,7 +107,11 @@ export default function Profile() {
   };
   const manager = can(s.user.role, 'manager');
   const owner = s.user.role === 'owner';
-  const sessions = useQuery({ queryKey: qk.sessions, queryFn: api.sessions });
+  const sessions = useQuery({
+    queryKey: qk.sessions,
+    queryFn: api.sessions,
+    enabled: view === 'aparelhos',
+  });
   const end = useMutation({
     mutationFn: api.endSession,
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.sessions }),
@@ -106,269 +126,283 @@ export default function Profile() {
           </>
         }
       />
+      <PageTabs tabs={TABS.perfil} label="Meu perfil" />
       <div className="space-y-8">
-        <Section title="Você">
-          <Card className="space-y-5 p-5">
-            <Field label="Nome" htmlFor="me-name">
-              <CommitInput
-                id="me-name"
-                maxLength={80}
-                value={s.user.name}
-                onCommit={(v) => patch({ name: v })}
-              />
-            </Field>
-            <Field
-              label="E-mail"
-              optional
-              htmlFor="me-mail"
-              helper={
-                s.user.pendingEmail
-                  ? `Confirme ${s.user.pendingEmail} pelo link que enviamos para lá.`
-                  : 'Para receber avisos se o WhatsApp falhar.'
-              }
-            >
-              <CommitInput
-                id="me-mail"
-                type="email"
-                maxLength={200}
-                value={s.user.email ?? ''}
-                placeholder="voce@exemplo.com"
-                onCommit={(v) => patch({ email: v || null })}
-              />
-            </Field>
-          </Card>
-        </Section>
-        <Section title="Pedido novo" hint="Como o painel te chama quando chega um pedido.">
-          <Card className="space-y-4 p-5">
-            <Toggle
-              checked={prefs.sound !== false}
-              onChange={(v) => {
-                setSoundOn(v);
-                void setPref({ sound: v });
-              }}
-              label={
-                <span className="inline-flex items-center gap-2">
-                  <SpeakerHigh className="size-5" /> Som
-                </span>
-              }
-              description="Toca de novo a cada 20 segundos até alguém ver o pedido."
-            />
-            <div className="flex flex-wrap items-center gap-3">
-              <label className="flex flex-1 items-center gap-3">
-                <span className="t-label shrink-0">Volume</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={volume}
-                  aria-label="volume do som"
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setVol(v);
-                    setVolume(v);
-                  }}
-                  onPointerUp={() => patch({ prefs: { volume } })}
-                  onKeyUp={() => patch({ prefs: { volume } })}
-                  className="h-11 w-full accent-(--primary)"
-                />
-              </label>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<BellRinging />}
-                onClick={() => chimeNewOrder()}
-              >
-                testar som
-              </Button>
-            </div>
-            <div className="border-t border-line pt-4">
-              <Toggle
-                checked={push === 'on'}
-                disabled={push === 'unsupported' || !s.push.publicKey}
-                onChange={async (v) => {
-                  try {
-                    if (v) {
-                      const r = await enablePush(s.push.publicKey!);
-                      setPush(r);
-                      if (r === 'denied')
-                        toast.error(
-                          'O navegador bloqueou os avisos. Libere nas configurações do site.',
-                        );
-                      else toast('Avisos ligados neste aparelho ✓');
-                    } else {
-                      await disablePush();
-                      setPush('off');
-                    }
-                    void setPref({ push: v });
-                  } catch (e) {
-                    toast.error(messageOf(e));
+        {view === 'voce' ? (
+          <>
+            <Section title="Seus dados">
+              <Card className="space-y-5 p-5">
+                <Field label="Nome" htmlFor="me-name">
+                  <CommitInput
+                    id="me-name"
+                    maxLength={80}
+                    value={s.user.name}
+                    onCommit={(v) => patch({ name: v })}
+                  />
+                </Field>
+                <Field
+                  label="E-mail"
+                  optional
+                  htmlFor="me-mail"
+                  helper={
+                    s.user.pendingEmail
+                      ? `Confirme ${s.user.pendingEmail} pelo link que enviamos para lá.`
+                      : 'Para receber avisos se o WhatsApp falhar.'
                   }
-                }}
-                label={
-                  <span className="inline-flex items-center gap-2">
-                    <DeviceMobile className="size-5" /> Avisos no celular
-                  </span>
-                }
-                description={
-                  !s.push.publicKey
-                    ? 'Os avisos ainda não estão ligados na Venduá. O som funciona com o painel aberto.'
-                    : push === 'unsupported'
-                      ? isIOS() && !standalone()
-                        ? 'No iPhone, os avisos chegam pelo app: toque em Compartilhar › Adicionar à Tela de Início e abra por lá.'
-                        : 'Este navegador não recebe avisos.'
-                      : push === 'denied'
-                        ? 'Bloqueado neste navegador. Libere nas configurações do site.'
-                        : 'Toca e vibra mesmo com o painel fechado. Dá para aceitar direto do aviso.'
-                }
-              />
-            </div>
-          </Card>
-        </Section>
-        <Section title="Outros avisos" hint="O que mais pode te chamar, além do pedido novo.">
-          <Card className="divide-y divide-line px-5 py-1">
-            <Toggle
-              checked={prefs.pushPayments !== false}
-              onChange={(v) => void setPref({ pushPayments: v })}
-              label={
-                <span className="inline-flex items-center gap-2">
-                  <CurrencyCircleDollar className="size-5" /> Pagamento recebido
-                </span>
-              }
-              description="Um aviso no celular quando um pagamento online é aprovado."
-            />
-            {s.vendedor?.enabled ? (
-              <Toggle
-                checked={prefs.pushWaiting !== false}
-                onChange={(v) => void setPref({ pushWaiting: v })}
-                label={
-                  <span className="inline-flex items-center gap-2">
-                    <ChatCircleText className="size-5" /> Cliente esperando por você
-                  </span>
-                }
-                description="Quando o Duá passa uma conversa para você. Se ninguém responder, avisa de novo em 5 e em 15 minutos."
-              />
-            ) : null}
-            {manager ? (
-              <Toggle
-                checked={prefs.whatsappAlerts !== false}
-                onChange={(v) => void setPref({ whatsappAlerts: v })}
-                label={
-                  <span className="inline-flex items-center gap-2">
-                    <WhatsappLogo className="size-5" /> WhatsApp se o aviso falhar
-                  </span>
-                }
-                description={
-                  s.vendedor?.enabled
-                    ? 'Se um pedido novo passar do tempo de aceite, ou um cliente esperar 5 minutos, e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
-                    : 'Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
-                }
+                >
+                  <CommitInput
+                    id="me-mail"
+                    type="email"
+                    maxLength={200}
+                    value={s.user.email ?? ''}
+                    placeholder="voce@exemplo.com"
+                    onCommit={(v) => patch({ email: v || null })}
+                  />
+                </Field>
+              </Card>
+            </Section>
+            <Section title="Aparência do painel" hint="Auto segue o claro ou escuro do celular.">
+              <Card className="p-5">
+                <Segmented
+                  label="tema"
+                  value={theme}
+                  onChange={(t) => {
+                    setThemeState(t);
+                    setTheme(t);
+                    void setPref({ theme: t });
+                  }}
+                  options={[
+                    {
+                      value: 'creme',
+                      label: (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Sun className="size-4" /> Creme
+                        </span>
+                      ),
+                    },
+                    {
+                      value: 'noite',
+                      label: (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Moon className="size-4" /> Noite
+                        </span>
+                      ),
+                    },
+                    {
+                      value: 'system',
+                      label: (
+                        <span className="inline-flex items-center gap-1.5">
+                          <DeviceMobile className="size-4" /> Auto
+                        </span>
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+            </Section>
+            {s.duaWhatsapp ? (
+              <DuaWhatsappSection
+                dua={s.duaWhatsapp}
+                on={prefs.duaWhatsapp === true}
+                myPhone={s.user.phone}
+                onChange={(v) => void setPref({ duaWhatsapp: v })}
               />
             ) : null}
-            {owner ? (
-              <Toggle
-                checked={prefs.emailInvoices !== false}
-                onChange={(v) => void setPref({ emailInvoices: v })}
-                disabled={!s.user.email}
-                label={
-                  <span className="inline-flex items-center gap-2">
-                    <EnvelopeSimple className="size-5" /> Faturas por e-mail
-                  </span>
-                }
-                description={
-                  s.user.email
-                    ? `A fatura do plano chega em ${s.user.email}.`
-                    : 'Cadastre seu e-mail acima para receber as faturas do plano.'
-                }
-              />
-            ) : null}
-          </Card>
-        </Section>
-        <AlertsSection manager={manager} />
-        {s.duaWhatsapp ? (
-          <DuaWhatsappSection
-            dua={s.duaWhatsapp}
-            on={prefs.duaWhatsapp === true}
-            myPhone={s.user.phone}
-            onChange={(v) => void setPref({ duaWhatsapp: v })}
-          />
+          </>
         ) : null}
-        <Section title="Aparência do painel" hint="Auto segue o claro ou escuro do celular.">
-          <Card className="p-5">
-            <Segmented
-              label="tema"
-              value={theme}
-              onChange={(t) => {
-                setThemeState(t);
-                setTheme(t);
-                void setPref({ theme: t });
-              }}
-              options={[
-                {
-                  value: 'creme',
-                  label: (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Sun className="size-4" /> Creme
+        {view === 'avisos' ? (
+          <>
+            <Section title="Pedido novo" hint="Como o painel te chama quando chega um pedido.">
+              <Card className="space-y-4 p-5">
+                <Toggle
+                  checked={prefs.sound !== false}
+                  onChange={(v) => {
+                    setSoundOn(v);
+                    void setPref({ sound: v });
+                  }}
+                  label={
+                    <span className="inline-flex items-center gap-2">
+                      <SpeakerHigh className="size-5" /> Som
                     </span>
-                  ),
-                },
-                {
-                  value: 'noite',
-                  label: (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Moon className="size-4" /> Noite
-                    </span>
-                  ),
-                },
-                {
-                  value: 'system',
-                  label: (
-                    <span className="inline-flex items-center gap-1.5">
-                      <DeviceMobile className="size-4" /> Auto
-                    </span>
-                  ),
-                },
-              ]}
-            />
-          </Card>
-        </Section>
-        <Section title="Aparelhos conectados">
-          <DuaNote pose="seguranca" className="mb-3">
-            Só entra quem tem o código no WhatsApp. Não reconhece um aparelho? Toque em sair nele.
-          </DuaNote>
-          <Card className="divide-y divide-line">
-            {sessions.isPending ? <Skeleton className="h-16 rounded-none" delay={0} /> : null}
-            {(sessions.data?.sessions ?? []).map((x) => (
-              <div key={x.id} className="flex min-h-16 items-center gap-3 px-4 py-2">
-                <DeviceMobile className="size-6 shrink-0 text-muted" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold">{deviceName(x.device)}</p>
-                  <p className="t-caption text-muted">
-                    {x.current ? 'este aparelho' : `usado ${ago(x.lastSeenAt)}`}
-                  </p>
-                </div>
-                {!x.current ? (
-                  <Button size="sm" variant="ghost" onClick={() => end.mutate(x.id)}>
-                    sair
+                  }
+                  description="Toca de novo a cada 20 segundos até alguém ver o pedido."
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex flex-1 items-center gap-3">
+                    <span className="t-label shrink-0">Volume</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={volume}
+                      aria-label="volume do som"
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setVol(v);
+                        setVolume(v);
+                      }}
+                      onPointerUp={() => patch({ prefs: { volume } })}
+                      onKeyUp={() => patch({ prefs: { volume } })}
+                      className="h-11 w-full accent-(--primary)"
+                    />
+                  </label>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<BellRinging />}
+                    onClick={() => chimeNewOrder()}
+                  >
+                    testar som
                   </Button>
+                </div>
+                <div className="border-t border-line pt-4">
+                  <Toggle
+                    checked={push === 'on'}
+                    disabled={push === 'unsupported' || !s.push.publicKey}
+                    onChange={async (v) => {
+                      try {
+                        if (v) {
+                          const r = await enablePush(s.push.publicKey!);
+                          setPush(r);
+                          if (r === 'denied')
+                            toast.error(
+                              'O navegador bloqueou os avisos. Libere nas configurações do site.',
+                            );
+                          else toast('Avisos ligados neste aparelho ✓');
+                        } else {
+                          await disablePush();
+                          setPush('off');
+                        }
+                        void setPref({ push: v });
+                      } catch (e) {
+                        toast.error(messageOf(e));
+                      }
+                    }}
+                    label={
+                      <span className="inline-flex items-center gap-2">
+                        <DeviceMobile className="size-5" /> Avisos no celular
+                      </span>
+                    }
+                    description={
+                      !s.push.publicKey
+                        ? 'Os avisos ainda não estão ligados na Venduá. O som funciona com o painel aberto.'
+                        : push === 'unsupported'
+                          ? isIOS() && !standalone()
+                            ? 'No iPhone, os avisos chegam pelo app: toque em Compartilhar › Adicionar à Tela de Início e abra por lá.'
+                            : 'Este navegador não recebe avisos.'
+                          : push === 'denied'
+                            ? 'Bloqueado neste navegador. Libere nas configurações do site.'
+                            : 'Toca e vibra mesmo com o painel fechado. Dá para aceitar direto do aviso.'
+                    }
+                  />
+                </div>
+              </Card>
+            </Section>
+            <Section title="Outros avisos" hint="O que mais pode te chamar, além do pedido novo.">
+              <Card className="divide-y divide-line px-5 py-1">
+                <Toggle
+                  checked={prefs.pushPayments !== false}
+                  onChange={(v) => void setPref({ pushPayments: v })}
+                  label={
+                    <span className="inline-flex items-center gap-2">
+                      <CurrencyCircleDollar className="size-5" /> Pagamento recebido
+                    </span>
+                  }
+                  description="Um aviso no celular quando um pagamento online é aprovado."
+                />
+                {s.vendedor?.enabled ? (
+                  <Toggle
+                    checked={prefs.pushWaiting !== false}
+                    onChange={(v) => void setPref({ pushWaiting: v })}
+                    label={
+                      <span className="inline-flex items-center gap-2">
+                        <ChatCircleText className="size-5" /> Cliente esperando por você
+                      </span>
+                    }
+                    description="Quando o Duá passa uma conversa para você. Se ninguém responder, avisa de novo em 5 e em 15 minutos."
+                  />
                 ) : null}
-              </div>
-            ))}
-          </Card>
-          <Button
-            variant="ghost"
-            className="mt-3 text-danger"
-            icon={<SignOut />}
-            onClick={async () => {
-              await disablePush().catch(() => undefined);
-              await api.auth.logout().catch(() => undefined);
-              await resetClient(qc);
-              window.location.assign('/admin/entrar');
-            }}
-          >
-            sair deste aparelho
-          </Button>
-        </Section>
+                {manager ? (
+                  <Toggle
+                    checked={prefs.whatsappAlerts !== false}
+                    onChange={(v) => void setPref({ whatsappAlerts: v })}
+                    label={
+                      <span className="inline-flex items-center gap-2">
+                        <WhatsappLogo className="size-5" /> WhatsApp se o aviso falhar
+                      </span>
+                    }
+                    description={
+                      s.vendedor?.enabled
+                        ? 'Se um pedido novo passar do tempo de aceite, ou um cliente esperar 5 minutos, e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
+                        : 'Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp.'
+                    }
+                  />
+                ) : null}
+                {owner ? (
+                  <Toggle
+                    checked={prefs.emailInvoices !== false}
+                    onChange={(v) => void setPref({ emailInvoices: v })}
+                    disabled={!s.user.email}
+                    label={
+                      <span className="inline-flex items-center gap-2">
+                        <EnvelopeSimple className="size-5" /> Faturas por e-mail
+                      </span>
+                    }
+                    description={
+                      s.user.email
+                        ? `A fatura do plano chega em ${s.user.email}.`
+                        : 'Cadastre seu e-mail em Você para receber as faturas do plano.'
+                    }
+                  />
+                ) : null}
+              </Card>
+            </Section>
+            <AlertsSection manager={manager} />
+          </>
+        ) : null}
+        {view === 'aparelhos' ? (
+          <>
+            <Section title="Aparelhos conectados">
+              <DuaNote pose="seguranca" className="mb-3">
+                Só entra quem tem o código no WhatsApp. Não reconhece um aparelho? Toque em sair
+                nele.
+              </DuaNote>
+              <Card className="divide-y divide-line">
+                {sessions.isPending ? <Skeleton className="h-16 rounded-none" delay={0} /> : null}
+                {(sessions.data?.sessions ?? []).map((x) => (
+                  <div key={x.id} className="flex min-h-16 items-center gap-3 px-4 py-2">
+                    <DeviceMobile className="size-6 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{deviceName(x.device)}</p>
+                      <p className="t-caption text-muted">
+                        {x.current ? 'este aparelho' : `usado ${ago(x.lastSeenAt)}`}
+                      </p>
+                    </div>
+                    {!x.current ? (
+                      <Button size="sm" variant="ghost" onClick={() => end.mutate(x.id)}>
+                        sair
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
+              </Card>
+              <Button
+                variant="ghost"
+                className="mt-3 text-danger"
+                icon={<SignOut />}
+                onClick={async () => {
+                  await disablePush().catch(() => undefined);
+                  await api.auth.logout().catch(() => undefined);
+                  await resetClient(qc);
+                  window.location.assign('/admin/entrar');
+                }}
+              >
+                sair deste aparelho
+              </Button>
+            </Section>
+          </>
+        ) : null}
       </div>
     </PageBody>
   );
@@ -516,11 +550,6 @@ function AlertsSection({ manager }: { manager: boolean }) {
     (a, b) => Number(b.userId === me) - Number(a.userId === me),
   );
   const recent = (data?.recent ?? []).slice(0, 8);
-  useEffect(() => {
-    // "ver avisos" from a toast or the help sheet lands here
-    if (location.hash === '#avisos')
-      document.getElementById('avisos')?.scrollIntoView({ block: 'start' });
-  }, []);
   return (
     <Section
       id="avisos"

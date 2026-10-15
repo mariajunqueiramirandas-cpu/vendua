@@ -14,6 +14,7 @@ import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionNav } from '../../ui/SectionNav.tsx';
 import { ReportsSkeleton } from '../../ui/skeletons.tsx';
 import { DEFAULT_PERIOD, isPeriod, PERIODS, reportsQuery } from './range.ts';
 
@@ -144,8 +145,19 @@ export default function Reports() {
       ) : (
         <div className={cn('space-y-8 transition-opacity', isFetching && 'opacity-70')}>
           <KpiRow d={data} />
+          <SectionNav
+            items={[
+              { id: 'r-vendas', label: 'Vendas' },
+              { id: 'r-funil', label: 'Funil' },
+              { id: 'r-produtos', label: 'Mais vendidos' },
+              { id: 'r-horarios', label: 'Horários de pico' },
+              { id: 'r-entrega', label: 'Entrega' },
+              { id: 'r-pagamentos', label: 'Pagamentos' },
+              ...(data.coupons.length ? [{ id: 'r-cupons', label: 'Cupons' }] : []),
+            ]}
+          />
           <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
-            <Card className="p-5">
+            <Card as="section" id="r-vendas" aria-label="vendas por dia" className="p-5">
               <ColumnChart
                 title="Vendas por dia"
                 summary={`${money(data.current.revenueCents)} em ${num(data.current.orders)} pedidos. Melhor dia: ${best(data)}.`}
@@ -159,7 +171,7 @@ export default function Reports() {
                 }))}
               />
             </Card>
-            <Card className="p-5">
+            <Card as="section" id="r-funil" aria-label="do olhar ao pedido" className="p-5">
               <Funnel
                 title="Do olhar ao pedido"
                 summary={funnelSummary(data)}
@@ -172,7 +184,7 @@ export default function Reports() {
                 ]}
               />
             </Card>
-            <Card className="p-5">
+            <Card as="section" id="r-produtos" aria-label="mais vendidos" className="p-5">
               <RankBars
                 title="Mais vendidos"
                 summary={
@@ -191,7 +203,7 @@ export default function Reports() {
                 }))}
               />
             </Card>
-            <Card className="p-5">
+            <Card as="section" id="r-horarios" aria-label="horários de pico" className="p-5">
               <Heatmap
                 title="Horários de pico"
                 summary={peak(data)}
@@ -199,7 +211,7 @@ export default function Reports() {
                 cells={data.hours.map((h) => ({ dow: h.dow, hour: h.hour, value: h.orders }))}
               />
             </Card>
-            <Card className="p-5">
+            <Card as="section" id="r-entrega" aria-label="entrega por área" className="p-5">
               <RankBars
                 title="Entrega por área"
                 summary={zonesSummary(data)}
@@ -235,7 +247,7 @@ export default function Reports() {
                   Gente que quis entrega nesses lugares e não achou uma área sua.
                 </p>
                 <ButtonLink
-                  to="/loja#entrega"
+                  to="/loja/entrega"
                   variant="secondary"
                   size="sm"
                   icon={<MapPin />}
@@ -245,7 +257,7 @@ export default function Reports() {
                 </ButtonLink>
               </Card>
             ) : null}
-            <Card className="p-5">
+            <Card as="section" id="r-pagamentos" aria-label="formas de pagamento" className="p-5">
               <RankBars
                 title="Formas de pagamento"
                 summary={
@@ -264,7 +276,7 @@ export default function Reports() {
             </Card>
           </div>
           {data.coupons.length ? (
-            <Section title="Cupons usados">
+            <Section title="Cupons usados" id="r-cupons">
               <Card className="divide-y divide-line">
                 {data.coupons.map((c) => (
                   <div

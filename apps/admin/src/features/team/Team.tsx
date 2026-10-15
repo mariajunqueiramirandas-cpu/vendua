@@ -36,6 +36,8 @@ import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import { Chips, Field, PhoneInput, TextInput, Toggle } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { PageTabs } from '../../ui/Tabs.tsx';
+import { TABS } from '../../app/tabs.ts';
 import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
@@ -63,9 +65,10 @@ export default function Team() {
   const session = useSession();
   const me = session.user.id;
   return (
-    <PageBody wide>
+    <PageBody>
       <PageHeader
         title="Equipe"
+        back="/loja"
         subtitle="Quem ajuda a tocar a loja. Cada pessoa entra com o próprio celular."
         actions={
           owner ? (
@@ -75,52 +78,50 @@ export default function Team() {
           ) : undefined
         }
       />
-      <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-        <div className="space-y-8">
-          <Section title="Pessoas">
-            {error && !data ? (
-              <ErrorState error={error} retry={() => void refetch()} />
-            ) : !data ? (
-              <RowsSkeleton rows={3} />
-            ) : (
-              <Card as="section" aria-label="pessoas da equipe">
-                <ul className="divide-y divide-line">
-                  {data.members.map((m) => (
-                    <MemberRow
-                      key={m.id}
-                      m={m}
-                      me={m.id === me}
-                      owner={owner}
-                      onOpen={() => setEditing(m)}
-                      onResent={setResult}
-                    />
-                  ))}
-                </ul>
-              </Card>
-            )}
-            {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
-              <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
-                Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
-                você escolhe o que ela pode fazer.
-              </DuaNote>
-            ) : null}
-            {owner ? (
-              <Button
-                variant="secondary"
-                block
-                className="mt-3 md:hidden"
-                icon={<Plus />}
-                onClick={() => setAdding(true)}
-              >
-                adicionar pessoa
-              </Button>
-            ) : null}
-          </Section>
-          {owner && session.duaWhatsapp && data ? (
-            <DuaWhatsappManagers on={data.duaWhatsappManagers !== false} />
+      <PageTabs tabs={TABS.equipe} label="Equipe" />
+      <div className="space-y-8">
+        <Section title="Pessoas">
+          {error && !data ? (
+            <ErrorState error={error} retry={() => void refetch()} />
+          ) : !data ? (
+            <RowsSkeleton rows={3} />
+          ) : (
+            <Card as="section" aria-label="pessoas da equipe">
+              <ul className="divide-y divide-line">
+                {data.members.map((m) => (
+                  <MemberRow
+                    key={m.id}
+                    m={m}
+                    me={m.id === me}
+                    owner={owner}
+                    onOpen={() => setEditing(m)}
+                    onResent={setResult}
+                  />
+                ))}
+              </ul>
+            </Card>
+          )}
+          {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
+            <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
+              Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
+              você escolhe o que ela pode fazer.
+            </DuaNote>
           ) : null}
-        </div>
-        <Activity />
+          {owner ? (
+            <Button
+              variant="secondary"
+              block
+              className="mt-3 md:hidden"
+              icon={<Plus />}
+              onClick={() => setAdding(true)}
+            >
+              adicionar pessoa
+            </Button>
+          ) : null}
+        </Section>
+        {owner && session.duaWhatsapp && data ? (
+          <DuaWhatsappManagers on={data.duaWhatsappManagers !== false} />
+        ) : null}
       </div>
       <AddSheet open={adding} onOpenChange={setAdding} />
       <InviteResultSheet result={result} onClose={() => setResult(null)} />
@@ -639,7 +640,7 @@ function linkOf(e: ActivityEntry): string | null {
     case 'store':
       return '/loja';
     case 'zone':
-      return '/loja#entrega';
+      return '/loja/entrega';
     case 'kitchen':
       return '/cozinha';
     case 'printer':
@@ -655,11 +656,12 @@ function linkOf(e: ActivityEntry): string | null {
     case 'loyalty':
       return '/marketing';
     case 'payments':
-      return '/pagamentos';
+      return '/loja/pagamentos';
     case 'account':
     case 'invoice':
-    case 'custom_domain':
       return '/conta';
+    case 'custom_domain':
+      return '/loja/site#dominio';
     case 'thread':
       return id ? `/vendedor/conversas/${id}` : '/vendedor/conversas';
     case 'store_agent':
@@ -671,6 +673,20 @@ function linkOf(e: ActivityEntry): string | null {
     default:
       return null;
   }
+}
+
+export function TeamActivity() {
+  return (
+    <PageBody>
+      <PageHeader
+        title="Equipe"
+        back="/loja"
+        subtitle="Tudo o que a equipe mudou no painel, de quem e quando."
+      />
+      <PageTabs tabs={TABS.equipe} label="Equipe" />
+      <Activity />
+    </PageBody>
+  );
 }
 
 function Activity() {
@@ -693,7 +709,7 @@ function Activity() {
   const rows = list.data?.pages.flatMap((p) => p.entries) ?? [];
   const label = kinds.find((o) => o.value === kind)?.label;
   return (
-    <Section title="Quem mudou o quê" hint="Tudo o que a equipe fez no painel.">
+    <Section title="Quem mudou o quê">
       <div ref={revealChecked} className="scroll-row -mx-4 mb-3 px-4 md:mx-0 md:px-0">
         <Chips
           label="mostrar"

@@ -1,11 +1,4 @@
-import {
-  CalendarBlank,
-  ClockCounterClockwise,
-  CookingPot,
-  ShareNetwork,
-  SunDim,
-  X,
-} from '@phosphor-icons/react';
+import { CookingPot, ShareNetwork, SunDim, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -34,6 +27,7 @@ import {
   SoldOutList,
 } from './OrderDetail.tsx';
 import { holdMove, useHeldStates, withHeld } from './transition.ts';
+import { OrdersTabs } from './OrdersTabs.tsx';
 import { usePreload } from '../../app/routes.ts';
 
 type LaneId = 'novos' | 'preparo' | 'prontos' | 'concluidos';
@@ -178,7 +172,7 @@ export default function Orders() {
           <Button
             variant="secondary"
             icon={<ShareNetwork />}
-            onClick={() => nav('/marketing#compartilhar')}
+            onClick={() => nav('/marketing/divulgar')}
           >
             divulgar a loja
           </Button>
@@ -218,30 +212,9 @@ export default function Orders() {
         >
           <CookingPot className="size-5" /> Cozinha
         </Link>
-        <Link
-          to="/pedidos/agendados"
-          {...preload('/pedidos/agendados')}
-          aria-label="Encomendas"
-          className="press t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
-        >
-          <CalendarBlank className="size-5" /> <span className="hidden sm:inline">Encomendas</span>
-          {data?.scheduledUpcoming ? (
-            <span className="tnum rounded-full bg-info-soft px-2 text-info">
-              {data.scheduledUpcoming}
-            </span>
-          ) : null}
-        </Link>
-        <Link
-          to="/pedidos/historico"
-          {...preload('/pedidos/historico')}
-          aria-label="Histórico"
-          className="press t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
-        >
-          <ClockCounterClockwise className="size-5" />{' '}
-          <span className="hidden sm:inline">Histórico</span>
-        </Link>
         <HelpButton className="-mr-2 md:mr-0" />
       </header>
+      <OrdersTabs />
 
       <Hint id="orders-swipe" className="mb-4 md:hidden">
         Arraste um pedido para a direita para avançar, ou para a esquerda para ver mais opções.

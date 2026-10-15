@@ -44,7 +44,10 @@ export const chunks = {
   stock: once(() => import('../features/menu/Stock.tsx')),
   festa: once(() => import('../features/menu/Festa.tsx')),
   planos: once(() => import('../features/menu/Planos.tsx')),
-  store: once(() => import('../features/store/Store.tsx')),
+  store: once(() => import('../features/store/Hub.tsx')),
+  // Perfil, Horários, Entrega, Tempo de preparo and Encomendas share the store's editor code
+  storePages: once(() => import('../features/store/Store.tsx')),
+  storeSite: once(() => import('../features/store/Site.tsx')),
   payments: once(() => import('../features/payments/Payments.tsx')),
   whatsapp: once(() => import('../features/whatsapp/Whatsapp.tsx')),
   printers: once(() => import('../features/printers/Printers.tsx')),
@@ -114,19 +117,31 @@ export type RouteId =
   | 'planos'
   | 'menu'
   | 'store'
+  | 'storeProfile'
+  | 'storeHours'
+  | 'storeDelivery'
+  | 'storePrep'
+  | 'storeEncomendas'
+  | 'storeSite'
   | 'payments'
+  | 'paymentMethods'
   | 'whatsapp'
   | 'printers'
   | 'customer'
   | 'customers'
   | 'marketing'
+  | 'marketingShare'
+  | 'marketingReminders'
   | 'bagCard'
   | 'statusDoDia'
   | 'appearance'
   | 'reports'
   | 'team'
+  | 'teamActivity'
   | 'account'
   | 'profile'
+  | 'profileAlerts'
+  | 'profileDevices'
   | 'help'
   | 'vendedorHome'
   | 'vendedorTrain'
@@ -157,6 +172,10 @@ const has = (qc: QueryClient, f: PlanFeature) => {
   return !s || featureOpen(s, f);
 };
 const kds = (qc: QueryClient) => has(qc, 'kds');
+const isOwner = (qc: QueryClient) => {
+  const s = qc.getQueryData<Session>(qk.session);
+  return !s || s.user.role === 'owner';
+};
 const pdv = (qc: QueryClient) => has(qc, 'pdv');
 
 const ROUTES: RouteDef[] = [
@@ -291,11 +310,54 @@ const ROUTES: RouteDef[] = [
     id: 'store',
     match: /^\/loja$/,
     chunk: chunks.store,
+    data: (qc) => Promise.all([q(qc, qk.store, api.store), q(qc, qk.payments, api.payments)]),
+  },
+  {
+    id: 'storeProfile',
+    match: /^\/loja\/perfil$/,
+    chunk: chunks.storePages,
     data: (qc) => q(qc, qk.store, api.store),
+  },
+  {
+    id: 'storeHours',
+    match: /^\/loja\/horarios$/,
+    chunk: chunks.storePages,
+    data: (qc) => q(qc, qk.store, api.store),
+  },
+  {
+    id: 'storeDelivery',
+    match: /^\/loja\/entrega$/,
+    chunk: chunks.storePages,
+    data: (qc) => q(qc, qk.store, api.store),
+  },
+  {
+    id: 'storePrep',
+    match: /^\/loja\/preparo$/,
+    chunk: chunks.storePages,
+    data: (qc) => Promise.all([q(qc, qk.store, api.store), q(qc, qk.freio, api.freio)]),
+  },
+  {
+    id: 'storeEncomendas',
+    match: /^\/loja\/encomendas$/,
+    chunk: chunks.storePages,
+    data: (qc) => q(qc, qk.store, api.store),
+  },
+  {
+    // the domain and the site sob medida are the owner's (they come with the plan)
+    id: 'storeSite',
+    match: /^\/loja\/site$/,
+    chunk: chunks.storeSite,
+    data: (qc) => (isOwner(qc) ? q(qc, qk.account, api.account) : q(qc, qk.store, api.store)),
   },
   {
     id: 'payments',
     match: /^\/pagamentos$/,
+    chunk: chunks.payments,
+    data: (qc) => q(qc, qk.payments, api.payments),
+  },
+  {
+    id: 'paymentMethods',
+    match: /^\/loja\/pagamentos$/,
     chunk: chunks.payments,
     data: (qc) => q(qc, qk.payments, api.payments),
   },
@@ -335,6 +397,19 @@ const ROUTES: RouteDef[] = [
     data: (qc) => q(qc, qk.marketing, api.marketing),
   },
   {
+    id: 'marketingShare',
+    match: /^\/marketing\/divulgar$/,
+    chunk: chunks.marketing,
+    data: (qc) => q(qc, qk.share, api.share),
+  },
+  {
+    id: 'marketingReminders',
+    match: /^\/marketing\/lembretes$/,
+    chunk: chunks.marketing,
+    data: (qc) =>
+      Promise.all([q(qc, qk.marketing, api.marketing), q(qc, qk.whatsapp, api.whatsapp)]),
+  },
+  {
     id: 'bagCard',
     match: /^\/marketing\/cartao$/,
     chunk: chunks.bagCard,
@@ -368,6 +443,17 @@ const ROUTES: RouteDef[] = [
     data: (qc) => q(qc, qk.team, api.team),
   },
   {
+    id: 'teamActivity',
+    match: /^\/equipe\/atividade$/,
+    chunk: chunks.team,
+    data: (qc) =>
+      qc.prefetchInfiniteQuery({
+        queryKey: qk.activityOf(''),
+        queryFn: ({ pageParam }) => api.activity(pageParam || undefined, undefined),
+        initialPageParam: 0,
+      }),
+  },
+  {
     id: 'account',
     match: /^\/conta$/,
     chunk: chunks.account,
@@ -377,6 +463,17 @@ const ROUTES: RouteDef[] = [
     id: 'profile',
     match: /^\/perfil$/,
     chunk: chunks.profile,
+  },
+  {
+    id: 'profileAlerts',
+    match: /^\/perfil\/avisos$/,
+    chunk: chunks.profile,
+  },
+  {
+    id: 'profileDevices',
+    match: /^\/perfil\/aparelhos$/,
+    chunk: chunks.profile,
+    data: (qc) => q(qc, qk.sessions, api.sessions),
   },
   {
     id: 'help',
@@ -516,6 +613,7 @@ export function warmUp(paths: string[]) {
     chunks.stock,
     chunks.customer,
     chunks.history,
+    chunks.storePages,
   ];
   let stopped = false;
   const idle = (fn: () => void) =>

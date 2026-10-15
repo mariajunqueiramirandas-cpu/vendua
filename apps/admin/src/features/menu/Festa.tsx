@@ -19,6 +19,7 @@ import {
   Toggle,
 } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { MenuTabs } from './MenuTabs.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -95,88 +96,95 @@ export default function Festa() {
   const { data, error, refetch } = useQuery({ queryKey: qk.party, queryFn: api.party });
   const [edit, setEdit] = useState<{ id: string | null; draft: Draft } | null>(null);
   const profiles = data?.profiles ?? [];
+  const create = () =>
+    setEdit({
+      id: null,
+      draft: { ...STARTER, groups: STARTER.groups.map((g) => ({ ...g, key: newKey() })) },
+    });
   return (
-    <PageBody>
+    <PageBody wide>
       <PageHeader
-        title="Calculadora de festa"
-        subtitle="O cliente diz quantas pessoas vêm e a loja calcula quanto de cada coisa. Vai para a sacola com os seus preços."
-        back="/cardapio"
+        title="Cardápio"
+        subtitle="Calculadora de festa: o cliente diz quantas pessoas vêm e a loja calcula quanto de cada coisa. Vai para a sacola com os seus preços."
         actions={
           manager ? (
-            <Button
-              icon={<Plus />}
-              onClick={() =>
-                setEdit({
-                  id: null,
-                  draft: {
-                    ...STARTER,
-                    groups: STARTER.groups.map((g) => ({ ...g, key: newKey() })),
-                  },
-                })
-              }
-            >
+            <Button icon={<Plus />} onClick={create}>
               nova festa
             </Button>
           ) : null
         }
       />
-      {error && !data ? (
-        <ErrorState error={error} retry={() => void refetch()} />
-      ) : !data ? (
-        <RowsSkeleton rows={2} />
-      ) : profiles.length === 0 ? (
-        <DuaNote pose="avatar-feliz" title="Monte a primeira festa">
-          Comece pelo modelo de aniversário: salgados, docinhos e bolo por pessoa. Você escolhe os
-          produtos e ajusta as quantidades. Na loja, aparece em{' '}
-          {s.store.url.replace('https://', '')}/festa.
-        </DuaNote>
-      ) : (
-        <div className="space-y-3">
-          {profiles.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              disabled={!manager}
-              onClick={() => setEdit({ id: p.id, draft: toDraft(p) })}
-              className="press block w-full rounded-lg bg-surface p-4 text-left ring-1 ring-line hover:bg-hover depth-1 disabled:pointer-events-none"
+      <MenuTabs />
+      <div className="max-w-[880px]">
+        {error && !data ? (
+          <ErrorState error={error} retry={() => void refetch()} />
+        ) : !data ? (
+          <RowsSkeleton rows={2} />
+        ) : profiles.length === 0 ? (
+          <DuaNote pose="avatar-feliz" title="Monte a primeira festa">
+            Comece pelo modelo de aniversário: salgados, docinhos e bolo por pessoa. Você escolhe os
+            produtos e ajusta as quantidades. Na loja, aparece em{' '}
+            {s.store.url.replace('https://', '')}/festa.
+          </DuaNote>
+        ) : (
+          <div className="space-y-3">
+            {profiles.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={!manager}
+                onClick={() => setEdit({ id: p.id, draft: toDraft(p) })}
+                className="press block w-full rounded-lg bg-surface p-4 text-left ring-1 ring-line hover:bg-hover depth-1 disabled:pointer-events-none"
+              >
+                <span className="flex items-center gap-3">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-full bg-sunken">
+                    <Confetti weight="bold" className="size-5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold">
+                      {p.name}
+                      {!p.active ? (
+                        <span className="t-caption ml-2 text-muted">(pausada)</span>
+                      ) : null}
+                    </span>
+                    <span className="t-caption block text-muted">
+                      <UsersThree className="mr-1 inline size-4 align-[-3px]" />
+                      {num(p.minGuests)} a {num(p.maxGuests)} pessoas
+                    </span>
+                  </span>
+                </span>
+                <span className="t-caption mt-3 block text-muted">
+                  {p.groups
+                    .map(
+                      (g) =>
+                        `${g.name}: ${g.perGuest.toLocaleString('pt-BR')} por pessoa, ${g.products.length} ${g.products.length === 1 ? 'opção' : 'opções'}`,
+                    )
+                    .join(' · ')}
+                </span>
+              </button>
+            ))}
+            <a
+              href={`${s.store.url}/festa`}
+              target="_blank"
+              rel="noreferrer"
+              className="t-label inline-flex min-h-11 items-center gap-1.5 px-1 text-muted underline underline-offset-2"
             >
-              <span className="flex items-center gap-3">
-                <span className="grid size-11 shrink-0 place-items-center rounded-full bg-sunken">
-                  <Confetti weight="bold" className="size-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-semibold">
-                    {p.name}
-                    {!p.active ? (
-                      <span className="t-caption ml-2 text-muted">(pausada)</span>
-                    ) : null}
-                  </span>
-                  <span className="t-caption block text-muted">
-                    <UsersThree className="mr-1 inline size-4 align-[-3px]" />
-                    {num(p.minGuests)} a {num(p.maxGuests)} pessoas
-                  </span>
-                </span>
-              </span>
-              <span className="t-caption mt-3 block text-muted">
-                {p.groups
-                  .map(
-                    (g) =>
-                      `${g.name}: ${g.perGuest.toLocaleString('pt-BR')} por pessoa, ${g.products.length} ${g.products.length === 1 ? 'opção' : 'opções'}`,
-                  )
-                  .join(' · ')}
-              </span>
-            </button>
-          ))}
-          <a
-            href={`${s.store.url}/festa`}
-            target="_blank"
-            rel="noreferrer"
-            className="t-label inline-flex min-h-11 items-center gap-1.5 px-1 text-muted underline underline-offset-2"
+              ver na loja <ArrowSquareOut className="size-4" />
+            </a>
+          </div>
+        )}
+        {manager && data ? (
+          <Button
+            variant="secondary"
+            block
+            className="mt-4 md:hidden"
+            icon={<Plus />}
+            onClick={create}
           >
-            ver na loja <ArrowSquareOut className="size-4" />
-          </a>
-        </div>
-      )}
+            nova festa
+          </Button>
+        ) : null}
+      </div>
       <PartySheet edit={edit} onClose={() => setEdit(null)} />
     </PageBody>
   );

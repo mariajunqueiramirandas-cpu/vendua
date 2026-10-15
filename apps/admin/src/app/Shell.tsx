@@ -17,7 +17,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
 import {
@@ -43,7 +43,8 @@ import { barOf, moreOf, navFor, sectionsOf } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
 import { useScrollMemory, useTabNav } from './nativeFeel.ts';
 import { useKeyboard } from '../ui/keyboard.ts';
-import { placeOf } from './nav.ts';
+import { areaOf, movedTo, placeOf } from './nav.ts';
+import { ScrollRail } from './ScrollRail.tsx';
 import { useBack } from './Router.tsx';
 import { PullToRefresh } from './PullToRefresh.tsx';
 
@@ -98,6 +99,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const pending = usePendingWrites();
   const loc = useLocation();
   const nav = useNavigate();
+  // the nav entry lit: a screen of Loja (WhatsApp, Conta…) keeps Loja lit, not nothing
+  const area = areaOf(loc.pathname);
   const liveRegion = useRef<HTMLDivElement>(null);
   // the kitchen screens own the whole display: no rail, bars or pull-to-refresh, their own keys
   // (locked by the plan, the kitchen is an ordinary page: the lock is the upsell)
@@ -206,6 +209,8 @@ export function Shell({ children }: { children: ReactNode }) {
     return onUpdate(announce);
   }, []);
   useEffect(() => setMoreOpen(false), [loc.pathname]);
+  // a section that became a screen of its own: an old link (/loja#entrega) lands there
+  const moved = movedTo(loc.pathname, loc.hash);
 
   const badge = (to: string) =>
     to === '/pedidos' ? placed : to === '/vendedor' && vendedorOn ? waiting : 0;
@@ -261,7 +266,10 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           ) : null}
         </div>
-        <nav aria-label="principal" className="flex-1 overflow-y-auto px-3 py-2 lg:px-4">
+        <nav
+          aria-label="principal"
+          className="scroll-fade-b flex-1 overflow-y-auto px-3 py-2 lg:px-4"
+        >
           {/* the button above is Copiloto's way in on the rail */}
           {sectionsOf(items.filter((n) => !(copilot && n.to === '/copiloto'))).map((g, i) => (
             <section
@@ -278,23 +286,22 @@ export function Shell({ children }: { children: ReactNode }) {
                 </h2>
               ) : null}
               <ul className="space-y-1">
-                {g.items.map((n) => (
-                  <li key={n.to}>
-                    <NavLink
-                      to={n.to}
-                      end={n.to === '/'}
-                      onClick={tab(n.to)}
-                      {...intent(qc, n.to)}
-                      className={({ isActive }) =>
-                        cn(
+                {g.items.map((n) => {
+                  const isActive = area === n.to;
+                  return (
+                    <li key={n.to}>
+                      <Link
+                        to={n.to}
+                        aria-current={isActive ? 'page' : undefined}
+                        onClick={tab(n.to)}
+                        {...intent(qc, n.to)}
+                        className={cn(
                           'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
                           isActive
                             ? 'bg-surface text-ink depth-1'
                             : 'text-muted hover:bg-hover hover:text-ink',
-                        )
-                      }
-                    >
-                      {({ isActive }) => (
+                        )}
+                      >
                         <>
                           <n.Icon
                             weight="duotone"
@@ -317,10 +324,10 @@ export function Shell({ children }: { children: ReactNode }) {
                             <NavLock className="absolute right-2 top-1.5 lg:static lg:ml-auto" />
                           ) : null}
                         </>
-                      )}
-                    </NavLink>
-                  </li>
-                ))}
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ))}
@@ -398,7 +405,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 </Suspense>
               }
             >
-              {children}
+              {moved ? <Navigate to={moved} replace /> : children}
             </Suspense>
           </Boundary>
         </main>
@@ -424,21 +431,20 @@ export function Shell({ children }: { children: ReactNode }) {
         )}
       >
         <ul className="mx-auto flex max-w-lg">
-          {primary.map((n) => (
-            <li key={n.to} className="flex-1">
-              <NavLink
-                to={n.to}
-                end={n.to === '/'}
-                onClick={tab(n.to)}
-                {...intent(qc, n.to)}
-                className={({ isActive }) =>
-                  cn(
+          {primary.map((n) => {
+            const isActive = area === n.to;
+            return (
+              <li key={n.to} className="flex-1">
+                <Link
+                  to={n.to}
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={tab(n.to)}
+                  {...intent(qc, n.to)}
+                  className={cn(
                     'relative flex h-[72px] flex-col items-center justify-center gap-1',
                     isActive ? 'text-ink' : 'text-muted',
-                  )
-                }
-              >
-                {({ isActive }) => (
+                  )}
+                >
                   <>
                     <span
                       className={cn(
@@ -457,10 +463,10 @@ export function Shell({ children }: { children: ReactNode }) {
                       />
                     ) : null}
                   </>
-                )}
-              </NavLink>
-            </li>
-          ))}
+                </Link>
+              </li>
+            );
+          })}
           {more.length ? (
             <li className="flex-1">
               <button
@@ -494,6 +500,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {helpOpen || helpSeen ? <HelpSheet open={helpOpen} onOpenChange={setHelpOpen} /> : null}
       </Suspense>
       {bare ? null : <PullToRefresh />}
+      {bare ? null : <ScrollRail />}
       <Toaster />
       <div ref={liveRegion} aria-live="assertive" className="sr-only" />
     </div>
