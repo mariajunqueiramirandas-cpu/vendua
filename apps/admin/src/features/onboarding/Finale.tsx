@@ -39,8 +39,9 @@ const lineOf = (live: boolean, name: string) =>
     : 'Ela abre para pedidos assim que o pagamento do plano for confirmado.';
 
 /**
- * The finale's top on phones and tablets: the shop window one last time, the store rising out of
- * it lit, with Duá beside it holding the flag. (From 1200 px the window is beside the page.)
+ * The finale's top on phones and tablets: the shop window one last time, as the card the store
+ * has worn the whole way, the finished store rising out of it lit, with Duá beside it holding
+ * the flag. (From 1200 px the window is beside the page.)
  */
 export function FinaleHero({
   name,
@@ -55,19 +56,24 @@ export function FinaleHero({
   accent: string | null;
 }) {
   return (
-    <section className="relative overflow-hidden bg-stage text-on-stage">
+    <section
+      className="relative overflow-hidden rounded-xl text-on-stage depth-2"
+      style={{ background: 'linear-gradient(180deg, var(--stage) 0%, var(--stage-deep) 100%)' }}
+    >
       <span
         aria-hidden
-        className="pointer-events-none absolute -bottom-40 left-1/2 aspect-square w-[34rem] -translate-x-1/2 rounded-full opacity-70"
+        className="pointer-events-none absolute -bottom-40 left-1/2 aspect-square w-[32rem] -translate-x-1/2 rounded-full opacity-70"
         style={{
           background: `radial-gradient(closest-side, color-mix(in srgb, ${glowOf(accent)} 45%, transparent), transparent)`,
         }}
       />
-      <div className="relative mx-auto max-w-2xl px-4 pt-8 md:px-0">
-        <h1 className="t-moment text-[2.5rem] leading-[2.75rem] text-balance">{titleOf(live)}</h1>
+      <div className="relative px-5 pt-6 sm:px-7">
+        <h1 className="t-moment text-balance text-[2.25rem] leading-[2.5rem] sm:text-[2.5rem] sm:leading-[2.75rem]">
+          {titleOf(live)}
+        </h1>
         <p className="t-body-lg mt-2 text-pretty text-on-stage-muted">{lineOf(live, name)}</p>
       </div>
-      <div className="relative mx-auto mt-7 h-[15rem] w-[13.5rem] overflow-hidden">
+      <div className="relative mx-auto mt-6 h-[14rem] w-[13rem] overflow-hidden">
         {live ? <Confetti /> : null}
         {phone}
       </div>
@@ -75,11 +81,15 @@ export function FinaleHero({
       <span
         aria-hidden
         data-dark
-        className="dua-disc absolute bottom-3 left-[max(0.5rem,calc(50%-12rem))] grid size-20 place-items-center depth-2"
+        className="dua-disc absolute bottom-4 left-[max(1rem,calc(50%-11.5rem))] grid size-20 place-items-center depth-2"
       >
         <Mascote pose={live ? 'publicar' : 'loja'} size={80} className="size-[4.5rem]" />
       </span>
-      <div aria-hidden className="relative h-px bg-stage-line" />
+      {/* the shelf */}
+      <div aria-hidden className="relative mx-5 h-px bg-stage-line">
+        <span className="absolute left-1/2 top-0 h-4 w-44 -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-black/40 blur-md" />
+      </div>
+      <div aria-hidden className="h-5" />
     </section>
   );
 }
@@ -126,13 +136,13 @@ export function Finale({
   return (
     <div className="animate-fade-up space-y-6">
       {/* from 1200 px the lit window is beside it: the page's own top stays on paper */}
-      <section className="relative hidden items-center gap-6 pb-2 lg:flex">
+      <section className="relative hidden items-end gap-6 pb-2 lg:flex">
         {live ? <Confetti /> : null}
         <span className="dua-disc grid size-32 shrink-0 place-items-center bg-spark-soft">
           <Mascote pose={live ? 'publicar' : 'loja'} size={128} className="size-[7.5rem]" />
         </span>
-        <div className="min-w-0">
-          <h1 className="t-moment text-[3.25rem] leading-[3.5rem] text-balance">{titleOf(live)}</h1>
+        <div className="min-w-0 pb-2">
+          <h1 className="t-moment text-balance text-[3rem] leading-[3.25rem]">{titleOf(live)}</h1>
           <p className="t-body-lg mt-2 text-pretty text-muted">{lineOf(live, name)}</p>
         </div>
       </section>
@@ -170,11 +180,16 @@ export function Finale({
 
       <Card className="p-5">
         <p className="t-title-2">Conte para todo mundo</p>
-        <div className="mt-4 flex flex-col gap-5 sm:flex-row sm:items-start">
+        <p className="t-body mt-1 text-muted">
+          O link é o endereço da sua loja. O QR code vai bem no balcão e na sacola.
+        </p>
+        <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-start">
           {/* while the plan's Pix QR is on screen, a second QR would get scanned by mistake */}
           {live ? (
             <div className="flex shrink-0 flex-col items-center gap-2 self-center sm:self-start">
-              <Qr value={url} alt={`QR code para ${bare}`} className="size-36 rounded-md" />
+              <span className="rounded-lg bg-surface p-2 ring-1 ring-line">
+                <Qr value={url} alt={`QR code para ${bare}`} className="size-36 rounded-sm" />
+              </span>
               {png ? (
                 <a
                   href={png}
@@ -193,7 +208,9 @@ export function Finale({
               className="press flex w-full items-center gap-2 rounded-md bg-sunken py-2 pl-4 pr-2 text-left"
               aria-label={`copiar o link ${bare}`}
             >
-              <span className="tnum min-w-0 flex-1 truncate font-semibold">{bare}</span>
+              <span className="tnum min-w-0 flex-1 truncate font-display text-[1.0625rem] font-semibold tracking-[-0.01em]">
+                {bare}
+              </span>
               <span className="t-label inline-flex min-h-10 items-center gap-1 rounded-sm bg-surface px-3 depth-1">
                 <Copy className="size-4" /> copiar
               </span>
@@ -202,7 +219,7 @@ export function Finale({
               href={`https://wa.me/?text=${encodeURIComponent(text)}`}
               target="_blank"
               rel="noreferrer"
-              className="t-label press flex min-h-14 items-center justify-center gap-2 rounded-lg bg-spark px-5 text-on-spark"
+              className="t-label press flex min-h-14 items-center justify-center gap-2 rounded-lg bg-whatsapp px-5 text-on-whatsapp depth-1"
             >
               <WhatsappLogo weight="fill" className="size-6" /> Avisar no WhatsApp
             </a>

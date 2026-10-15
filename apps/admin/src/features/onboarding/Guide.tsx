@@ -65,20 +65,20 @@ export function Reaction({
         aria-hidden
         className={cn(
           'dua-disc animate-pop grid shrink-0 place-items-center bg-spark-soft',
-          pose ? 'size-[5.5rem] sm:size-24' : 'size-12',
+          pose ? 'size-[5.5rem] sm:size-24' : 'size-11',
         )}
       >
         <Mascote
           pose={pose ?? 'avatar-feliz'}
           size={pose ? 96 : 48}
-          className={pose ? 'size-[5rem] sm:size-[5.5rem]' : 'size-11'}
+          className={pose ? 'size-[5rem] sm:size-[5.5rem]' : 'size-10'}
         />
       </span>
       <p
         role="status"
         className={cn(
           't-body min-w-0 rounded-lg bg-surface px-4 py-2.5 depth-1',
-          pose ? 'mb-2 rounded-bl-sm' : 'rounded-bl-sm',
+          pose ? 'mb-3 rounded-bl-sm' : 'rounded-bl-sm',
         )}
       >
         {done ? (

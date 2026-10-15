@@ -522,15 +522,22 @@ export function Choice({
       }}
       className={cn(
         // the ring inside the card, so its edges are the column's (like the fields')
-        'flex min-h-24 w-full items-center gap-4 rounded-lg p-4 text-left ring-2 ring-inset transition-[background-color,box-shadow,scale] duration-(--duration-quick) active:scale-[0.99]',
-        on ? 'bg-spark-soft ring-primary' : 'bg-surface ring-line-strong hover:bg-hover',
+        'flex min-h-24 w-full items-center gap-4 rounded-lg p-4 text-left ring-inset transition-[background-color,box-shadow,scale] duration-(--duration-quick) active:scale-[0.99]',
+        on
+          ? 'bg-spark-soft ring-2 ring-primary'
+          : 'bg-surface ring-1 ring-line-strong hover:bg-hover',
       )}
     >
-      <span className="grid size-14 shrink-0 place-items-center rounded-full bg-sunken [&_svg]:size-7">
+      <span
+        className={cn(
+          'grid size-14 shrink-0 place-items-center rounded-full transition-colors duration-(--duration-quick) [&_svg]:size-7',
+          on ? 'bg-spark text-on-spark' : 'bg-sunken text-ink',
+        )}
+      >
         {icon}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="t-title-2 block">{title}</span>
+        <span className="block text-[1.125rem] font-semibold leading-6">{title}</span>
         <span className="t-body block text-muted">{body}</span>
       </span>
       <span
@@ -800,6 +807,18 @@ export function ProductsStep({
             </Field>
           </div>
         </div>
+        {/* the other way in, inside the same card: a list pasted from WhatsApp */}
+        {paste ? null : (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ClipboardText />}
+            className="-mx-3.5 -mb-2 text-muted"
+            onClick={() => setPaste(true)}
+          >
+            tenho a lista no WhatsApp, quero colar
+          </Button>
+        )}
       </Card>
       {paste ? (
         <PasteList
@@ -811,16 +830,7 @@ export function ProductsStep({
           }}
           onCancel={() => setPaste(false)}
         />
-      ) : (
-        <Button
-          variant="ghost"
-          icon={<ClipboardText />}
-          className="-mx-3.5"
-          onClick={() => setPaste(true)}
-        >
-          tenho a lista no WhatsApp, quero colar
-        </Button>
-      )}
+      ) : null}
     </Frame>
   );
 }
