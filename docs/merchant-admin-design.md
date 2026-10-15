@@ -530,12 +530,27 @@ merchant is; any of them is one tap away. From 1200 px the same map is a rail be
 question. Moving on slides the next question in from the right, "voltar" from the left. When a
 part ends, Duá ticks it off ("Parte 1 de 4 pronta") and introduces the next.
 
-**The store builds itself, where they can see it.** Each answer visibly assembles the
-storefront: name → header, logo → avatar, colour → avatar and buttons, phrase and hours → the
-line under the name, products → the grid. On phones and tablets a live card of the store sits
-above every question (a tap opens the whole store in a sheet), and from 1200 px the phone sits
-beside it. The part the open question changes is marked (a lime highlighter on the card, a lime
-halo in the phone), and an answer that changed the store sparks the card's edge.
+**One column, one set of edges.** The header's bar, the question, its answers and its buttons
+share the question column's edges (the header uses the page's grid tracks), and answer cards
+draw their rings inside their edges. The buttons are one row: "voltar" as a square arrow, then the
+main button, with "deixar para depois" at the column's right edge (above the row on phones).
+Below 1200 px that bar holds the bottom of the screen on every question, short or scrolled, so
+the main button never moves between questions.
+
+**The store builds itself, in a shop window.** The screen is two places: the counter (paper),
+where Duá asks one question in big type, and the window (`--stage`, forest; a deep forest-night in
+Noite), where the store stands lit. Each answer visibly assembles the storefront, drawn like the
+real one: name → the sign, logo → the app icon on the cover's edge, colour → the cover (its
+dishes printed on it) and the bag button, phrase and hours → the lines under the name, products →
+the menu, sketched dishes from what the store sells until real ones exist. From 1200 px the window
+is a full-height column beside the questions: the phone on a shelf, lit by a glow in the store's
+own colour, with one line under it saying where the open question's answer lands. On phones and
+tablets it's a forest strip under the header (a tap opens the whole store in a sheet). The part
+the open question changes is marked (a lime highlighter in the strip, a lime halo in the phone),
+and an answer that changed the store makes the window's light swell once. When a part begins,
+Duá shows up in its pose (the brush, the parcel, the coin, the menu); the colour question's
+swatches are the store's cover in each colour. The finale lights the window: on phones the
+finished store rises out of the strip with Duá holding the flag.
 
 **Never a dead button.** "Continuar" waits, quietly, until the answer is there, then lights up;
 a tap before that says what's missing in one line ("Escreva o nome da loja para continuar.")

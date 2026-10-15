@@ -283,7 +283,8 @@ function Paste({
   const ok = url.trim().length >= 4;
   return (
     <form
-      className="animate-fade-up space-y-6"
+      // in the onboarding it's one of the questions: its bar holds the bottom like theirs
+      className={cn('animate-fade-up space-y-6', onSkip && 'flex flex-1 flex-col')}
       onSubmit={(e) => {
         e.preventDefault();
         if (ok && !busy) onSubmit();
@@ -346,6 +347,7 @@ function Paste({
           why="Cole o link da sua loja no outro app. Se não usa outro app, toque em “começar do zero”."
           busy={busy}
           back={onBack}
+          pinned
           aside={
             <Button variant="ghost" onClick={onSkip} className="-mr-3 text-muted">
               começar do zero

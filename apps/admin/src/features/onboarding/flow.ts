@@ -1,5 +1,6 @@
 import { ForkKnife, Motorcycle, Storefront, Wallet, type Icon } from '@phosphor-icons/react';
 import type { Payments, StoreView } from '../../lib/api.ts';
+import type { Pose } from '../../ui/Mascote.tsx';
 
 // The onboarding's map: four parts, one question per screen. Which questions a store gets
 // depends on what's already known (signup asked the name and what it sells), the role (money
@@ -33,11 +34,14 @@ export const CHAPTERS: {
   blurb: string;
   /** what Duá says as the part begins */
   start: string;
+  /** Duá at work on this part, as it begins */
+  pose: Pose;
   Icon: Icon;
   steps: StepId[];
 }[] = [
   {
     id: 'cara',
+    pose: 'personalizar',
     start: 'Primeiro, a cara da loja.',
     label: 'A cara da loja',
     blurb: 'O que você vende, logo, cores e uma frase',
@@ -46,6 +50,7 @@ export const CHAPTERS: {
   },
   {
     id: 'atendimento',
+    pose: 'entrega',
     start: 'Agora, o atendimento.',
     label: 'Atendimento',
     blurb: 'WhatsApp, endereço, horários, retirada e entrega',
@@ -54,6 +59,7 @@ export const CHAPTERS: {
   },
   {
     id: 'pagamentos',
+    pose: 'pagamento',
     start: 'Agora, os pagamentos.',
     label: 'Pagamentos',
     blurb: 'Como o cliente paga e para onde vai o dinheiro',
@@ -62,6 +68,7 @@ export const CHAPTERS: {
   },
   {
     id: 'cardapio',
+    pose: 'catalogo',
     start: 'Por último, o cardápio!',
     label: 'Cardápio',
     blurb: 'Os primeiros produtos, com foto',

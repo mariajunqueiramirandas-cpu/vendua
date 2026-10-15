@@ -25,6 +25,7 @@ export function StepFrame({
   solidBar,
   hidePrimary,
   enter = true,
+  big,
 }: {
   title: ReactNode;
   /** a small line above the title: which part of a longer flow this is */
@@ -49,6 +50,8 @@ export function StepFrame({
   hidePrimary?: boolean;
   /** off when the screen around it already animates the change of step */
   enter?: boolean;
+  /** the question is the whole screen (the onboarding): a larger title */
+  big?: boolean;
 }) {
   const head = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -57,7 +60,8 @@ export function StepFrame({
   }, []);
   return (
     <form
-      className={cn('space-y-6', enter && 'animate-fade-up')}
+      // a big question fills the screen, so its bar can sit at the bottom (ActionBar `pinned`)
+      className={cn('space-y-6', enter && 'animate-fade-up', big && 'flex flex-1 flex-col')}
       noValidate
       onSubmit={(e) => {
         e.preventDefault();
@@ -69,11 +73,22 @@ export function StepFrame({
         <h1
           ref={head}
           tabIndex={-1}
-          className="t-title-1 text-balance outline-none focus-visible:shadow-none md:text-[2rem] md:leading-[2.5rem]"
+          className={cn(
+            't-title-1 text-balance outline-none focus-visible:shadow-none',
+            big
+              ? 'text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]'
+              : 'md:text-[2rem] md:leading-[2.5rem]',
+          )}
         >
           {title}
         </h1>
-        {hint ? <p className="t-body-lg mt-2 text-pretty text-muted">{hint}</p> : null}
+        {hint ? (
+          <p
+            className={cn('t-body-lg text-pretty text-muted', big ? 'mt-3 max-w-[34rem]' : 'mt-2')}
+          >
+            {hint}
+          </p>
+        ) : null}
       </div>
       {children}
       {hidePrimary && !back && !aside ? null : (
@@ -86,6 +101,7 @@ export function StepFrame({
           aside={aside}
           solidBar={solidBar}
           hidePrimary={hidePrimary}
+          pinned={big}
         />
       )}
     </form>
@@ -97,6 +113,11 @@ export function StepFrame({
  * phones, with "voltar" and a way around in a quiet row. A button that isn't ready yet stays
  * tappable and says what's missing (on Enter too), with a little shake; once the answer is
  * there it lights up with a small bounce.
+ *
+ * `pinned` (the onboarding): below 1200 px the bar holds the bottom of the screen on every
+ * question (its form is a flex column, so `mt-auto` takes the slack), its backdrop spans the
+ * screen's width while the buttons keep the column's edges. "Voltar" is a square arrow on the
+ * main button's left.
  */
 export function ActionBar({
   label = 'Continuar',
@@ -107,6 +128,7 @@ export function ActionBar({
   aside,
   solidBar,
   hidePrimary,
+  pinned,
 }: {
   label?: ReactNode;
   disabled?: boolean | undefined;
@@ -116,6 +138,7 @@ export function ActionBar({
   aside?: ReactNode;
   solidBar?: boolean | undefined;
   hidePrimary?: boolean | undefined;
+  pinned?: boolean | undefined;
 }) {
   const bar = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -150,6 +173,79 @@ export function ActionBar({
   }, [told]);
   const waiting = !!disabled && !!why;
   const side = back || aside;
+  const primary = hidePrimary ? null : (
+    <Button
+      ref={button}
+      type="submit"
+      size="lg"
+      // not ready yet: a quiet button that can still say why (a plain disabled one without)
+      variant={waiting ? 'quiet' : 'primary'}
+      loading={!!busy}
+      disabled={!!disabled && !why}
+      aria-disabled={waiting || undefined}
+      className={cn(
+        pinned ? 'flex-1 md:flex-none md:min-w-52' : 'order-1 sm:order-2 sm:min-w-44',
+        waiting && 'text-muted',
+      )}
+    >
+      {label} <ArrowRight />
+    </Button>
+  );
+  const whyLine =
+    told && waiting ? (
+      <p
+        key={told}
+        role="status"
+        className={cn(
+          'animate-fade-up t-body flex items-start gap-2 text-ink',
+          !pinned && 'sm:justify-end',
+        )}
+      >
+        <Info weight="fill" className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
+        <span>{why}</span>
+      </p>
+    ) : null;
+  if (pinned) {
+    return (
+      <div
+        ref={bar}
+        data-kb-reveal
+        className={cn(
+          'sticky bottom-0 z-20 mt-auto space-y-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3',
+          'before:pointer-events-none before:absolute before:inset-y-0 before:left-1/2 before:-z-10 before:w-screen before:-translate-x-1/2 before:border-t before:border-line before:bg-bg/95 before:backdrop-blur-sm',
+          'kb:static kb:pb-2 kb:before:hidden lg:static lg:mt-0 lg:pb-0 lg:pt-2 lg:before:hidden',
+        )}
+      >
+        {whyLine}
+        {/* the way around sits above the main button on phones, so that button keeps the same
+            spot on every question; from 768 px it ends the row, on the column's right edge */}
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
+            {back ? (
+              hidePrimary ? (
+                // alone (a tap answers), "voltar" keeps its word
+                <Button variant="ghost" icon={<ArrowLeft />} onClick={back} className="-ml-3">
+                  voltar
+                </Button>
+              ) : (
+                <Button
+                  variant="quiet"
+                  size="lg"
+                  onClick={back}
+                  aria-label="voltar"
+                  className="w-14 shrink-0 px-0"
+                >
+                  <ArrowLeft />
+                </Button>
+              )
+            ) : null}
+            {primary}
+          </div>
+          {aside ? <div className="order-first flex justify-end md:order-none">{aside}</div> : null}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       ref={bar}
@@ -159,16 +255,7 @@ export function ActionBar({
         !solidBar && 'lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none',
       )}
     >
-      {told && waiting ? (
-        <p
-          key={told}
-          role="status"
-          className="animate-fade-up t-body flex items-start gap-2 text-ink sm:justify-end"
-        >
-          <Info weight="fill" className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
-          <span>{why}</span>
-        </p>
-      ) : null}
+      {whyLine}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
         {/* phones: the way back and the way around share one quiet row under the main
             button; from sm the row sits to its left, so the main button is always last */}
@@ -187,21 +274,7 @@ export function ActionBar({
             {aside}
           </div>
         ) : null}
-        {hidePrimary ? null : (
-          <Button
-            ref={button}
-            type="submit"
-            size="lg"
-            // not ready yet: a quiet button that can still say why (a plain disabled one without)
-            variant={waiting ? 'quiet' : 'primary'}
-            loading={!!busy}
-            disabled={!!disabled && !why}
-            aria-disabled={waiting || undefined}
-            className={cn('order-1 sm:order-2 sm:min-w-44', waiting && 'text-muted')}
-          >
-            {label} <ArrowRight />
-          </Button>
-        )}
+        {primary}
       </div>
     </div>
   );

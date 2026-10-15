@@ -17,11 +17,12 @@ import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { useKeyboard } from '../../ui/keyboard.ts';
+import type { Pose } from '../../ui/Mascote.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { ImportFlow } from '../import/ImportFlow.tsx';
-import { Finale, type Pending } from './Finale.tsx';
+import { Finale, FinaleHero, type Pending } from './Finale.tsx';
 import {
   after,
   ALL_STEPS,
@@ -43,6 +44,7 @@ import { MiniStore, type Draft } from './MiniStore.tsx';
 import { Welcome, type ChapterProgress } from './Overview.tsx';
 import { StepMap, type Mark } from './StepMap.tsx';
 import { StoreCard } from './StoreCard.tsx';
+import { SPOT_LINE, Vitrine } from './Vitrine.tsx';
 import { planState, PlanBanner, PlanPix, usePlan } from './PlanPay.tsx';
 import { markLeft, readStep, saveStep } from './progress.ts';
 import { GENERIC, segmentOf, type SegmentId } from './segments.ts';
@@ -62,10 +64,11 @@ import {
 import { ColorsStep, DeliveryStep, MercadoPagoStep, MethodsStep, PixStep } from './steps-more.tsx';
 
 // The store builds itself (§6.8): one question per screen in four parts, Duá reacting to each
-// answer, and the store assembling as it goes (a live card above the question on phones, the
-// phone beside it from 1200 px). The header's status opens every question (a rail beside the
-// question on a desktop), so any of them is one tap away. Every answer saves on "Continuar";
-// where the merchant stopped lives in Core, so any device picks up from there.
+// answer, and the store assembling as it goes, lit in a shop window (a forest strip above the
+// question on phones, the phone on its shelf beside it from 1200 px). The header's status opens
+// every question (a rail beside the question on a desktop), so any of them is one tap away. Every
+// answer saves on "Continuar"; where the merchant stopped lives in Core, so any device picks up
+// from there.
 
 const draftOf = (s: StoreView, t: StoreTokens | null): Draft => ({
   name: s.profile.name,
@@ -238,8 +241,13 @@ function Flow({
   // each question counts as its own page, so the CRM sees where the setup stalls
   useEffect(() => trackPageview(`/bem-vindo/${step}`), [step]);
   const [solo, setSolo] = useState(first.current.solo);
-  // Duá's line over the next question: praise for the answer, and a part that just finished
-  const [said, setSaid] = useState<{ praise: string | null; done: string | null } | null>(null);
+  // Duá's line over the next question: praise for the answer, a part that just finished, and
+  // the pose of the part that begins
+  const [said, setSaid] = useState<{
+    praise: string | null;
+    done: string | null;
+    pose: Pose | null;
+  } | null>(null);
   // which way the questions slide: forward from the right, back from the left
   const [dir, setDir] = useState<'fwd' | 'back'>('fwd');
   // questions the merchant moved on from this visit (an import declined counts as answered)
@@ -286,7 +294,7 @@ function Flow({
             : `${n} pronta`
           : null;
       const line = [p, entering ? now!.start : null].filter(Boolean).join(' ');
-      setSaid(line ? { praise: line, done: finished } : null);
+      setSaid(line ? { praise: line, done: finished, pose: entering ? now!.pose : null } : null);
       setDir(ahead ? 'fwd' : 'back');
       setStep(to);
       if (p) setSpark((n) => n + 1);
@@ -478,7 +486,7 @@ function Flow({
   const header =
     step === 'pronto' ? (
       <JourneyBar
-        wide
+        align="center-wide"
         phase="abrir"
         progress={hold ? 0.5 : 1}
         status={hold ? 'falta o plano' : 'no ar!'}
@@ -486,13 +494,14 @@ function Flow({
       />
     ) : (
       <JourneyBar
-        wide
+        align={step === 'oi' ? 'center' : 'rail'}
         phase="loja"
         progress={questions.filter(settled).length / questions.length}
         status={step === 'oi' ? 'começando' : where}
         parts={step === 'oi' ? undefined : parts}
         onStatus={step === 'oi' ? undefined : () => setMap(true)}
-        exit={<Exit leave={leave} />}
+        // only beside a question, on a wide screen, does the header leave the way out room for words
+        exit={<Exit leave={leave} worded={step !== 'oi'} />}
       />
     );
 
@@ -537,10 +546,10 @@ function Flow({
         hasProducts={products.length > 0}
         intro={
           <div>
-            <h1 className="t-title-1 text-balance md:text-[2rem] md:leading-[2.5rem]">
+            <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]">
               Já vende em outro app de cardápio?
             </h1>
-            <p className="t-body-lg mt-2 text-muted">
+            <p className="t-body-lg mt-3 max-w-[34rem] text-pretty text-muted">
               Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere tudo
               antes de entrar.
             </p>
@@ -614,7 +623,8 @@ function Flow({
     );
 
   const question = step !== 'oi' && step !== 'pronto';
-  const preview = (
+  const spot = question ? (SPOT[step] ?? null) : null;
+  const preview = (wide?: boolean) => (
     <MiniStore
       draft={draft}
       products={products}
@@ -623,83 +633,116 @@ function Flow({
       specialDays={s.specialDays}
       url={session.store.url.replace(/^https?:\/\//, '')}
       examples={segment.examples}
-      spot={question ? (SPOT[step] ?? null) : null}
+      spot={spot}
+      // as tall as the window allows, never past 300 px wide
+      className={wide ? 'w-[min(300px,calc((100dvh-15rem)*0.47))]' : undefined}
     />
   );
   const stepMap = <StepMap steps={steps} mark={mark} onJump={jump} />;
 
   return (
-    <div className="min-h-dvh overflow-x-clip">
-      {header}
-      {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
-      <div
-        className={cn(
-          'mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-5 md:px-8 md:pt-8',
-          question &&
-            'lg:grid-cols-[15rem_minmax(0,1fr)_21rem] xl:grid-cols-[15.5rem_minmax(0,1fr)_22rem] xl:gap-14',
-          step === 'oi' && 'lg:grid-cols-[minmax(0,1fr)_22rem] lg:pl-24 xl:pl-40',
-        )}
-      >
-        {question ? (
-          <nav
-            aria-label="todas as perguntas"
-            className="hidden lg:sticky lg:top-24 lg:block lg:self-start"
-          >
-            <p className="t-label mb-2 px-2 text-muted">
-              <span className="tnum">
-                {questions.filter(settled).length} de {questions.length}
-              </span>{' '}
-              respondidas
-            </p>
-            <StepMap rail steps={steps} mark={mark} onJump={jump} />
-          </nav>
+    // the counter (the questions) and, from 1200 px, the shop window beside it, full height
+    <div className="min-h-dvh overflow-x-clip lg:grid lg:grid-cols-[minmax(0,1fr)_34vw] xl:grid-cols-[minmax(0,1fr)_38vw]">
+      {/* a column as tall as the screen, so a question's bar can hold the bottom on phones (not
+          while typing: the keyboard covers the bottom) */}
+      <div className="flex min-h-dvh min-w-0 flex-col kb:min-h-0">
+        {header}
+        {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
+        {step === 'pronto' ? (
+          <div className="lg:hidden">
+            <FinaleHero
+              name={draft.name.trim() || s.profile.name}
+              live={!hold}
+              phone={preview()}
+              accent={draft.accent}
+            />
+          </div>
         ) : null}
-
-        <main
+        {question ? (
+          <div className="lg:hidden">
+            <StoreCard
+              draft={draft}
+              products={products.length}
+              whatsapp={!!s.profile.whatsapp}
+              timeZone={s.hours.timezone}
+              specialDays={s.specialDays}
+              spot={spot}
+              spark={spark}
+              onOpen={() => setPeek(true)}
+            />
+          </div>
+        ) : null}
+        <div
           className={cn(
-            'mx-auto w-full max-w-xl space-y-6',
-            step === 'pronto' ? 'max-w-2xl' : 'lg:mx-0',
+            'mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)] gap-10 px-4 pt-6 md:px-8 md:pt-10 lg:pt-14',
+            // a question's bar keeps the screen's bottom edge (ActionBar `pinned`), scrolled or not
+            question
+              ? 'pb-[var(--kb,0px)] lg:pb-[calc(1rem+var(--kb,0px))]'
+              : 'pb-[calc(1rem+var(--kb,0px))]',
+            // the same tracks as the header's (JourneyBar align="rail"), so both line up
+            question &&
+              'lg:grid-cols-[13rem_minmax(0,36rem)] lg:justify-center xl:grid-cols-[14.5rem_minmax(0,36rem)] xl:gap-14',
           )}
         >
           {question ? (
-            <div className="lg:hidden">
-              <StoreCard
-                draft={draft}
-                products={products.length}
-                whatsapp={!!s.profile.whatsapp}
-                timeZone={s.hours.timezone}
-                specialDays={s.specialDays}
-                spot={SPOT[step] ?? null}
-                spark={spark}
-                onOpen={() => setPeek(true)}
-              />
-            </div>
+            <nav
+              aria-label="todas as perguntas"
+              // its rows' text on the track's edge, their highlight in the gutter
+              className="hidden lg:sticky lg:top-28 lg:-mx-2 lg:block lg:self-start"
+            >
+              <p className="t-label mb-2 px-2 text-muted">
+                <span className="tnum">
+                  {questions.filter(settled).length} de {questions.length}
+                </span>{' '}
+                respondidas
+              </p>
+              <StepMap rail steps={steps} mark={mark} onJump={jump} />
+            </nav>
           ) : null}
-          <div
-            key={step}
-            className={cn('space-y-5', dir === 'back' ? 'animate-step-back' : 'animate-step-fwd')}
-          >
-            {question && said ? <Reaction done={said.done}>{said.praise}</Reaction> : null}
-            {body}
-          </div>
-        </main>
 
-        {step !== 'pronto' ? (
-          <aside
-            className="hidden lg:sticky lg:top-24 lg:block lg:self-start"
-            aria-label="prévia da sua loja"
+          <main
+            className={cn(
+              'mx-auto flex w-full flex-col',
+              step === 'pronto' ? 'max-w-2xl' : 'max-w-xl',
+              question && 'lg:mx-0',
+            )}
           >
-            <p className="t-label mb-3 flex items-center justify-center gap-2 text-muted">
-              <span
-                aria-hidden
-                className="animate-pulse-dot size-2 rounded-full bg-[var(--chart)]"
-              />
-              Sua loja, ao vivo
-            </p>
-            {preview}
-          </aside>
-        ) : null}
+            <div
+              key={step}
+              className={cn(
+                'flex flex-1 flex-col space-y-6',
+                dir === 'back' ? 'animate-step-back' : 'animate-step-fwd',
+              )}
+            >
+              {question && said ? (
+                <Reaction done={said.done} pose={said.pose}>
+                  {said.praise}
+                </Reaction>
+              ) : null}
+              {body}
+            </div>
+          </main>
+        </div>
       </div>
+
+      <Vitrine
+        phone={preview(true)}
+        accent={draft.accent}
+        spark={spark}
+        title={
+          step === 'pronto' ? (hold ? 'Sua loja, pronta' : 'Sua loja, no ar') : 'Sua loja, ao vivo'
+        }
+        line={
+          step === 'pronto'
+            ? hold
+              ? 'Ela abre para pedidos assim que o plano for confirmado.'
+              : 'Seus clientes já podem pedir por esse link.'
+            : spot
+              ? SPOT_LINE[spot]
+              : 'Cada resposta aparece aqui, na hora.'
+        }
+      />
+
       {question ? (
         <>
           <Sheet
@@ -708,7 +751,7 @@ function Flow({
             title="Sua loja, ao vivo"
             description="Cada resposta entra aqui na hora. O que está marcado é o que essa pergunta muda."
           >
-            <div className="mx-auto max-w-[300px] py-2">{preview}</div>
+            <div className="mx-auto max-w-[300px] py-2">{preview()}</div>
           </Sheet>
           <Sheet
             open={map}
@@ -730,16 +773,17 @@ function Flow({
   );
 }
 
-function Exit({ leave, done }: { leave: () => void; done?: boolean }) {
+function Exit({ leave, done, worded }: { leave: () => void; done?: boolean; worded?: boolean }) {
   return (
     <Link
       to="/"
       onClick={done ? undefined : leave}
-      className="t-label inline-flex min-h-11 items-center gap-1 rounded-md px-3 text-muted hover:bg-hover"
+      // -mr-3: the X sits on the column's right edge
+      className="t-label -mr-3 inline-flex min-h-11 items-center gap-1 whitespace-nowrap rounded-md px-3 text-muted hover:bg-hover"
       aria-label={done ? 'ir para o painel' : 'sair e continuar depois'}
     >
-      <X className="size-5" />{' '}
-      <span className="hidden sm:inline">{done ? 'ir ao painel' : 'continuar depois'}</span>
+      <X className="size-5" />
+      {worded ? <span className="hidden min-[1400px]:inline">continuar depois</span> : null}
     </Link>
   );
 }

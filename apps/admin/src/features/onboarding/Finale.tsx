@@ -3,6 +3,7 @@ import {
   ArrowSquareOut,
   Copy,
   DownloadSimple,
+  Gift,
   InstagramLogo,
   WhatsappLogo,
 } from '@phosphor-icons/react';
@@ -15,6 +16,7 @@ import { Confetti } from '../../ui/Celebration.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { Qr, qrPng } from '../../ui/Qr.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { glowOf } from './Vitrine.tsx';
 
 export interface Pending {
   id: string;
@@ -28,6 +30,59 @@ const copy = (text: string, done: string) =>
     () => toast(done),
     () => toast.error('Não deu para copiar. Segure o texto para copiar.'),
   );
+
+/** "Sua loja está no ar!", or "pronta" while the plan's first payment is on its way. */
+const titleOf = (live: boolean) => (live ? 'Sua loja está no ar!' : 'Sua loja está pronta!');
+const lineOf = (live: boolean, name: string) =>
+  live
+    ? `Parabéns, ${name}. Agora é só contar para todo mundo.`
+    : 'Ela abre para pedidos assim que o pagamento do plano for confirmado.';
+
+/**
+ * The finale's top on phones and tablets: the shop window one last time, the store rising out of
+ * it lit, with Duá beside it holding the flag. (From 1200 px the window is beside the page.)
+ */
+export function FinaleHero({
+  name,
+  live,
+  phone,
+  accent,
+}: {
+  name: string;
+  live: boolean;
+  /** the store, as built */
+  phone: ReactNode;
+  accent: string | null;
+}) {
+  return (
+    <section className="relative overflow-hidden bg-stage text-on-stage">
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -bottom-40 left-1/2 aspect-square w-[34rem] -translate-x-1/2 rounded-full opacity-70"
+        style={{
+          background: `radial-gradient(closest-side, color-mix(in srgb, ${glowOf(accent)} 45%, transparent), transparent)`,
+        }}
+      />
+      <div className="relative mx-auto max-w-2xl px-4 pt-8 md:px-0">
+        <h1 className="t-moment text-[2.5rem] leading-[2.75rem] text-balance">{titleOf(live)}</h1>
+        <p className="t-body-lg mt-2 text-pretty text-on-stage-muted">{lineOf(live, name)}</p>
+      </div>
+      <div className="relative mx-auto mt-7 h-[15rem] w-[13.5rem] overflow-hidden">
+        {live ? <Confetti /> : null}
+        {phone}
+      </div>
+      {/* Duá on the shelf beside the store, on a cream disc (on forest, always) */}
+      <span
+        aria-hidden
+        data-dark
+        className="dua-disc absolute bottom-3 left-[max(0.5rem,calc(50%-12rem))] grid size-20 place-items-center depth-2"
+      >
+        <Mascote pose={live ? 'publicar' : 'loja'} size={80} className="size-[4.5rem]" />
+      </span>
+      <div aria-hidden className="relative h-px bg-stage-line" />
+    </section>
+  );
+}
 
 /**
  * The last screen. Live: the address, the QR and the words to tell everyone. Still waiting on the
@@ -70,40 +125,36 @@ export function Finale({
   }, [url]);
   return (
     <div className="animate-fade-up space-y-6">
-      <section className="relative overflow-visible rounded-xl bg-primary p-6 text-on-primary depth-2 md:p-8">
+      {/* from 1200 px the lit window is beside it: the page's own top stays on paper */}
+      <section className="relative hidden items-center gap-6 pb-2 lg:flex">
         {live ? <Confetti /> : null}
-        <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">
-          <span className="dua-disc grid size-20 shrink-0 place-items-center bg-[#f7f4ea] sm:size-28">
-            <Mascote pose={live ? 'publicar' : 'loja'} size={104} className="w-16 sm:w-24" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="t-moment text-[2.25rem] leading-[2.5rem]">
-              {live ? 'Sua loja está no ar!' : 'Sua loja está pronta!'}
-            </h1>
-            <p className="t-body-lg mt-2 opacity-85">
-              {live
-                ? `Parabéns, ${name}. Agora é só contar para todo mundo.`
-                : 'Ela abre para pedidos assim que o pagamento do plano for confirmado.'}
-            </p>
-            {live && trialEndsAt ? (
-              <p className="t-body mt-3 opacity-85">
-                Teste grátis até{' '}
-                <strong className="whitespace-nowrap">
-                  {new Date(trialEndsAt).toLocaleDateString('pt-BR', {
-                    day: 'numeric',
-                    month: 'long',
-                  })}
-                </strong>
-                : nada é cobrado até lá. Depois, é só escolher Pix ou cartão em{' '}
-                <Link to="/conta" className="font-semibold underline underline-offset-2">
-                  Conta
-                </Link>
-                .
-              </p>
-            ) : null}
-          </div>
+        <span className="dua-disc grid size-32 shrink-0 place-items-center bg-spark-soft">
+          <Mascote pose={live ? 'publicar' : 'loja'} size={128} className="size-[7.5rem]" />
+        </span>
+        <div className="min-w-0">
+          <h1 className="t-moment text-[3.25rem] leading-[3.5rem] text-balance">{titleOf(live)}</h1>
+          <p className="t-body-lg mt-2 text-pretty text-muted">{lineOf(live, name)}</p>
         </div>
       </section>
+      {live && trialEndsAt ? (
+        <p className="t-body flex items-start gap-3 rounded-lg bg-spark-soft px-4 py-3 text-ink">
+          <Gift weight="duotone" className="mt-0.5 size-5 shrink-0" aria-hidden />
+          <span>
+            Teste grátis até{' '}
+            <strong className="whitespace-nowrap">
+              {new Date(trialEndsAt).toLocaleDateString('pt-BR', {
+                day: 'numeric',
+                month: 'long',
+              })}
+            </strong>
+            : nada é cobrado até lá. Depois, é só escolher Pix ou cartão em{' '}
+            <Link to="/conta" className="font-semibold underline underline-offset-2">
+              Conta
+            </Link>
+            .
+          </span>
+        </p>
+      ) : null}
 
       {live ? null : (
         <Card className="space-y-4 p-5">
@@ -176,7 +227,7 @@ export function Finale({
       </Card>
 
       {pending.length ? (
-        <Card className="p-4">
+        <Card className="p-5">
           <p className="t-title-2">Ficou para depois</p>
           <p className="t-body mt-1 text-muted">Sem pressa. Quando der, é só tocar.</p>
           <ul className="mt-3">
@@ -184,7 +235,7 @@ export function Finale({
               <li key={p.id}>
                 <Link
                   to={p.to}
-                  className="press-row flex min-h-12 items-center justify-between gap-3 rounded-md px-2 hover:bg-hover"
+                  className="press-row -mx-2 flex min-h-12 items-center justify-between gap-3 rounded-md px-2 hover:bg-hover"
                 >
                   {p.label} <ArrowRight className="size-4 text-faint" />
                 </Link>

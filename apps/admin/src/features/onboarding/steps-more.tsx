@@ -1,5 +1,6 @@
 import {
   ArrowSquareOut,
+  Check,
   CreditCard,
   Crosshair,
   ForkKnife,
@@ -24,6 +25,7 @@ import { Chips, Field, MoneyField, TextInput, Toggle } from '../../ui/fields.tsx
 import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { logoColors, PRESETS, readable } from '../appearance/Colors.tsx';
+import { DishPrint } from './dishes.tsx';
 import { Choice, deliveryReady, Frame, type StepProps } from './steps.tsx';
 
 const ZoneMap = lazy(() => import('../../ui/ZoneMap.tsx').then((m) => ({ default: m.ZoneMap })));
@@ -80,10 +82,12 @@ export function ColorsStep({
       onSkip={picked || tokens ? undefined : skip}
       onSubmit={() => (picked ? save.mutate(picked) : next())}
     >
-      <div role="radiogroup" aria-label="cores" className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+      {/* each swatch is the store's cover in that colour, as the customer will see it */}
+      <div role="radiogroup" aria-label="cores" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {swatches.map(([c, name], i) => {
           const accent = readableAccent(c);
           const on = current === accent;
+          const t = paletteFrom(c, base);
           return (
             <button
               key={c + i}
@@ -92,21 +96,34 @@ export function ColorsStep({
               aria-checked={on}
               aria-label={`cor ${name}`}
               onClick={() => {
-                const t = paletteFrom(c, base);
                 if (!readable(t)) return toast.error('Essa cor fica difícil de ler. Tente outra.');
                 setPicked(t);
                 patch({ accent: t.color.accent, onAccent: t.color.onAccent });
               }}
+              // the ring is drawn over the cover, inside the tile's edges
               className={cn(
-                'press flex min-h-20 flex-col items-center justify-center gap-2 rounded-lg bg-surface p-3 transition-[box-shadow]',
-                on ? 'ring-2 ring-primary' : 'ring-1 ring-line-strong hover:bg-hover',
+                'press relative overflow-hidden rounded-lg bg-surface text-left after:pointer-events-none after:absolute after:inset-0 after:rounded-lg after:ring-inset',
+                on ? 'after:ring-2 after:ring-primary' : 'after:ring-1 after:ring-line-strong',
               )}
             >
               <span
-                className="size-10 rounded-full ring-2 ring-surface depth-1"
-                style={{ background: accent }}
-              />
-              <span className="t-caption font-semibold">{name}</span>
+                aria-hidden
+                className="relative block h-16 overflow-hidden"
+                style={{
+                  background: accent,
+                  color: `color-mix(in srgb, ${t.color.onAccent} 22%, transparent)`,
+                }}
+              >
+                <DishPrint scale={0.32} />
+              </span>
+              <span className="flex min-h-10 items-center justify-between gap-2 px-3 py-2">
+                <span className="t-label">{name}</span>
+                {on ? (
+                  <span className="grid size-5 place-items-center rounded-full bg-primary text-on-primary">
+                    <Check weight="bold" className="size-3" aria-hidden />
+                  </span>
+                ) : null}
+              </span>
             </button>
           );
         })}

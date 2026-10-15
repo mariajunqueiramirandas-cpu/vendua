@@ -35,8 +35,8 @@ export function SegmentPicker({
             className={cn(
               'press flex min-h-16 items-center gap-2.5 rounded-lg py-2.5 pl-2.5 pr-3 text-left transition-[background-color,box-shadow] duration-(--duration-quick) disabled:opacity-60 sm:min-h-24 sm:flex-col sm:items-start sm:justify-between sm:p-4',
               on
-                ? 'bg-spark-soft ring-2 ring-primary'
-                : 'bg-surface ring-1 ring-line-strong hover:bg-hover',
+                ? 'bg-spark-soft ring-2 ring-inset ring-primary'
+                : 'bg-surface ring-1 ring-inset ring-line-strong hover:bg-hover',
             )}
           >
             <span
