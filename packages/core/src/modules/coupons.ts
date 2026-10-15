@@ -97,17 +97,33 @@ export function evaluateCoupon(
     if (c.first_order_only && (!ctx.phone || (ctx.usage.priorOrders ?? 0) > 0))
       return fail('COUPON_FIRST_ORDER_ONLY');
   }
-  let discount = 0;
-  if (c.kind === 'percent') discount = Math.floor((ctx.subtotalCents * c.value) / 100);
-  else if (c.kind === 'fixed') discount = c.value;
-  else discount = ctx.deliveryFeeCents;
+  return {
+    ok: true,
+    code: c.code,
+    discountCents: couponDiscountCents(c, ctx.subtotalCents, ctx.deliveryFeeCents),
+  };
+}
+
+/**
+ * The cents a coupon takes off, once it applies — the one formula for checkout and for whatever
+ * budgets a coupon ahead of it (the Vendedor's incentives). A percent rounds down; every kind
+ * stays under its cap and never goes below zero: fixed/percent come off the items, free delivery
+ * off the fee.
+ */
+export function couponDiscountCents(
+  c: Pick<CouponRow, 'kind' | 'value' | 'max_discount_cents'>,
+  subtotalCents: number,
+  deliveryFeeCents: number,
+): number {
+  let discount =
+    c.kind === 'percent'
+      ? Math.floor((subtotalCents * c.value) / 100)
+      : c.kind === 'fixed'
+        ? c.value
+        : deliveryFeeCents;
   if (c.max_discount_cents != null) discount = Math.min(discount, c.max_discount_cents);
-  // never below zero: fixed/percent come off the items, free delivery off the fee
-  discount = Math.min(
-    discount,
-    c.kind === 'free_delivery' ? ctx.deliveryFeeCents : ctx.subtotalCents,
-  );
-  return { ok: true, code: c.code, discountCents: Math.max(0, discount) };
+  discount = Math.min(discount, c.kind === 'free_delivery' ? deliveryFeeCents : subtotalCents);
+  return Math.max(0, discount);
 }
 
 export async function loadCoupon(

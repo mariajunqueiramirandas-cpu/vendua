@@ -57,6 +57,17 @@ const STOPWORDS = new Set([
   'coisas',
   'opcao',
   'opcoes',
+  // asking words: 'mais' would fold to 'mal' and prefix-match "malagueta"
+  'mais',
+  'menos',
+  'muito',
+  'muita',
+  'gostaria',
+  'queria',
+  'vende',
+  'vendem',
+  'hoje',
+  'tambem',
 ]);
 
 /** lowercase, accents off, anything but letters and digits a space */
@@ -88,27 +99,19 @@ export function searchTokens(s: string): string[] {
     .map(singular);
 }
 
-/** ≤ 1 edit between two words (a typo), for words long enough that it isn't another word */
-function nearly(a: string, b: string): boolean {
+/** One typo between two words — a letter missing, extra or wrong, or two neighbours swapped
+ *  ("brigadiero") — for words long enough that it isn't another word. */
+export function nearly(a: string, b: string): boolean {
   if (Math.abs(a.length - b.length) > 1) return false;
   let i = 0;
-  let j = 0;
-  let edits = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      i++;
-      j++;
-      continue;
-    }
-    if (++edits > 1) return false;
-    if (a.length > b.length) i++;
-    else if (b.length > a.length) j++;
-    else {
-      i++;
-      j++;
-    }
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length !== b.length) {
+    const [long, short] = a.length > b.length ? [a, b] : [b, a];
+    return long.slice(i + 1) === short.slice(i);
   }
-  return edits + (a.length - i) + (b.length - j) <= 1;
+  if (i === a.length) return true;
+  if (a.slice(i + 1) === b.slice(i + 1)) return true;
+  return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
 }
 
 /** how well one query word meets one field's words: 1 exact, 0.8 a prefix, 0.6 a typo */

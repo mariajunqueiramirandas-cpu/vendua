@@ -17,6 +17,7 @@ import { createSacolaLinkTx, createShare, readShare } from '../src/modules/cart-
 import { getProductById } from '../src/modules/catalog.ts';
 import {
   foldText,
+  nearly,
   scoreProduct,
   searchCatalog,
   searchTokens,
@@ -41,6 +42,29 @@ describe('catalog search scoring', () => {
     expect(singular('doces')).toBe('doce');
     expect(singular('gas')).toBe('gas');
     expect(searchTokens('Tem PUDINS de limões?')).toEqual(['pudim', 'limao']);
+  });
+
+  test('one typo: a letter missing, extra, wrong, or two neighbours swapped', () => {
+    for (const [a, b] of [
+      ['brigadeiro', 'brigadeiro'],
+      ['brigadeiro', 'brigadero'],
+      ['brigadero', 'brigadeiro'],
+      ['brigadeiro', 'brigadeiros'],
+      ['brigadeiro', 'brigadeira'],
+      ['brigadeiro', 'brigadiero'],
+      ['coxinha', 'ocxinha'],
+      ['coxinha', 'coxinah'],
+    ])
+      expect(nearly(a!, b!)).toBe(true);
+    for (const [a, b] of [
+      ['brigadeiro', 'brgadeira'],
+      ['brigadeiro', 'brigadeiroos'],
+      ['coxinha', 'cxoinah'],
+      ['coxinha', 'xocinha'],
+      ['coxinha', 'coxin'],
+      ['pudim', 'pudixy'],
+    ])
+      expect(nearly(a!, b!)).toBe(false);
   });
 
   test('exact name > prefix > token overlap; field weights; typos; vocabulary', () => {
@@ -68,6 +92,11 @@ describe('catalog search scoring', () => {
       matched: 'category',
     });
     expect(scoreProduct(q('brigadero'), { name: 'Brigadeiro' })!.score).toBe(24);
+    // two letters swapped is one typo too
+    expect(scoreProduct(q('brigadiero'), { name: 'Brigadeiro' })!.score).toBe(24);
+    // an asking word isn't a product word: 'mais' would fold to 'mal' and meet "malagueta"
+    expect(searchTokens('tem mais brigadeiro?')).toEqual(['brigadeiro']);
+    expect(scoreProduct(q('mais pimenta'), { name: 'Molho malagueta' })).toBeNull();
     expect(scoreProduct(q('sorvete'), { name: 'Brigadeiro' })).toBeNull();
     expect(scoreProduct(q('doces'), { name: 'Brigadeiro' }, new Set(['doce']))).toEqual({
       score: 5,

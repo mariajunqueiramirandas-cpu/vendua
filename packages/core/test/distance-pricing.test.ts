@@ -162,6 +162,39 @@ describe('providers', () => {
     expect(await routeQuoter(null)(STORE, NEAR)).toBeNull();
   });
 
+  test('routeQuoter: asks for one leg at once share one call; a failure is not cached', async () => {
+    let calls = 0;
+    let fail = true;
+    let release = () => {};
+    const quote = routeQuoter(async () => {
+      calls++;
+      await new Promise<void>((r) => (release = r));
+      if (fail) throw new Error('down');
+      return { meters: 1234, seconds: 120 };
+    });
+    const burst = [quote(STORE, NEAR), quote(STORE, NEAR), quote(STORE, NEAR)];
+    await Bun.sleep(1);
+    release();
+    expect(await Promise.all(burst)).toEqual([null, null, null]);
+    expect(calls).toBe(1);
+    // paused after the failure: nothing goes out, and nothing was cached for the pin
+    expect(await quote(STORE, NEAR)).toBeNull();
+    expect(calls).toBe(1);
+    const fresh = routeQuoter(async () => {
+      calls++;
+      await new Promise<void>((r) => (release = r));
+      return { meters: 1234, seconds: 120 };
+    });
+    fail = false;
+    const two = [fresh(STORE, NEAR), fresh(STORE, NEAR)];
+    await Bun.sleep(1);
+    release();
+    expect(await Promise.all(two)).toEqual([leg(NEAR, 1234, 120), leg(NEAR, 1234, 120)]);
+    expect(calls).toBe(2);
+    expect(await fresh(STORE, NEAR)).toEqual(leg(NEAR, 1234, 120));
+    expect(calls).toBe(2);
+  });
+
   test('orsRouter: no key = no router; reads the summary; 404 = unroutable', async () => {
     expect(orsRouter({})).toBeNull();
     const sent: { url: string; init?: RequestInit }[] = [];

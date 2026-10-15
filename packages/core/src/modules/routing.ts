@@ -60,9 +60,11 @@ const CACHE_TTL_MS = 30 * 86_400_000;
 const COOLDOWN_MS = 60_000;
 
 /** Never throws: a cached leg, a fresh one, or null (no provider, unroutable, provider down).
- *  A failure pauses calls for a minute — a free quota that ran out is not hammered. */
+ *  A failure pauses calls for a minute — a free quota that ran out is not hammered — and asks
+ *  for a leg already on its way (a quote and a checkout racing, two tabs) wait on that one call. */
 export function routeQuoter(router: Router | null) {
   const cache = new Map<string, { at: number; value: RouteLeg | null }>();
+  const inflight = new Map<string, Promise<RouteLeg | null>>();
   let pausedUntil = 0;
   return async (from: Coords, to: Coords): Promise<RouteQuote | null> => {
     if (!router) return null;
@@ -80,17 +82,27 @@ export function routeQuoter(router: Router | null) {
       cache.set(key, hit);
       return quote(hit.value);
     }
-    if (Date.now() < pausedUntil) return null;
-    let leg: RouteLeg | null;
-    try {
-      leg = await router(from, to);
-    } catch {
-      pausedUntil = Date.now() + COOLDOWN_MS;
-      return null;
+    let pending = inflight.get(key);
+    if (!pending) {
+      if (Date.now() < pausedUntil) return null;
+      // a then, so a router that throws at once pauses like one that rejects
+      pending = Promise.resolve(router)
+        .then((r) => r(from, to))
+        .then(
+          (leg) => {
+            cache.set(key, { at: Date.now(), value: leg });
+            if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+            return leg;
+          },
+          () => {
+            pausedUntil = Date.now() + COOLDOWN_MS;
+            return null;
+          },
+        );
+      inflight.set(key, pending);
+      void pending.finally(() => inflight.delete(key));
     }
-    cache.set(key, { at: Date.now(), value: leg });
-    if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
-    return quote(leg);
+    return quote(await pending);
   };
 }
 

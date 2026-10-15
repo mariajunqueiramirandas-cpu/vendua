@@ -89,7 +89,9 @@ export function resolveZone<Z extends ZoneLike>(
     if (radius) {
       return {
         zone: radius.z,
-        distanceKm: Math.round(km * 10) / 10,
+        // up to the next 100 m, as the fee counts started km: 3.02 km pays a 4th, so it reads
+        // "3,1 km", never "3,0 km"
+        distanceKm: Math.ceil(km * 10) / 10,
         feeCents: radiusFeeCents(radius.z, km),
       };
     }

@@ -14,7 +14,9 @@ import {
   type ZoneLike,
 } from '../src/modules/geo.ts';
 import { bookableDates, scheduleView, validateSchedule } from '../src/modules/preorder.ts';
-import { evaluateCoupon, type CouponRow } from '../src/modules/coupons.ts';
+import { couponDiscountCents, evaluateCoupon, type CouponRow } from '../src/modules/coupons.ts';
+import type { CartView } from '../src/modules/cart.ts';
+import { worstCaseCents } from '../src/vendedor/incentives.ts';
 import { parseSelections, validateCombo, type ComboSlot } from '../src/modules/combos.ts';
 import { shortfall, stockDemand } from '../src/modules/stock.ts';
 import {
@@ -118,6 +120,13 @@ describe('geo zones', () => {
     const m = resolveZone(zones, { coords: { lat: -22.93, lng: -42.48 } }, store)!;
     expect(m.zone.id).toBe('r5');
     expect(m.feeCents).toBe(300 + 4 * 50);
+    // 3.02 km pays a 4th km, so it reads "3,1 km" — never "3,0 km" for that fee
+    const past = { lat: -22.93, lng: -42.4805 };
+    expect(haversineKm(store, past)).toBeGreaterThan(3);
+    expect(haversineKm(store, past)).toBeLessThan(3.05);
+    const shown = resolveZone(zones, { coords: past }, store)!;
+    expect(shown.distanceKm).toBe(3.1);
+    expect(shown.feeCents).toBe(300 + Math.ceil(shown.distanceKm!) * 50);
     const far = resolveZone(zones, { coords: { lat: -22.93, lng: -42.43 } }, store)!;
     expect(far.zone.id).toBe('r10');
     expect(effectiveFee(far, 9999)).toBe(800);
@@ -407,6 +416,36 @@ describe('coupons', () => {
   test('fixed never exceeds subtotal; free delivery = fee', () => {
     expect(ev({ kind: 'fixed', value: 5000 }).discountCents).toBe(3333);
     expect(ev({ kind: 'free_delivery' }).discountCents).toBe(700);
+  });
+  test("an incentive budgets (and caps its coupon at) checkout's own discount", () => {
+    const cart = (subtotalCents: number, deliveryFeeCents: number) =>
+      ({ totals: { subtotalCents, deliveryFeeCents } }) as CartView;
+    // 15% of R$ 33,33 is R$ 4,99 at checkout, not a rounded R$ 5,00
+    expect(worstCaseCents(base, cart(3333, 700))).toBe(499);
+    // the merchant's cap on the template holds for every kind: "frete grátis até R$ 5"
+    expect(
+      worstCaseCents({ ...base, kind: 'free_delivery', max_discount_cents: 500 }, cart(3333, 700)),
+    ).toBe(500);
+    expect(
+      worstCaseCents(
+        { ...base, kind: 'fixed', value: 2000, max_discount_cents: 1000 },
+        cart(3333, 700),
+      ),
+    ).toBe(1000);
+    for (const kind of ['percent', 'fixed', 'free_delivery'] as const)
+      for (const value of [1, 15, 100, 2500])
+        for (const max of [null, 1, 450])
+          for (const [sub, fee] of [
+            [0, 0],
+            [1, 1],
+            [3333, 700],
+            [99_999, 0],
+          ] as const) {
+            const c = { ...base, kind, value, max_discount_cents: max };
+            const at = { subtotalCents: sub, deliveryFeeCents: fee, usage: { total: 0 }, now };
+            expect(worstCaseCents(c, cart(sub, fee))).toBe(evaluateCoupon(c, at).discountCents);
+            expect(couponDiscountCents(c, sub, fee)).toBe(evaluateCoupon(c, at).discountCents);
+          }
   });
   test('window, limits, min subtotal, personal, first order', () => {
     expect(ev({ ends_at: '2026-09-01T00:00:00Z' }).reason).toBe('COUPON_EXPIRED');
