@@ -1,6 +1,5 @@
 import { ForkKnife, Motorcycle, Storefront, Wallet, type Icon } from '@phosphor-icons/react';
 import type { Payments, StoreView } from '../../lib/api.ts';
-import type { Pose } from '../../ui/Mascote.tsx';
 
 // The onboarding's map: four parts, one question per screen. Which questions a store gets
 // depends on what's already known (signup asked the name and what it sells), the role (money
@@ -32,11 +31,14 @@ export const CHAPTERS: {
   id: ChapterId;
   label: string;
   blurb: string;
+  /** what Duá says as the part begins */
+  start: string;
   Icon: Icon;
   steps: StepId[];
 }[] = [
   {
     id: 'cara',
+    start: 'Primeiro, a cara da loja.',
     label: 'A cara da loja',
     blurb: 'O que você vende, logo, cores e uma frase',
     Icon: Storefront,
@@ -44,6 +46,7 @@ export const CHAPTERS: {
   },
   {
     id: 'atendimento',
+    start: 'Agora, o atendimento.',
     label: 'Atendimento',
     blurb: 'WhatsApp, endereço, horários, retirada e entrega',
     Icon: Motorcycle,
@@ -51,6 +54,7 @@ export const CHAPTERS: {
   },
   {
     id: 'pagamentos',
+    start: 'Agora, os pagamentos.',
     label: 'Pagamentos',
     blurb: 'Como o cliente paga e para onde vai o dinheiro',
     Icon: Wallet,
@@ -58,6 +62,7 @@ export const CHAPTERS: {
   },
   {
     id: 'cardapio',
+    start: 'Por último, o cardápio!',
     label: 'Cardápio',
     blurb: 'Os primeiros produtos, com foto',
     Icon: ForkKnife,
@@ -80,46 +85,69 @@ export const after = (steps: StepId[], from: StepId): StepId =>
 export const landOn = (steps: StepId[], s: StepId): StepId =>
   steps.includes(s) ? s : after(steps, s);
 
-export const LINE: Record<StepId, string> = {
-  oi: 'Vou montar a sua loja junto com você, sem pressa e sem palavra difícil.',
-  tipo: 'Primeiro, me conta: o que você vende?',
-  importar: 'Se você já tem um cardápio digital, eu trago tudo de lá para cá.',
-  nome: 'O mais importante: o nome!',
-  logo: 'Agora um rostinho para a loja.',
-  cores: 'Que tal as cores da loja?',
-  frase: 'Um toque de personalidade.',
-  whatsapp: 'Como os clientes vão falar com você?',
-  endereco: 'Agora, onde a sua loja fica.',
-  horarios: 'Hora de dizer quando você trabalha.',
-  como: 'Como o pedido chega até o cliente?',
-  retirada: 'Onde o cliente busca o pedido?',
-  entrega: 'Agora, quanto custa a entrega.',
-  formas: 'Vamos falar de dinheiro.',
-  pix: 'Para onde vai o dinheiro do Pix?',
-  mercadopago: 'Quer receber cartão pelo site também?',
-  produtos: 'A parte mais gostosa: o cardápio!',
-  pronto: 'Olha só o que a gente fez juntos!',
+/** How a question is named in the map of questions (and the header under the progress). */
+export const LABEL: Record<StepId, string> = {
+  oi: 'Boas-vindas',
+  tipo: 'O que você vende',
+  importar: 'Trazer de outro app',
+  nome: 'Nome',
+  logo: 'Foto ou logo',
+  cores: 'Cor da loja',
+  frase: 'Frase',
+  whatsapp: 'WhatsApp',
+  endereco: 'Endereço',
+  horarios: 'Horários',
+  como: 'Retirada ou entrega',
+  retirada: 'Onde buscar',
+  entrega: 'Preço da entrega',
+  formas: 'Formas de pagamento',
+  pix: 'Chave Pix',
+  mercadopago: 'Cartão pelo site',
+  produtos: 'Primeiros produtos',
+  pronto: 'No ar',
 };
 
-export const POSE: Record<StepId, Pose> = {
-  oi: 'avatar-ola',
-  tipo: 'avatar-pensando',
-  importar: 'catalogo',
-  nome: 'loja',
-  logo: 'personalizar',
-  cores: 'personalizar',
-  frase: 'avatar-feliz',
-  whatsapp: 'avatar-pensando',
-  endereco: 'loja',
-  horarios: 'horarios',
-  como: 'entrega',
-  retirada: 'loja',
-  entrega: 'entrega',
-  formas: 'pagamento',
-  pix: 'pagamento',
-  mercadopago: 'seguranca',
-  produtos: 'catalogo',
-  pronto: 'avatar-feliz',
+/** The button on the welcome-back screen names the next question in a couple of words. */
+export const LINE_SHORT: Record<StepId, string> = {
+  oi: 'início',
+  tipo: 'o que você vende',
+  importar: 'trazer o cardápio',
+  nome: 'o nome',
+  logo: 'a logo',
+  cores: 'as cores',
+  frase: 'a frase',
+  whatsapp: 'o WhatsApp',
+  endereco: 'o endereço',
+  horarios: 'os horários',
+  como: 'retirada e entrega',
+  retirada: 'onde buscar',
+  entrega: 'a taxa de entrega',
+  formas: 'as formas de pagamento',
+  pix: 'a chave Pix',
+  mercadopago: 'o Mercado Pago',
+  produtos: 'o cardápio',
+  pronto: 'o fim',
+};
+
+/** The part of the store a question changes: the preview marks it while the question is open. */
+export type Spot =
+  'name' | 'logo' | 'color' | 'tagline' | 'hours' | 'how' | 'whatsapp' | 'products' | 'pay';
+
+export const SPOT: Partial<Record<StepId, Spot>> = {
+  importar: 'products',
+  nome: 'name',
+  logo: 'logo',
+  cores: 'color',
+  frase: 'tagline',
+  whatsapp: 'whatsapp',
+  horarios: 'hours',
+  como: 'how',
+  retirada: 'how',
+  entrega: 'how',
+  formas: 'pay',
+  pix: 'pay',
+  mercadopago: 'pay',
+  produtos: 'products',
 };
 
 export interface Known {
@@ -161,10 +189,13 @@ export function answered(
     reached: StepId | null;
   },
 ): boolean {
+  const past = (s: StepId) => !!x.reached && ALL_STEPS.indexOf(x.reached) > ALL_STEPS.indexOf(s);
   switch (step) {
     case 'tipo':
       return !!x.segment;
     case 'importar':
+      // "começar do zero" is an answer too: it counts once the wizard went past it
+      return x.products > 0 || past('importar');
     case 'produtos':
       return x.products > 0;
     case 'nome':
@@ -189,7 +220,7 @@ export function answered(
       return x.s.zones.some((z) => z.active) || x.s.distancePricing.enabled;
     case 'formas':
       // the methods always have an answer (Core's defaults): it counts once the owner went past
-      return !!x.reached && ALL_STEPS.indexOf(x.reached) > ALL_STEPS.indexOf('formas');
+      return past('formas');
     case 'pix':
       // a store that doesn't take Pix has nothing to set here
       return !!x.pay?.pix || (!!x.pay && !x.pay.methods.includes('pix'));

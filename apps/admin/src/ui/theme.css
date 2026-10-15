@@ -893,6 +893,48 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
 .animate-panel-in {
   animation: panel-in var(--duration-smooth) var(--ease-soft) both;
 }
+/* the onboarding's questions: the next one comes from the right, the one before from the left */
+@keyframes step-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes step-back {
+  from {
+    opacity: 0;
+    transform: translateX(-32px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-step-fwd {
+  animation: step-fwd 340ms var(--ease-soft) both;
+}
+.animate-step-back {
+  animation: step-back 340ms var(--ease-soft) both;
+}
+/* an answer changed the store: its card's edge lights up once */
+@keyframes spark-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--spark);
+  }
+  25% {
+    box-shadow: 0 0 0 4px var(--spark);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+.animate-spark-ring {
+  animation: spark-ring 1.1s ease-out 200ms both;
+}
 /* ── the kitchen (features/kitchen) ── */
 /* a bumped ticket's undo window drains left to right */
 @keyframes drain {
@@ -992,7 +1034,9 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
   }
   .animate-drop-in,
   .animate-fade-up,
-  .animate-panel-in {
+  .animate-panel-in,
+  .animate-step-fwd,
+  .animate-step-back {
     animation: fade-up 120ms linear both !important;
   }
   .animate-breathe,
@@ -1001,6 +1045,7 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
   .animate-pulse-dot,
   .animate-ring,
   .animate-beckon,
+  .animate-spark-ring,
   .fuse-late,
   .skeleton {
     animation: none !important;

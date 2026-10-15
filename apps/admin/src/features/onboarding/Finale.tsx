@@ -72,9 +72,9 @@ export function Finale({
     <div className="animate-fade-up space-y-6">
       <section className="relative overflow-visible rounded-xl bg-primary p-6 text-on-primary depth-2 md:p-8">
         {live ? <Confetti /> : null}
-        <div className="flex items-center gap-5">
-          <span className="dua-disc hidden size-28 shrink-0 place-items-center bg-[#f7f4ea] sm:grid">
-            <Mascote pose={live ? 'publicar' : 'loja'} size={104} className="w-24" />
+        <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">
+          <span className="dua-disc grid size-20 shrink-0 place-items-center bg-[#f7f4ea] sm:size-28">
+            <Mascote pose={live ? 'publicar' : 'loja'} size={104} className="w-16 sm:w-24" />
           </span>
           <div className="min-w-0">
             <h1 className="t-moment text-[2.25rem] leading-[2.5rem]">

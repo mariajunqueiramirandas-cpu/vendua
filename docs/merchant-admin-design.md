@@ -507,9 +507,10 @@ with the store's name and address and keeps filling in. Signup asks what the sto
 big tiles, one tap); that answer tunes everything after it: the hours preset ("Terça a domingo,
 18h–23h30" for a pizzaria), example products, tagline ideas and the menu's first category.
 
-After signup, onboarding is a conversation: **one question per screen**, told by a friendly
-guide (Duá in a speech bubble that praises each answer), with 56 px buttons, presets instead of
-blank fields and plain pt-BR. The questions come in four parts, named above each title ("Atendimento · 2 de 5"):
+After signup, onboarding is a conversation: **one question per screen**, with Duá reacting to
+each answer (a small face and one line over the next question: "Quero Pudim… que nome bonito!"),
+56 px buttons, presets instead of blank fields and plain pt-BR. The question is the one thing to
+read: a big title, at most one sentence under it, the answer. The questions come in four parts:
 
 - **A cara da loja**: what it sells (only if nobody asked), import from another menu app, the
   name (only if signup didn't ask), logo, the store's colour (swatches, the logo's first),
@@ -522,13 +523,29 @@ blank fields and plain pt-BR. The questions come in four parts, named above each
   wizard.
 - **Cardápio**: the first products with a photo each, or a WhatsApp list pasted in.
 
-Each answer **visibly assembles their storefront** in the phone beside the questions (behind
-the eye in the header on phones, a bottom sheet that marks itself when an answer changed the store): name → header, logo → avatar, colour → buttons, hours → the
-status, products → the grid. Everything saves on "Continuar"; every optional question has a
-quiet "pular". Where the merchant stopped is kept by Core, so another device opens a
-welcome-back map with what's ready ticked and "Continuar: os horários". "Continuar depois"
-leaves without nagging (Core remembers it). A store nobody has touched, or one fresh from
-signup that never chose to leave, opens Início straight into it.
+**Where am I, and what's left.** The header's bar splits "Sua loja" into the four parts, each
+filling as its questions are answered, and names the place ("Atendimento · 2 de 4"). A tap on
+it opens every question, part by part, with what's done, what was left for later and where the
+merchant is; any of them is one tap away. From 1200 px the same map is a rail beside the
+question. Moving on slides the next question in from the right, "voltar" from the left. When a
+part ends, Duá ticks it off ("Parte 1 de 4 pronta") and introduces the next.
+
+**The store builds itself, where they can see it.** Each answer visibly assembles the
+storefront: name → header, logo → avatar, colour → avatar and buttons, phrase and hours → the
+line under the name, products → the grid. On phones and tablets a live card of the store sits
+above every question (a tap opens the whole store in a sheet), and from 1200 px the phone sits
+beside it. The part the open question changes is marked (a lime highlighter on the card, a lime
+halo in the phone), and an answer that changed the store sparks the card's edge.
+
+**Never a dead button.** "Continuar" waits, quietly, until the answer is there, then lights up;
+a tap before that says what's missing in one line ("Escreva o nome da loja para continuar.")
+instead of doing nothing. Everything saves on "Continuar"; every optional question has a quiet
+"deixar para depois". Where the merchant stopped is kept by Core, so another device opens a
+welcome-back screen with the four parts as a path, what's ready ticked, and "Continuar: os
+horários" (the first question still open from where they stopped); with everything answered it
+offers the finale or a review. "Continuar depois" leaves without nagging (Core remembers it). A
+store nobody has touched, or one fresh from signup that never chose to leave, opens Início
+straight into it.
 
 While the plan's first payment is pending the wizard says so in a slim line under the header,
 with the Pix one tap away, and notices by itself when it lands. The last step is "sua loja está

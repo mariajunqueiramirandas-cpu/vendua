@@ -28,8 +28,9 @@ cd storefronts/quero-pudim && bun run dev
 The seed makes one store, Quero Pudim, deliberately blank (no hours, delivery, Pix or menu),
 with Vinícius, phone `(22) 98179-5040`, as its owner. A blank store opens Início straight into
 `/bem-vindo`, the step-by-step onboarding (`features/onboarding`: one question per screen in
-four parts, a guide, the store assembling beside it; `flow.ts` decides which questions a store
-gets). Core keeps where it stopped (`GET/PATCH /admin/v1/onboarding`); re-seed to reset and run
+four parts, Duá reacting to each answer, the store assembling as it goes, and a map of every
+question behind the header's status; `flow.ts` decides which questions a store gets and which
+part of the store each one changes). Core keeps where it stopped (`GET/PATCH /admin/v1/onboarding`); re-seed to reset and run
 it again ("continuar depois" is remembered by Core too: open `/admin/bem-vindo` directly).
 `/bem-vindo?passo=horarios` opens one question and returns to the finale. CI and fleet runs need a menu and the canary
 tenants instead: `cd packages/core && bun run seed:fixtures`. `bun scripts/demo-orders.ts` needs a menu

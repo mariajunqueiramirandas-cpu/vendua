@@ -1,3 +1,4 @@
+import { CheckCircle } from '@phosphor-icons/react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 
@@ -37,6 +38,35 @@ export function Guide({ turn, pose, children }: { turn: string; pose: Pose; chil
           <span className="animate-fade-up block">{children}</span>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Duá reacting to the answer just given, above the next question: a small face and one line.
+ * Only after an answer (a question opened from the map or by "voltar" has nothing to react
+ * to), so the question itself stays the one thing to read.
+ */
+export function Reaction({ children, done }: { children: ReactNode; done?: string | null }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span
+        aria-hidden
+        className="dua-disc animate-pop grid size-11 shrink-0 place-items-center bg-spark-soft"
+      >
+        <Mascote pose="avatar-feliz" size={44} className="size-10" />
+      </span>
+      <p
+        role="status"
+        className="t-body min-w-0 rounded-lg rounded-bl-sm bg-surface px-3.5 py-2 depth-1"
+      >
+        {done ? (
+          <span className="t-caption mb-0.5 flex items-center gap-1 font-semibold text-success">
+            <CheckCircle weight="fill" className="size-4 shrink-0" aria-hidden /> {done}
+          </span>
+        ) : null}
+        <span className="font-semibold">{children}</span>
+      </p>
     </div>
   );
 }

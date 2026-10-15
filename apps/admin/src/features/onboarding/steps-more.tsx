@@ -42,7 +42,6 @@ export function ColorsStep({
   next,
   back,
   skip,
-  eyebrow,
   tokens,
   onSaved,
 }: StepProps & { tokens: StoreTokens | null; onSaved: (t: StoreTokens) => void }) {
@@ -68,7 +67,6 @@ export function ColorsStep({
   const current = (picked ?? tokens)?.color.accent ?? null;
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Escolha a cor da loja"
       hint={
         fromLogo.length
@@ -78,10 +76,11 @@ export function ColorsStep({
       back={back}
       busy={save.isPending}
       disabled={!picked && !tokens}
+      why="Toque em uma cor. Se não souber agora, deixe para depois."
       onSkip={picked || tokens ? undefined : skip}
       onSubmit={() => (picked ? save.mutate(picked) : next())}
     >
-      <div role="radiogroup" aria-label="cores" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div role="radiogroup" aria-label="cores" className="grid grid-cols-3 gap-3 sm:grid-cols-4">
         {swatches.map(([c, name], i) => {
           const accent = readableAccent(c);
           const on = current === accent;
@@ -122,7 +121,7 @@ const FEE_MAX = 100_000;
 const feeRule = (c: number) => (c > FEE_MAX ? `Até ${money(FEE_MAX)}.` : null);
 
 /** How delivery is priced: a fee per bairro list, or by road distance from the store's pin (ADR 0024). */
-export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: StepProps) {
+export function DeliveryStep({ s, draft, save, next, back, skip }: StepProps) {
   const qc = useQueryClient();
   const [busy, run] = useBusy();
   const zoneMade = useRef(false);
@@ -193,7 +192,6 @@ export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: Step
 
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Quanto custa a entrega?"
       hint={
         ready
@@ -203,6 +201,17 @@ export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: Step
       back={back}
       busy={busy}
       disabled={!ok}
+      why={
+        mode === 'bairro'
+          ? !list.length
+            ? 'Escreva pelo menos um bairro.'
+            : 'Coloque quanto cobra pela entrega. Se for de graça, digite 0.'
+          : !pin
+            ? 'Marque no mapa de onde a entrega sai.'
+            : !kmOk
+              ? 'A distância vai de 1 a 50 km.'
+              : 'Preencha a taxa de saída e o valor por km.'
+      }
       onSkip={ready ? undefined : skip}
       skipLabel="faço depois"
       onSubmit={() =>
@@ -412,7 +421,7 @@ const OFFLINE: { id: PayMethod; label: string; body: string; Icon: typeof Money 
   },
 ];
 
-export function MethodsStep({ pay, next, back, eyebrow }: StepProps & { pay: Payments }) {
+export function MethodsStep({ pay, next, back }: StepProps & { pay: Payments }) {
   const qc = useQueryClient();
   const [methods, setMethods] = useState<PayMethod[]>(pay.methods);
   const save = useMutation({
@@ -427,12 +436,12 @@ export function MethodsStep({ pay, next, back, eyebrow }: StepProps & { pay: Pay
     methods.length !== pay.methods.length || methods.some((m) => !pay.methods.includes(m));
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Como o cliente pode pagar?"
       hint="Marque o que você aceita. O site só mostra essas opções."
       back={back}
       busy={save.isPending}
       disabled={!methods.length}
+      why="Deixe pelo menos uma forma de pagamento."
       onSubmit={() => (changed ? save.mutate() : next('Combinado!'))}
     >
       <Card className="divide-y divide-line px-4">
@@ -471,7 +480,7 @@ const KEY_TYPES = [
   { value: 'random', label: 'aleatória' },
 ] as const;
 
-export function PixStep({ pay, next, back, skip, eyebrow, me, s }: StepProps & { pay: Payments }) {
+export function PixStep({ pay, next, back, skip, me, s }: StepProps & { pay: Payments }) {
   const qc = useQueryClient();
   // the owner's verified number is the commonest Pix key; their name is the beneficiary
   const [type, setType] = useState<string>('phone');
@@ -499,7 +508,6 @@ export function PixStep({ pay, next, back, skip, eyebrow, me, s }: StepProps & {
   if (pay.pix || noPix)
     return (
       <Frame
-        eyebrow={eyebrow}
         title={noPix ? 'Sem Pix por enquanto' : 'Seu Pix já está pronto'}
         hint={
           noPix
@@ -512,12 +520,14 @@ export function PixStep({ pay, next, back, skip, eyebrow, me, s }: StepProps & {
     );
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Qual é a sua chave Pix?"
       hint="O cliente paga e o dinheiro cai direto na sua conta, sem taxa nossa."
       back={back}
       busy={m.isPending}
       disabled={!key.trim() || name.trim().length < 2}
+      why={
+        key.trim() ? 'Escreva o nome de quem recebe, como no banco.' : 'Coloque a sua chave Pix.'
+      }
       label="Salvar Pix"
       onSkip={skip}
       skipLabel="faço depois"
@@ -558,7 +568,7 @@ export function PixStep({ pay, next, back, skip, eyebrow, me, s }: StepProps & {
   );
 }
 
-export function MercadoPagoStep({ back, skip, eyebrow }: StepProps) {
+export function MercadoPagoStep({ back, skip }: StepProps) {
   const go = useMutation({
     mutationFn: () => api.mpConnect('onboarding'),
     onSuccess: (r) => window.location.assign(r.url),
@@ -566,7 +576,6 @@ export function MercadoPagoStep({ back, skip, eyebrow }: StepProps) {
   });
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Receber cartão pelo site"
       hint="Conectando a sua conta do Mercado Pago, o cliente paga com cartão ou Pix no site e o pedido já chega pago."
       back={back}

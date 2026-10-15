@@ -132,7 +132,7 @@ export function PlanBanner({ owner, hold }: { owner: boolean; hold: boolean }) {
         : 'A loja abre quando o Pix do plano cair.';
   return (
     <div className="border-b border-line bg-warning-soft">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 md:px-8">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 md:px-8">
         <Clock weight="bold" className="size-5 shrink-0 text-warning" aria-hidden />
         <p className="t-body min-w-0 flex-1 text-ink">{text}</p>
         {st.kind === 'pix' ? (
