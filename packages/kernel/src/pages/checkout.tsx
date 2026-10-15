@@ -343,7 +343,7 @@ export function CheckoutPage() {
   const [cepPlace, setCepPlace] = useState<{ city: string | null; state: string | null } | null>(
     null,
   );
-  // Kernel 1.27: what the shopper is typing in "Rua" (only typing asks), and the streets for it
+  // Kernel 1.28: what the shopper is typing in "Rua" (only typing asks), and the streets for it
   const [streetQuery, setStreetQuery] = useState('');
   const [places, setPlaces] = useState<PlaceSuggestion[]>([]);
   // a picked street placed the map: the geocoder's answer moves it only if it is closer
@@ -499,8 +499,10 @@ export function CheckoutPage() {
     : encomenda && !atTable
       ? schedule!.paymentMethods.join(',')
       : '';
-  // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
-  const accepted = store?.paymentMethods?.join(',') ?? '';
+  // the store's own list (Kernel 1.4), for this mode (1.27); absent on an older Core = the three
+  // offline ones
+  const forMode = atTable ? undefined : store?.paymentMethodsByMode?.[mode];
+  const accepted = (forMode ?? store?.paymentMethods)?.join(',') ?? '';
   const online = store?.onlinePayments;
   const pixOnline = online?.pix === true;
   const cardOnline = online?.card !== false;

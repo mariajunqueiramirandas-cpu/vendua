@@ -4,6 +4,7 @@ import { Drawer } from 'vaul';
 import { dimStatusBar } from '../lib/theme.ts';
 import { cn } from './cn.ts';
 import { IconButton } from './Button.tsx';
+import { TEXT_FIELD } from './keyboard.ts';
 
 function useDesktop() {
   const q = '(min-width: 768px)';
@@ -47,6 +48,32 @@ function useBackToClose(open: boolean, close: () => void) {
 }
 
 /**
+ * A field that takes focus while its sheet is still sliding up (autoFocus) sits below the screen
+ * at that moment: iOS raises the keyboard and scrolls the page to where the field was, leaving
+ * the screen blank once the sheet lands. Hold the focus until the slide is over. A document
+ * listener, because autoFocus runs before any effect of the sheet's.
+ */
+function holdFocusWhileSliding(e: FocusEvent) {
+  const el = e.target;
+  if (!(el instanceof HTMLElement) || !el.matches(TEXT_FIELD)) return;
+  const sheet = el.closest<HTMLElement>('[data-vaul-drawer-direction="bottom"]');
+  const slide = sheet?.getAnimations().find((a) => a.playState !== 'finished');
+  if (!sheet || !slide) return;
+  const x = scrollX;
+  const y = scrollY;
+  el.blur();
+  requestAnimationFrame(() => scrollTo(x, y));
+  slide.finished.then(
+    () => {
+      if (el.isConnected && sheet.dataset.state === 'open') el.focus({ preventScroll: true });
+    },
+    () => undefined,
+  );
+}
+if (typeof document !== 'undefined')
+  document.addEventListener('focusin', holdFocusWhileSliding, true);
+
+/**
  * Bottom sheet on phones (drag down to dismiss), side panel on desktop. Focus is
  * trapped while open and returns to the trigger on close (§7, §10).
  */
@@ -71,7 +98,18 @@ export function Sheet({
   useBackToClose(open, () => onOpenChange(false));
   useEffect(() => (open && !desktop ? dimStatusBar() : undefined), [open, desktop]);
   return (
-    <Drawer.Root open={open} onOpenChange={onOpenChange} direction={desktop ? 'right' : 'bottom'}>
+    // repositionInputs off: vaul's iOS keyboard handling fights ui/keyboard.ts; the sheet rides
+    // above the keyboard on --kb instead and fits in what it leaves visible (--vvh).
+    // noBodyStyles: in a Safari tab vaul pins <body> (position: fixed), so the page can't scroll
+    // and iOS pans the visual viewport to reach a field instead, which iOS 26 can leave panned
+    // once the keyboard is gone; the installed app never had it (vaul skips it standalone)
+    <Drawer.Root
+      open={open}
+      onOpenChange={onOpenChange}
+      direction={desktop ? 'right' : 'bottom'}
+      repositionInputs={false}
+      noBodyStyles
+    >
       <Drawer.Portal>
         {/* keep in step with SCRIM in lib/theme.ts (the dimmed status bar) */}
         <Drawer.Overlay className="fixed inset-0 z-[60] bg-[rgb(10_16_13/0.42)]" />
@@ -84,7 +122,7 @@ export function Sheet({
                   'inset-y-3 right-3 rounded-lg',
                   wide ? 'w-[min(680px,calc(100vw-24px))]' : 'w-[min(480px,calc(100vw-24px))]',
                 )
-              : 'inset-x-0 bottom-0 max-h-[92dvh] rounded-t-lg',
+              : 'inset-x-0 bottom-[var(--kb,0px)] max-h-[92dvh] rounded-t-lg kb:max-h-[calc(var(--vvh,100dvh)-env(safe-area-inset-top)-8px)]',
           )}
         >
           {!desktop ? (
@@ -115,7 +153,7 @@ export function Sheet({
             {children}
           </div>
           {footer ? (
-            <div className="border-t border-line px-5 py-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+            <div className="border-t border-line px-5 py-3 pb-[max(12px,env(safe-area-inset-bottom))] kb:pb-3">
               {footer}
             </div>
           ) : null}

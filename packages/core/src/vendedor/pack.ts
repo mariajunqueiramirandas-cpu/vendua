@@ -4,11 +4,12 @@ import { distancePricingOf, loadZoneRows, storeCoords } from '../modules/cart.ts
 import {
   offeredMethods,
   adjustmentFor,
+  methodsForMode,
   type PaymentMethod,
 } from '../modules/payment-adjustments.ts';
 import { ordersByPhone } from '../modules/customer.ts';
 import { onlineOffer } from '../modules/payments/store-payments.ts';
-import { upcomingSpecialDays, type StoreHours } from '../modules/store.ts';
+import { pickupMinOrderCents, upcomingSpecialDays, type StoreHours } from '../modules/store.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import type { Sql } from '../platform/db.ts';
 import { brl, PAYMENT_LABEL } from './cards.ts';
@@ -56,9 +57,18 @@ export interface StorePack {
     pickupAddress: string | null;
     prepMinutes: number;
   };
+  /** delivery's (and, unless pickupMinOrder says otherwise, pickup's) */
   minOrder: string | null;
+  /** 0133: pickup's own minimum when it differs from minOrder; 'nenhum' = no minimum */
+  pickupMinOrder: string | null;
   freeDeliveryOver: string | null;
-  payments: { id: PaymentMethod; label: string; note: string | null }[];
+  /** `only`: the store takes it for that mode alone (0133) */
+  payments: {
+    id: PaymentMethod;
+    label: string;
+    note: string | null;
+    only: 'delivery' | 'pickup' | null;
+  }[];
   onlinePayments: boolean;
   encomendas: { whileClosed: boolean; maxDays: number };
   catalog: string[];
@@ -67,6 +77,15 @@ export interface StorePack {
   guidance: string[];
   guards: CompiledGuard[];
   version: number;
+}
+
+/** `Dinheiro (só na retirada; 5% de desconto)` — a method as the Vendedor reads it */
+export function paymentLine(m: StorePack['payments'][number]): string {
+  const notes = [
+    m.only === 'delivery' ? 'só na entrega' : m.only === 'pickup' ? 'só na retirada' : null,
+    m.note,
+  ].filter(Boolean);
+  return `${m.label}${notes.length ? ` (${notes.join('; ')})` : ''}`;
 }
 
 function hoursLines(h: StoreHours): string[] {
@@ -148,6 +167,13 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
   const methods = offeredMethods(settings) as PaymentMethod[];
   const knowledge = await liveRules(tx, tenantId);
   const minOrder = settings?.min_order_cents ? brl(settings.min_order_cents) : null;
+  const pickupMin = pickupMinOrderCents(settings);
+  const pickupMinOrder =
+    pickupMin === (settings?.min_order_cents ?? 0) ? null : pickupMin ? brl(pickupMin) : 'nenhum';
+  const byMode = {
+    delivery: methodsForMode(settings, 'delivery', online),
+    pickup: methodsForMode(settings, 'pickup', online),
+  };
   const special = upcomingSpecialDays(
     settings?.special_days,
     settings?.hours?.timezone ?? 'America/Sao_Paulo',
@@ -202,6 +228,7 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
       prepMinutes: settings?.prep_time_minutes ?? 30,
     },
     minOrder,
+    pickupMinOrder,
     freeDeliveryOver: settings?.delivery_free_over_cents
       ? brl(settings.delivery_free_over_cents)
       : null,
@@ -211,6 +238,11 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
         id: m,
         label: PAYMENT_LABEL[m],
         note: adjustmentNote(adjustmentFor(settings, m)),
+        only: !byMode.pickup.includes(m)
+          ? ('delivery' as const)
+          : !byMode.delivery.includes(m)
+            ? ('pickup' as const)
+            : null,
       })),
     onlinePayments: online,
     encomendas: {

@@ -717,14 +717,38 @@ function Delivery({
               onSave={(v) => run({ operations: { acceptTargetMinutes: v } }).catch(() => undefined)}
             />
           </Field>
-          <Field label="Pedido mínimo" htmlFor="minorder" helper="Deixe vazio para não ter mínimo.">
-            <MoneyField
-              id="minorder"
-              allowEmpty
-              cents={o.minOrderCents || null}
-              onCommit={(v) => patch({ operations: { minOrderCents: v ?? 0 } })}
-            />
-          </Field>
+          {o.deliveryEnabled ? (
+            <Field
+              label={o.pickupEnabled ? 'Pedido mínimo na entrega' : 'Pedido mínimo'}
+              htmlFor="minorder"
+              helper={
+                zones.some((z) => z.minOrderCents > 0)
+                  ? 'Deixe vazio para não ter mínimo. Algumas áreas pedem mais.'
+                  : 'Deixe vazio para não ter mínimo.'
+              }
+            >
+              <MoneyField
+                id="minorder"
+                allowEmpty
+                cents={o.minOrderCents || null}
+                onCommit={(v) => patch({ operations: { minOrderCents: v ?? 0 } })}
+              />
+            </Field>
+          ) : null}
+          {o.pickupEnabled ? (
+            <Field
+              label={o.deliveryEnabled ? 'Pedido mínimo na retirada' : 'Pedido mínimo'}
+              htmlFor="minorder-pickup"
+              helper="Deixe vazio para não ter mínimo."
+            >
+              <MoneyField
+                id="minorder-pickup"
+                allowEmpty
+                cents={o.pickupMinOrderCents || null}
+                onCommit={(v) => patch({ operations: { pickupMinOrderCents: v ?? 0 } })}
+              />
+            </Field>
+          ) : null}
         </div>
         <div className="border-t border-line pt-2">
           <Toggle

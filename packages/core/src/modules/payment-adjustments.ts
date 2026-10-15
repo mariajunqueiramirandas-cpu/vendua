@@ -1,3 +1,4 @@
+import { HttpError } from '../platform/http.ts';
 import type { StoreSettingsRow } from './store.ts';
 
 // Per-payment-method discount/surcharge (model gap 7). Core is the only place it is computed:
@@ -49,6 +50,98 @@ export function offeredMethods(
   settings: Pick<StoreSettingsRow, 'payment_methods'> | null | undefined,
 ): string[] {
   return settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS;
+}
+
+export type HandoverMode = 'delivery' | 'pickup';
+export const HANDOVER_MODES: readonly HandoverMode[] = ['delivery', 'pickup'];
+export type MethodsOff = Partial<Record<HandoverMode, PaymentMethod[]>>;
+
+/** Stored rows are validated on write; a stray entry is ignored on read. */
+export function readMethodsOff(raw: unknown): MethodsOff {
+  const out: MethodsOff = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const mode of HANDOVER_MODES) {
+    const list = (raw as Record<string, unknown>)[mode];
+    if (!Array.isArray(list)) continue;
+    const methods = [...new Set(list.filter(isPaymentMethod))];
+    if (methods.length) out[mode] = methods;
+  }
+  return out;
+}
+
+/**
+ * What an order handed over this way may be paid with: the store's methods less those it turned
+ * off for the mode (`cardOnline`: Mercado Pago takes cards right now). A mode is never left with
+ * nothing — exclusions that would empty it fall back to the store's whole list.
+ */
+export function methodsForMode(
+  settings: Pick<StoreSettingsRow, 'payment_methods' | 'payment_methods_off'> | null | undefined,
+  mode: string | null | undefined,
+  cardOnline: boolean,
+): string[] {
+  const usable = offeredMethods(settings).filter((m) => m !== 'card_online' || cardOnline);
+  const off =
+    mode === 'delivery' || mode === 'pickup'
+      ? readMethodsOff(settings?.payment_methods_off)[mode]
+      : undefined;
+  const left = off ? usable.filter((m) => !(off as string[]).includes(m)) : usable;
+  return left.length ? left : usable;
+}
+
+export interface EncomendaConflict {
+  mode: HandoverMode;
+  /** 'encomenda': none of the encomendas' methods; 'sinal': no Pix for the sinal */
+  need: 'encomenda' | 'sinal';
+  /** what that mode would need to take one of */
+  methods: string[];
+}
+
+/**
+ * A mode (one that is on) whose own exclusions leave an encomenda unpayable: the store takes one
+ * of the encomendas' methods (or Pix, while it asks a sinal) but turned it off for that mode.
+ * Every write that could cause it refuses it. Store-wide lists are the store's own call, as before.
+ */
+export function encomendaConflict(
+  settings: Pick<
+    StoreSettingsRow,
+    | 'payment_methods'
+    | 'payment_methods_off'
+    | 'preorder_payment_methods'
+    | 'deposit_bps'
+    | 'pickup_enabled'
+    | 'delivery_enabled'
+  >,
+): EncomendaConflict | null {
+  const encomenda = settings.preorder_payment_methods ?? ['pix'];
+  const store = methodsForMode(settings, null, true);
+  const sinal = (settings.deposit_bps ?? 0) > 0 && store.includes('pix');
+  for (const mode of HANDOVER_MODES) {
+    if (!((mode === 'pickup' ? settings.pickup_enabled : settings.delivery_enabled) ?? true))
+      continue;
+    const takes = methodsForMode(settings, mode, true);
+    const lost = (ms: string[]) =>
+      ms.some((m) => store.includes(m)) && !ms.some((m) => takes.includes(m));
+    if (lost(encomenda)) return { mode, need: 'encomenda', methods: encomenda };
+    if (sinal && lost(['pix'])) return { mode, need: 'sinal', methods: ['pix'] };
+  }
+  return null;
+}
+
+/** 422 ENCOMENDA_PAYMENT_CONFLICT when `settings` (as they would be saved) leave one. */
+export function assertNoEncomendaConflict(
+  settings: Parameters<typeof encomendaConflict>[0],
+  field: string,
+): void {
+  const c = encomendaConflict(settings);
+  if (c)
+    throw new HttpError(
+      422,
+      'ENCOMENDA_PAYMENT_CONFLICT',
+      c.need === 'sinal'
+        ? `${c.mode} must take pix while the store asks a sinal`
+        : `${c.mode} must take one of the encomendas' payment methods`,
+      { field, ...c },
+    );
 }
 
 /** The rule for `method`, only while the store accepts it. */

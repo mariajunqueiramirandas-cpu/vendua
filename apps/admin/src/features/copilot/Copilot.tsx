@@ -360,7 +360,7 @@ export default function Copilot() {
         )}
       </div>
 
-      <div className="sticky bottom-(--tabbar-h) z-20 md:bottom-0 md:px-8 md:pb-4">
+      <div className="sticky bottom-(--tabbar-h) z-20 md:bottom-0 md:px-8 md:pb-4 kb:bottom-(--kb)">
         <div className="md:overflow-hidden md:rounded-lg md:depth-2">
           <Composer
             id="copilot-msg"

@@ -190,7 +190,7 @@ function Field({
   );
 }
 
-/** "Rua" with the streets Core found for what is typed (Kernel 1.27): an ARIA 1.2 combobox */
+/** "Rua" with the streets Core found for what is typed (Kernel 1.28): an ARIA 1.2 combobox */
 function StreetInput({
   value,
   onChange,

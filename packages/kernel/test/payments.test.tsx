@@ -1194,3 +1194,61 @@ describe('payOrder — the redirect is https only', () => {
     );
   });
 });
+
+describe('payment methods and minimum per mode (Kernel 1.27)', () => {
+  const MODES_STORE = {
+    ...STORE,
+    paymentMethods: ['pix', 'card_on_delivery', 'cash'],
+    paymentMethodsByMode: { delivery: ['card_on_delivery', 'cash'], pickup: ['pix'] },
+  };
+
+  test("pickup offers only pickup's methods", async () => {
+    core((url) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, MODES_STORE);
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: cartWithItem() });
+      if (url.pathname === '/checkout/v1/cart/delivery')
+        return json(200, { cart: { ...cartWithItem(), delivery: { mode: 'pickup' } } });
+      return null;
+    });
+    m = await mount({ path: '/checkout', session: 'tok' });
+    await act(async () => {
+      setValue('#checkout-name', 'Ana');
+      setValue('#checkout-phone', '(22) 99999-0001');
+    });
+    await submitForm();
+    await click($('input[value="pickup"]'));
+    await submitForm();
+    await flush();
+    expect($('input[value="pix"]')).not.toBeNull();
+    expect($('input[value="cash"]')).toBeNull();
+    expect($('input[value="card_on_delivery"]')).toBeNull();
+    expect(($('input[value="pix"]') as HTMLInputElement).checked).toBe(true);
+  });
+
+  test('the checkout button waits only while no mode would take the cart', async () => {
+    const below = (every: boolean) => ({
+      ...cartWithItem(),
+      totals: {
+        ...cartWithItem().totals,
+        minOrderCents: 6000,
+        remainingMinOrderCents: 1300,
+        belowMinOrder: true,
+        belowEveryMinOrder: every,
+      },
+    });
+    let every = false;
+    core((url) => {
+      if (url.pathname === '/storefront/v1/store') return json(200, MODES_STORE);
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: below(every) });
+      return null;
+    });
+    m = await mount({ path: '/sacola', session: 'tok' });
+    await flush();
+    expect($('[data-vendua="checkout-button"]')?.getAttribute('data-state')).toBe('idle');
+    m.unmount();
+    every = true;
+    m = await mount({ path: '/sacola', session: 'tok' });
+    await flush();
+    expect($('[data-vendua="checkout-button"]')?.getAttribute('data-state')).toBe('blocked');
+  });
+});

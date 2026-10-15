@@ -585,6 +585,34 @@ caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot th
   with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
   in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
 
+### Street suggestions while the address is typed (Kernel 1.28)
+
+Additive — no storefront edit, no new runtime export. As the shopper types in "Rua", the checkout
+asks `api.places(q)` → `GET /storefront/v1/places?q=` (`{ places: PlaceSuggestion[] }`; under 3
+characters asks nothing) after a 300 ms pause, and only for typing: a street filled from a CEP or
+a saved address asks nothing. Core searches OpenStreetMap through Photon, the store's own area
+first, at most 5. `checkout.AddressForm` gains optional `streetSuggestions` (`id`, `label`
+"Rua Barão de Jaguara", `detail` "Ponte Preta, Campinas – SP") and `onPickStreet(id)`. Picking
+fills the street, and the bairro and number only when empty (the CEP is left as typed: OSM's can
+be the whole city's), and under distance pricing opens the map on that street; the geocoder then
+moves it only to a closer answer. The shopper still confirms the door. The default is an ARIA 1.2
+combobox (arrows, Enter, Escape; a tap) with "© OpenStreetMap" under the list.
+
+### Minimum order and payment methods per mode (Kernel 1.27)
+
+Additive — no storefront edit. A store sets pickup's minimum apart from delivery's (none at all,
+say) and turns a payment method off for delivery or for pickup (Loja › Entrega e retirada,
+Pagamentos). Core enforces both at checkout (`ORDER_MIN_NOT_MET`, `PAYMENT_METHOD_UNAVAILABLE`).
+
+- `StoreProfile.minOrderCents` is delivery's (a zone may ask more); `pickupMinOrderCents`
+  (optional, 0 = none) is pickup's. Absent on an older Core: pickup's is `minOrderCents`.
+- `StoreProfile.paymentMethodsByMode` (`{ delivery: string[]; pickup: string[] }`, optional):
+  `paymentMethods` less the ones off for that mode, never empty. Checkout offers the chosen
+  mode's and moves the choice when it isn't among them; a table keeps its own list.
+- `CartTotals.minOrderCents` / `belowMinOrder` are the cart's mode's, delivery's before one is
+  picked. `CartTotals.belowEveryMinOrder` (optional): below both modes' minimums, the only time
+  `CheckoutButton` blocks on the minimum (absent = `belowMinOrder`).
+
 ### "O de sempre" (Kernel 1.26)
 
 Additive — no storefront edit, no new runtime export. A store may remind a shopper who asked of
@@ -716,19 +744,6 @@ Additive — no storefront edit, no new export. A link with `?ref=CODE` (`^[a-z0
 Status do dia post, the bag card) is remembered for the tab (sessionStorage `vendua.ref`) on
 first load and sent as `ref` with `api.checkout`; Core keeps it on the order and counts each
 post's orders. Anything else in `ref` is ignored, never an error, and the address is left as it is.
-
-### Street suggestions while the address is typed (Kernel 1.27)
-
-Additive — no storefront edit, no new runtime export. As the shopper types in "Rua", the checkout
-asks `api.places(q)` → `GET /storefront/v1/places?q=` (`{ places: PlaceSuggestion[] }`; under 3
-characters asks nothing) after a 300 ms pause, and only for typing: a street filled from a CEP or
-a saved address asks nothing. Core searches OpenStreetMap through Photon, the store's own area
-first, at most 5. `checkout.AddressForm` gains optional `streetSuggestions` (`id`, `label`
-"Rua Barão de Jaguara", `detail` "Ponte Preta, Campinas – SP") and `onPickStreet(id)`. Picking
-fills the street, and the bairro and number only when empty (the CEP is left as typed: OSM's can
-be the whole city's), and under distance pricing opens the map on that street; the geocoder then
-moves it only to a closer answer. The shopper still confirms the door. The default is an ARIA 1.2
-combobox (arrows, Enter, Escape; a tap) with "© OpenStreetMap" under the list.
 
 ### Timed promotions and "a partir de" (Kernel 1.13)
 
@@ -1067,7 +1082,7 @@ cupom de desconto" link; the root has `data-closed` until it opens), in
 `[data-vendua="checkout-summary"]` `head` (the "Seu pedido" line with the item count), and in
 `[data-vendua="checkout-success"]` `stub` (the ticket stub with the order number, aria-hidden).
 
-Parts added in Kernel 1.27: in `checkout.AddressForm` `street-suggestions` (the list under
+Parts added in Kernel 1.28: in `checkout.AddressForm` `street-suggestions` (the list under
 "Rua", `hidden` while closed) and `street-suggestion` (each row, `role="option"` with
 `aria-selected`).
 
@@ -1088,7 +1103,7 @@ an override, and K07 allows `@vendua/kernel/rules` in store code.
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
 `ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`;
 Kernel 1.12: `PaymentAdjustment`, `ModifierPricingRule`; Kernel 1.15: `DistancePricing`,
-`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.24: `StoreChatMedia`, `StoreChatMediaKinds`; Kernel 1.21: `DietaryBadge`, from the rules; Kernel 1.22: `TableInfo`; Kernel 1.27: `PlaceSuggestion`); every new DTO field
+`GeoPoint`, `LatLng`, `MapTiles`; Kernel 1.18: `StoreChat`, `StoreChatMessage`; Kernel 1.24: `StoreChatMedia`, `StoreChatMediaKinds`; Kernel 1.21: `DietaryBadge`, from the rules; Kernel 1.22: `TableInfo`; Kernel 1.28: `PlaceSuggestion`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 

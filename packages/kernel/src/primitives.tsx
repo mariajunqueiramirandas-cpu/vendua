@@ -331,7 +331,7 @@ export function CheckoutButton({ asChild, children, onStart, className }: Checko
   const blocked =
     empty ||
     (status !== undefined && !takesOrders(status, store, cart.items)) ||
-    cart.totals.belowMinOrder;
+    (cart.totals.belowEveryMinOrder ?? cart.totals.belowMinOrder);
   const disabled = pending || blocked;
   return withChild(
     asChild,

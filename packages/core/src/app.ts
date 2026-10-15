@@ -56,6 +56,7 @@ import { getCatalogView, getProduct, getProductById } from './modules/catalog.ts
 import {
   deriveStatus,
   instagramHandle,
+  pickupMinOrderCents,
   upcomingSpecialDays,
   whatsappDigits,
   type StoreSettingsRow,
@@ -735,6 +736,7 @@ export function createApp({
                 provider,
                 settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS,
                 readPaymentAdjustments(settings?.payment_adjustments),
+                settings?.payment_methods_off,
               ),
               // online payments switch off by themselves when the token expires
               onlineUntil: isOnline(conn, provider) ? new Date(conn!.expires_at).getTime() : null,
@@ -770,6 +772,8 @@ export function createApp({
       },
       prepTimeMinutes: settings?.prep_time_minutes ?? 30,
       minOrderCents: settings?.min_order_cents ?? 0,
+      // Kernel 1.27 (0133): pickup's own minimum; minOrderCents is delivery's (with the zone's)
+      pickupMinOrderCents: pickupMinOrderCents(settings),
       pickupEnabled: settings?.pickup_enabled ?? true,
       dineIn: { enabled: dineIn },
       deliveryEnabled: settings?.delivery_enabled ?? true,

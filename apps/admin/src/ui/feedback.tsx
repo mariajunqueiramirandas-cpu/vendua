@@ -150,9 +150,41 @@ export function messageOf(err: unknown): string {
     if (err.status === 429) return 'Muitas tentativas seguidas. Espere um minuto e tente de novo.';
     if (err.status >= 500)
       return 'Algo deu errado do nosso lado. Já estamos vendo. Tente de novo em instantes.';
+    if (err.code === 'ENCOMENDA_PAYMENT_CONFLICT') {
+      const d = err.details ?? {};
+      return encomendaConflictText(
+        d.mode === 'pickup' ? 'pickup' : 'delivery',
+        d.need === 'sinal' ? 'sinal' : 'encomenda',
+        Array.isArray(d.methods) ? (d.methods as string[]) : ['pix'],
+      );
+    }
     return FRIENDLY[err.code] ?? 'Não deu certo. Confira os dados e tente de novo.';
   }
   return 'Não deu certo. Tente de novo.';
+}
+
+const METHOD_WORD: Record<string, string> = {
+  pix: 'Pix',
+  card_online: 'cartão pelo site',
+  card_on_delivery: 'cartão na maquininha',
+  cash: 'dinheiro',
+  meal_voucher: 'vale-refeição',
+};
+
+/** Why a mode must keep a method: encomendas (or their sinal) couldn't be paid there otherwise. */
+export function encomendaConflictText(
+  mode: 'delivery' | 'pickup',
+  need: 'encomenda' | 'sinal',
+  methods: string[],
+): string {
+  const where = mode === 'pickup' ? 'na retirada' : 'na entrega';
+  if (need === 'sinal')
+    return `O sinal das encomendas é por Pix, então o Pix fica ${where}. Para tirar, desligue o sinal em Loja › Encomendas.`;
+  const list = methods.map((m) => METHOD_WORD[m] ?? m);
+  if (list.length === 1)
+    return `As encomendas só aceitam ${list[0]}, então ${list[0]} fica ${where}. Para mudar, ajuste as formas das encomendas em Loja › Encomendas.`;
+  const words = `${list.slice(0, -1).join(', ')} ou ${list[list.length - 1]}`;
+  return `As encomendas aceitam ${words}: ${where} precisa ficar com pelo menos uma delas. Para mudar, ajuste as formas das encomendas em Loja › Encomendas.`;
 }
 
 const FRIENDLY: Record<string, string> = {

@@ -1135,7 +1135,7 @@
     gap: 12px;
     position: relative;
   }
-  /* Kernel 1.27: the streets found for "Rua", under the whole row (street and number) so a long
+  /* Kernel 1.28: the streets found for "Rua", under the whole row (street and number) so a long
      name has room on a phone */
   .v-suggest {
     position: absolute;
@@ -3169,6 +3169,7 @@
     resize: vertical;
     min-height: 72px;
     font: inherit;
+    font-size: max(16px, 1em); /* the shorthand above resets .v-input's; iOS zooms under 16px */
   }
   .v-counter {
     text-align: end;

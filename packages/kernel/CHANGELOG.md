@@ -3,7 +3,7 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
-## 1.27.0
+## 1.28.0
 
 Street suggestions in the checkout's address form — additive, no storefront edit, no new runtime
 export.
@@ -14,6 +14,16 @@ export.
   asks while the shopper types in "Rua" and a pick fills the street (and an empty bairro and
   number) and opens the pin map on it. The default is an ARIA combobox with parts
   `street-suggestions` / `street-suggestion`.
+
+## 1.27.0
+
+Delivery and pickup each with their own minimum order and payment methods — additive, no
+storefront edit.
+
+- `StoreProfile.pickupMinOrderCents` (0 = no minimum) and `StoreProfile.paymentMethodsByMode`
+  (`{ delivery, pickup }`); checkout offers the chosen mode's methods.
+- `CartTotals.belowEveryMinOrder`: `CheckoutButton` waits only while neither mode would take the
+  cart; `belowMinOrder` / `minOrderCents` are the cart's mode's (delivery's before one is picked).
 
 ## 1.26.0
 
