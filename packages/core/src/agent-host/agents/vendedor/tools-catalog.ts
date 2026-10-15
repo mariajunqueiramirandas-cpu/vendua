@@ -6,6 +6,7 @@ import { quoteDeliveryTx } from '../../../modules/cart-ops.ts';
 import { normalizeCep, viaCep } from '../../../modules/geo.ts';
 import type { Sql } from '../../../platform/db.ts';
 import { brl } from '../../../vendedor/cards.ts';
+import { paymentLine } from '../../../vendedor/pack.ts';
 import { vendedorDeps } from '../../../vendedor/deps.ts';
 import { findAnswers, fold, queueQuestion } from '../../../vendedor/knowledge.ts';
 import { loadStoreSettings, storeStatus } from '../../../vendedor/threads.ts';
@@ -184,11 +185,24 @@ export const storeInfoTool = defineTool<Record<string, never>, Sql>({
     );
     if (p.minOrder) {
       ctx.figure('loja.minimo', { value: p.minOrder, text: p.minOrder, kind: 'money' });
-      out.push('Pedido mínimo: {{loja.minimo}}');
+      out.push(
+        p.pickupMinOrder
+          ? 'Pedido mínimo para entrega: {{loja.minimo}}'
+          : 'Pedido mínimo: {{loja.minimo}}',
+      );
     }
-    out.push(
-      `Pagamento: ${p.payments.map((m) => `${m.label}${m.note ? ` (${m.note})` : ''}`).join(', ')}`,
-    );
+    if (p.pickupMinOrder && p.fulfilment.pickup) {
+      if (p.pickupMinOrder === 'nenhum') out.push('Retirada: sem pedido mínimo');
+      else {
+        ctx.figure('retirada.minimo', {
+          value: p.pickupMinOrder,
+          text: p.pickupMinOrder,
+          kind: 'money',
+        });
+        out.push('Pedido mínimo para retirada: {{retirada.minimo}}');
+      }
+    }
+    out.push(`Pagamento: ${p.payments.map(paymentLine).join(', ')}`);
     out.push(
       `Encomendas: ${p.encomendas.whileClosed ? 'aceitas mesmo com a loja fechada' : 'só com a loja aberta'}, até ${p.encomendas.maxDays} dias à frente`,
     );

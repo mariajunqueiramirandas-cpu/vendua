@@ -3,6 +3,16 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.27.0
+
+Delivery and pickup each with their own minimum order and payment methods — additive, no
+storefront edit.
+
+- `StoreProfile.pickupMinOrderCents` (0 = no minimum) and `StoreProfile.paymentMethodsByMode`
+  (`{ delivery, pickup }`); checkout offers the chosen mode's methods.
+- `CartTotals.belowEveryMinOrder`: `CheckoutButton` waits only while neither mode would take the
+  cart; `belowMinOrder` / `minOrderCents` are the cart's mode's (delivery's before one is picked).
+
 ## 1.26.0
 
 "O de sempre", Freio automático, Festa calculada, Plano semanal — additive, no storefront

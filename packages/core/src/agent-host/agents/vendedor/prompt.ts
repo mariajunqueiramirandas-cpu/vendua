@@ -1,5 +1,5 @@
 import type { BlockCtx, InstructionBlock } from '@vendua/agent-runtime';
-import type { StorePack, SubjectContext } from '../../../vendedor/pack.ts';
+import { paymentLine, type StorePack, type SubjectContext } from '../../../vendedor/pack.ts';
 import { custom } from './fold.ts';
 
 // The prompt in cache order (sales-agent.md §4.9): fixed rules → the store pack → the customer
@@ -50,7 +50,7 @@ function storeText(ctx: BlockCtx): string {
   ];
   if (a.voice) lines.push(`Jeito de falar pedido pela loja (orientação): ${a.voice}`);
   lines.push(
-    `Retirada: ${p.fulfilment.pickup ? 'sim' : 'não'} · Entrega: ${p.fulfilment.delivery ? 'sim' : 'não'} · Pagamento: ${p.payments.map((m) => m.label).join(', ')}${p.onlinePayments ? ' (Pix e cartão online pela loja)' : ''}`,
+    `Retirada: ${p.fulfilment.pickup ? 'sim' : 'não'} · Entrega: ${p.fulfilment.delivery ? 'sim' : 'não'} · Pagamento: ${p.payments.map((m) => (m.only ? paymentLine({ ...m, note: null }) : m.label)).join(', ')}${p.onlinePayments ? ' (Pix e cartão online pela loja)' : ''}`,
   );
   if (p.fulfilment.delivery && p.fulfilment.needsPin)
     lines.push(

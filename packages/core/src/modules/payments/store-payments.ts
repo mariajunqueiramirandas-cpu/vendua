@@ -5,7 +5,11 @@ import { HttpError, UUID_RE } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { storeOrigin } from '../../platform/store-origin.ts';
 import { ORDER_CHANNEL, loadOrderView, recordOrderStep, type OrderView } from '../orders.ts';
-import type { PaymentAdjustment, PaymentAdjustments } from '../payment-adjustments.ts';
+import {
+  methodsForMode,
+  type PaymentAdjustment,
+  type PaymentAdjustments,
+} from '../payment-adjustments.ts';
 import { pixPayload, type PixKeyType } from '../pix.ts';
 import { enqueueOrderMessageTx, enqueueSinalPaidTx } from '../../store-whatsapp/messages.ts';
 import { dueCharge, sinalOf, type Charge, type OrderSinal, type SinalVia } from '../sinal.ts';
@@ -148,9 +152,13 @@ export function storePaymentsPublic(
   provider: PaymentProvider,
   methods: string[],
   adjustments: PaymentAdjustments = {},
+  /** store_settings.payment_methods_off (0133) */
+  methodsOff: unknown = {},
 ): {
   onlinePayments: { pix: boolean; card: boolean };
   paymentMethods: string[];
+  /** what each mode takes (0133): `paymentMethods` less the ones off for it, never empty */
+  paymentMethodsByMode: { delivery: string[]; pickup: string[] };
   /** offered methods with a discount/surcharge only — labels; Core computes the cents */
   paymentAdjustments: Record<string, PaymentAdjustment>;
 } {
@@ -162,6 +170,18 @@ export function storePaymentsPublic(
       card: online && methods.includes('card_online'),
     },
     paymentMethods,
+    paymentMethodsByMode: {
+      delivery: methodsForMode(
+        { payment_methods: methods, payment_methods_off: methodsOff },
+        'delivery',
+        online,
+      ),
+      pickup: methodsForMode(
+        { payment_methods: methods, payment_methods_off: methodsOff },
+        'pickup',
+        online,
+      ),
+    },
     paymentAdjustments: Object.fromEntries(
       Object.entries(adjustments).filter(([m]) => paymentMethods.includes(m)),
     ),
