@@ -220,8 +220,13 @@
     display: none;
   }
   @media (min-width: 900px) {
+    /* the words start level with the top of the device, not adrift beside its middle */
     .panel {
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      align-items: start;
+    }
+    .copy {
+      padding-top: clamp(32px, 5vw, 64px);
     }
   }
   .copy {
