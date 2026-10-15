@@ -702,7 +702,10 @@ export interface StoreView {
   operations: {
     prepTimeMinutes: number;
     acceptTargetMinutes: number;
+    /** delivery's (each area may ask more) */
     minOrderCents: number;
+    /** pickup's own (0 = none) */
+    pickupMinOrderCents: number;
     pickupEnabled: boolean;
     pickupAddress: string | null;
     pickupInstructions: string | null;
@@ -1351,8 +1354,14 @@ export interface StatusDoDia {
 }
 export type StatusPostState = 'ready' | 'shared' | 'skipped';
 
+export type HandoverMode = 'delivery' | 'pickup';
+
 export interface Payments {
   methods: PayMethod[];
+  /** methods the store takes, but not for that mode */
+  methodsOff: Record<HandoverMode, PayMethod[]>;
+  /** which modes are on (Loja › Entrega e retirada) */
+  modes: Record<HandoverMode, boolean>;
   adjustments: PaymentAdjustments;
   pix: { key: string; keyType: string; beneficiary: string; city: string; sample: string } | null;
   mercadoPago: {
@@ -2964,6 +2973,8 @@ export const api = {
   payments: () => get<Payments>('/payments'),
   updatePayments: (p: {
     methods?: PayMethod[];
+    /** replaces both lists */
+    methodsOff?: Record<HandoverMode, PayMethod[]>;
     pix?: Record<string, unknown> | null;
     /** replaces the whole map */
     adjustments?: PaymentAdjustments | null;

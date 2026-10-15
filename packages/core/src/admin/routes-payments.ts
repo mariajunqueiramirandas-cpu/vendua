@@ -17,11 +17,14 @@ import { paymentReviews } from '../modules/payments/store-payments.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import {
   DEFAULT_PAYMENT_METHODS,
+  HANDOVER_MODES,
   MAX_FIXED_CENTS,
   MAX_PERCENT_BPS,
   PAYMENT_METHODS,
   isPaymentMethod,
+  readMethodsOff,
   readPaymentAdjustments,
+  type MethodsOff,
   type PaymentAdjustment,
   type PaymentAdjustments,
 } from '../modules/payment-adjustments.ts';
@@ -229,6 +232,10 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
   const month = currentMonth(tz);
   return {
     methods: s.payment_methods ?? [...DEFAULT_PAYMENT_METHODS],
+    // 0133: methods the store takes, but not for delivery / not for pickup
+    methodsOff: { delivery: [], pickup: [], ...readMethodsOff(s.payment_methods_off) },
+    // which modes are on (Loja → Entrega e retirada): a split only matters with both
+    modes: { delivery: s.delivery_enabled, pickup: s.pickup_enabled },
     // { method: { percentBps?, fixedCents? } }, signed: negative = discount
     adjustments: readPaymentAdjustments(s.payment_adjustments),
     // what PATCH accepts, either sign
@@ -248,6 +255,28 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
   };
 }
 
+function parseMethodsOff(raw: unknown): MethodsOff {
+  if (!isObj(raw))
+    throw new HttpError(422, 'BAD_REQUEST', 'methodsOff must be an object', {
+      field: 'methodsOff',
+    });
+  const out: MethodsOff = {};
+  for (const mode of HANDOVER_MODES) {
+    const list = raw[mode];
+    if (list === undefined || list === null) continue;
+    if (
+      !Array.isArray(list) ||
+      list.length > METHODS.length ||
+      !list.every((m) => isPaymentMethod(m))
+    )
+      throw new HttpError(422, 'BAD_REQUEST', `methodsOff.${mode} must list payment methods`, {
+        field: 'methodsOff',
+      });
+    if (list.length) out[mode] = [...new Set(list)];
+  }
+  return out;
+}
+
 export function mountPayments(d: AdminDeps) {
   const { admin, provider } = d;
   const { read, write, named } = handlers(d);
@@ -263,8 +292,15 @@ export function mountPayments(d: AdminDeps) {
     '/payments',
     write('owner', async (tx, t, m, c) => {
       const body = await bodyJson(c);
-      await loadSettings(tx, t.id);
+      const s = await loadSettings(tx, t.id);
       const changed: string[] = [];
+      let methods: string[] = s.payment_methods ?? [...DEFAULT_PAYMENT_METHODS];
+      let off = readMethodsOff(s.payment_methods_off);
+      if (body.methodsOff !== undefined) {
+        off = parseMethodsOff(body.methodsOff);
+        await tx`update store_settings set payment_methods_off = ${tx.json(off as never)} where tenant_id = ${t.id}`;
+        changed.push('formas de pagamento por entrega e retirada');
+      }
       if (body.methods !== undefined) {
         const pm = body.methods;
         if (
@@ -285,9 +321,17 @@ export function mountPayments(d: AdminDeps) {
               field: 'methods',
             },
           );
-        await tx`update store_settings set payment_methods = ${tx.json([...new Set(pm as string[])])} where tenant_id = ${t.id}`;
+        methods = [...new Set(pm as string[])];
+        await tx`update store_settings set payment_methods = ${tx.json(methods)} where tenant_id = ${t.id}`;
         changed.push('formas de pagamento');
       }
+      // delivery and pickup each keep at least one way to pay
+      for (const mode of HANDOVER_MODES)
+        if (!methods.some((m) => !(off[mode] as string[] | undefined)?.includes(m)))
+          throw new HttpError(422, 'BAD_REQUEST', `keep at least one payment method for ${mode}`, {
+            field: 'methodsOff',
+            mode,
+          });
       if (body.adjustments !== undefined) {
         const adjustments = parseAdjustments(body.adjustments);
         await tx`update store_settings set payment_adjustments = ${tx.json(adjustments as never)} where tenant_id = ${t.id}`;

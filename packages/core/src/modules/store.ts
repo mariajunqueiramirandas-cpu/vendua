@@ -155,6 +155,11 @@ export interface StoreSettingsRow {
   accept_target_minutes?: number;
   email?: string | null;
   payment_methods?: string[];
+  /** migration 0133: { delivery?: [...], pickup?: [...] } — read via payment-adjustments.ts */
+  payment_methods_off?: unknown;
+  /** migration 0133: pickup's own minimum (0 = none); null = min_order_cents — read via
+   *  pickupMinOrderCents */
+  pickup_min_order_cents?: number | null;
   /** migration 0067: { method: { percentBps?, fixedCents? } } — read via payment-adjustments.ts */
   payment_adjustments?: unknown;
   // Phase 3 (migration 0054)
@@ -168,6 +173,14 @@ export interface StoreSettingsRow {
     cta?: string;
     [k: string]: string | undefined;
   };
+}
+
+/** The least a pickup order may be (0 = no minimum): its own once the store set one, else the
+ *  store's (rows from before migration 0133). Delivery's is min_order_cents and the zone's. */
+export function pickupMinOrderCents(
+  settings: Pick<StoreSettingsRow, 'min_order_cents' | 'pickup_min_order_cents'> | null | undefined,
+): number {
+  return settings?.pickup_min_order_cents ?? settings?.min_order_cents ?? 0;
 }
 
 export type StoreStatus = 'open' | 'closed' | 'paused';

@@ -4,6 +4,7 @@ import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
   deriveStatus,
   instagramHandle,
+  pickupMinOrderCents,
   SPECIAL_RANGE_MAX_DAYS,
   upcomingSpecialDays,
   whatsappDigits,
@@ -164,6 +165,8 @@ export async function storeView(
       prepTimeMinutes: s.prep_time_minutes,
       acceptTargetMinutes: s.accept_target_minutes ?? 5,
       minOrderCents: s.min_order_cents,
+      // 0133: pickup's own (0 = none); a store that never set it still takes the store's
+      pickupMinOrderCents: pickupMinOrderCents(s),
       pickupEnabled: s.pickup_enabled,
       pickupAddress: s.pickup_address ?? null,
       pickupInstructions: s.pickup_instructions ?? null,
@@ -496,6 +499,20 @@ export function mountStore(d: AdminDeps) {
           set.accept_target_minutes = int(o.acceptTargetMinutes, 'acceptTargetMinutes', 1, 120);
         if (o.minOrderCents !== undefined)
           set.min_order_cents = int(o.minOrderCents, 'minOrderCents', 0, 10_000_000);
+        // pickup's field showed the store's minimum until now: it keeps that, not the new one
+        if (
+          o.minOrderCents !== undefined &&
+          o.pickupMinOrderCents === undefined &&
+          s.pickup_min_order_cents == null
+        )
+          set.pickup_min_order_cents = s.min_order_cents;
+        if (o.pickupMinOrderCents !== undefined)
+          set.pickup_min_order_cents = int(
+            o.pickupMinOrderCents,
+            'pickupMinOrderCents',
+            0,
+            10_000_000,
+          );
         if (o.pickupEnabled !== undefined)
           set.pickup_enabled = bool(o.pickupEnabled, 'pickupEnabled');
         if (o.deliveryEnabled !== undefined)

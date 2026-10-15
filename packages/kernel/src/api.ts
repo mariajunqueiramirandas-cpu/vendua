@@ -43,7 +43,10 @@ export interface StoreProfile {
     specialDays?: SpecialDay[];
   };
   prepTimeMinutes: number;
+  /** delivery's minimum (a zone may ask more); also pickup's on a Core before 1.27 */
   minOrderCents: number;
+  /** Kernel 1.27 — pickup's own minimum (0 = none); absent = `minOrderCents` */
+  pickupMinOrderCents?: number;
   pickupEnabled: boolean;
   deliveryEnabled: boolean;
   /** ISO 4217 — pt-BR storefronts today get 'BRL'. */
@@ -59,6 +62,9 @@ export interface StoreProfile {
   preorder?: { paymentMethods: string[]; maxDays: number; whileClosed?: boolean };
   /** Kernel 1.4 — methods the store accepts at checkout (the merchant admin toggles them). */
   paymentMethods?: string[];
+  /** Kernel 1.27 — what a delivery and a pickup order may each be paid with (`paymentMethods`
+   *  less the ones the store turned off for that mode; never empty); absent = `paymentMethods` */
+  paymentMethodsByMode?: { delivery: string[]; pickup: string[] };
   /** Kernel 1.4 — the store's uploaded logo, when it has one. */
   logoUrl?: string | null;
   /** Kernel 1.7 — where and how to pick an order up (null = not set) */
@@ -433,7 +439,11 @@ export interface CartTotals {
   /** Cents short of the minimum order — Core-computed so storefronts never
    *  subtract money themselves. 0 once the minimum is met. */
   remainingMinOrderCents: number;
+  /** below the minimum of the cart's mode (delivery's before one is picked) */
   belowMinOrder: boolean;
+  /** Kernel 1.27 — below delivery's and pickup's minimums alike: no way to get the order yet
+   *  (`CheckoutButton` waits on this; absent = `belowMinOrder`) */
+  belowEveryMinOrder?: boolean;
   /** Kernel 1.2 — coupon discount (Core-computed); total already has it off */
   discountCents?: number;
   freeDeliveryThresholdCents?: number | null;

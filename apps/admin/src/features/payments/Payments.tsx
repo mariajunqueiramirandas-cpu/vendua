@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  Check,
   Copy,
   CreditCard,
   ForkKnife,
@@ -10,7 +11,12 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type Payments as PaymentsData, type PayMethod } from '../../lib/api.ts';
+import {
+  api,
+  type HandoverMode,
+  type Payments as PaymentsData,
+  type PayMethod,
+} from '../../lib/api.ts';
 import { ago, money, plural } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
@@ -242,8 +248,31 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
       toast.error(payError(e));
     },
   });
+  const saveOff = useMutation({
+    mutationFn: (methodsOff: PaymentsData['methodsOff']) => api.updatePayments({ methodsOff }),
+    onMutate: (methodsOff) =>
+      optimistic<PaymentsData>(qc, qk.payments, (d) => ({ ...d, methodsOff })),
+    onSuccess: (d) => qc.setQueryData(qk.payments, d),
+    onError: (e, _m, ctx) => {
+      ctx?.restore();
+      toast.error(payError(e));
+    },
+  });
   const live = mpLive(data.mercadoPago);
   const on = (m: PayMethod) => data.methods.includes(m) && (m !== 'card_online' || live);
+  // a split only means something while the store both delivers and hands over at the counter
+  const split = data.modes.delivery && data.modes.pickup;
+  const takes = (mode: HandoverMode, methods: PayMethod[]) =>
+    methods.filter((x) => !data.methodsOff[mode].includes(x));
+  // off everywhere would leave a mode with no way to pay: Core refuses it, so the toggle waits
+  const lastFor = (m: PayMethod) =>
+    (['delivery', 'pickup'] as const).some(
+      (mode) =>
+        takes(
+          mode,
+          data.methods.filter((x) => x !== m),
+        ).length === 0,
+    );
   const hint = (m: PayMethod) => {
     if (m === 'pix') {
       if (live) return 'Pelo Mercado Pago: o pedido chega pago, sem conferir no banco.';
@@ -271,13 +300,28 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
             <div className="min-w-0 flex-1">
               <Toggle
                 checked={on(m)}
-                disabled={!canEdit || locked || (on(m) && data.methods.length === 1)}
+                disabled={!canEdit || locked || (on(m) && lastFor(m))}
                 onChange={(v) =>
                   save.mutate(v ? [...data.methods, m] : data.methods.filter((x) => x !== m))
                 }
                 label={M.label}
                 description={hint(m)}
               />
+              {on(m) && split ? (
+                <ModesLine
+                  label={M.label}
+                  takes={(mode) => !data.methodsOff[mode].includes(m)}
+                  last={(mode) => takes(mode, data.methods).length === 1}
+                  canEdit={canEdit}
+                  onToggle={(mode) => {
+                    const off = data.methodsOff[mode];
+                    saveOff.mutate({
+                      ...data.methodsOff,
+                      [mode]: off.includes(m) ? off.filter((x) => x !== m) : [...off, m],
+                    });
+                  }}
+                />
+              ) : null}
               {on(m) ? (
                 <AdjustmentLine method={m} label={M.label} data={data} canEdit={canEdit} />
               ) : null}
@@ -286,6 +330,52 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
         );
       })}
     </Card>
+  );
+}
+
+const MODE_WORD: Record<HandoverMode, string> = { delivery: 'Na entrega', pickup: 'Na retirada' };
+
+/** Under a method's toggle: whether delivery and pickup each take it. */
+function ModesLine({
+  label,
+  takes,
+  last,
+  canEdit,
+  onToggle,
+}: {
+  label: string;
+  takes: (mode: HandoverMode) => boolean;
+  /** the mode's only method left: it can't be turned off there */
+  last: (mode: HandoverMode) => boolean;
+  canEdit: boolean;
+  onToggle: (mode: HandoverMode) => void;
+}) {
+  return (
+    <div role="group" aria-label={`${label}: onde aceita`} className="-mt-1 flex gap-2 pb-2">
+      {(['delivery', 'pickup'] as const).map((mode) => {
+        const yes = takes(mode);
+        return (
+          <button
+            key={mode}
+            type="button"
+            role="checkbox"
+            aria-checked={yes}
+            disabled={!canEdit || (yes && last(mode))}
+            onClick={() => onToggle(mode)}
+            className={cn(
+              'press t-caption inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 font-semibold ring-1 transition-[color,background-color] duration-(--duration-quick) disabled:cursor-default',
+              yes
+                ? 'bg-sunken text-ink ring-line-strong'
+                : 'bg-surface text-muted ring-line line-through decoration-1',
+              canEdit && !(yes && last(mode)) && 'hover:bg-hover',
+            )}
+          >
+            {yes ? <Check weight="bold" className="size-3.5" aria-hidden /> : null}
+            {MODE_WORD[mode]}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

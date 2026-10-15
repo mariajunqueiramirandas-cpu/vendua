@@ -51,6 +51,42 @@ export function offeredMethods(
   return settings?.payment_methods ?? DEFAULT_PAYMENT_METHODS;
 }
 
+export type HandoverMode = 'delivery' | 'pickup';
+export const HANDOVER_MODES: readonly HandoverMode[] = ['delivery', 'pickup'];
+export type MethodsOff = Partial<Record<HandoverMode, PaymentMethod[]>>;
+
+/** Stored rows are validated on write; a stray entry is ignored on read. */
+export function readMethodsOff(raw: unknown): MethodsOff {
+  const out: MethodsOff = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const mode of HANDOVER_MODES) {
+    const list = (raw as Record<string, unknown>)[mode];
+    if (!Array.isArray(list)) continue;
+    const methods = [...new Set(list.filter(isPaymentMethod))];
+    if (methods.length) out[mode] = methods;
+  }
+  return out;
+}
+
+/**
+ * What an order handed over this way may be paid with: the store's methods less those it turned
+ * off for the mode (`cardOnline`: Mercado Pago takes cards right now). A mode is never left with
+ * nothing — exclusions that would empty it fall back to the store's whole list.
+ */
+export function methodsForMode(
+  settings: Pick<StoreSettingsRow, 'payment_methods' | 'payment_methods_off'> | null | undefined,
+  mode: string | null | undefined,
+  cardOnline: boolean,
+): string[] {
+  const usable = offeredMethods(settings).filter((m) => m !== 'card_online' || cardOnline);
+  const off =
+    mode === 'delivery' || mode === 'pickup'
+      ? readMethodsOff(settings?.payment_methods_off)[mode]
+      : undefined;
+  const left = off ? usable.filter((m) => !(off as string[]).includes(m)) : usable;
+  return left.length ? left : usable;
+}
+
 /** The rule for `method`, only while the store accepts it. */
 export function adjustmentFor(
   settings: Pick<StoreSettingsRow, 'payment_methods' | 'payment_adjustments'> | null | undefined,
