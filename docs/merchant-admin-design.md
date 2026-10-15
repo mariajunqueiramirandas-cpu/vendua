@@ -523,7 +523,7 @@ blank fields and plain pt-BR. The questions come in four parts, named above each
 - **Cardápio**: the first products with a photo each, or a WhatsApp list pasted in.
 
 Each answer **visibly assembles their storefront** in the phone beside the questions (behind
-"Espiar minha loja" on phones): name → header, logo → avatar, colour → buttons, hours → the
+the eye in the header on phones, a bottom sheet that marks itself when an answer changed the store): name → header, logo → avatar, colour → buttons, hours → the
 status, products → the grid. Everything saves on "Continuar"; every optional question has a
 quiet "pular". Where the merchant stopped is kept by Core, so another device opens a
 welcome-back map with what's ready ticked and "Continuar: os horários". "Continuar depois"

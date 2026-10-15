@@ -20,6 +20,7 @@ export function StepFrame({
   eyebrow,
   focusTitle = true,
   solidBar,
+  hidePrimary,
 }: {
   title: ReactNode;
   /** a small line above the title: which part of a longer flow this is */
@@ -37,6 +38,8 @@ export function StepFrame({
   focusTitle?: boolean;
   /** a long answer (cards side by side): the bar keeps its backdrop on a desktop too */
   solidBar?: boolean;
+  /** the answer itself moves on (one tap on a tile): no main button, only the way back */
+  hidePrimary?: boolean;
 }) {
   const head = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -64,30 +67,43 @@ export function StepFrame({
         {hint ? <p className="t-body-lg mt-2 text-muted">{hint}</p> : null}
       </div>
       {children}
-      <div
-        data-kb-reveal
-        className={cn(
-          'sticky bottom-0 z-20 -mx-4 flex flex-col-reverse gap-2 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center sm:gap-3 md:-mx-8 md:px-8 kb:static kb:border-0 kb:bg-transparent kb:pb-2 kb:backdrop-blur-none',
-          !solidBar &&
-            'lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none',
-        )}
-      >
-        {/* phones: the way back and the way around share one row under the main button */}
-        {back || aside ? (
-          <div className="flex items-center gap-2 sm:flex-1 sm:gap-3 [&>*]:flex-1 sm:[&>*]:flex-none">
-            {back ? (
-              <Button variant="ghost" size="lg" icon={<ArrowLeft />} onClick={back}>
-                voltar
-              </Button>
-            ) : null}
-            <div className="hidden sm:block sm:!flex-1" />
-            {aside}
-          </div>
-        ) : null}
-        <Button type="submit" size="lg" loading={!!busy} disabled={disabled}>
-          {label} <ArrowRight />
-        </Button>
-      </div>
+      {hidePrimary && !back && !aside ? null : (
+        <div
+          data-kb-reveal
+          className={cn(
+            'sticky bottom-0 z-20 -mx-4 flex flex-col-reverse gap-2 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center sm:gap-3 md:-mx-8 md:px-8 kb:static kb:border-0 kb:bg-transparent kb:pb-2 kb:backdrop-blur-none',
+            !solidBar &&
+              'lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none',
+          )}
+        >
+          {/* phones: the way back and the way around share one quiet row under the main button */}
+          {back || aside ? (
+            <div
+              className={cn(
+                'flex items-center gap-2 sm:flex-1 sm:justify-end sm:gap-3',
+                back ? 'justify-between' : 'justify-center',
+              )}
+            >
+              {back ? (
+                <Button
+                  variant="ghost"
+                  icon={<ArrowLeft />}
+                  onClick={back}
+                  className="-ml-3 sm:mr-auto"
+                >
+                  voltar
+                </Button>
+              ) : null}
+              {aside}
+            </div>
+          ) : null}
+          {hidePrimary ? null : (
+            <Button type="submit" size="lg" loading={!!busy} disabled={disabled}>
+              {label} <ArrowRight />
+            </Button>
+          )}
+        </div>
+      )}
     </form>
   );
 }

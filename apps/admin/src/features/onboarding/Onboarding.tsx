@@ -1,4 +1,4 @@
-import { Eye, EyeSlash, X } from '@phosphor-icons/react';
+import { Eye, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -13,10 +13,11 @@ import {
 import { trackPageview } from '../../lib/analytics.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
-import { Button, ButtonLink } from '../../ui/Button.tsx';
+import { Button, ButtonLink, IconButton } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { useKeyboard } from '../../ui/keyboard.ts';
+import { Sheet } from '../../ui/Sheet.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { ImportFlow } from '../import/ImportFlow.tsx';
@@ -58,7 +59,7 @@ import {
 import { ColorsStep, DeliveryStep, MercadoPagoStep, MethodsStep, PixStep } from './steps-more.tsx';
 
 // The store builds itself (§6.8): one question per screen in four parts, a friendly guide, and
-// the store assembling in the phone beside it (behind "espiar" on phones). Every answer saves
+// the store assembling in the phone beside it (behind the eye in the header on phones). Every answer saves
 // on "Continuar"; where the merchant stopped lives in Core, so any device picks up from there.
 
 const draftOf = (s: StoreView, t: StoreTokens | null): Draft => ({
@@ -229,7 +230,10 @@ function Flow({
   useEffect(() => trackPageview(`/bem-vindo/${step}`), [step]);
   const [solo, setSolo] = useState(first.current.solo);
   const [praise, setPraise] = useState<string | null>(null);
+  // the phone preview lives behind the eye in the header on small screens; the dot on it says
+  // an answer changed the store since the merchant last looked
   const [peek, setPeek] = useState(false);
+  const [changed, setChanged] = useState(false);
 
   const remember = useCallback(
     (body: Parameters<typeof api.updateOnboarding>[0]) =>
@@ -243,6 +247,7 @@ function Flow({
     (to: StepId, p: string | null) => {
       setPraise(p);
       setStep(to);
+      if (p) setChanged(true);
       saveStep(storeId, to);
       markTab();
       void remember(to === 'pronto' ? { step: to, finished: true } : { step: to });
@@ -394,7 +399,30 @@ function Flow({
         phase="loja"
         progress={step === 'oi' ? 0 : answeredCount / questions.length}
         status={step === 'oi' ? 'começando' : `${answeredCount + 1} de ${questions.length}`}
-        exit={<Exit leave={leave} />}
+        exit={
+          <div className="flex items-center">
+            {step !== 'oi' ? (
+              <span className="relative lg:hidden">
+                <IconButton
+                  label="espiar minha loja"
+                  onClick={() => {
+                    setChanged(false);
+                    setPeek(true);
+                  }}
+                >
+                  <Eye />
+                </IconButton>
+                {changed ? (
+                  <span
+                    aria-hidden
+                    className="animate-fade-up pointer-events-none absolute right-2 top-2 size-2.5 rounded-full bg-spark ring-2 ring-bg"
+                  />
+                ) : null}
+              </span>
+            ) : null}
+            <Exit leave={leave} />
+          </div>
+        }
       />
     );
 
@@ -547,21 +575,6 @@ function Flow({
           ) : null}
 
           {body}
-
-          {step !== 'oi' && step !== 'pronto' ? (
-            <div className="lg:hidden">
-              <Button
-                variant="secondary"
-                block
-                icon={peek ? <EyeSlash /> : <Eye />}
-                aria-expanded={peek}
-                onClick={() => setPeek((v) => !v)}
-              >
-                {peek ? 'Fechar a prévia' : 'Espiar minha loja'}
-              </Button>
-              {peek ? <div className="animate-fade-up mt-4">{preview}</div> : null}
-            </div>
-          ) : null}
         </main>
 
         {step !== 'pronto' ? (
@@ -574,6 +587,16 @@ function Flow({
           </aside>
         ) : null}
       </div>
+      {step !== 'pronto' ? (
+        <Sheet
+          open={peek}
+          onOpenChange={setPeek}
+          title="Sua loja, ao vivo"
+          description="Cada resposta entra aqui na hora."
+        >
+          <div className="mx-auto max-w-[300px] py-2">{preview}</div>
+        </Sheet>
+      ) : null}
     </div>
   );
 }
