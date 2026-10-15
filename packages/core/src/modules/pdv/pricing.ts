@@ -131,7 +131,7 @@ export function parseDiscount(v: unknown): PdvDiscount | null {
   return { kind, value: v.value as number, reason };
 }
 
-/** Never more than what it discounts. Percent rounds half up, in the store's favour at .5 cents. */
+/** Never more than what it discounts. Percent rounds half up: a .5 cent goes to the customer. */
 export function discountCents(d: PdvDiscount | null, subtotal: number): number {
   if (!d || subtotal <= 0) return 0;
   const raw = d.kind === 'fixed' ? d.value : Math.round((subtotal * d.value) / 10_000);

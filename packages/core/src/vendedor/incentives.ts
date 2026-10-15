@@ -1,5 +1,5 @@
 import type { CartView } from '../modules/cart.ts';
-import { mintCouponTx } from '../modules/coupons.ts';
+import { couponDiscountCents, mintCouponTx } from '../modules/coupons.ts';
 import type { Sql } from '../platform/db.ts';
 import type { CompiledGuard } from './knowledge.ts';
 import type { IncentiveReason, StoreAgentSettings } from './settings.ts';
@@ -37,15 +37,13 @@ interface TemplateRow {
   ends_at: Date | null;
 }
 
-/** The most a coupon can take off this cart: what the budget counts. */
+/** The most a coupon can take off this cart: what the budget counts, and the minted coupon's cap
+ *  (checkout's own formula, the merchant's cap on the template included). */
 export function worstCaseCents(
   t: Pick<TemplateRow, 'kind' | 'value' | 'max_discount_cents'>,
   cart: CartView,
 ): number {
-  if (t.kind === 'fixed') return Math.min(t.value, cart.totals.subtotalCents);
-  if (t.kind === 'free_delivery') return cart.totals.deliveryFeeCents;
-  const pct = Math.round((cart.totals.subtotalCents * t.value) / 100);
-  return t.max_discount_cents ? Math.min(pct, t.max_discount_cents) : pct;
+  return couponDiscountCents(t, cart.totals.subtotalCents, cart.totals.deliveryFeeCents);
 }
 
 function monthStart(now: Date): Date {
