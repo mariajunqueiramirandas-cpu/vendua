@@ -114,6 +114,8 @@ export interface MountAdminOpts {
   notify: MerchantNotify;
   publicOrigin: (c: Context) => string;
   geocode: AdminDeps['geocode'];
+  places: AdminDeps['places'];
+  cepLookup: AdminDeps['cepLookup'];
   signupReady: AdminDeps['signupReady'];
   domains: AdminDeps['domains'];
   fleet: AdminDeps['fleet'];
@@ -280,6 +282,8 @@ export function mountAdmin(o: MountAdminOpts) {
     notify: o.notify,
     publicOrigin: o.publicOrigin,
     geocode: o.geocode,
+    places: o.places,
+    cepLookup: o.cepLookup,
     signupReady: o.signupReady,
     domains: o.domains,
     fleet: o.fleet,

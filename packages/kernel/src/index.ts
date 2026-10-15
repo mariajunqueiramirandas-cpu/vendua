@@ -201,6 +201,8 @@ export type {
   GeoPoint,
   LatLng,
   MapTiles,
+  // Kernel 1.28
+  PlaceSuggestion,
   // Kernel 1.18
   StoreChat,
   StoreChatMessage,

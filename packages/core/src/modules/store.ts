@@ -90,6 +90,8 @@ export interface StoreSettingsRow {
   instagram: string | null;
   city: string | null;
   address: string | null;
+  /** 8 digits (migration 0134) */
+  cep?: string | null;
   hours: StoreHours;
   status_override: 'paused' | 'closed' | null;
   resumes_at: string | null;

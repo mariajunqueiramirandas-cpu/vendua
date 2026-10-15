@@ -2,7 +2,7 @@ import { MapPinLine, Moped, PencilSimple, UserCircleCheck } from '@phosphor-icon
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, type PdvCustomer, type PdvDeliveryIn, type PdvQuote } from '../../lib/api.ts';
-import { money, phone as phoneText } from '../../lib/format.ts';
+import { maskCep, money, phone as phoneText } from '../../lib/format.ts';
 import { parsePhone } from '../../lib/parse.ts';
 import { qk } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -11,6 +11,7 @@ import { Field, MoneyField, PhoneInput, TextArea, TextInput } from '../../ui/fie
 import { Notice } from '../../ui/Notice.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
+import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { useDebounced } from './data.ts';
 
 // A phone order: who asked (the phone first, which brings back a returning customer's name and
@@ -45,10 +46,6 @@ export interface Who {
 }
 
 export const cepDigits = (cep: string) => cep.replace(/\D/g, '');
-const maskCep = (v: string) => {
-  const d = cepDigits(v).slice(0, 8);
-  return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
-};
 
 export const addressDone = (a: Address) => !!a.street.trim() && !!a.neighborhood.trim();
 export const whoDone = (c: Who) => c.name.trim().length >= 2 && !!c.digits;
@@ -314,6 +311,18 @@ export function DeliverySheet({
   const [tried, setTried] = useState(false);
   const [fromLast, setFromLast] = useState(false);
   const filled = useRef<string | null>(null);
+  // streets for the typed "Rua" (typing only: a returning customer's address stays quiet)
+  const street = useStreetSuggest((s) => {
+    setFromLast(false);
+    setA((x) => ({
+      ...x,
+      street: s.street,
+      number: x.number.trim() ? x.number : (s.number ?? ''),
+      neighborhood: x.neighborhood.trim() ? x.neighborhood : (s.neighborhood ?? ''),
+      // the door itself when OSM has the typed number; a street's middle is left to the geocoder
+      pin: s.precision === 'address' ? { lat: s.lat, lng: s.lng } : null,
+    }));
+  }, open);
   const ids = {
     phone: useId(),
     name: useId(),
@@ -332,6 +341,7 @@ export function DeliverySheet({
     setShown(!!who.digits || !!who.name || addressDone(address));
     setTried(false);
     setFromLast(false);
+    street.reset();
     filled.current = who.digits;
     // the values it opened with
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -380,6 +390,22 @@ export function DeliverySheet({
   const setAddr = (p: Partial<Address>) => {
     setFromLast(false);
     setA((x) => ({ ...x, ...p, pin: null }));
+  };
+
+  // a CEP fills the street and bairro still blank (ViaCEP, through Core)
+  const cepFill = async (digits: string) => {
+    const found = await api.cep(digits).catch(() => null);
+    const c = found?.address;
+    if (!c) return;
+    setA((x) =>
+      cepDigits(x.cep) !== digits
+        ? x
+        : {
+            ...x,
+            street: x.street.trim() ? x.street : (c.street ?? ''),
+            neighborhood: x.neighborhood.trim() ? x.neighborhood : (c.neighborhood ?? ''),
+          },
+    );
   };
 
   const badPhone = c.phone.trim() !== '' && !parsePhone(c.phone);
@@ -475,8 +501,13 @@ export function DeliverySheet({
                   maxLength={120}
                   autoComplete="off"
                   value={a.street}
-                  onChange={(e) => setAddr({ street: e.target.value })}
+                  {...street.input}
+                  onChange={(e) => {
+                    setAddr({ street: e.target.value });
+                    street.typing(e.target.value);
+                  }}
                 />
+                {street.list}
               </Field>
               <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
                 <Field label="Número" htmlFor={ids.number} error={err('delivery.number')}>
@@ -536,7 +567,11 @@ export function DeliverySheet({
                   autoComplete="off"
                   placeholder="00000-000"
                   value={a.cep}
-                  onChange={(e) => setAddr({ cep: maskCep(e.target.value) })}
+                  onChange={(e) => {
+                    const cep = maskCep(e.target.value);
+                    setAddr({ cep });
+                    if (cepDigits(cep).length === 8 && cep !== a.cep) void cepFill(cepDigits(cep));
+                  }}
                   className="tnum max-w-44"
                 />
               </Field>

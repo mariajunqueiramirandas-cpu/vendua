@@ -25,7 +25,8 @@ geocoding and routing.
 **The customer confirms the door on a map; that point is what gets priced.** Free geocoders are
 weak on Brazilian house numbers, so geocoding is only used to open the map in the right area:
 Core places the typed address (`GET /storefront/v1/geocode`, OpenStreetMap's public Nominatim:
-1 request/second, an identifying User-Agent, cached), the shopper drags the map until the pin is
+1 request/second, an identifying User-Agent, cached; OSM barely knows Brazilian CEPs, so a CEP
+is placed by the street and then the bairro ViaCEP names for it, before the city), the shopper drags the map until the pin is
 on their door, or uses the device's location, and confirms. "Lembrar meus dados" keeps the pin,
 so a returning customer doesn't confirm it again. The store's own pin is set the same way in the
 admin (`GET /admin/v1/geocode` from the store's address, then a tap on the map).
@@ -72,6 +73,13 @@ tiles by default), so the provider can change without a Kernel release. A vector
   Beyond that, the estimate takes over. OpenStreetMap's tile servers discourage heavy
   commercial use, so as traffic grows, point `MAP_TILE_URL` at a commercial or self-hosted
   raster source. Each of these is one env var (`NOMINATIM_URL`, `ORS_URL`, `MAP_TILE_URL`).
+- Typing the street suggests streets (Kernel 1.28, the PDV too): Nominatim's policy forbids
+  autocomplete, so `GET /storefront/v1/places` and `/admin/v1/places` ask komoot's public Photon
+  (same OSM data, made for typeahead, fair use: 120 a minute per process, 40 per client, cached a
+  day, near the store's pin or city first). `PHOTON_URL` points at a self-hosted instance.
+- The store has its own CEP (`store_settings.cep`, migration 0134). In the admin it fills a blank
+  city and address (ViaCEP, `GET /admin/v1/cep/:cep`), and "pelo endereço" sends it to the
+  geocoder, so the store's pin gets the same CEP → street → bairro path as a shopper's address.
 - The tile server, and Nominatim through Core, see the shopper's area. The checkout already
   needed the address. The pin is stored with the cart (`carts.delivery`, and `delivery_route.to`)
   and the order like the address, and customer erasure strips it from orders (`lat`/`lng`) the

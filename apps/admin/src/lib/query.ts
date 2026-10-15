@@ -90,6 +90,7 @@ export const qk = {
   },
   pdvCustomer: (phone: string) => ['pdv-customer', phone] as const,
   pdvGeocode: (address: string) => ['pdv-geocode', address] as const,
+  places: (q: string) => ['places', q] as const,
   // outside the `pdv` root: a write elsewhere doesn't re-price an open ticket
   pdvQuote: (body: string) => ['pdv-quote', body] as const,
   pdvPix: (cents: number) => ['pdv-pix', cents] as const,

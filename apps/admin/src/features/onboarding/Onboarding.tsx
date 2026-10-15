@@ -48,6 +48,7 @@ import {
   LogoStep,
   NameStep,
   PickupStep,
+  AddressStep,
   ProductsStep,
   SegmentStep,
   TaglineStep,
@@ -471,6 +472,7 @@ function Flow({
     );
   else if (step === 'frase') body = <TaglineStep {...props} />;
   else if (step === 'whatsapp') body = <WhatsappStep {...props} />;
+  else if (step === 'endereco') body = <AddressStep {...props} />;
   else if (step === 'horarios') body = <HoursStep {...props} />;
   else if (step === 'como') body = <HowStep {...props} />;
   else if (step === 'retirada') body = <PickupStep {...props} />;
@@ -600,6 +602,7 @@ const LINE_SHORT: Record<StepId, string> = {
   cores: 'as cores',
   frase: 'a frase',
   whatsapp: 'o WhatsApp',
+  endereco: 'o endereço',
   horarios: 'os horários',
   como: 'retirada e entrega',
   retirada: 'onde buscar',

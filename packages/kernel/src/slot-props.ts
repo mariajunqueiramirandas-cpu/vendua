@@ -207,6 +207,13 @@ export interface SlotProps {
     savedAddressId?: string | null;
     /** Kernel 1.21 — pick a saved address, or null to type another (the fields empty) */
     onPickAddress?: (id: string | null) => void;
+    /** Kernel 1.28 — streets named like what the shopper is typing in "Rua" (`label` "Rua Barão
+     *  de Jaguara", `detail` "Ponte Preta, Campinas – SP"), best first; empty while there are
+     *  none. Absent = no suggestions */
+    streetSuggestions?: { id: string; label: string; detail?: string }[];
+    /** Kernel 1.28 — the shopper picked one: the page fills the street (and the bairro and
+     *  number when empty) and opens the map there */
+    onPickStreet?: (id: string) => void;
   };
   /** Kernel 1.15 — distance pricing (ADR 0024): the shopper confirms where the order goes on a
    *  map; the confirmed point is what Core prices. Rendered under the address form. */

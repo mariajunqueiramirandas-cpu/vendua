@@ -357,6 +357,7 @@ export const SETUP_STEPS = [
   'cores',
   'frase',
   'whatsapp',
+  'endereco',
   'horarios',
   'como',
   'retirada',

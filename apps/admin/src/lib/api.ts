@@ -682,6 +682,8 @@ export interface StoreView {
     email: string | null;
     city: string | null;
     address: string | null;
+    /** 8 digits */
+    cep: string | null;
     logoUrl: string | null;
   };
   status: {
@@ -2459,6 +2461,21 @@ export interface PdvDeliveryQuote {
   etaMax: number | null;
   distanceKm: number | null;
 }
+/** a street Core found for what is typed in "Rua" (GET /admin/v1/places) */
+export interface PlaceSuggestion {
+  street: string;
+  /** a house OSM knows, matching the typed number; null = the street */
+  number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  /** UF ("SP") */
+  state: string | null;
+  cep: string | null;
+  lat: number;
+  lng: number;
+  precision: 'address' | 'street';
+}
+
 export interface PdvCustomer {
   name: string | null;
   phone: string;
@@ -2948,14 +2965,30 @@ export const api = {
   store: () => get<StoreView>('/store'),
   updateStore: (patch: Record<string, unknown>) => send<StoreView>('PATCH', '/store', patch),
   /** roughly where a one-line address is (Core asks the geocoder); null = not found */
-  geocode: (q: string) =>
+  geocode: (q: string, cep?: string | null) =>
     get<{
       point: {
         lat: number;
         lng: number;
         precision: 'address' | 'street' | 'postcode' | 'area';
       } | null;
-    }>(`/geocode?q=${encodeURIComponent(q.slice(0, 300))}`),
+    }>(
+      `/geocode?q=${encodeURIComponent(q.slice(0, 300))}${cep ? `&cep=${encodeURIComponent(cep)}` : ''}`,
+    ),
+  /** a CEP's street, bairro and city (ViaCEP through Core); 404 CEP_NOT_FOUND */
+  cep: (cep: string) =>
+    get<{
+      address: {
+        cep: string;
+        street: string | null;
+        neighborhood: string | null;
+        city: string | null;
+        state: string | null;
+      };
+    }>(`/cep/${encodeURIComponent(cep.replace(/\D/g, '').slice(0, 8))}`),
+  /** streets named like what is typed (OpenStreetMap through Core), the store's area first */
+  places: (q: string) =>
+    get<{ places: PlaceSuggestion[] }>(`/places?q=${encodeURIComponent(q.slice(0, 120))}`),
   pause: (p: {
     for: '15m' | '1h' | 'today' | 'indefinite' | 'minutes';
     minutes?: number;

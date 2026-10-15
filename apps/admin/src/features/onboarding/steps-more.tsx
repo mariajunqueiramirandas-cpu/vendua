@@ -21,6 +21,7 @@ import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, MoneyField, TextInput, Toggle } from '../../ui/fields.tsx';
+import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { logoColors, PRESETS, readable } from '../appearance/Colors.tsx';
 import { Choice, deliveryReady, Frame, type StepProps } from './steps.tsx';
@@ -140,6 +141,20 @@ export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: Step
   );
   const [pin, setPin] = useState(s.location);
   const [finding, setFinding] = useState(false);
+  // a street picked from the suggestions places the pin there; the merchant fine-tunes it
+  const street = useStreetSuggest((p) => {
+    setLine(
+      [p.number ? `${p.street}, ${p.number}` : p.street, p.neighborhood, p.city]
+        .filter(Boolean)
+        .join(', '),
+    );
+    setPin({ latitude: p.lat, longitude: p.lng });
+    toast(
+      p.precision === 'address'
+        ? 'Achei! Confira o pino no mapa.'
+        : 'Marquei na rua. Toque em “ajustar” e depois na porta da cozinha.',
+    );
+  });
   const [moving, setMoving] = useState(false);
   const [base, setBase] = useState<number | null>(
     s.distancePricing.enabled ? s.distancePricing.baseFeeCents : null,
@@ -154,7 +169,7 @@ export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: Step
   const find = async () => {
     setFinding(true);
     try {
-      const { point } = await api.geocode(line);
+      const { point } = await api.geocode(line, s.profile.cep);
       if (!point) return void toast.error('Não achei no mapa. Toque no mapa para marcar à mão.');
       setPin({ latitude: point.lat, longitude: point.lng });
       toast(
@@ -291,7 +306,11 @@ export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: Step
                     maxLength={300}
                     autoComplete="street-address"
                     value={line}
-                    onChange={(e) => setLine(e.target.value)}
+                    {...street.input}
+                    onChange={(e) => {
+                      setLine(e.target.value);
+                      street.typing(e.target.value);
+                    }}
                     placeholder="Rua, número, bairro e cidade"
                   />
                   <Button
@@ -304,6 +323,7 @@ export function DeliveryStep({ s, draft, save, next, back, skip, eyebrow }: Step
                     achar
                   </Button>
                 </div>
+                {street.list}
               </Field>
               {/* isolate: Leaflet's panes (z-index 400) stay under the sticky buttons */}
               <div className="isolate overflow-hidden rounded-md ring-1 ring-line">
