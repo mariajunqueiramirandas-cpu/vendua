@@ -168,14 +168,14 @@ function Editor({
       frame.current?.contentWindow?.postMessage(
         {
           type: PREVIEW_MESSAGE.draft,
-          templates: ed.drafts,
+          templates: ed.previewDrafts,
           selected: selectedId,
           ...(ed.tokens ? { tokens: ed.tokens } : {}),
           ...extra,
         },
         origin,
       ),
-    [ed.drafts, selectedId, ed.tokens, origin],
+    [ed.previewDrafts, selectedId, ed.tokens, origin],
   );
   useEffect(() => {
     const t = setTimeout(() => post(), 120);
@@ -189,11 +189,13 @@ function Editor({
       id?: string;
       tokens?: StoreTokens | null;
       paths?: StorefrontPaths;
+      templates?: Record<string, unknown> | null;
     };
     if (d?.type === PREVIEW_MESSAGE.ready) {
       setFrameReady(true);
       if (d.tokens) ed.setFrameTokens(d.tokens);
       if (d.paths) setPaths(d.paths);
+      if (d.templates && typeof d.templates === 'object') ed.setFrameTemplates(d.templates);
       post();
     }
     if (d?.type === PREVIEW_MESSAGE.select && d.id) {

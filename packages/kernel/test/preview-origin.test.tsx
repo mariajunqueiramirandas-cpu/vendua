@@ -65,6 +65,15 @@ test('drafts are taken only from the admin origin Core reported', () => {
   expect(drafts).toEqual({});
 });
 
+test("ready carries what each page falls back to, so the editor starts from the store's own", () => {
+  const home = { version: 1, page: 'home', sections: [{ id: 'hero', type: 'store:menu-hero' }] };
+  act(() => preview.reportPreview({} as never, { catalog: '/cardapio' }, { home } as never));
+  expect(sent.at(-1)).toMatchObject({
+    target: ADMIN,
+    data: { type: 'vendua:preview-ready', paths: { catalog: '/cardapio' }, templates: { home } },
+  });
+});
+
 test('an unusable origin turns the preview off again', () => {
   act(() => preview.setPreviewOrigin('not a url'));
   const before = sent.length;

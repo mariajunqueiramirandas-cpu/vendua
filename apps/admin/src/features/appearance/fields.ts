@@ -39,6 +39,12 @@ const STORE_SECTION_NAMES: Record<string, string> = {
   'store:catalog-browser': 'Cardápio',
   'store:product-figure': 'Foto do produto',
   'store:product-perks': 'Vantagens do produto',
+  // the default bundle's (storefronts/_template)
+  'store:menu-hero': 'Capa da loja',
+  'store:menu-rail': 'Vitrine',
+  'store:menu': 'Cardápio',
+  'store:intro': 'Apresentação',
+  'store:dish-media': 'Foto do prato',
   // blocks inside a section, should one ever be named on its own
   'sdk:recent-order': 'Seu último pedido',
   'sdk:party-cta': 'Monte sua festa',

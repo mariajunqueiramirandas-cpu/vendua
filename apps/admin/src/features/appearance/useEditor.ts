@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { DEFAULT_TEMPLATES } from '@vendua/kernel/sdk-catalog';
-import type { ComponentType } from '@vendua/templates';
+import { validateTemplate, type ComponentType } from '@vendua/templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
@@ -82,23 +82,43 @@ function readSaved(storeId: string): Saved | null {
 
 export function useEditor(data: AppearanceData, storeId: string) {
   const qc = useQueryClient();
+  const [kept] = useState(() => readSaved(storeId));
+  // a page the store never saved renders its build's own template, which only the preview frame
+  // knows (Kernel 1.29 says it when it loads; the default bundle's isn't the Kernel's defaults).
+  // Until it does, a draft kept in this browser says what it was made on, else the Kernel's
+  // defaults stand in
+  const [frameTpls, setFrameTpls] = useState<Partial<Record<TplId, PageTemplate>>>(() => {
+    const out: Partial<Record<TplId, PageTemplate>> = {};
+    for (const t of TPLS) {
+      const s = kept?.pages[t];
+      if (s?.version === 0 && s.base) out[t] = s.base;
+    }
+    return out;
+  });
+  const setFrameTemplates = useCallback((raw: Record<string, unknown>) => {
+    const next: Partial<Record<TplId, PageTemplate>> = {};
+    for (const t of TPLS) {
+      const v = validateTemplate(raw[t], t);
+      if (v.ok) next[t] = v.template as PageTemplate;
+    }
+    setFrameTpls((cur) => (same(cur, next) ? cur : next));
+  }, []);
   const base = useMemo(() => {
     const out = {} as Record<TplId, { version: number; template: PageTemplate }>;
     for (const t of TPLS) {
       const row = data.pages.find((x) => x.page === t);
       out[t] = row
         ? { version: row.version, template: row.template }
-        : // the Kernel's own fallback for a page the store never customized
-          { version: 0, template: DEFAULT_TEMPLATES[t]! };
+        : { version: 0, template: frameTpls[t] ?? DEFAULT_TEMPLATES[t]! };
     }
     return out;
-  }, [data.pages]);
+  }, [data.pages, frameTpls]);
   const [frameTokens, setFrameTokens] = useState<StoreTokens | null>(null);
   const baseTokens = data.tokens?.tokens ?? frameTokens;
 
   // drafts left in this browser come back while the page they were made on is still current
   const [restored] = useState(() => {
-    const saved = readSaved(storeId);
+    const saved = kept;
     const pages: TplId[] = [];
     const drafts = Object.fromEntries(
       TPLS.map((t) => {
@@ -213,6 +233,17 @@ export function useEditor(data: AppearanceData, storeId: string) {
   const tokensDirty = !!tokens && !same(tokens, baseTokens);
   const dirty = dirtyTpls.length > 0 || tokensDirty;
   const tokensOk = !tokens || readable(tokens);
+  // what the preview is sent: a page whose starting point is only the Kernel's stand-in (a frame
+  // built before 1.29 doesn't say its own) is left to the frame's own until it's edited
+  const previewDrafts = useMemo(
+    () =>
+      Object.fromEntries(
+        TPLS.filter(
+          (t) => base[t].version > 0 || !!frameTpls[t] || !same(drafts[t], base[t].template),
+        ).map((t) => [t, drafts[t]]),
+      ) as Partial<Drafts>,
+    [drafts, base, frameTpls],
+  );
   /** a section changed since it was published (a new one counts) */
   const dirtySection = (t: TplId, s: TemplateSection) =>
     !same(
@@ -409,6 +440,8 @@ export function useEditor(data: AppearanceData, storeId: string) {
     tokens,
     baseTokens,
     setFrameTokens,
+    setFrameTemplates,
+    previewDrafts,
     restored: restored.any,
     page,
     setPage,

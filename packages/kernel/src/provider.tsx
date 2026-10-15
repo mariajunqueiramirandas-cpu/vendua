@@ -1,5 +1,6 @@
 import { injectedTokens } from './injected.ts';
 import { reportPreview, usePreviewTokens } from './preview.ts';
+import { DEFAULT_TEMPLATES } from './sdk/defaults.ts';
 import {
   createContext,
   useContext,
@@ -326,7 +327,14 @@ export function VenduaProvider({
   // Inside the admin's editor frame, its draft colours win (Kernel 1.4 preview).
   const draftTokens = usePreviewTokens();
   const shown = draftTokens ?? tokens;
-  useEffect(() => reportPreview(tokens, resolvePaths(config)), [tokens, config]);
+  useEffect(
+    () =>
+      reportPreview(tokens, resolvePaths(config), {
+        ...DEFAULT_TEMPLATES,
+        ...storefront.snapshot.templates,
+      }),
+    [tokens, config, storefront],
+  );
   useEffect(() => {
     const root = document.documentElement;
     const vars = tokensToVars(shown);

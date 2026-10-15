@@ -3,6 +3,14 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.29.0
+
+The editor preview's `vendua:preview-ready` also carries `templates`: what each page renders when
+Core has no template for it (the build's own, the Kernel's defaults under them). A store that never
+saved a page (every new store on the default bundle) used to open Aparência on `DEFAULT_TEMPLATES`,
+so the preview lost the store's own sections and a first "publicar" replaced them. Additive: no
+storefront edit, no new export.
+
 ## 1.28.0
 
 Street suggestions in the checkout's address form — additive, no storefront edit, no new runtime
