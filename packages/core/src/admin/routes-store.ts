@@ -29,6 +29,7 @@ import {
   type AdminDeps,
 } from './context.ts';
 import { onlineOffer } from '../modules/payments/store-payments.ts';
+import { assertNoEncomendaConflict } from '../modules/payment-adjustments.ts';
 import { DEPOSIT_POLICY_MAX } from '../modules/sinal.ts';
 import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
@@ -602,6 +603,7 @@ export function mountStore(d: AdminDeps) {
           field: 'location',
         });
       const pre = isObj(body.preorder) ? body.preorder : null;
+      let preorderMethods: string[] | undefined;
       if (pre) {
         if (pre.paymentMethods !== undefined) {
           const pm = pre.paymentMethods;
@@ -613,7 +615,8 @@ export function mountStore(d: AdminDeps) {
             throw new HttpError(422, 'BAD_REQUEST', 'pick at least one payment method', {
               field: 'paymentMethods',
             });
-          set.preorder_payment_methods = tx.json([...new Set(pm as string[])]);
+          preorderMethods = [...new Set(pm as string[])];
+          set.preorder_payment_methods = tx.json(preorderMethods);
         }
         if (pre.maxDays !== undefined) set.preorder_max_days = int(pre.maxDays, 'maxDays', 1, 120);
         if (pre.whileClosed !== undefined)
@@ -651,6 +654,29 @@ export function mountStore(d: AdminDeps) {
         changed.push('sinal');
       }
       if (!changed.length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
+      // an encomenda must stay payable in every mode that's on (Pagamentos splits methods by mode)
+      if (
+        preorderMethods ||
+        set.deposit_bps !== undefined ||
+        set.pickup_enabled === true ||
+        set.delivery_enabled === true
+      )
+        assertNoEncomendaConflict(
+          {
+            ...s,
+            preorder_payment_methods: preorderMethods ?? s.preorder_payment_methods ?? ['pix'],
+            deposit_bps: (set.deposit_bps as number | undefined) ?? s.deposit_bps ?? 0,
+            pickup_enabled: (set.pickup_enabled as boolean | undefined) ?? s.pickup_enabled,
+            delivery_enabled: (set.delivery_enabled as boolean | undefined) ?? s.delivery_enabled,
+          },
+          preorderMethods
+            ? 'preorder.paymentMethods'
+            : set.deposit_bps !== undefined
+              ? 'sinal.bps'
+              : set.pickup_enabled === true
+                ? 'pickupEnabled'
+                : 'deliveryEnabled',
+        );
       if (Object.keys(set).length)
         await tx`update store_settings set ${tx(set as never)} where tenant_id = ${t.id}`;
       const name = (await tx<{ name: string }[]>`select name from tenants where id = ${t.id}`)[0]!

@@ -1362,6 +1362,8 @@ export interface Payments {
   methodsOff: Record<HandoverMode, PayMethod[]>;
   /** which modes are on (Loja › Entrega e retirada) */
   modes: Record<HandoverMode, boolean>;
+  /** each mode must keep one of these (Loja › Encomendas), and Pix while a sinal is on */
+  encomendas: { methods: PayMethod[]; sinal: boolean };
   adjustments: PaymentAdjustments;
   pix: { key: string; keyType: string; beneficiary: string; city: string; sample: string } | null;
   mercadoPago: {

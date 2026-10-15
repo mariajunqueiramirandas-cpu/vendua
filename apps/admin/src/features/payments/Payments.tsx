@@ -4,6 +4,7 @@ import {
   Copy,
   CreditCard,
   ForkKnife,
+  Lock,
   Money,
   PixLogo,
   WarningCircle,
@@ -23,7 +24,7 @@ import { useCan } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { RankBars } from '../../ui/charts.tsx';
-import { DuaNote, ErrorState, messageOf } from '../../ui/feedback.tsx';
+import { DuaNote, encomendaConflictText, ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Chips, Field, TextInput, Toggle } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
@@ -273,6 +274,22 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
           data.methods.filter((x) => x !== m),
         ).length === 0,
     );
+  // turning `m` off for `mode` would leave encomendas (or their sinal) unpayable there: Core
+  // refuses it, so the chip stays on and says why (the same rule as encomendaConflict in Core)
+  const enc = data.encomendas;
+  const lockFor = (m: PayMethod, mode: HandoverMode): string | null => {
+    const after = takes(
+      mode,
+      data.methods.filter((x) => x !== m),
+    );
+    const lost = (ms: string[]) =>
+      ms.some((x) => (data.methods as string[]).includes(x)) &&
+      !ms.some((x) => (after as string[]).includes(x));
+    if (lost(enc.methods)) return encomendaConflictText(mode, 'encomenda', enc.methods);
+    if (enc.sinal && data.methods.includes('pix') && lost(['pix']))
+      return encomendaConflictText(mode, 'sinal', ['pix']);
+    return null;
+  };
   const hint = (m: PayMethod) => {
     if (m === 'pix') {
       if (live) return 'Pelo Mercado Pago: o pedido chega pago, sem conferir no banco.';
@@ -312,6 +329,7 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
                   label={M.label}
                   takes={(mode) => !data.methodsOff[mode].includes(m)}
                   last={(mode) => takes(mode, data.methods).length === 1}
+                  lock={(mode) => lockFor(m, mode)}
                   canEdit={canEdit}
                   onToggle={(mode) => {
                     const off = data.methodsOff[mode];
@@ -340,6 +358,7 @@ function ModesLine({
   label,
   takes,
   last,
+  lock,
   canEdit,
   onToggle,
 }: {
@@ -347,6 +366,8 @@ function ModesLine({
   takes: (mode: HandoverMode) => boolean;
   /** the mode's only method left: it can't be turned off there */
   last: (mode: HandoverMode) => boolean;
+  /** why it can't be turned off there (encomendas), or null */
+  lock: (mode: HandoverMode) => string | null;
   canEdit: boolean;
   onToggle: (mode: HandoverMode) => void;
 }) {
@@ -354,14 +375,20 @@ function ModesLine({
     <div role="group" aria-label={`${label}: onde aceita`} className="-mt-1 flex gap-2 pb-2">
       {(['delivery', 'pickup'] as const).map((mode) => {
         const yes = takes(mode);
+        const why = yes ? lock(mode) : null;
         return (
           <button
             key={mode}
             type="button"
             role="checkbox"
             aria-checked={yes}
+            // locked by the encomendas: still tappable, to say why instead of switching
+            aria-disabled={why ? true : undefined}
+            aria-label={
+              why ? `${MODE_WORD[mode]}: fica ligado por causa das encomendas` : undefined
+            }
             disabled={!canEdit || (yes && last(mode))}
-            onClick={() => onToggle(mode)}
+            onClick={() => (why ? toast.error(why) : onToggle(mode))}
             className={cn(
               'press t-caption inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 font-semibold ring-1 transition-[color,background-color] duration-(--duration-quick) disabled:cursor-default',
               yes
@@ -370,7 +397,11 @@ function ModesLine({
               canEdit && !(yes && last(mode)) && 'hover:bg-hover',
             )}
           >
-            {yes ? <Check weight="bold" className="size-3.5" aria-hidden /> : null}
+            {why ? (
+              <Lock weight="bold" className="size-3.5" aria-hidden />
+            ) : yes ? (
+              <Check weight="bold" className="size-3.5" aria-hidden />
+            ) : null}
             {MODE_WORD[mode]}
           </button>
         );

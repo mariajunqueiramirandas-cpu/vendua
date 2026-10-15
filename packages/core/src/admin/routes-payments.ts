@@ -21,6 +21,7 @@ import {
   MAX_FIXED_CENTS,
   MAX_PERCENT_BPS,
   PAYMENT_METHODS,
+  assertNoEncomendaConflict,
   isPaymentMethod,
   readMethodsOff,
   readPaymentAdjustments,
@@ -236,6 +237,11 @@ export async function paymentsView(tx: Sql, tenantId: string, provider: PaymentP
     methodsOff: { delivery: [], pickup: [], ...readMethodsOff(s.payment_methods_off) },
     // which modes are on (Loja → Entrega e retirada): a split only matters with both
     modes: { delivery: s.delivery_enabled, pickup: s.pickup_enabled },
+    // what each mode must keep taking one of (Loja › Encomendas): Core refuses a split without it
+    encomendas: {
+      methods: s.preorder_payment_methods ?? ['pix'],
+      sinal: (s.deposit_bps ?? 0) > 0,
+    },
     // { method: { percentBps?, fixedCents? } }, signed: negative = discount
     adjustments: readPaymentAdjustments(s.payment_adjustments),
     // what PATCH accepts, either sign
@@ -332,6 +338,12 @@ export function mountPayments(d: AdminDeps) {
             field: 'methodsOff',
             mode,
           });
+      // and each still takes a way to pay for an encomenda (and its sinal)
+      if (body.methods !== undefined || body.methodsOff !== undefined)
+        assertNoEncomendaConflict(
+          { ...s, payment_methods: methods, payment_methods_off: off },
+          body.methodsOff !== undefined ? 'methodsOff' : 'methods',
+        );
       if (body.adjustments !== undefined) {
         const adjustments = parseAdjustments(body.adjustments);
         await tx`update store_settings set payment_adjustments = ${tx.json(adjustments as never)} where tenant_id = ${t.id}`;

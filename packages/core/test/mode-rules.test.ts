@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { methodsForMode, readMethodsOff } from '../src/modules/payment-adjustments.ts';
+import {
+  encomendaConflict,
+  methodsForMode,
+  readMethodsOff,
+} from '../src/modules/payment-adjustments.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
 import { pickupMinOrderCents } from '../src/modules/store.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -34,6 +38,28 @@ describe('mode rules (pure)', () => {
     const lone = { ...s, payment_methods_off: { pickup: ['pix', 'cash'] } };
     expect(methodsForMode(lone, 'pickup', false)).toEqual(['pix', 'cash']);
     expect(readMethodsOff('x')).toEqual({});
+  });
+
+  test('encomenda conflict: a mode that is on must take an encomenda method, and Pix for a sinal', () => {
+    const base = {
+      payment_methods: ['pix', 'cash'],
+      payment_methods_off: { pickup: ['pix'] },
+      pickup_enabled: true,
+      delivery_enabled: true,
+    };
+    expect(encomendaConflict(base)).toEqual({
+      mode: 'pickup',
+      need: 'encomenda',
+      methods: ['pix'],
+    });
+    expect(encomendaConflict({ ...base, pickup_enabled: false })).toBeNull();
+    const cashToo = { ...base, preorder_payment_methods: ['pix', 'cash'] };
+    expect(encomendaConflict(cashToo)).toBeNull();
+    expect(encomendaConflict({ ...cashToo, deposit_bps: 3000 })).toEqual({
+      mode: 'pickup',
+      need: 'sinal',
+      methods: ['pix'],
+    });
   });
 });
 
@@ -207,6 +233,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('mode rules (db)', () => {
     const view = await owner('GET', '/payments');
     expect(view.body.methodsOff).toEqual({ delivery: [], pickup: [] });
     expect(view.body.modes).toEqual({ delivery: true, pickup: true });
+    expect(view.body.encomendas).toEqual({ methods: ['pix'], sinal: false });
+
+    // encomendas take only Pix: delivery without Pix couldn't be paid for one
+    const blocked = await owner('PATCH', '/payments', {
+      methodsOff: { pickup: ['cash'], delivery: ['pix'] },
+    });
+    expect(blocked.status).toBe(422);
+    expect(blocked.body.error).toMatchObject({
+      code: 'ENCOMENDA_PAYMENT_CONFLICT',
+      details: { field: 'methodsOff', mode: 'delivery', need: 'encomenda', methods: ['pix'] },
+    });
+    const pre = await owner('PATCH', '/store', { preorder: { paymentMethods: ['pix', 'cash'] } });
+    expect(pre.status).toBe(200);
 
     const ok = await owner('PATCH', '/payments', {
       methodsOff: { pickup: ['cash'], delivery: ['pix'] },
@@ -226,6 +265,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('mode rules (db)', () => {
       expect(r.status).toBe(422);
       expect(r.body.error.details.field).toMatch(/^methods/);
     }
+
+    // and the other way round: encomendas back to Pix only, or a sinal (a Pix), are refused
+    const back = await owner('PATCH', '/store', { preorder: { paymentMethods: ['pix'] } });
+    expect(back.status).toBe(422);
+    expect(back.body.error).toMatchObject({
+      code: 'ENCOMENDA_PAYMENT_CONFLICT',
+      details: { field: 'preorder.paymentMethods', mode: 'delivery' },
+    });
+    const sinal = await owner('PATCH', '/store', { sinal: { bps: 3000 } });
+    expect(sinal.status).toBe(422);
+    expect(sinal.body.error.details).toMatchObject({ field: 'sinal.bps', need: 'sinal' });
+    expect((await owner('GET', '/store')).body.preorder.paymentMethods).toEqual(['pix', 'cash']);
 
     const store = await call('GET', '/storefront/v1/store', undefined, { host });
     expect(store.body.paymentMethods).toEqual(['pix', 'card_on_delivery', 'cash']);
