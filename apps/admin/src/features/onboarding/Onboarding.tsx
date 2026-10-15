@@ -1,4 +1,4 @@
-import { Eye, X } from '@phosphor-icons/react';
+import { X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -13,7 +13,7 @@ import {
 import { trackPageview } from '../../lib/analytics.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
-import { Button, ButtonLink, IconButton } from '../../ui/Button.tsx';
+import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { useKeyboard } from '../../ui/keyboard.ts';
@@ -24,22 +24,25 @@ import { ImportFlow } from '../import/ImportFlow.tsx';
 import { Finale, type Pending } from './Finale.tsx';
 import {
   after,
+  ALL_STEPS,
   answered,
   CHAPTERS,
   chapterOf,
   isStep,
   landOn,
-  LINE,
-  POSE,
+  LINE_SHORT,
   FOLLOWS,
+  SPOT,
   STEP_FOR_ITEM,
   stepsFor,
   type StepId,
 } from './flow.ts';
-import { Guide } from './Guide.tsx';
+import { Guide, Reaction } from './Guide.tsx';
 import { JourneyBar } from './Journey.tsx';
 import { MiniStore, type Draft } from './MiniStore.tsx';
 import { Welcome, type ChapterProgress } from './Overview.tsx';
+import { StepMap, type Mark } from './StepMap.tsx';
+import { StoreCard } from './StoreCard.tsx';
 import { planState, PlanBanner, PlanPix, usePlan } from './PlanPay.tsx';
 import { markLeft, readStep, saveStep } from './progress.ts';
 import { GENERIC, segmentOf, type SegmentId } from './segments.ts';
@@ -58,9 +61,11 @@ import {
 } from './steps.tsx';
 import { ColorsStep, DeliveryStep, MercadoPagoStep, MethodsStep, PixStep } from './steps-more.tsx';
 
-// The store builds itself (§6.8): one question per screen in four parts, a friendly guide, and
-// the store assembling in the phone beside it (behind the eye in the header on phones). Every answer saves
-// on "Continuar"; where the merchant stopped lives in Core, so any device picks up from there.
+// The store builds itself (§6.8): one question per screen in four parts, Duá reacting to each
+// answer, and the store assembling as it goes (a live card above the question on phones, the
+// phone beside it from 1200 px). The header's status opens every question (a rail beside the
+// question on a desktop), so any of them is one tap away. Every answer saves on "Continuar";
+// where the merchant stopped lives in Core, so any device picks up from there.
 
 const draftOf = (s: StoreView, t: StoreTokens | null): Draft => ({
   name: s.profile.name,
@@ -226,14 +231,28 @@ function Flow({
     else first.current = { step: 'oi', solo: false, resume: null };
   }
   const [step, setStep] = useState<StepId>(first.current.step);
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
   // each question counts as its own page, so the CRM sees where the setup stalls
   useEffect(() => trackPageview(`/bem-vindo/${step}`), [step]);
   const [solo, setSolo] = useState(first.current.solo);
-  const [praise, setPraise] = useState<string | null>(null);
-  // the phone preview lives behind the eye in the header on small screens; the dot on it says
-  // an answer changed the store since the merchant last looked
+  // Duá's line over the next question: praise for the answer, and a part that just finished
+  const [said, setSaid] = useState<{ praise: string | null; done: string | null } | null>(null);
+  // which way the questions slide: forward from the right, back from the left
+  const [dir, setDir] = useState<'fwd' | 'back'>('fwd');
+  // questions the merchant moved on from this visit (an import declined counts as answered)
+  const [left, setLeft] = useState<ReadonlySet<StepId>>(() => new Set());
   const [peek, setPeek] = useState(false);
-  const [changed, setChanged] = useState(false);
+  const [map, setMap] = useState(false);
+  // bumps when an answer changed the store, so its card lights up
+  const [spark, setSpark] = useState(0);
+  // the furthest question "Continuar" got to (a jump from the map or "voltar" doesn't move it):
+  // the ones before it that need no answer of their own (the methods, an import declined) count
+  const [furthest, setFurthest] = useState<StepId | null>(() =>
+    ob.finishedAt ? 'pronto' : isStep(ob.step) ? ob.step : null,
+  );
 
   const remember = useCallback(
     (body: Parameters<typeof api.updateOnboarding>[0]) =>
@@ -244,10 +263,33 @@ function Flow({
     [qc],
   );
   const go = useCallback(
-    (to: StepId, p: string | null) => {
-      setPraise(p);
+    (
+      to: StepId,
+      p: string | null,
+      how: 'step' | 'jump' | 'detour' = 'step',
+      /** the question just left closed its part: how many of it were left for later */
+      part: { later: number } | null = null,
+    ) => {
+      const from = stepRef.current;
+      const ahead = ALL_STEPS.indexOf(to) > ALL_STEPS.indexOf(from);
+      const was = chapterOf(from);
+      const now = chapterOf(to);
+      // a new part on the way forward: Duá introduces it, and ticks off the one just finished
+      const parts = CHAPTERS.filter((c) => c.steps.some((x) => stepsRef.current.includes(x)));
+      // (not on a jump from the map, nor on a detour from the finale)
+      const entering = ahead && how === 'step' && !!now && now.id !== was?.id;
+      const n = `Parte ${parts.findIndex((c) => c.id === was?.id) + 1} de ${parts.length}`;
+      const finished =
+        entering && was && part
+          ? part.later
+            ? `${n} feita (${part.later} para depois)`
+            : `${n} pronta`
+          : null;
+      const line = [p, entering ? now!.start : null].filter(Boolean).join(' ');
+      setSaid(line ? { praise: line, done: finished } : null);
+      setDir(ahead ? 'fwd' : 'back');
       setStep(to);
-      if (p) setChanged(true);
+      if (p) setSpark((n) => n + 1);
       saveStep(storeId, to);
       markTab();
       void remember(to === 'pronto' ? { step: to, finished: true } : { step: to });
@@ -273,7 +315,7 @@ function Flow({
       );
     if (isStep(passo) && steps.includes(passo) && passo !== step) {
       setSolo(true);
-      go(passo, null);
+      go(passo, null, 'detour');
     }
     setParams({}, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,28 +344,62 @@ function Flow({
     segment: ob.segment,
     products: products.length,
     hasColors: !!tokens,
-    reached: ob.finishedAt ? ('pronto' as const) : isStep(ob.step) ? ob.step : null,
+    reached: furthest,
   };
   const at = steps.indexOf(step);
   // a detour from the finale answers its question and what that question opens, then goes back
   const soloNext = (): StepId =>
     FOLLOWS[step]?.find((x) => steps.includes(x) && !answered(x, facts)) ?? 'pronto';
-  const next = (p?: string) =>
-    go(solo ? soloNext() : (steps[Math.min(at + 1, steps.length - 1)] ?? 'pronto'), p ?? null);
+  const mark = (x: StepId): Mark =>
+    x === step
+      ? 'current'
+      : answered(x, facts)
+        ? 'done'
+        : ob.skipped.includes(x)
+          ? 'skipped'
+          : left.has(x)
+            ? 'done'
+            : 'open';
+  const settled = (x: StepId) => {
+    const m = mark(x);
+    return m === 'done' || m === 'skipped';
+  };
+  const next = (p?: string, skipping = false) => {
+    const to = solo ? soloNext() : (steps[Math.min(at + 1, steps.length - 1)] ?? 'pronto');
+    // the last question of its part, with every other one of it settled: Duá ticks the part off
+    const was = chapterOf(step);
+    const rest = was ? was.steps.filter((x) => x !== step && steps.includes(x)) : [];
+    const part =
+      !solo && was && chapterOf(to)?.id !== was.id && rest.every(settled)
+        ? { later: rest.filter((x) => mark(x) === 'skipped').length + (skipping ? 1 : 0) }
+        : null;
+    setLeft((x) => new Set(x).add(step));
+    if (!solo) setFurthest((f) => (!f || ALL_STEPS.indexOf(to) > ALL_STEPS.indexOf(f) ? to : f));
+    go(to, p ?? null, solo ? 'detour' : 'step', part);
+  };
   const back = at > 0 && !solo ? () => go(steps[at - 1]!, null) : null;
   const skip = () => {
     const skipped = [...new Set([...ob.skipped, step])].slice(-20);
     qc.setQueryData<OnboardingData>(qk.onboarding, (o) => (o ? { ...o, skipped } : o));
     void remember({ skipped });
-    next();
+    next(undefined, true);
+  };
+  // straight to any question, from the map; the focus then goes to its title, not back to the
+  // header that opened the map
+  const jumped = useRef(false);
+  const jump = (to: StepId) => {
+    jumped.current = true;
+    setMap(false);
+    setSolo(false);
+    if (to !== step) go(to, null, 'jump');
   };
   const chapter = chapterOf(step);
   const inChapter = chapter ? chapter.steps.filter((x) => steps.includes(x)) : [];
-  const eyebrow = chapter
+  const where = chapter
     ? `${chapter.label} · ${inChapter.indexOf(step) + 1} de ${inChapter.length}`
     : '';
   const me = { name: session.user.name, phone: session.user.phone };
-  const props: StepProps = { s, draft, patch, save, next, back, skip, eyebrow, segment, me };
+  const props: StepProps = { s, draft, patch, save, next, back, skip, segment, me };
 
   const leave = () => {
     markLeft(storeId);
@@ -336,15 +412,24 @@ function Flow({
     return {
       id: c.id,
       total: mine.length,
-      done: mine.filter((x) => answered(x, facts) || ob.skipped.includes(x)).length,
+      done: mine.filter((x) => answered(x, facts) || ob.skipped.includes(x) || left.has(x)).length,
+      later: mine.filter((x) => !answered(x, facts) && ob.skipped.includes(x)).length,
     };
   });
+  // a returning merchant picks up at the first question still open from where they stopped
+  // (they may have stopped on one they went back to), else the first open one at all
+  const open = (x: StepId) => !answered(x, facts) && !ob.skipped.includes(x);
+  const saved = first.current.resume;
   const resumeAt =
-    first.current.resume ?? questions.find((x) => !answered(x, facts) && !ob.skipped.includes(x));
+    (saved ? questions.slice(Math.max(0, questions.indexOf(saved))).find(open) : undefined) ??
+    questions.find(open);
+  const returning = !!(saved || ob.finishedAt);
   const resume =
-    step === 'oi' && (first.current.resume || ob.finishedAt) && resumeAt
+    step === 'oi' && returning && resumeAt
       ? { step: resumeAt, chapter: chapterOf(resumeAt)!.id, label: LINE_SHORT[resumeAt] }
       : null;
+  // came back with every question answered: the welcome offers the finale, or a review
+  const complete = step === 'oi' && returning && !resumeAt;
 
   const hold = s.status.billingHold;
   const plan = usePlan(owner, hold);
@@ -385,10 +470,15 @@ function Flow({
       : []),
   ];
 
-  const answeredCount = Math.max(0, questions.indexOf(step));
+  // each part of the header's bar fills as its questions are answered (or left for later)
+  const parts = CHAPTERS.flatMap((c) => {
+    const mine = c.steps.filter((x) => steps.includes(x));
+    return mine.length ? [{ label: c.label, fill: mine.filter(settled).length / mine.length }] : [];
+  });
   const header =
     step === 'pronto' ? (
       <JourneyBar
+        wide
         phase="abrir"
         progress={hold ? 0.5 : 1}
         status={hold ? 'falta o plano' : 'no ar!'}
@@ -396,33 +486,13 @@ function Flow({
       />
     ) : (
       <JourneyBar
+        wide
         phase="loja"
-        progress={step === 'oi' ? 0 : answeredCount / questions.length}
-        status={step === 'oi' ? 'começando' : `${answeredCount + 1} de ${questions.length}`}
-        exit={
-          <div className="flex items-center">
-            {step !== 'oi' ? (
-              <span className="relative lg:hidden">
-                <IconButton
-                  label="espiar minha loja"
-                  onClick={() => {
-                    setChanged(false);
-                    setPeek(true);
-                  }}
-                >
-                  <Eye />
-                </IconButton>
-                {changed ? (
-                  <span
-                    aria-hidden
-                    className="animate-fade-up pointer-events-none absolute right-2 top-2 size-2.5 rounded-full bg-spark ring-2 ring-bg"
-                  />
-                ) : null}
-              </span>
-            ) : null}
-            <Exit leave={leave} />
-          </div>
-        }
+        progress={questions.filter(settled).length / questions.length}
+        status={step === 'oi' ? 'começando' : where}
+        parts={step === 'oi' ? undefined : parts}
+        onStatus={step === 'oi' ? undefined : () => setMap(true)}
+        exit={<Exit leave={leave} />}
       />
     );
 
@@ -432,16 +502,19 @@ function Flow({
       <Welcome
         first={session.user.name.trim().split(/\s+/)[0] ?? ''}
         questions={questions.length}
+        minutes={Math.max(2, Math.round((questions.length * 20) / 60))}
         progress={progress}
         resume={resume}
-        onStart={() => go(resume?.step ?? questions[0]!, null)}
+        complete={complete}
+        onStart={() => go(complete ? 'pronto' : (resume?.step ?? questions[0]!), null)}
+        onReview={() => go(questions[0]!, null, 'jump')}
+        later={questions.filter((x) => !answered(x, facts) && ob.skipped.includes(x)).length}
         onLeave={leave}
       />
     );
   else if (step === 'tipo')
     body = (
       <SegmentStep
-        eyebrow={eyebrow}
         back={back}
         current={ob.segment}
         onPick={async (id: SegmentId) => {
@@ -464,8 +537,7 @@ function Flow({
         hasProducts={products.length > 0}
         intro={
           <div>
-            <p className="t-label tnum mb-2 text-muted">{eyebrow}</p>
-            <h1 className="t-title-1 md:text-[2rem] md:leading-[2.5rem]">
+            <h1 className="t-title-1 text-balance md:text-[2rem] md:leading-[2.5rem]">
               Já vende em outro app de cardápio?
             </h1>
             <p className="t-body-lg mt-2 text-muted">
@@ -475,6 +547,7 @@ function Flow({
           </div>
         }
         onSkip={() => next()}
+        onBack={back}
         onPhotosDone={() => next('Cardápio dentro! Depois coloque as fotos de cada produto.')}
         onApplied={() =>
           void qc
@@ -540,6 +613,7 @@ function Flow({
       />
     );
 
+  const question = step !== 'oi' && step !== 'pronto';
   const preview = (
     <MiniStore
       draft={draft}
@@ -549,8 +623,10 @@ function Flow({
       specialDays={s.specialDays}
       url={session.store.url.replace(/^https?:\/\//, '')}
       examples={segment.examples}
+      spot={question ? (SPOT[step] ?? null) : null}
     />
   );
+  const stepMap = <StepMap steps={steps} mark={mark} onJump={jump} />;
 
   return (
     <div className="min-h-dvh overflow-x-clip">
@@ -558,23 +634,54 @@ function Flow({
       {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
       <div
         className={cn(
-          'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-8 md:px-8',
-          step !== 'pronto' && 'lg:grid-cols-[minmax(0,1fr)_380px]',
+          'mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-5 md:px-8 md:pt-8',
+          question &&
+            'lg:grid-cols-[15rem_minmax(0,1fr)_21rem] xl:grid-cols-[15.5rem_minmax(0,1fr)_22rem] xl:gap-14',
+          step === 'oi' && 'lg:grid-cols-[minmax(0,1fr)_22rem] lg:pl-24 xl:pl-40',
         )}
       >
-        <main className="mx-auto w-full max-w-xl space-y-8 lg:mx-0">
-          {step !== 'pronto' ? (
-            <Guide turn={step} pose={POSE[step]}>
-              {praise ? <strong className="mr-1">{praise}</strong> : null}
-              {step === 'oi'
-                ? resume
-                  ? 'Que bom te ver de novo! Guardei tudo o que você já fez.'
-                  : `Oi, ${session.user.name.trim().split(/\s+/)[0] ?? ''}! Meu nome é Duá. ${LINE.oi}`
-                : LINE[step]}
-            </Guide>
-          ) : null}
+        {question ? (
+          <nav
+            aria-label="todas as perguntas"
+            className="hidden lg:sticky lg:top-24 lg:block lg:self-start"
+          >
+            <p className="t-label mb-2 px-2 text-muted">
+              <span className="tnum">
+                {questions.filter(settled).length} de {questions.length}
+              </span>{' '}
+              respondidas
+            </p>
+            <StepMap rail steps={steps} mark={mark} onJump={jump} />
+          </nav>
+        ) : null}
 
-          {body}
+        <main
+          className={cn(
+            'mx-auto w-full max-w-xl space-y-6',
+            step === 'pronto' ? 'max-w-2xl' : 'lg:mx-0',
+          )}
+        >
+          {question ? (
+            <div className="lg:hidden">
+              <StoreCard
+                draft={draft}
+                products={products.length}
+                whatsapp={!!s.profile.whatsapp}
+                timeZone={s.hours.timezone}
+                specialDays={s.specialDays}
+                spot={SPOT[step] ?? null}
+                spark={spark}
+                onOpen={() => setPeek(true)}
+              />
+            </div>
+          ) : null}
+          <div
+            key={step}
+            className={cn('space-y-5', dir === 'back' ? 'animate-step-back' : 'animate-step-fwd')}
+          >
+            {question && said ? <Reaction done={said.done}>{said.praise}</Reaction> : null}
+            {body}
+          </div>
         </main>
 
         {step !== 'pronto' ? (
@@ -582,20 +689,42 @@ function Flow({
             className="hidden lg:sticky lg:top-24 lg:block lg:self-start"
             aria-label="prévia da sua loja"
           >
-            <p className="t-label mb-3 text-center text-muted">Sua loja, ao vivo</p>
+            <p className="t-label mb-3 flex items-center justify-center gap-2 text-muted">
+              <span
+                aria-hidden
+                className="animate-pulse-dot size-2 rounded-full bg-[var(--chart)]"
+              />
+              Sua loja, ao vivo
+            </p>
             {preview}
           </aside>
         ) : null}
       </div>
-      {step !== 'pronto' ? (
-        <Sheet
-          open={peek}
-          onOpenChange={setPeek}
-          title="Sua loja, ao vivo"
-          description="Cada resposta entra aqui na hora."
-        >
-          <div className="mx-auto max-w-[300px] py-2">{preview}</div>
-        </Sheet>
+      {question ? (
+        <>
+          <Sheet
+            open={peek}
+            onOpenChange={setPeek}
+            title="Sua loja, ao vivo"
+            description="Cada resposta entra aqui na hora. O que está marcado é o que essa pergunta muda."
+          >
+            <div className="mx-auto max-w-[300px] py-2">{preview}</div>
+          </Sheet>
+          <Sheet
+            open={map}
+            onOpenChange={setMap}
+            onCloseAutoFocus={(e) => {
+              if (!jumped.current) return;
+              jumped.current = false;
+              e.preventDefault();
+              document.querySelector<HTMLElement>('main h1')?.focus({ preventScroll: true });
+            }}
+            title="Todas as perguntas"
+            description="Toque em qualquer uma para ir direto. O que você já respondeu fica guardado."
+          >
+            <div className="pb-2">{stepMap}</div>
+          </Sheet>
+        </>
       ) : null}
     </div>
   );
@@ -614,25 +743,3 @@ function Exit({ leave, done }: { leave: () => void; done?: boolean }) {
     </Link>
   );
 }
-
-/** The button on the welcome-back map names the next question in a couple of words. */
-const LINE_SHORT: Record<StepId, string> = {
-  oi: 'início',
-  tipo: 'o que você vende',
-  importar: 'trazer o cardápio',
-  nome: 'o nome',
-  logo: 'a logo',
-  cores: 'as cores',
-  frase: 'a frase',
-  whatsapp: 'o WhatsApp',
-  endereco: 'o endereço',
-  horarios: 'os horários',
-  como: 'retirada e entrega',
-  retirada: 'onde buscar',
-  entrega: 'a taxa de entrega',
-  formas: 'as formas de pagamento',
-  pix: 'a chave Pix',
-  mercadopago: 'o Mercado Pago',
-  produtos: 'o cardápio',
-  pronto: 'o fim',
-};

@@ -85,6 +85,7 @@ export function Sheet({
   children,
   footer,
   wide,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -93,6 +94,9 @@ export function Sheet({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** where the focus goes on close (by default back to what opened the sheet); preventDefault
+   *  to place it yourself, e.g. on a screen the sheet navigated to */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
   const desktop = useDesktop();
   useBackToClose(open, () => onOpenChange(false));
@@ -115,6 +119,7 @@ export function Sheet({
         <Drawer.Overlay className="fixed inset-0 z-[60] bg-[rgb(10_16_13/0.42)]" />
         <Drawer.Content
           aria-describedby={undefined}
+          onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             'fixed z-[61] flex flex-col bg-surface text-ink outline-none depth-3',
             desktop

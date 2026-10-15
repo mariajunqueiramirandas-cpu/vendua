@@ -4,6 +4,7 @@ import { hhmm, money, WEEKDAYS } from '../../lib/format.ts';
 import { cn } from '../../ui/cn.ts';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { fromWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
+import type { Spot } from './flow.ts';
 
 export interface Draft {
   name: string;
@@ -21,6 +22,10 @@ type Item = { id: string; name: string; priceCents: number; imageUrl: string | n
 
 // imitates a storefront, so it keeps its own colours (the README's one exception to tokens)
 const INK = '#123c32';
+// the part of the store the open question changes: a cream gap, a lime ring, a forest hairline
+const HALO = 'shadow-[0_0_0_3px_#fcfbf8,0_0_0_6px_#d9f875,0_0_0_7px_rgb(18_60_50/0.3)]';
+const halo = (on: boolean, round = 'rounded-[10px]') =>
+  cn('transition-shadow duration-(--duration-smooth)', on && [HALO, round]);
 
 /**
  * The store assembling itself: name → header, logo → avatar, colour → the buttons, hours → the
@@ -35,6 +40,7 @@ export function MiniStore({
   specialDays,
   url,
   examples,
+  spot = null,
 }: {
   draft: Draft;
   products: Item[];
@@ -46,6 +52,8 @@ export function MiniStore({
   url?: string | undefined;
   /** ghost products until real ones exist (from what the store sells) */
   examples?: readonly string[] | undefined;
+  /** the part the open question changes */
+  spot?: Spot | null | undefined;
 }) {
   const hours = todayHours({
     timezone: timeZone,
@@ -69,7 +77,10 @@ export function MiniStore({
         ) : null}
         <div className="flex items-center gap-2 border-b border-black/5 px-4 py-3">
           <span
-            className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-sm font-semibold transition-colors duration-(--duration-smooth)"
+            className={cn(
+              'grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-sm font-semibold transition-[background-color,box-shadow] duration-(--duration-smooth)',
+              (spot === 'logo' || spot === 'color') && HALO,
+            )}
             style={{ background: accent, color: onAccent }}
           >
             {draft.logoUrl ? (
@@ -78,26 +89,31 @@ export function MiniStore({
               (draft.name.trim().slice(0, 1) || '?').toUpperCase()
             )}
           </span>
-          {draft.name.trim() ? (
-            <span className="min-w-0 flex-1 truncate font-semibold">{draft.name}</span>
-          ) : (
-            <span className="h-3 flex-1 rounded bg-black/5" />
-          )}
+          <span className={cn('min-w-0 flex-1 px-1', halo(spot === 'name'))}>
+            {draft.name.trim() ? (
+              <span className="block truncate font-semibold">{draft.name}</span>
+            ) : (
+              <span className="my-1 block h-3 rounded bg-black/5" />
+            )}
+          </span>
           <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px]">sacola</span>
         </div>
         <div className="min-h-0 flex-1 overflow-hidden px-4 py-4">
-          {draft.tagline ? (
-            <p key={draft.tagline} className="animate-fade-up font-display text-xl leading-tight">
-              {draft.tagline}
-            </p>
-          ) : (
-            <div className="h-6 w-3/4 rounded bg-black/5" />
-          )}
+          <div className={cn('-mx-1 px-1', halo(spot === 'tagline'))}>
+            {draft.tagline ? (
+              <p key={draft.tagline} className="animate-fade-up font-display text-xl leading-tight">
+                {draft.tagline}
+              </p>
+            ) : (
+              <div className="h-6 w-3/4 rounded bg-black/5" />
+            )}
+          </div>
           {anyHours ? (
             <p
               className={cn(
                 'mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold',
                 hours.length ? 'bg-[#e8f5dd] text-[#2f4a00]' : 'bg-black/5 text-black/65',
+                halo(spot === 'hours', 'rounded-full'),
               )}
             >
               <span
@@ -111,10 +127,23 @@ export function MiniStore({
                 : `${WEEKDAYS[weekday]}: fechado`}
             </p>
           ) : (
-            <div className="mt-2 h-5 w-28 rounded-full bg-black/5" />
+            <div
+              className={cn(
+                'mt-2 h-5 w-28 rounded-full bg-black/5',
+                halo(spot === 'hours', 'rounded-full'),
+              )}
+            />
           )}
-          <p className="mt-1 min-h-4 text-[11px] text-black/65">{how}</p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <p
+            className={cn(
+              '-mx-1 mt-1 min-h-4 px-1 text-[11px] text-black/65',
+              halo(spot === 'how'),
+              spot === 'how' && !how && 'w-24',
+            )}
+          >
+            {how}
+          </p>
+          <div className={cn('mt-3 grid grid-cols-2 gap-2', halo(spot === 'products'))}>
             {products.length
               ? products.slice(0, 4).map((p) => (
                   <div
@@ -146,15 +175,24 @@ export function MiniStore({
                   </div>
                 ))}
           </div>
-          {whatsapp ? (
-            <p className="animate-fade-up mt-3 text-center text-[11px] font-semibold text-[#1f7a4d]">
+          {whatsapp || spot === 'whatsapp' ? (
+            <p
+              className={cn(
+                'animate-fade-up mt-3 text-center text-[11px] font-semibold',
+                whatsapp ? 'text-[#1f7a4d]' : 'text-black/45',
+                halo(spot === 'whatsapp'),
+              )}
+            >
               ● fale com a gente no WhatsApp
             </p>
           ) : null}
         </div>
         <div className="px-4 pb-4">
           <p
-            className="rounded-full py-2 text-center text-[12px] font-semibold transition-colors duration-(--duration-smooth)"
+            className={cn(
+              'rounded-full py-2 text-center text-[12px] font-semibold transition-[background-color,box-shadow] duration-(--duration-smooth)',
+              (spot === 'pay' || spot === 'color') && HALO,
+            )}
             style={{ background: accent, color: onAccent }}
           >
             ver sacola

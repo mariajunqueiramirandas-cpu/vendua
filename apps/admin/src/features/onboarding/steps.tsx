@@ -46,15 +46,16 @@ export interface StepProps {
   back: (() => void) | null;
   /** leave it for later: Core remembers it was skipped, the finale lists it */
   skip: () => void;
-  /** "Atendimento · 2 de 4" */
-  eyebrow: string;
   /** what the store sells (the generic one while unknown) */
   segment: Segment;
   /** the person filling it in: their verified WhatsApp and name suggest answers */
   me: { name: string; phone: string };
 }
 
-/** One question per screen (StepFrame) with a quiet "pular" under the main button, beside "voltar". */
+/**
+ * One question per screen (StepFrame) with a quiet "pular" under the main button, beside "voltar".
+ * The onboarding slides its questions in itself, and names the part in its header.
+ */
 export function Frame({
   skipLabel = 'deixar para depois',
   onSkip,
@@ -62,6 +63,7 @@ export function Frame({
 }: Parameters<typeof StepFrame>[0] & { onSkip?: (() => void) | undefined; skipLabel?: string }) {
   return (
     <StepFrame
+      enter={false}
       {...p}
       aside={
         onSkip ? (
@@ -84,18 +86,16 @@ function useBusy() {
 // ── A cara da loja ──────────────────────────────────────────────────────────
 
 export function SegmentStep({
-  eyebrow,
   back,
   current,
   onPick,
-}: Pick<StepProps, 'eyebrow' | 'back'> & {
+}: Pick<StepProps, 'back'> & {
   current: string | null;
   onPick: (id: SegmentId) => Promise<boolean>;
 }) {
   const [busy, run] = useBusy();
   return (
     <Frame
-      eyebrow={eyebrow}
       title="O que a sua loja vende?"
       hint="É só tocar. Assim eu já sugiro horários, frases e exemplos que combinam com você."
       back={back}
@@ -108,17 +108,17 @@ export function SegmentStep({
   );
 }
 
-export function NameStep({ s, draft, patch, save, next, back, eyebrow }: StepProps) {
+export function NameStep({ s, draft, patch, save, next, back }: StepProps) {
   const [busy, run] = useBusy();
   const name = draft.name.trim();
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Como se chama a sua loja?"
       hint="Esse é o nome que seus clientes vão ver."
       back={back}
       busy={busy}
       disabled={name.length < 2}
+      why="Escreva o nome da loja para continuar."
       onSubmit={() =>
         void run(
           (name === s.profile.name ? Promise.resolve(true) : save({ profile: { name } })).then(
@@ -141,14 +141,14 @@ export function NameStep({ s, draft, patch, save, next, back, eyebrow }: StepPro
   );
 }
 
-export function LogoStep({ draft, patch, save, next, back, skip, eyebrow }: StepProps) {
+export function LogoStep({ draft, patch, save, next, back, skip }: StepProps) {
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Tem uma foto ou logo?"
       hint="Pode ser uma foto tirada agora, do celular mesmo. As cores da loja podem sair dela."
       back={back}
       disabled={!draft.logoUrl}
+      why="Toque em “adicionar foto” para escolher uma. Se não tiver agora, deixe para depois."
       onSkip={draft.logoUrl ? undefined : skip}
       onSubmit={() => next('Ficou lindo!')}
     >
@@ -169,27 +169,17 @@ export function LogoStep({ draft, patch, save, next, back, skip, eyebrow }: Step
   );
 }
 
-export function TaglineStep({
-  s,
-  draft,
-  patch,
-  save,
-  next,
-  back,
-  skip,
-  eyebrow,
-  segment,
-}: StepProps) {
+export function TaglineStep({ s, draft, patch, save, next, back, skip, segment }: StepProps) {
   const [busy, run] = useBusy();
   const tag = draft.tagline.trim();
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Uma frase que descreve a loja"
       hint="Curtinha, como se fosse contar para um vizinho. Se não vier nada na cabeça, toque em uma das ideias."
       back={back}
       busy={busy}
       disabled={!tag}
+      why="Escreva uma frase ou toque em uma das ideias."
       onSkip={tag ? undefined : skip}
       onSubmit={() =>
         void run(
@@ -221,7 +211,7 @@ export function TaglineStep({
 
 // ── Atendimento ─────────────────────────────────────────────────────────────
 
-export function WhatsappStep({ s, save, next, back, eyebrow, me }: StepProps) {
+export function WhatsappStep({ s, save, next, back, me }: StepProps) {
   // the number signup (or sign-in) just confirmed is the likeliest answer
   const suggested = !s.profile.whatsapp && !!me.phone;
   const [shown, setShown] = useState(fmtPhone(s.profile.whatsapp ?? (me.phone || null)));
@@ -231,7 +221,6 @@ export function WhatsappStep({ s, save, next, back, eyebrow, me }: StepProps) {
   const ok = !!digits;
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Qual é o WhatsApp da loja?"
       hint={
         suggested
@@ -241,6 +230,7 @@ export function WhatsappStep({ s, save, next, back, eyebrow, me }: StepProps) {
       back={back}
       busy={busy}
       disabled={!ok}
+      why="Coloque o DDD e o número, como (22) 99999-0000."
       onSubmit={() =>
         void run(
           (digits === s.profile.whatsapp
@@ -265,7 +255,7 @@ export function WhatsappStep({ s, save, next, back, eyebrow, me }: StepProps) {
   );
 }
 
-export function AddressStep({ s, save, next, back, skip, eyebrow }: StepProps) {
+export function AddressStep({ s, save, next, back, skip }: StepProps) {
   const p = s.profile;
   const [cep, setCep] = useState(maskCep(p.cep ?? ''));
   const [city, setCity] = useState(p.city ?? '');
@@ -320,12 +310,16 @@ export function AddressStep({ s, save, next, back, skip, eyebrow }: StepProps) {
   const filled = !!(digits || city.trim() || address.trim());
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Onde fica a sua loja?"
       hint="Comece pelo CEP: eu preencho a cidade e a rua para você. Daqui sai a entrega e é aqui que o cliente busca."
       back={back}
       busy={busy}
       disabled={!filled || !cepOk}
+      why={
+        filled
+          ? 'Confira o CEP: são 8 números. Ou apague e preencha só a cidade.'
+          : 'Comece pelo CEP, ou escreva a cidade.'
+      }
       onSkip={skip}
       onSubmit={() =>
         void run(
@@ -420,7 +414,7 @@ function detect(w: WeekModel): { preset: HoursPreset; open: string; close: strin
   return hit ? { preset: hit, open: first.open, close: first.close } : null;
 }
 
-export function HoursStep({ draft, patch, save, next, back, eyebrow, segment }: StepProps) {
+export function HoursStep({ draft, patch, save, next, back, segment }: StepProps) {
   const saved = detect(draft.week);
   const typical = segment.hours;
   const [preset, setPreset] = useState<HoursPreset | 'custom'>(
@@ -444,12 +438,12 @@ export function HoursStep({ draft, patch, save, next, back, eyebrow, segment }: 
   const anyDay = draft.week.some((d) => d.length);
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Quando a loja abre?"
       hint="Já deixei um horário comum para lojas como a sua. Ajuste os dias e as horas."
       back={back}
       busy={busy}
       disabled={!anyDay}
+      why="Deixe pelo menos um dia aberto."
       onSubmit={() =>
         void run(
           save({ hours: fromWeek(draft.week) }).then(
@@ -553,17 +547,17 @@ export function Choice({
 export const deliveryReady = (s: StoreView) =>
   s.zones.some((z) => z.active) || s.distancePricing.enabled;
 
-export function HowStep({ s, draft, patch, save, next, back, eyebrow }: StepProps) {
+export function HowStep({ s, draft, patch, save, next, back }: StepProps) {
   const [busy, run] = useBusy();
   const ok = draft.pickup || draft.delivery;
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Como o cliente recebe?"
       hint="Pode marcar os dois."
       back={back}
       busy={busy}
       disabled={!ok}
+      why="Marque retirada, entrega ou os dois."
       onSubmit={() =>
         void run(
           (async () => {
@@ -605,20 +599,20 @@ export function HowStep({ s, draft, patch, save, next, back, eyebrow }: StepProp
   );
 }
 
-export function PickupStep({ s, save, next, back, eyebrow }: StepProps) {
+export function PickupStep({ s, save, next, back }: StepProps) {
   const [busy, run] = useBusy();
   const [where, setWhere] = useState(s.operations.pickupAddress ?? s.profile.address ?? '');
   const [how, setHow] = useState(s.operations.pickupInstructions ?? '');
   const ok = where.trim().length >= 5;
   return (
     <Frame
-      eyebrow={eyebrow}
       title="Onde o cliente busca?"
       // pickup is already on: without this the customer is told only "na loja"
       hint="Só quem pede para retirar vê esse endereço, junto com o pedido. Sem retirada? Volte e desmarque."
       back={back}
       busy={busy}
       disabled={!ok}
+      why="Escreva o endereço onde o cliente busca."
       onSubmit={() =>
         void run(
           save({
@@ -671,9 +665,8 @@ export function ProductsStep({
   next,
   back,
   skip,
-  eyebrow,
   segment,
-}: Pick<StepProps, 'next' | 'back' | 'skip' | 'eyebrow' | 'segment'> & {
+}: Pick<StepProps, 'next' | 'back' | 'skip' | 'segment'> & {
   products: Listed[];
   categories: Category[];
 }) {
@@ -726,12 +719,16 @@ export function ProductsStep({
   const withPhoto = products.filter((p) => p.imageUrl).length;
   return (
     <Frame
-      eyebrow={eyebrow}
       title="O que você vende?"
       hint={`Comece com os ${GOAL} que mais saem, com foto: é o que faz o cliente pedir. Detalhes e opções você coloca depois.`}
       back={back}
       busy={add.isPending}
       disabled={!ready && !products.length}
+      why={
+        name.trim().length < 2
+          ? 'Escreva o nome do produto.'
+          : 'Coloque o preço. Se for de graça, digite 0.'
+      }
       label={ready || !products.length ? 'Adicionar ao cardápio' : 'Terminei'}
       onSkip={products.length ? undefined : skip}
       aside={

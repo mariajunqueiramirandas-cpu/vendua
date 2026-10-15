@@ -34,6 +34,7 @@ import { Notice } from '../../ui/Notice.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
+import { ActionBar } from '../../ui/StepFrame.tsx';
 import { PhotoImport } from './PhotoImport.tsx';
 import {
   hidesProduct,
@@ -67,6 +68,7 @@ export function ImportFlow({
   onSkip,
   onPhotosDone,
   intro,
+  onBack,
 }: {
   where: ImportWhere;
   owner: boolean;
@@ -80,6 +82,8 @@ export function ImportFlow({
   onPhotosDone: () => void;
   /** title block above the paste field */
   intro?: ReactNode;
+  /** the onboarding's question before this one */
+  onBack?: (() => void) | null | undefined;
 }) {
   const qc = useQueryClient();
   const [id, setId] = useState<string | null>(null);
@@ -178,6 +182,7 @@ export function ImportFlow({
         busy={start.isPending}
         onSubmit={() => start.mutate(url.trim())}
         onSkip={onSkip}
+        onBack={onBack}
         onPhotos={() => {
           setError(null);
           setPhotos(true);
@@ -262,6 +267,7 @@ function Paste({
   busy,
   onSubmit,
   onSkip,
+  onBack,
   onPhotos,
 }: {
   intro?: ReactNode;
@@ -271,6 +277,7 @@ function Paste({
   busy: boolean;
   onSubmit: () => void;
   onSkip?: (() => void) | undefined;
+  onBack?: (() => void) | null | undefined;
   onPhotos: () => void;
 }) {
   const ok = url.trim().length >= 4;
@@ -331,17 +338,28 @@ function Paste({
           mandar fotos do cardápio
         </Button>
       </div>
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
-        {onSkip ? (
-          <Button variant="quiet" size="lg" onClick={onSkip}>
-            começar do zero
+      {onSkip ? (
+        // the onboarding: the same bar as its other questions
+        <ActionBar
+          label="Ler meu cardápio"
+          disabled={!ok}
+          why="Cole o link da sua loja no outro app. Se não usa outro app, toque em “começar do zero”."
+          busy={busy}
+          back={onBack}
+          aside={
+            <Button variant="ghost" onClick={onSkip} className="-mr-3 text-muted">
+              começar do zero
+            </Button>
+          }
+        />
+      ) : (
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+          <div className="hidden flex-1 sm:block" />
+          <Button type="submit" size="lg" loading={busy} disabled={!ok}>
+            Ler meu cardápio <ArrowRight />
           </Button>
-        ) : null}
-        <div className="hidden flex-1 sm:block" />
-        <Button type="submit" size="lg" loading={busy} disabled={!ok}>
-          Ler meu cardápio <ArrowRight />
-        </Button>
-      </div>
+        </div>
+      )}
     </form>
   );
 }
