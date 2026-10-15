@@ -190,6 +190,21 @@ export interface GeoPoint extends LatLng {
   precision: 'address' | 'street' | 'postcode' | 'area';
 }
 
+/** Kernel 1.27 — a street named like what the shopper typed in "Rua" (OpenStreetMap, through
+ *  Core). Picking one fills the form; the shopper still confirms the door. */
+export interface PlaceSuggestion extends LatLng {
+  street: string;
+  /** a house OSM knows, matching the number typed; null = the street */
+  number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  /** UF ("SP") */
+  state: string | null;
+  /** 8 digits, OSM's — it can be the street's segment or the whole city's */
+  cep: string | null;
+  precision: 'address' | 'street';
+}
+
 /** Kernel 1.14 — a date with its own hours (`closed`, or one `open`–`close` window). */
 export interface SpecialDay {
   /** the store's local date, YYYY-MM-DD */
@@ -1512,6 +1527,14 @@ export function createApi(baseUrl = '') {
       const params = new URLSearchParams();
       for (const [k, v] of Object.entries(q)) if (v?.trim()) params.set(k, v.trim().slice(0, 120));
       return apiFetch<{ point: GeoPoint | null }>(sf(`/geocode?${params}`));
+    },
+    /** Kernel 1.27 — streets named like `q`, the store's area first; under 3 characters asks
+     *  nothing (`places: []`) */
+    places: (q: string) => {
+      const text = q.trim().slice(0, 120);
+      return text.length < 3
+        ? Promise.resolve({ places: [] as PlaceSuggestion[] })
+        : apiFetch<{ places: PlaceSuggestion[] }>(sf(`/places?q=${encodeURIComponent(text)}`));
     },
     /** Kernel 1.2 — restock waitlist; answers how many are waiting */
     waitlist: (productId: string, phone: string) =>

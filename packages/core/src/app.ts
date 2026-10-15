@@ -110,8 +110,10 @@ import {
 import {
   mapTilesFromEnv,
   nominatimGeocoder,
+  photonPlaces,
   type Geocoder,
   type MapTiles,
+  type PlaceSearch,
 } from './modules/geocode.ts';
 import { orsRouter, routeQuoter, type Router } from './modules/routing.ts';
 import { OrderHub } from './modules/order-live.ts';
@@ -290,6 +292,8 @@ export interface AppDeps {
   cepLookup?: CepLookup | undefined;
   /** address → approximate point for the pin maps (default: Nominatim); tests inject a stub */
   geocoder?: Geocoder | undefined;
+  /** street suggestions while an address is typed (default: Photon); tests inject a stub */
+  places?: PlaceSearch | undefined;
   /** road distance for distance pricing (default: OpenRouteService when ORS_API_KEY is set;
    *  null = none, Core estimates) */
   router?: Router | null | undefined;
@@ -553,6 +557,7 @@ export function createApp({
   publishSecret,
   cepLookup,
   geocoder,
+  places: placeSearch,
   router,
   mapTiles,
   otpSender,
@@ -577,6 +582,7 @@ export function createApp({
   const cache = readCache ?? new StoreReadCache(sql, { strict: true });
   const provider = paymentProvider ?? createPaymentProvider();
   const geocode = geocoder ?? nominatimGeocoder(process.env, fetch, cepLookup ?? viaCep);
+  const places = placeSearch ?? photonPlaces();
   const tiles = mapTiles ?? mapTilesFromEnv();
   const routeQuote = routeQuoter(router === undefined ? orsRouter() : router);
   /** The road leg store → this pin, fetched before the request's tx (an HTTP call never holds
@@ -2994,6 +3000,7 @@ export function createApp({
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
     cepLookup: cepLookup ?? viaCep,
     geocode,
+    places,
     orderHub,
     orderWatch,
     provider,
@@ -3200,6 +3207,7 @@ export function createApp({
     signupReady: signupReady ?? (() => signupReadiness(sql, provider)),
     publicOrigin: adminOrigin,
     geocode,
+    places,
     domains: domainProviders,
     fleet: fleetD,
     copilotMedia: ears,

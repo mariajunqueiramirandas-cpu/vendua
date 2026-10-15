@@ -34,6 +34,7 @@ import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 import { parsePolygon, type LatLng } from '../modules/geo.ts';
+import { PLACE_QUERY_MAX, PLACE_QUERY_MIN, storeNearby } from '../modules/geocode.ts';
 
 /** encomendas: the offline methods a preorder may be limited to */
 const METHODS = ['pix', 'card_on_delivery', 'cash', 'meal_voucher'] as const;
@@ -412,6 +413,18 @@ export function mountStore(d: AdminDeps) {
     });
     c.header('cache-control', 'no-store');
     return c.json({ point });
+  });
+
+  // street suggestions while an address is typed (the PDV's delivery address), the store's area first
+  const nearStore = storeNearby(d.sql, d.geocode);
+  admin.get('/places', async (c) => {
+    need(c as AdminCtx, 'attendant');
+    const text = c.req.query('q')?.trim() ?? '';
+    if (text.length > PLACE_QUERY_MAX) throw new HttpError(400, 'BAD_REQUEST', 'q is too long');
+    c.header('cache-control', 'no-store');
+    if (text.length < PLACE_QUERY_MIN) return c.json({ places: [] });
+    const tenant = (c as AdminCtx).get('tenant');
+    return c.json({ places: await d.places({ text, near: await nearStore(tenant.id) }) });
   });
 
   // attendants read it too: the status pill and today's hours are on every screen

@@ -2448,6 +2448,21 @@ export interface PdvDeliveryQuote {
   etaMax: number | null;
   distanceKm: number | null;
 }
+/** a street Core found for what is typed in "Rua" (GET /admin/v1/places) */
+export interface PlaceSuggestion {
+  street: string;
+  /** a house OSM knows, matching the typed number; null = the street */
+  number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  /** UF ("SP") */
+  state: string | null;
+  cep: string | null;
+  lat: number;
+  lng: number;
+  precision: 'address' | 'street';
+}
+
 export interface PdvCustomer {
   name: string | null;
   phone: string;
@@ -2945,6 +2960,9 @@ export const api = {
         precision: 'address' | 'street' | 'postcode' | 'area';
       } | null;
     }>(`/geocode?q=${encodeURIComponent(q.slice(0, 300))}`),
+  /** streets named like what is typed (OpenStreetMap through Core), the store's area first */
+  places: (q: string) =>
+    get<{ places: PlaceSuggestion[] }>(`/places?q=${encodeURIComponent(q.slice(0, 120))}`),
   pause: (p: {
     for: '15m' | '1h' | 'today' | 'indefinite' | 'minutes';
     minutes?: number;

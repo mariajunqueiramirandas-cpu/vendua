@@ -73,6 +73,10 @@ tiles by default), so the provider can change without a Kernel release. A vector
   Beyond that, the estimate takes over. OpenStreetMap's tile servers discourage heavy
   commercial use, so as traffic grows, point `MAP_TILE_URL` at a commercial or self-hosted
   raster source. Each of these is one env var (`NOMINATIM_URL`, `ORS_URL`, `MAP_TILE_URL`).
+- Typing the street suggests streets (Kernel 1.27, the PDV too): Nominatim's policy forbids
+  autocomplete, so `GET /storefront/v1/places` and `/admin/v1/places` ask komoot's public Photon
+  (same OSM data, made for typeahead, fair use: 120 a minute per process, 40 per client, cached a
+  day, near the store's pin or city first). `PHOTON_URL` points at a self-hosted instance.
 - The tile server, and Nominatim through Core, see the shopper's area. The checkout already
   needed the address. The pin is stored with the cart (`carts.delivery`, and `delivery_route.to`)
   and the order like the address, and customer erasure strips it from orders (`lat`/`lng`) the

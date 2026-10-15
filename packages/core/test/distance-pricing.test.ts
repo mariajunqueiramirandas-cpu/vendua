@@ -12,7 +12,13 @@ import {
   type DistancePricing,
   type RouteQuote,
 } from '../src/modules/geo.ts';
-import { mapTilesFromEnv, nominatimGeocoder } from '../src/modules/geocode.ts';
+import {
+  mapTilesFromEnv,
+  nominatimGeocoder,
+  photonPlaces,
+  type PlaceHit,
+  type PlaceQuery,
+} from '../src/modules/geocode.ts';
 import { orsRouter, routeQuoter, type RouteLeg } from '../src/modules/routing.ts';
 import { migrate } from '../src/platform/db.ts';
 
@@ -255,6 +261,108 @@ describe('providers', () => {
     });
   });
 
+  test('photonPlaces: Brazilian streets named like the query, near the store first', async () => {
+    const urls: URL[] = [];
+    const feature = (props: Record<string, string>, lng: number, lat: number) => ({
+      geometry: { coordinates: [lng, lat] },
+      properties: { countrycode: 'BR', ...props },
+    });
+    const search = photonPlaces({ PHOTON_URL: 'http://p.test/' }, async (url) => {
+      urls.push(new URL(url));
+      return new Response(
+        JSON.stringify({
+          features: [
+            feature(
+              {
+                type: 'street',
+                name: 'Rua Barão de Jaguara',
+                district: 'Cambuci',
+                city: 'São Paulo',
+                state: 'São Paulo',
+                postcode: '03105-020',
+              },
+              -46.6,
+              -23.5,
+            ),
+            feature(
+              {
+                type: 'street',
+                name: 'Rua Barão de Jaguara',
+                district: 'Ponte Preta',
+                city: 'Campinas',
+                state: 'São Paulo',
+                postcode: '13026-510',
+              },
+              -47.05,
+              -22.91,
+            ),
+            // the same road, another segment
+            feature(
+              {
+                type: 'street',
+                name: 'Rua Barão de Jaguara',
+                district: 'Ponte Preta',
+                city: 'Campinas',
+                state: 'São Paulo',
+              },
+              -47.051,
+              -22.912,
+            ),
+            // padded in for its number only
+            feature(
+              { type: 'house', street: 'Avenida Jandira', housenumber: '45', city: 'São Paulo' },
+              -46.65,
+              -23.61,
+            ),
+            feature(
+              {
+                type: 'house',
+                street: 'Rua Barão de Jaguara',
+                housenumber: '45',
+                district: 'Ponte Preta',
+                city: 'Campinas',
+                state: 'São Paulo',
+              },
+              -47.052,
+              -22.913,
+            ),
+            feature(
+              { type: 'street', name: 'Rua Barão de Jaguara', countrycode: 'PT' },
+              -9.1,
+              38.7,
+            ),
+          ],
+        }),
+      );
+    });
+    const near = { lat: -22.9, lng: -47.06 };
+    const hits = await search({ text: 'rua barao jaguara 45', near });
+    expect(hits.map((h) => [h.city, h.neighborhood, h.number, h.precision])).toEqual([
+      ['Campinas', 'Ponte Preta', null, 'street'],
+      ['Campinas', 'Ponte Preta', '45', 'address'],
+      ['São Paulo', 'Cambuci', null, 'street'],
+    ]);
+    expect(hits[0]).toMatchObject({ street: 'Rua Barão de Jaguara', state: 'SP', cep: '13026510' });
+    const u = urls[0]!;
+    expect(u.origin + u.pathname).toBe('http://p.test/api/');
+    expect(u.searchParams.getAll('layer')).toEqual(['house', 'street']);
+    expect([u.searchParams.get('lat'), u.searchParams.get('lon')]).toEqual(['-22.9', '-47.1']);
+    // cached, and too short never asks
+    await search({ text: 'Rua  Barão Jaguara 45', near });
+    const asked = urls.length;
+    expect(await search({ text: 'ru' })).toEqual([]);
+    // "das" names no street: a misspelt one finds nothing rather than every "Rua das …"
+    expect(await search({ text: 'rua das florestonio' })).toEqual([]);
+    expect(asked).toBe(1);
+    // the provider down is an empty list, never a throw
+    const down = photonPlaces({}, async () => new Response('', { status: 503 }));
+    expect(await down({ text: 'rua a' })).toEqual([]);
+    const broken = photonPlaces({}, async () => {
+      throw new Error('timeout');
+    });
+    expect(await broken({ text: 'rua a' })).toEqual([]);
+  });
+
   test('mapTilesFromEnv: https XYZ templates only', () => {
     expect(mapTilesFromEnv({}).url).toBe('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(
@@ -279,6 +387,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
   const legs = new Map<string, RouteLeg>();
   let routerCalls = 0;
   let routerDown = false;
+  const placeCalls: { q: PlaceQuery; client: string | undefined }[] = [];
+  const PLACE: PlaceHit = {
+    street: 'Rua A',
+    number: null,
+    neighborhood: 'Centro',
+    city: 'Saquarema',
+    state: 'RJ',
+    cep: '28990000',
+    lat: -22.93,
+    lng: -42.49,
+    precision: 'street',
+  };
   const app = createApp({
     sql,
     sessionSecret: 's',
@@ -286,6 +406,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     cepLookup: async () => null,
     geocoder: async (q) =>
       q.city || q.text ? { lat: -22.931, lng: -42.48, precision: 'street' } : null,
+    places: async (q, client) => {
+      placeCalls.push({ q, client });
+      return [PLACE];
+    },
     router: async (_from, to) => {
       routerCalls++;
       if (routerDown) throw new Error('down');
@@ -440,6 +564,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     );
     const g = await admin('GET', '/geocode?q=Rua%20A%2C%2010%2C%20Saquarema');
     expect(g.body.point).toEqual({ lat: -22.931, lng: -42.48, precision: 'street' });
+    // street suggestions centre on the store's pin
+    expect((await admin('GET', '/places?q=Rua%20A')).body.places).toEqual([PLACE]);
+    expect(placeCalls.at(-1)!.q).toEqual({ text: 'Rua A', near: STORE });
+    expect((await admin('GET', '/places?q=R')).body.places).toEqual([]);
+    expect((await admin('GET', `/places?q=${'x'.repeat(121)}`)).status).toBe(400);
   });
 
   test('storefront: the store says how it prices and where the map opens', async () => {
@@ -457,6 +586,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     expect((await call('GET', `/storefront/v1/geocode?street=${'x'.repeat(200)}`)).status).toBe(
       400,
     );
+    const before = placeCalls.length;
+    expect((await call('GET', '/storefront/v1/places?q=Rua%20A')).body.places).toEqual([PLACE]);
+    expect(placeCalls.at(-1)!.q).toEqual({ text: 'Rua A', near: STORE });
+    expect((await call('GET', '/storefront/v1/places?q=Ru')).body.places).toEqual([]);
+    expect((await call('GET', `/storefront/v1/places?q=${'x'.repeat(121)}`)).status).toBe(400);
+    expect(placeCalls.length).toBe(before + 1);
   });
 
   test('quote → address → checkout charge the road distance the shopper saw', async () => {

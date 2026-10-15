@@ -129,6 +129,7 @@ services:
       # Pin maps: geocoder and raster tiles; unset = OSM's public Nominatim and tiles.
       NOMINATIM_URL: ${NOMINATIM_URL:-}
       NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-}
+      PHOTON_URL: ${PHOTON_URL:-}
       MAP_TILE_URL: ${MAP_TILE_URL:-}
       MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
       MAP_TILE_MAX_ZOOM: ${MAP_TILE_MAX_ZOOM:-}
