@@ -16,7 +16,7 @@ import type { MerchantNotify } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
 import { audit } from './audit.ts';
 import { DEMAND_DEFAULT_MINUTES } from './routes-store.ts';
-import { sendPushResult, vapidPublicKey, type PushResult } from './webpush.ts';
+import { sendPushResult, vapidConfig, vapidPublicKey, type PushResult } from './webpush.ts';
 
 const workLog = log.child({ mod: 'admin-workers' });
 
@@ -58,6 +58,9 @@ export async function recordPushAttempt(
 /** New order / online payment → web push to the store's devices. One replica wins each
  *  event (push_deliveries), so a scaled Core never double-rings a phone. */
 export async function startPushNotifier(sql: Sql, hub: AdminHub): Promise<() => void> {
+  // the only sign of a missing or broken key otherwise is a greyed-out toggle in every admin
+  const { problem } = vapidConfig();
+  if (problem) workLog.warn({ problem }, `web push is off: ${problem}`);
   return hub.onAny((tenantId, e) => {
     if (!e.id || !vapidPublicKey()) return;
     if (e.topic === 'order.placed')

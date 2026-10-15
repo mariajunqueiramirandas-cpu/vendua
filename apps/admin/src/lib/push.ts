@@ -29,14 +29,32 @@ export async function enablePush(publicKey: string): Promise<'on' | 'denied' | '
     (await navigator.serviceWorker.getRegistration('/admin/')) ??
     (await navigator.serviceWorker.register('/admin/sw.js', { scope: '/admin/' }));
   await navigator.serviceWorker.ready;
-  const sub =
-    (await reg.pushManager.getSubscription()) ??
-    (await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: keyBytes(publicKey),
-    }));
+  const key = keyBytes(publicKey);
+  let sub = await reg.pushManager.getSubscription();
+  // made under an earlier VAPID key, it can never be delivered to: start a new one
+  if (sub && !sameKey(sub, key)) {
+    await api.pushUnsubscribe(sub.endpoint).catch(() => undefined);
+    await sub.unsubscribe().catch(() => false);
+    sub = null;
+  }
+  sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   await api.pushSubscribe(sub.toJSON());
   return 'on';
+}
+
+function sameKey(sub: PushSubscription, key: Uint8Array) {
+  const had = sub.options.applicationServerKey;
+  // a browser that doesn't say: keep it, Core drops it if the push service refuses it
+  if (!had) return true;
+  const a = new Uint8Array(had);
+  return a.length === key.length && a.every((b, i) => b === key[i]);
+}
+
+/** This device's subscription, unless it was made under another VAPID key (the keys changed):
+ *  the admin then offers to turn push on again, which re-subscribes with the current one. */
+export async function liveSubscription(publicKey: string): Promise<PushSubscription | null> {
+  const sub = await currentSubscription();
+  return sub && sameKey(sub, keyBytes(publicKey)) ? sub : null;
 }
 
 export async function disablePush() {

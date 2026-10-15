@@ -5,6 +5,8 @@
 //   VAPID_SUBJECT     — mailto: or https: contact for push services
 // Without them push is off and the admin says so; sound + the live board still work.
 
+import { createECDH } from 'node:crypto';
+
 const enc = new TextEncoder();
 // ArrayBuffer-backed: WebCrypto's BufferSource rejects SharedArrayBuffer views
 type Bytes = Uint8Array<ArrayBuffer>;
@@ -15,10 +17,44 @@ const b64u = {
   decode: (s: string): Bytes => new Uint8Array(Buffer.from(s, 'base64url')),
 };
 
+type Vapid = { pub: string; priv: string };
+let parsed: { from: string; keys: Vapid | null; problem: string | null } | null = null;
+
+/** The VAPID pair, normalized to unpadded base64url. A pair that is missing, doesn't decode
+ *  or doesn't match is `problem` and push is off: every send would be refused by the push
+ *  service, and a browser can't subscribe with a bad key. */
+export function vapidConfig(): { keys: Vapid | null; problem: string | null } {
+  // trimmed and unquoted: a key pasted into a deploy's env often carries either
+  const raw = (v: string | undefined) => (v ?? '').trim().replace(/^(["'])(.*)\1$/, '$2');
+  const pub = raw(process.env.VAPID_PUBLIC_KEY);
+  const priv = raw(process.env.VAPID_PRIVATE_KEY);
+  const from = `${pub}|${priv}`;
+  if (parsed?.from === from) return parsed;
+  const off = (problem: string) => (parsed = { from, keys: null, problem });
+  if (!pub && !priv) return off('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are not set');
+  if (!pub) return off('VAPID_PUBLIC_KEY is not set');
+  if (!priv) return off('VAPID_PRIVATE_KEY is not set');
+  // base64url decoding also takes standard base64 (+/ and = padding)
+  const p = b64u.decode(pub);
+  const d = b64u.decode(priv);
+  if (p.length !== 65 || p[0] !== 4)
+    return off('VAPID_PUBLIC_KEY is not a base64url P-256 public key (65 bytes)');
+  if (d.length !== 32)
+    return off('VAPID_PRIVATE_KEY is not a base64url P-256 private key (32 bytes)');
+  try {
+    const ecdh = createECDH('prime256v1');
+    ecdh.setPrivateKey(d);
+    if (!ecdh.getPublicKey().equals(p))
+      return off('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are not the same pair');
+  } catch {
+    return off('VAPID_PRIVATE_KEY is not a valid P-256 key');
+  }
+  parsed = { from, keys: { pub: b64u.encode(p), priv: b64u.encode(d) }, problem: null };
+  return parsed;
+}
+
 export function vapidPublicKey(): string | null {
-  return process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY
-    ? process.env.VAPID_PUBLIC_KEY
-    : null;
+  return vapidConfig().keys?.pub ?? null;
 }
 
 function concat(...parts: Uint8Array[]): Bytes {
@@ -137,6 +173,9 @@ export function isPushEndpoint(endpoint: string): boolean {
   return PUSH_HOSTS.includes(host) || PUSH_HOST_SUFFIXES.some((s) => host.endsWith(s));
 }
 
+// FCM: "…does not correspond to the sender ID…"; Apple: VapidPkHashMismatch; autopush: "…mismatch"
+const VAPID_MISMATCH = /does not correspond|VapidPkHashMismatch|mismatch/i;
+
 export type PushResult = { result: 'ok' | 'gone' | 'error'; detail: string | null };
 
 /** 'gone' = the browser dropped the subscription; delete it. */
@@ -149,9 +188,8 @@ export async function sendPush(
 
 /** Like sendPush, with a short reason the admin can show when it didn't arrive. */
 export async function sendPushResult(target: PushTarget, message: object): Promise<PushResult> {
-  const pub = process.env.VAPID_PUBLIC_KEY;
-  const priv = process.env.VAPID_PRIVATE_KEY;
-  if (!pub || !priv) return { result: 'error', detail: 'push not configured' };
+  const keys = vapidConfig().keys;
+  if (!keys) return { result: 'error', detail: 'push not configured' };
   // rows saved before the allowlist: never sent to, and dropped like an unsubscribed device
   if (!isPushEndpoint(target.endpoint)) return { result: 'gone', detail: 'endpoint not allowed' };
   try {
@@ -165,8 +203,8 @@ export async function sendPushResult(target: PushTarget, message: object): Promi
       headers: {
         authorization: await vapidAuth(
           target.endpoint,
-          pub,
-          priv,
+          keys.pub,
+          keys.priv,
           process.env.VAPID_SUBJECT ?? 'mailto:suporte@vendua.com.br',
         ),
         'content-encoding': 'aes128gcm',
@@ -181,6 +219,13 @@ export async function sendPushResult(target: PushTarget, message: object): Promi
     if (res.status >= 300 && res.status < 400) return { result: 'error', detail: 'redirect' };
     if (res.status === 404 || res.status === 410)
       return { result: 'gone', detail: `push service ${res.status}` };
+    // the subscription was made with another VAPID key (the keys changed): it can never be
+    // delivered to again, and the device re-subscribes with the current key on its next visit
+    if (
+      [400, 401, 403].includes(res.status) &&
+      VAPID_MISMATCH.test(await res.text().catch(() => ''))
+    )
+      return { result: 'gone', detail: `push service ${res.status}: key changed` };
     return res.ok
       ? { result: 'ok', detail: null }
       : { result: 'error', detail: `push service ${res.status}` };

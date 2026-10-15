@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
-import { currentSubscription, enablePush, pushSupported } from '../../lib/push.ts';
+import { enablePush, liveSubscription, pushSupported } from '../../lib/push.ts';
 import { installMode, onInstallChange, promptInstall, standalone } from '../../lib/pwa.ts';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
@@ -30,7 +30,7 @@ function usePushOff() {
   const [off, setOff] = useState(false);
   useEffect(() => {
     if (!s.push.publicKey || !pushSupported() || Notification.permission === 'denied') return;
-    void currentSubscription().then((sub) => setOff(!sub));
+    void liveSubscription(s.push.publicKey).then((sub) => setOff(!sub));
   }, [s.push.publicKey]);
   return off;
 }

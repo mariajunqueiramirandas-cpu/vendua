@@ -46,7 +46,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `GIT_COMMIT`                               | optional: the commit releases record (else `unknown`)             |
 | `VENDUA_ADMIN_HOST`                        | the merchant admin's own domain, e.g. `painel.example.com`        |
 | `VENDUA_STORE_DOMAIN`                      | stores live at `<slug>.<domain>` — the admin's store links        |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`   | web push for new orders (`npx web-push generate-vapid-keys`)      |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`   | web push (`npx web-push generate-vapid-keys`); boot logs if bad   |
 | `VENDUA_SUPPORT_WHATSAPP`                  | Ajuda's "chamar no WhatsApp" number (digits; optional)            |
 | `RESEND_API_KEY`                           | email driver — sending + fetching received bodies                 |
 | `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)            |
