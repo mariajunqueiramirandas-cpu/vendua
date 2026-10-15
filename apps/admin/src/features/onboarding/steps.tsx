@@ -7,7 +7,7 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { whatsappDigits } from '@vendua/kernel/rules';
 import { api, ApiError, withRetryScope, type Category, type StoreView } from '../../lib/api.ts';
 import { maskCep, money, phone as fmtPhone } from '../../lib/format.ts';
@@ -18,20 +18,15 @@ import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Disclosure } from '../../ui/Disclosure.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
-import {
-  Chips,
-  Field,
-  MoneyField,
-  PhoneInput,
-  TextArea,
-  TextInput,
-  TimeInput,
-} from '../../ui/fields.tsx';
+import { Chips, Field, MoneyField, TextArea, TextInput, TimeInput } from '../../ui/fields.tsx';
+import type { Pose } from '../../ui/Mascote.tsx';
 import { PhotoField, type Photo } from '../../ui/PhotoField.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { fromWeek, TimeRangeField, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { AnswerLine, AnswerPhone } from './Answer.tsx';
+import { Say } from './Guide.tsx';
 import type { Draft } from './MiniStore.tsx';
 import { SegmentPicker } from './SegmentPicker.tsx';
 import type { HoursPreset, Segment, SegmentId } from './segments.ts';
@@ -56,16 +51,36 @@ export interface StepProps {
  * One question per screen (StepFrame) with a quiet "pular" under the main button, beside "voltar".
  * The onboarding slides its questions in itself, and names the part in its header.
  */
+/** What Duá has to say over the open question: praise for the answer just given, a part just
+ *  finished, and the pose of a part that begins (then he's above the title, bigger). */
+export const Voice = createContext<{
+  praise: string | null;
+  done: string | null;
+  pose: Pose | null;
+} | null>(null);
+
 export function Frame({
   skipLabel = 'deixar para depois',
   onSkip,
+  hint,
   ...p
 }: Parameters<typeof StepFrame>[0] & { onSkip?: (() => void) | undefined; skipLabel?: string }) {
+  const said = useContext(Voice);
+  // a part's opening already put Duá above the title: the hint stays a plain line then
+  const face = !said?.pose;
+  const praise = face ? (said?.praise ?? null) : null;
   return (
     <StepFrame
       enter={false}
       big
       {...p}
+      lead={
+        hint || praise ? (
+          <Say praise={praise} face={face}>
+            {hint}
+          </Say>
+        ) : undefined
+      }
       aside={
         onSkip ? (
           <Button variant="ghost" onClick={onSkip} className="-mr-3 text-muted">
@@ -128,16 +143,15 @@ export function NameStep({ s, draft, patch, save, next, back }: StepProps) {
         )
       }
     >
-      <Field label="Nome da loja" htmlFor="ob-name">
-        <TextInput
-          id="ob-name"
-          maxLength={80}
-          autoComplete="off"
-          value={draft.name}
-          onChange={(e) => patch({ name: e.target.value })}
-          placeholder="Ex.: Doces da Maria"
-        />
-      </Field>
+      <AnswerLine
+        id="ob-name"
+        label="Nome da loja"
+        maxLength={80}
+        autoComplete="off"
+        value={draft.name}
+        onChange={(e) => patch({ name: e.target.value })}
+        placeholder="Doces da Maria"
+      />
     </Frame>
   );
 }
@@ -191,21 +205,23 @@ export function TaglineStep({ s, draft, patch, save, next, back, skip, segment }
         )
       }
     >
-      <Field label="Frase" htmlFor="ob-tag">
-        <TextInput
-          id="ob-tag"
-          maxLength={120}
-          value={draft.tagline}
-          onChange={(e) => patch({ tagline: e.target.value })}
-          placeholder={`Ex.: ${segment.taglines[0]}`}
-        />
-      </Field>
-      <Chips
-        label="ideias de frase"
-        value={tag}
-        onChange={(v) => patch({ tagline: v })}
-        options={segment.taglines.map((t) => ({ value: t, label: t }))}
+      <AnswerLine
+        id="ob-tag"
+        label="Frase"
+        maxLength={120}
+        value={draft.tagline}
+        onChange={(e) => patch({ tagline: e.target.value })}
+        placeholder={segment.taglines[0]}
       />
+      <div className="space-y-2">
+        <p className="t-caption text-muted">Ideias para lojas como a sua</p>
+        <Chips
+          label="ideias de frase"
+          value={tag}
+          onChange={(v) => patch({ tagline: v })}
+          options={segment.taglines.map((t) => ({ value: t, label: t }))}
+        />
+      </div>
     </Frame>
   );
 }
@@ -241,17 +257,14 @@ export function WhatsappStep({ s, save, next, back, me }: StepProps) {
         )
       }
     >
-      <Field
-        label={
-          <span className="inline-flex items-center gap-2">
-            <WhatsappLogo weight="fill" className="size-5 text-success" /> WhatsApp com DDD
-          </span>
-        }
-        htmlFor="ob-wa"
-        helper={shown && !ok ? 'Faltam números: DDD + o número, como (22) 99999-0000.' : undefined}
-      >
-        <PhoneInput id="ob-wa" value={shown} onChange={(v) => setShown(v)} />
-      </Field>
+      <AnswerPhone
+        id="ob-wa"
+        label="WhatsApp com DDD"
+        value={shown}
+        onChange={(v) => setShown(v)}
+        lead={<WhatsappLogo weight="fill" className="text-success" aria-hidden />}
+        helper={shown && !ok ? 'Faltam números: DDD + o número, como (22) 99999-0000.' : 'Com DDD.'}
+      />
     </Frame>
   );
 }

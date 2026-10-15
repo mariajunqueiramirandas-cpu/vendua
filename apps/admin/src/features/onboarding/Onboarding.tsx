@@ -38,7 +38,7 @@ import {
   stepsFor,
   type StepId,
 } from './flow.ts';
-import { Guide, Reaction } from './Guide.tsx';
+import { Guide, Reaction, Say } from './Guide.tsx';
 import { Ribbon, TRACKS } from './Ribbon.tsx';
 import { MiniStore, type Draft } from './MiniStore.tsx';
 import { Welcome, type ChapterProgress } from './Overview.tsx';
@@ -60,6 +60,7 @@ import {
   TaglineStep,
   WhatsappStep,
   type StepProps,
+  Voice,
 } from './steps.tsx';
 import { ColorsStep, DeliveryStep, MercadoPagoStep, MethodsStep, PixStep } from './steps-more.tsx';
 
@@ -546,10 +547,12 @@ function Flow({
             <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]">
               Já vende em outro app de cardápio?
             </h1>
-            <p className="t-body-lg mt-3 max-w-[34rem] text-pretty text-muted">
-              Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere tudo
-              antes de entrar.
-            </p>
+            <div className="mt-4">
+              <Say praise={said?.pose ? null : said?.praise} face={!said?.pose}>
+                Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere
+                tudo antes de entrar.
+              </Say>
+            </div>
           </div>
         }
         onSkip={() => next()}
@@ -700,12 +703,12 @@ function Flow({
               dir === 'back' ? 'animate-step-back' : 'animate-step-fwd',
             )}
           >
-            {question && said ? (
+            {question && said?.pose ? (
               <Reaction done={said.done} pose={said.pose}>
                 {said.praise}
               </Reaction>
             ) : null}
-            {body}
+            <Voice.Provider value={question ? said : null}>{body}</Voice.Provider>
           </div>
         </main>
 

@@ -508,10 +508,16 @@ and keeps filling in. Signup asks what the store sells (ten
 big tiles, one tap); that answer tunes everything after it: the hours preset ("Terça a domingo,
 18h–23h30" for a pizzaria), example products, tagline ideas and the menu's first category.
 
-After signup, onboarding is a conversation: **one question per screen**, with Duá reacting to
-each answer (a small face and one line over the next question: "Quero Pudim… que nome bonito!"),
-56 px buttons, presets instead of blank fields and plain pt-BR. The question is the one thing to
-read: a big title, at most one sentence under it, the answer. The questions come in four parts:
+After signup, onboarding is a conversation: **one question per screen**, 56 px buttons, presets
+instead of blank fields and plain pt-BR. The question is the one thing to read: a big title,
+Duá's line under it, the answer. The line is his (its sentence already speaks in the first person:
+"Já deixei um horário comum para lojas como a sua"), a small face beside it, and the answer just
+given gets his praise in front of it ("Quero Pudim… que nome bonito! Pode ser uma foto tirada
+agora."). A question with one answer in words (the name, the phrase, the WhatsApp) is answered on
+a line, not in a box: the title is the label, the answer is set big in the display face over a
+rule that turns forest as it's typed on, with the lime under it. With a mouse and keyboard the
+bar says "ou Enter ↵" beside the main button on a typed question. The questions come in four
+parts:
 
 - **A cara da loja**: what it sells (only if nobody asked), import from another menu app, the
   name (only if signup didn't ask), logo, the store's colour (swatches, the logo's first),
