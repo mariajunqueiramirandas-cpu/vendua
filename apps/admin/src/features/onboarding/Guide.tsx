@@ -44,6 +44,52 @@ export function Guide({ turn, pose, children }: { turn: string; pose: Pose; chil
 }
 
 /**
+ * Duá's line under a question's title, on every question: the hint is his (it already speaks in
+ * the first person), and the answer just given gets his praise in front of it ("Quero Pudim… que
+ * nome bonito! Pode ser uma foto tirada agora."). `face` off when Duá is already on screen
+ * bigger, opening a part above the title.
+ */
+export function Say({
+  praise,
+  children,
+  face = true,
+}: {
+  praise?: ReactNode;
+  children?: ReactNode;
+  face?: boolean;
+}) {
+  if (!praise && !children) return null;
+  const line = (
+    <p
+      role={praise ? 'status' : undefined}
+      className={cn(
+        't-body-lg min-w-0 max-w-[34rem] text-pretty text-muted',
+        // the first line's middle on the face's middle (26 px line, 36 px disc)
+        face && 'pt-1',
+      )}
+    >
+      {praise ? <strong className="font-semibold text-ink">{praise} </strong> : null}
+      {children}
+    </p>
+  );
+  if (!face) return line;
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        aria-hidden
+        className={cn(
+          'dua-disc grid size-9 shrink-0 place-items-center bg-spark-soft',
+          praise && 'animate-pop',
+        )}
+      >
+        <Mascote pose={praise ? 'avatar-feliz' : 'avatar-ola'} size={36} className="size-8" />
+      </span>
+      {line}
+    </div>
+  );
+}
+
+/**
  * Duá reacting to the answer just given, above the next question: a small face and one line.
  * Only after an answer (a question opened from the map or by "voltar" has nothing to react
  * to), so the question itself stays the one thing to read. When the answer opened a new part,
@@ -65,20 +111,20 @@ export function Reaction({
         aria-hidden
         className={cn(
           'dua-disc animate-pop grid shrink-0 place-items-center bg-spark-soft',
-          pose ? 'size-[5.5rem] sm:size-24' : 'size-12',
+          pose ? 'size-[5.5rem] sm:size-24' : 'size-11',
         )}
       >
         <Mascote
           pose={pose ?? 'avatar-feliz'}
           size={pose ? 96 : 48}
-          className={pose ? 'size-[5rem] sm:size-[5.5rem]' : 'size-11'}
+          className={pose ? 'size-[5rem] sm:size-[5.5rem]' : 'size-10'}
         />
       </span>
       <p
         role="status"
         className={cn(
           't-body min-w-0 rounded-lg bg-surface px-4 py-2.5 depth-1',
-          pose ? 'mb-2 rounded-bl-sm' : 'rounded-bl-sm',
+          pose ? 'mb-3 rounded-bl-sm' : 'rounded-bl-sm',
         )}
       >
         {done ? (

@@ -501,16 +501,24 @@ unpublished work is kept in the browser, so leaving the screen loses nothing.
 
 ### 6.8 The store builds itself (onboarding)
 
-Signup and onboarding are **one journey in three parts** — Cadastro, Sua loja, No ar — and
-both wear the same header (`JourneyBar`) and the same phone preview, which starts in signup
-with the store's name and address and keeps filling in. Signup asks what the store sells (ten
+Signup and onboarding are **one journey in three parts** — Cadastro, Sua loja, No ar. Signup
+wears the journey's header (`JourneyBar`) and the onboarding its own ribbon (`Ribbon`, below),
+and both share the same phone preview, which starts in signup with the store's name and address
+and keeps filling in. Signup asks what the store sells (ten
 big tiles, one tap); that answer tunes everything after it: the hours preset ("Terça a domingo,
 18h–23h30" for a pizzaria), example products, tagline ideas and the menu's first category.
 
-After signup, onboarding is a conversation: **one question per screen**, with Duá reacting to
-each answer (a small face and one line over the next question: "Quero Pudim… que nome bonito!"),
-56 px buttons, presets instead of blank fields and plain pt-BR. The question is the one thing to
-read: a big title, at most one sentence under it, the answer. The questions come in four parts:
+After signup, onboarding is a conversation: **one question per screen**, 56 px buttons, presets
+instead of blank fields and plain pt-BR. The question is the one thing to read: a big title,
+Duá's line under it, the answer. The line is his (its sentence already speaks in the first person:
+"Já deixei um horário comum para lojas como a sua"), a small face beside it, and the answer just
+given gets his praise in front of it ("Quero Pudim… que nome bonito! Pode ser uma foto tirada
+agora."). A question with one answer in words (the name, the phrase, the WhatsApp) is answered on
+a line, not in a box: the title is the label, the answer is set big in the display face over a
+rule that turns forest as it's typed on, with the lime under it. Every answer spans the column,
+the logo's too: one row with the app icon's square the photo lands in and the words beside it,
+never a lone tile in a corner. With a mouse and keyboard the bar says "ou Enter ↵" beside the
+main button on a typed question. The questions come in four parts:
 
 - **A cara da loja**: what it sells (only if nobody asked), import from another menu app, the
   name (only if signup didn't ask), logo, the store's colour (swatches, the logo's first),
@@ -523,34 +531,51 @@ read: a big title, at most one sentence under it, the answer. The questions come
   wizard.
 - **Cardápio**: the first products with a photo each, or a WhatsApp list pasted in.
 
-**Where am I, and what's left.** The header's bar splits "Sua loja" into the four parts, each
-filling as its questions are answered, and names the place ("Atendimento · 2 de 4"). A tap on
-it opens every question, part by part, with what's done, what was left for later and where the
-merchant is; any of them is one tap away. From 1200 px the same map is a rail beside the
-question. Moving on slides the next question in from the right, "voltar" from the left. When a
-part ends, Duá ticks it off ("Parte 1 de 4 pronta") and introduces the next.
+**Where am I, and what's left.** The header is one slim ribbon: the wordmark, the place
+("A cara da loja, 3 de 6") and the way out, with a hairline under it split into the four parts,
+each filling as its questions are answered. Signup is behind the merchant and the finale is this
+screen's own end, so neither is spelled out up there; the hairline is the whole journey. Below
+1200 px a tap on the place opens every question, part by part, with what's done, what was left
+for later and where the merchant is; any of them is one tap away. From 1200 px the same map is a
+spine beside the question, the current part open. Moving on slides the next question in from the
+right, "voltar" from the left. When a part ends, Duá ticks it off ("Parte 1 de 4 pronta") and
+introduces the next.
 
-**One column, one set of edges.** The header's bar, the question, its answers and its buttons
-share the question column's edges (the header uses the page's grid tracks), and answer cards
+**One column, one set of edges.** The ribbon's place, the question, its answers and its buttons
+share the question column's edges (the ribbon uses the page's grid tracks), and answer cards
 draw their rings inside their edges. The buttons are one row: "voltar" as a square arrow, then the
 main button, with "deixar para depois" at the column's right edge (above the row on phones).
 Below 1200 px that bar holds the bottom of the screen on every question, short or scrolled, so
 the main button never moves between questions.
 
-**The store builds itself, in a shop window.** The screen is two places: the counter (paper),
-where Duá asks one question in big type, and the window (`--stage`, forest; a deep forest-night in
-Noite), where the store stands lit. Each answer visibly assembles the storefront, drawn like the
-real one: name → the sign, logo → the app icon on the cover's edge, colour → the cover (its
-dishes printed on it) and the bag button, phrase and hours → the lines under the name, products →
-the menu, sketched dishes from what the store sells until real ones exist. From 1200 px the window
-is a full-height column beside the questions: the phone on a shelf, lit by a glow in the store's
-own colour, with one line under it saying where the open question's answer lands. On phones and
-tablets it's a forest strip under the header (a tap opens the whole store in a sheet). The part
-the open question changes is marked (a lime highlighter in the strip, a lime halo in the phone),
-and an answer that changed the store makes the window's light swell once. When a part begins,
-Duá shows up in its pose (the brush, the parcel, the coin, the menu); the colour question's
-swatches are the store's cover in each colour. The finale lights the window: on phones the
-finished store rises out of the strip with Duá holding the flag.
+**The store builds itself, in the counter's own window.** The screen is a shop: the counter
+(paper), where Duá asks one question in big type, and the window, where the store stands lit.
+Each answer visibly assembles the storefront, drawn like the real one: name → the sign, logo →
+the app icon on the cover's edge, colour → the cover (its dishes printed on it) and the bag
+button, phrase and hours → the lines under the name, products → the menu, sketched dishes from
+what the store sells until real ones exist.
+
+- On phones and tablets the store is a **card above the question** (`StoreCard`): radius `xl`,
+  in the store's own colour with its dishes printed on it (forest until a colour is chosen), the
+  app icon, the name set like the sign, the phrase (the store's address until there is one) and
+  what's known as chips (today's hours, retirada and entrega, the WhatsApp). It is the living
+  card Início will wear, so the merchant watches the thing they'll use every day take shape. The
+  part the open question changes wears a lime highlighter, or sits as a dashed slot waiting for
+  its answer ("Seus horários aqui"); an answer that changed the store sweeps a light across the
+  card once. A tap opens the whole store in a sheet.
+- From 1200 px the window is a **rounded card cut into the paper** beside the question
+  (`Vitrine`: `--stage` to `--stage-deep`, forest; a deep forest-night in Noite), as tall as the
+  screen, the phone standing on a shelf inside it, lit by a glow in the store's own colour, with
+  one line under the shelf saying where the open question's answer lands. The part the open
+  question changes wears a lime halo in the phone, and the light swells once when an answer
+  changed the store.
+
+When a part begins, Duá shows up in its pose (the brush, the parcel, the coin, the menu); the
+colour question's swatches are the store's own front in each colour, the app icon cut out of the
+cover's edge. The welcome is Duá at the counter with the greeting in the moments' voice and the
+four parts as a path sketched down the page. The finale lights the window one last time: on
+phones the finished store rises out of the card with Duá holding the flag, and the link, the QR
+and "avisar no WhatsApp" (in WhatsApp's own green) follow on paper.
 
 **Never a dead button.** "Continuar" waits, quietly, until the answer is there, then lights up;
 a tap before that says what's missing in one line ("Escreva o nome da loja para continuar.")

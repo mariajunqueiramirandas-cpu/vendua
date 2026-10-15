@@ -7,8 +7,8 @@ export type Mark = 'current' | 'done' | 'skipped' | 'open';
 /**
  * Every question of the store, part by part, with what's done, what was left for later and
  * where the merchant is; a tap goes straight to any of them. The sheet behind the header's
- * status on phones, a rail beside the question from 1200 px (the rail opens only the current
- * part, so it stays one screen tall).
+ * place on phones and tablets; from 1200 px a spine beside the question (the spine opens only
+ * the current part, so it stays one screen tall).
  */
 export function StepMap({
   steps,
@@ -23,7 +23,7 @@ export function StepMap({
   rail?: boolean;
 }) {
   return (
-    <ol className={cn(rail ? 'space-y-1' : 'space-y-5')}>
+    <ol className={cn(rail ? 'space-y-1.5' : 'space-y-6')}>
       {/* numbered among this store's parts (a manager has no Pagamentos) */}
       {CHAPTERS.filter((c) => c.steps.some((x) => steps.includes(x))).map((c, n) => {
         const mine = c.steps.filter((x) => steps.includes(x));
@@ -33,8 +33,13 @@ export function StepMap({
         const later = marks.filter((m) => m === 'skipped').length;
         const full = settled === mine.length;
         const open = !rail || here;
-        // a closed part in the rail goes to its first question still open (or its first)
+        // a closed part in the spine goes to its first question still open (or its first)
         const target = mine.find((_, i) => marks[i] === 'open') ?? mine[0]!;
+        const state = full
+          ? later
+            ? `${later} para depois`
+            : 'pronto'
+          : `${settled} de ${mine.length}`;
         const head = (
           <>
             <span
@@ -45,43 +50,49 @@ export function StepMap({
                   ? 'bg-success-soft text-success'
                   : here
                     ? 'bg-primary text-on-primary'
-                    : 'bg-sunken text-ink',
+                    : 'bg-sunken text-muted',
               )}
             >
               {full ? (
-                <Check weight="bold" className={rail ? 'size-4.5' : 'size-5'} aria-hidden />
+                <Check weight="bold" className={rail ? 'size-4' : 'size-5'} aria-hidden />
               ) : (
                 <c.Icon weight="duotone" className={rail ? 'size-5' : 'size-6'} aria-hidden />
               )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="t-caption tnum block text-muted">Parte {n + 1}</span>
-              <span className={cn('block truncate font-semibold', rail && 't-body')}>
+              {rail ? null : <span className="t-caption tnum block text-muted">Parte {n + 1}</span>}
+              <span
+                className={cn(
+                  'block truncate font-semibold',
+                  rail && 't-body',
+                  rail && !here && !full && 'text-muted',
+                )}
+              >
                 {c.label}
               </span>
             </span>
             <span
               className={cn(
                 't-caption tnum shrink-0',
-                full && later ? 'text-warning' : 'text-muted',
+                full && later ? 'text-warning' : full ? 'text-success' : 'text-muted',
               )}
             >
-              {full ? (later ? `${later} para depois` : 'pronto') : `${settled}/${mine.length}`}
+              {state}
             </span>
           </>
         );
         return (
           <li key={c.id}>
             {open ? (
-              <div className={cn('flex items-center gap-3', rail ? 'px-2 py-2' : 'pb-2')}>
+              <div className={cn('flex items-center gap-3', rail ? 'px-2 py-1.5' : 'pb-2.5')}>
                 {head}
               </div>
             ) : (
               <button
                 type="button"
                 onClick={() => onJump(target)}
-                className="press-row flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-hover"
-                aria-label={`${c.label}: ${full ? (later ? `${later} para depois` : 'pronto') : `${settled} de ${mine.length}`}. Ir para ${LABEL[target]}`}
+                className="press-row flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-hover"
+                aria-label={`${c.label}: ${state}. Ir para ${LABEL[target]}`}
               >
                 {head}
               </button>
@@ -91,12 +102,12 @@ export function StepMap({
                 className={cn(
                   'relative space-y-0.5',
                   // the thread that ties a part's questions to its icon
-                  'before:absolute before:bottom-5 before:top-1 before:w-0.5 before:rounded-full before:bg-line',
-                  rail ? 'ml-[1.6rem] before:left-0 pl-3' : 'ml-[1.35rem] pl-4 before:left-0',
+                  'before:absolute before:bottom-4 before:top-0 before:w-0.5 before:rounded-full before:bg-line',
+                  rail ? 'ml-[1.6rem] pl-3 before:left-0' : 'ml-[1.35rem] pl-4 before:left-0',
                 )}
               >
                 {mine.map((s, i) => (
-                  <Row key={s} step={s} mark={marks[i]!} onJump={onJump} />
+                  <Row key={s} step={s} mark={marks[i]!} onJump={onJump} rail={rail} />
                 ))}
               </ol>
             ) : null}
@@ -107,7 +118,17 @@ export function StepMap({
   );
 }
 
-function Row({ step, mark, onJump }: { step: StepId; mark: Mark; onJump: (s: StepId) => void }) {
+function Row({
+  step,
+  mark,
+  onJump,
+  rail,
+}: {
+  step: StepId;
+  mark: Mark;
+  onJump: (s: StepId) => void;
+  rail?: boolean | undefined;
+}) {
   const now = mark === 'current';
   return (
     <li>
@@ -116,7 +137,8 @@ function Row({ step, mark, onJump }: { step: StepId; mark: Mark; onJump: (s: Ste
         onClick={() => onJump(step)}
         aria-current={now ? 'step' : undefined}
         className={cn(
-          'press-row flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-1.5 text-left',
+          'press-row flex w-full items-center gap-3 rounded-md px-2.5 py-1.5 text-left transition-colors duration-(--duration-quick)',
+          rail ? 'min-h-10' : 'min-h-12',
           now ? 'bg-spark-soft font-semibold text-ink' : 'hover:bg-hover',
         )}
       >
@@ -133,7 +155,9 @@ function Row({ step, mark, onJump }: { step: StepId; mark: Mark; onJump: (s: Ste
           {mark === 'done' ? <Check weight="bold" className="size-3" /> : null}
           {mark === 'skipped' ? <Clock weight="bold" className="size-3" /> : null}
         </span>
-        <span className={cn('t-body min-w-0 flex-1 leading-5', mark === 'open' && 'text-muted')}>
+        <span
+          className={cn('t-body min-w-0 flex-1 leading-5', mark === 'open' && !now && 'text-muted')}
+        >
           {LABEL[step]}
         </span>
         <span className="sr-only">
@@ -147,7 +171,7 @@ function Row({ step, mark, onJump }: { step: StepId; mark: Mark; onJump: (s: Ste
         </span>
         {mark === 'skipped' ? (
           <span className="t-caption shrink-0 text-warning" aria-hidden>
-            para depois
+            depois
           </span>
         ) : null}
       </button>

@@ -16,7 +16,7 @@ export interface ChapterProgress {
 
 /**
  * The four parts of the store as one path, each with how much of it is ready, ending where the
- * store goes live.
+ * store goes live. A dashed thread ties the parts together, like a route sketched on paper.
  */
 export function ChapterList({
   progress,
@@ -35,20 +35,20 @@ export function ChapterList({
         return (
           <li
             key={c.id}
-            className="relative flex gap-4 pb-5"
+            className="relative flex gap-4 pb-6"
             aria-current={now ? 'step' : undefined}
           >
             {/* the path from this part to the next */}
             <span
               aria-hidden
               className={cn(
-                'absolute bottom-0 left-[1.375rem] top-12 w-0.5 -translate-x-1/2 rounded-full',
-                full ? 'bg-success/50' : 'bg-line-strong',
+                'absolute bottom-0 left-6 top-12 w-0 -translate-x-1/2 border-l-2 border-dashed',
+                full ? 'border-success/50' : 'border-line-strong',
               )}
             />
             <span
               className={cn(
-                'relative grid size-11 shrink-0 place-items-center rounded-full',
+                'relative grid size-12 shrink-0 place-items-center rounded-full',
                 full
                   ? 'bg-success-soft text-success'
                   : now
@@ -62,10 +62,12 @@ export function ChapterList({
                 <c.Icon weight="duotone" className="size-6" aria-hidden />
               )}
             </span>
-            <span className="min-w-0 flex-1 pt-0.5">
+            <span className="min-w-0 flex-1 pt-1">
               <span className="flex items-baseline justify-between gap-3">
-                <span className="font-semibold">
-                  <span className="t-caption tnum mr-1.5 text-muted">Parte {i + 1}</span>
+                <span className="text-[1.0625rem] font-semibold leading-6">
+                  <span className="t-caption tnum mr-1.5 font-medium text-muted">
+                    Parte {i + 1}
+                  </span>
                   {c.label}
                 </span>
                 {full && p.later ? (
@@ -95,11 +97,11 @@ export function ChapterList({
         );
       })}
       <li className="flex items-center gap-4">
-        <span className="grid size-11 shrink-0 place-items-center rounded-full bg-spark text-on-spark">
+        <span className="grid size-12 shrink-0 place-items-center rounded-full bg-spark text-on-spark">
           <Confetti weight="duotone" className="size-6" aria-hidden />
         </span>
         <span className="min-w-0">
-          <span className="block font-semibold">Loja no ar</span>
+          <span className="block text-[1.0625rem] font-semibold leading-6">Loja no ar</span>
           <span className="t-body block text-muted">O link, o QR code e a primeira venda</span>
         </span>
       </li>
@@ -108,8 +110,9 @@ export function ChapterList({
 }
 
 /**
- * The wizard's first screen. A store that never started gets the welcome; one that comes back
- * gets the same path with what's ready ticked and a button to the next open question.
+ * The wizard's first screen: Duá at the counter, a greeting in the moments' voice, and the four
+ * parts of the store as the path ahead. A store that comes back gets the same path with what's
+ * ready ticked and a button to the next open question.
  */
 export function Welcome({
   first,
@@ -142,19 +145,23 @@ export function Welcome({
   const again = !!resume || complete;
   const hi = first ? `, ${first}` : '';
   return (
-    <div className="space-y-7">
-      <div className="flex items-center gap-4 sm:gap-5">
+    <div className="space-y-8">
+      <div className="flex items-end gap-4 sm:gap-6">
         <span
           aria-hidden
-          className="dua-disc animate-bob grid size-20 shrink-0 place-items-center bg-spark-soft sm:size-24"
+          className="dua-disc animate-rise grid size-[7.5rem] shrink-0 place-items-center bg-spark-soft sm:size-36"
         >
-          <Mascote pose="avatar-ola" size={96} className="size-[72px] sm:size-[88px]" />
+          <Mascote
+            pose={again ? 'avatar-feliz' : 'boas-vindas'}
+            size={144}
+            className={again ? 'size-[6rem] sm:size-[7rem]' : 'size-[7rem] sm:size-[8.5rem]'}
+          />
         </span>
-        <div className="min-w-0">
-          <p className="t-moment text-[1.75rem] leading-8 text-ink sm:text-[2rem] sm:leading-9">
+        <div className="min-w-0 pb-2">
+          <p className="t-moment text-[2rem] leading-9 text-ink sm:text-[2.5rem] sm:leading-[2.75rem]">
             {again ? `Que bom te ver${hi}!` : `Oi${hi}!`}
           </p>
-          <p className="t-body text-muted">
+          <p className="t-body-lg mt-1 text-muted">
             {again
               ? 'Guardei tudo o que você já fez.'
               : 'Eu sou o Duá. Vou montar a loja com você.'}
@@ -162,7 +169,7 @@ export function Welcome({
         </div>
       </div>
       <div>
-        <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]">
+        <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem]">
           {complete
             ? 'Sua loja já está montada'
             : resume

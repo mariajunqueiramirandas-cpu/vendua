@@ -38,8 +38,8 @@ import {
   stepsFor,
   type StepId,
 } from './flow.ts';
-import { Guide, Reaction } from './Guide.tsx';
-import { JourneyBar } from './Journey.tsx';
+import { Guide, Reaction, Say } from './Guide.tsx';
+import { Ribbon, TRACKS } from './Ribbon.tsx';
 import { MiniStore, type Draft } from './MiniStore.tsx';
 import { Welcome, type ChapterProgress } from './Overview.tsx';
 import { StepMap, type Mark } from './StepMap.tsx';
@@ -60,15 +60,16 @@ import {
   TaglineStep,
   WhatsappStep,
   type StepProps,
+  Voice,
 } from './steps.tsx';
 import { ColorsStep, DeliveryStep, MercadoPagoStep, MethodsStep, PixStep } from './steps-more.tsx';
 
 // The store builds itself (§6.8): one question per screen in four parts, Duá reacting to each
-// answer, and the store assembling as it goes, lit in a shop window (a forest strip above the
-// question on phones, the phone on its shelf beside it from 1200 px). The header's status opens
-// every question (a rail beside the question on a desktop), so any of them is one tap away. Every
-// answer saves on "Continuar"; where the merchant stopped lives in Core, so any device picks up
-// from there.
+// answer, and the store assembling as it goes. On phones and tablets the store is a card above
+// the question, in its own colour (the card Início will wear); from 1200 px it stands lit in a
+// shop window cut into the paper beside the question, with the map of questions as a spine on the
+// other side. The header names the place and, below 1200 px, opens that map. Every answer saves
+// on "Continuar"; where the merchant stopped lives in Core, so any device picks up from there.
 
 const draftOf = (s: StoreView, t: StoreTokens | null): Draft => ({
   name: s.profile.name,
@@ -403,9 +404,6 @@ function Flow({
   };
   const chapter = chapterOf(step);
   const inChapter = chapter ? chapter.steps.filter((x) => steps.includes(x)) : [];
-  const where = chapter
-    ? `${chapter.label} · ${inChapter.indexOf(step) + 1} de ${inChapter.length}`
-    : '';
   const me = { name: session.user.name, phone: session.user.phone };
   const props: StepProps = { s, draft, patch, save, next, back, skip, segment, me };
 
@@ -478,30 +476,30 @@ function Flow({
       : []),
   ];
 
-  // each part of the header's bar fills as its questions are answered (or left for later)
+  // each part of the header's hairline fills as its questions are answered (or left for later)
   const parts = CHAPTERS.flatMap((c) => {
     const mine = c.steps.filter((x) => steps.includes(x));
-    return mine.length ? [{ label: c.label, fill: mine.filter(settled).length / mine.length }] : [];
+    return mine.length
+      ? [{ id: c.id, label: c.label, fill: mine.filter(settled).length / mine.length }]
+      : [];
   });
   const header =
     step === 'pronto' ? (
-      <JourneyBar
-        align="center-wide"
-        phase="abrir"
-        progress={hold ? 0.5 : 1}
-        status={hold ? 'falta o plano' : 'no ar!'}
+      <Ribbon
+        parts={parts}
+        place={hold ? 'Sua loja, pronta' : 'Sua loja, no ar!'}
+        done={!hold}
         exit={<Exit leave={leave} done />}
       />
+    ) : step === 'oi' ? (
+      <Ribbon parts={parts} place="Montar a loja" exit={<Exit leave={leave} />} />
     ) : (
-      <JourneyBar
-        align={step === 'oi' ? 'center' : 'rail'}
-        phase="loja"
-        progress={questions.filter(settled).length / questions.length}
-        status={step === 'oi' ? 'começando' : where}
-        parts={step === 'oi' ? undefined : parts}
-        onStatus={step === 'oi' ? undefined : () => setMap(true)}
-        // only beside a question, on a wide screen, does the header leave the way out room for words
-        exit={<Exit leave={leave} worded={step !== 'oi'} />}
+      <Ribbon
+        parts={parts}
+        place={chapter?.label ?? ''}
+        count={`${inChapter.indexOf(step) + 1} de ${inChapter.length}`}
+        onPlace={() => setMap(true)}
+        exit={<Exit leave={leave} worded />}
       />
     );
 
@@ -549,10 +547,12 @@ function Flow({
             <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]">
               Já vende em outro app de cardápio?
             </h1>
-            <p className="t-body-lg mt-3 max-w-[34rem] text-pretty text-muted">
-              Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere tudo
-              antes de entrar.
-            </p>
+            <div className="mt-4">
+              <Say praise={said?.pose ? null : said?.praise} face={!said?.pose}>
+                Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere
+                tudo antes de entrar.
+              </Say>
+            </div>
           </div>
         }
         onSkip={() => next()}
@@ -634,114 +634,111 @@ function Flow({
       url={session.store.url.replace(/^https?:\/\//, '')}
       examples={segment.examples}
       spot={spot}
-      // as tall as the window allows, never past 300 px wide
-      className={wide ? 'w-[min(300px,calc((100dvh-15rem)*0.47))]' : undefined}
+      // as tall as the window allows, never past 280 px wide
+      className={wide ? 'w-[min(100%,280px,calc((100dvh-19rem)*0.47))]' : undefined}
     />
   );
   const stepMap = <StepMap steps={steps} mark={mark} onJump={jump} />;
+  const name = draft.name.trim() || s.profile.name;
 
   return (
-    // the counter (the questions) and, from 1200 px, the shop window beside it, full height
-    <div className="min-h-dvh overflow-x-clip lg:grid lg:grid-cols-[minmax(0,1fr)_34vw] xl:grid-cols-[minmax(0,1fr)_38vw]">
-      {/* a column as tall as the screen, so a question's bar can hold the bottom on phones (not
-          while typing: the keyboard covers the bottom) */}
-      <div className="flex min-h-dvh min-w-0 flex-col kb:min-h-0">
-        {header}
-        {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
-        {step === 'pronto' ? (
-          <div className="lg:hidden">
-            <FinaleHero
-              name={draft.name.trim() || s.profile.name}
-              live={!hold}
-              phone={preview()}
-              accent={draft.accent}
-            />
-          </div>
-        ) : null}
+    // a column as tall as the screen, so a question's bar can hold the bottom on phones (not
+    // while typing: the keyboard covers the bottom)
+    <div className="flex min-h-dvh min-w-0 flex-col overflow-x-clip kb:min-h-0">
+      {header}
+      {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
+      <div
+        className={cn(
+          // one column on phones and tablets; from 1200 px the map, the question and the window,
+          // on the header's own tracks
+          'mx-auto grid w-full max-w-[84rem] flex-1 grid-cols-[minmax(0,1fr)] px-4 pt-4 md:px-8 md:pt-6 lg:pt-6',
+          TRACKS,
+          // a question's bar keeps the screen's bottom edge (ActionBar `pinned`), scrolled or not
+          question ? 'pb-[var(--kb,0px)] lg:pb-10' : 'pb-[calc(1.5rem+var(--kb,0px))] lg:pb-10',
+        )}
+      >
         {question ? (
-          <div className="lg:hidden">
-            <StoreCard
-              draft={draft}
-              products={products.length}
-              whatsapp={!!s.profile.whatsapp}
-              timeZone={s.hours.timezone}
-              specialDays={s.specialDays}
-              spot={spot}
-              spark={spark}
-              onOpen={() => setPeek(true)}
-            />
-          </div>
+          <nav
+            aria-label="todas as perguntas"
+            // its rows' text on the track's edge, their highlight in the gutter
+            // the first part's row on the title's first line (the same breath above both)
+            className="hidden lg:sticky lg:top-[5.5rem] lg:-mx-2 lg:block lg:self-start lg:pt-2"
+          >
+            <StepMap rail steps={steps} mark={mark} onJump={jump} />
+            <p className="t-caption mt-4 px-2 text-muted">
+              <span className="tnum font-semibold text-ink">
+                {questions.filter(settled).length} de {questions.length}
+              </span>{' '}
+              respondidas
+            </p>
+          </nav>
         ) : null}
-        <div
+
+        <main
           className={cn(
-            'mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)] gap-10 px-4 pt-6 md:px-8 md:pt-10 lg:pt-14',
-            // a question's bar keeps the screen's bottom edge (ActionBar `pinned`), scrolled or not
-            question
-              ? 'pb-[var(--kb,0px)] lg:pb-[calc(1rem+var(--kb,0px))]'
-              : 'pb-[calc(1rem+var(--kb,0px))]',
-            // the same tracks as the header's (JourneyBar align="rail"), so both line up
-            question &&
-              'lg:grid-cols-[13rem_minmax(0,36rem)] lg:justify-center xl:grid-cols-[14.5rem_minmax(0,36rem)] xl:gap-14',
+            'mx-auto flex w-full max-w-xl flex-col lg:mx-0 lg:pt-2',
+            // the welcome and the finale have no map: they take its track too, a little wider
+            question ? 'lg:max-w-none' : 'lg:col-span-2 lg:max-w-[44rem]',
           )}
         >
-          {question ? (
-            <nav
-              aria-label="todas as perguntas"
-              // its rows' text on the track's edge, their highlight in the gutter
-              className="hidden lg:sticky lg:top-28 lg:-mx-2 lg:block lg:self-start"
-            >
-              <p className="t-label mb-2 px-2 text-muted">
-                <span className="tnum">
-                  {questions.filter(settled).length} de {questions.length}
-                </span>{' '}
-                respondidas
-              </p>
-              <StepMap rail steps={steps} mark={mark} onJump={jump} />
-            </nav>
+          {step === 'pronto' ? (
+            <div className="mb-6 lg:hidden">
+              <FinaleHero name={name} live={!hold} phone={preview()} accent={draft.accent} />
+            </div>
           ) : null}
-
-          <main
+          {question ? (
+            <div className="mb-6 lg:hidden">
+              <StoreCard
+                draft={draft}
+                products={products.length}
+                whatsapp={!!s.profile.whatsapp}
+                timeZone={s.hours.timezone}
+                specialDays={s.specialDays}
+                spot={spot}
+                spark={spark}
+                url={session.store.url.replace(/^https?:\/\//, '')}
+                onOpen={() => setPeek(true)}
+              />
+            </div>
+          ) : null}
+          <div
+            key={step}
             className={cn(
-              'mx-auto flex w-full flex-col',
-              step === 'pronto' ? 'max-w-2xl' : 'max-w-xl',
-              question && 'lg:mx-0',
+              'flex flex-1 flex-col space-y-6',
+              dir === 'back' ? 'animate-step-back' : 'animate-step-fwd',
             )}
           >
-            <div
-              key={step}
-              className={cn(
-                'flex flex-1 flex-col space-y-6',
-                dir === 'back' ? 'animate-step-back' : 'animate-step-fwd',
-              )}
-            >
-              {question && said ? (
-                <Reaction done={said.done} pose={said.pose}>
-                  {said.praise}
-                </Reaction>
-              ) : null}
-              {body}
-            </div>
-          </main>
-        </div>
-      </div>
+            {question && said?.pose ? (
+              <Reaction done={said.done} pose={said.pose}>
+                {said.praise}
+              </Reaction>
+            ) : null}
+            <Voice.Provider value={question ? said : null}>{body}</Voice.Provider>
+          </div>
+        </main>
 
-      <Vitrine
-        phone={preview(true)}
-        accent={draft.accent}
-        spark={spark}
-        title={
-          step === 'pronto' ? (hold ? 'Sua loja, pronta' : 'Sua loja, no ar') : 'Sua loja, ao vivo'
-        }
-        line={
-          step === 'pronto'
-            ? hold
-              ? 'Ela abre para pedidos assim que o plano for confirmado.'
-              : 'Seus clientes já podem pedir por esse link.'
-            : spot
-              ? SPOT_LINE[spot]
-              : 'Cada resposta aparece aqui, na hora.'
-        }
-      />
+        <Vitrine
+          phone={preview(true)}
+          accent={draft.accent}
+          spark={spark}
+          title={
+            step === 'pronto'
+              ? hold
+                ? 'Sua loja, pronta'
+                : 'Sua loja, no ar'
+              : 'Sua loja, ao vivo'
+          }
+          line={
+            step === 'pronto'
+              ? hold
+                ? 'Ela abre para pedidos assim que o plano for confirmado.'
+                : 'Seus clientes já podem pedir por esse link.'
+              : spot
+                ? SPOT_LINE[spot]
+                : 'Cada resposta aparece aqui, na hora.'
+          }
+        />
+      </div>
 
       {question ? (
         <>
@@ -779,11 +776,11 @@ function Exit({ leave, done, worded }: { leave: () => void; done?: boolean; word
       to="/"
       onClick={done ? undefined : leave}
       // -mr-3: the X sits on the column's right edge
-      className="t-label -mr-3 inline-flex min-h-11 items-center gap-1 whitespace-nowrap rounded-md px-3 text-muted hover:bg-hover"
+      className="t-label -mr-3 inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-muted hover:bg-hover"
       aria-label={done ? 'ir para o painel' : 'sair e continuar depois'}
     >
       <X className="size-5" />
-      {worded ? <span className="hidden min-[1400px]:inline">continuar depois</span> : null}
+      {worded ? <span className="hidden lg:inline">continuar depois</span> : null}
     </Link>
   );
 }

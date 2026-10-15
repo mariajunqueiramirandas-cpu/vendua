@@ -4,6 +4,7 @@ import { haptic } from '../lib/haptics.ts';
 import { BOUNCY, reducedMotion, springEasing } from '../lib/spring.ts';
 import { Button } from './Button.tsx';
 import { cn } from './cn.ts';
+import { TEXT_FIELD } from './keyboard.ts';
 
 /**
  * One question per screen: a big title, one plain sentence, the answer, and one obvious
@@ -12,6 +13,7 @@ import { cn } from './cn.ts';
 export function StepFrame({
   title,
   hint,
+  lead,
   children,
   onSubmit,
   label = 'Continuar',
@@ -31,6 +33,8 @@ export function StepFrame({
   /** a small line above the title: which part of a longer flow this is */
   eyebrow?: ReactNode;
   hint?: ReactNode;
+  /** under the title in the hint's place, as a block (someone speaking the hint, say) */
+  lead?: ReactNode;
   children?: ReactNode;
   onSubmit: () => void;
   label?: ReactNode;
@@ -89,6 +93,7 @@ export function StepFrame({
             {hint}
           </p>
         ) : null}
+        {lead ? <div className={big ? 'mt-4' : 'mt-3'}>{lead}</div> : null}
       </div>
       {children}
       {hidePrimary && !back && !aside ? null : (
@@ -143,12 +148,15 @@ export function ActionBar({
   const bar = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const [told, setTold] = useState(0);
+  // a question answered by typing: with a mouse and keyboard, Enter is the quicker way on
+  const [typed, setTyped] = useState(false);
   const now = useRef({ disabled, why });
   now.current = { disabled, why };
   // the form decides whether to submit; the bar only listens, to say why it didn't
   useEffect(() => {
     const form = bar.current?.closest('form');
     if (!form) return;
+    setTyped(!!form.querySelector(TEXT_FIELD));
     const onSubmit = () => {
       if (!now.current.disabled || !now.current.why) return;
       haptic.tick();
@@ -223,8 +231,14 @@ export function ActionBar({
           <div className="flex items-center gap-2 md:gap-3">
             {back ? (
               hidePrimary ? (
-                // alone (a tap answers), "voltar" keeps its word
-                <Button variant="ghost" icon={<ArrowLeft />} onClick={back} className="-ml-3">
+                // alone (a tap answers), "voltar" keeps its word, starting on the column's edge
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ArrowLeft />}
+                  onClick={back}
+                  className="-ml-3.5"
+                >
                   voltar
                 </Button>
               ) : (
@@ -240,6 +254,14 @@ export function ActionBar({
               )
             ) : null}
             {primary}
+            {primary && typed ? (
+              <span className="t-caption hidden items-center gap-1.5 text-muted lg:pointer-fine:inline-flex">
+                ou
+                <kbd className="rounded-sm bg-sunken px-1.5 py-0.5 font-sans text-[0.75rem] font-semibold text-ink">
+                  Enter ↵
+                </kbd>
+              </span>
+            ) : null}
           </div>
           {aside ? <div className="order-first flex justify-end md:order-none">{aside}</div> : null}
         </div>

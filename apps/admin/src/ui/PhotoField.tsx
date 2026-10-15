@@ -231,7 +231,7 @@ export function PhotoField({
   );
 }
 
-function CropSheet({
+export function CropSheet({
   file,
   aspect: initial,
   onClose,

@@ -82,7 +82,8 @@ export function ColorsStep({
       onSkip={picked || tokens ? undefined : skip}
       onSubmit={() => (picked ? save.mutate(picked) : next())}
     >
-      {/* each swatch is the store's cover in that colour, as the customer will see it */}
+      {/* each swatch is the store's own front in that colour: the cover with its dishes printed
+          on it and the app icon cut out of its edge, as the customer will see it */}
       <div role="radiogroup" aria-label="cores" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {swatches.map(([c, name], i) => {
           const accent = readableAccent(c);
@@ -102,8 +103,10 @@ export function ColorsStep({
               }}
               // the ring is drawn over the cover, inside the tile's edges
               className={cn(
-                'press relative overflow-hidden rounded-lg bg-surface text-left after:pointer-events-none after:absolute after:inset-0 after:rounded-lg after:ring-inset',
-                on ? 'after:ring-2 after:ring-primary' : 'after:ring-1 after:ring-line-strong',
+                'press relative overflow-hidden rounded-lg bg-surface text-left transition-[box-shadow] duration-(--duration-quick) after:pointer-events-none after:absolute after:inset-0 after:rounded-lg after:ring-inset',
+                on
+                  ? 'after:ring-2 after:ring-primary'
+                  : 'after:ring-1 after:ring-line-strong hover:after:ring-line-strong',
               )}
             >
               <span
@@ -116,7 +119,17 @@ export function ColorsStep({
               >
                 <DishPrint scale={0.32} />
               </span>
-              <span className="flex min-h-10 items-center justify-between gap-2 px-3 py-2">
+              <span
+                aria-hidden
+                className="relative -mt-4 ml-3 grid size-9 place-items-center overflow-hidden rounded-[11px] bg-spark font-display text-[1.0625rem] font-semibold leading-none tracking-[-0.04em] text-on-spark shadow-[0_0_0_2px_var(--surface)]"
+              >
+                {draft.logoUrl ? (
+                  <img src={draft.logoUrl} alt="" className="size-full bg-white object-cover" />
+                ) : (
+                  (draft.name.trim().slice(0, 1) || '?').toUpperCase()
+                )}
+              </span>
+              <span className="flex min-h-9 items-center justify-between gap-2 px-3 pb-2.5 pt-1">
                 <span className="t-label">{name}</span>
                 {on ? (
                   <span className="grid size-5 place-items-center rounded-full bg-primary text-on-primary">

@@ -7,7 +7,7 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { whatsappDigits } from '@vendua/kernel/rules';
 import { api, ApiError, withRetryScope, type Category, type StoreView } from '../../lib/api.ts';
 import { maskCep, money, phone as fmtPhone } from '../../lib/format.ts';
@@ -18,20 +18,15 @@ import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Disclosure } from '../../ui/Disclosure.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
-import {
-  Chips,
-  Field,
-  MoneyField,
-  PhoneInput,
-  TextArea,
-  TextInput,
-  TimeInput,
-} from '../../ui/fields.tsx';
+import { Chips, Field, MoneyField, TextArea, TextInput, TimeInput } from '../../ui/fields.tsx';
+import type { Pose } from '../../ui/Mascote.tsx';
 import { PhotoField, type Photo } from '../../ui/PhotoField.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { fromWeek, TimeRangeField, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { AnswerLine, AnswerLogo, AnswerPhone } from './Answer.tsx';
+import { Say } from './Guide.tsx';
 import type { Draft } from './MiniStore.tsx';
 import { SegmentPicker } from './SegmentPicker.tsx';
 import type { HoursPreset, Segment, SegmentId } from './segments.ts';
@@ -56,19 +51,40 @@ export interface StepProps {
  * One question per screen (StepFrame) with a quiet "pular" under the main button, beside "voltar".
  * The onboarding slides its questions in itself, and names the part in its header.
  */
+/** What Duá has to say over the open question: praise for the answer just given, a part just
+ *  finished, and the pose of a part that begins (then he's above the title, bigger). */
+export const Voice = createContext<{
+  praise: string | null;
+  done: string | null;
+  pose: Pose | null;
+} | null>(null);
+
 export function Frame({
   skipLabel = 'deixar para depois',
   onSkip,
+  hint,
   ...p
 }: Parameters<typeof StepFrame>[0] & { onSkip?: (() => void) | undefined; skipLabel?: string }) {
+  const said = useContext(Voice);
+  // a part's opening already put Duá above the title: the hint stays a plain line then
+  const face = !said?.pose;
+  const praise = face ? (said?.praise ?? null) : null;
   return (
     <StepFrame
       enter={false}
       big
       {...p}
+      lead={
+        hint || praise ? (
+          <Say praise={praise} face={face}>
+            {hint}
+          </Say>
+        ) : undefined
+      }
       aside={
         onSkip ? (
-          <Button variant="ghost" onClick={onSkip} className="-mr-3 text-muted">
+          // its padding hangs in the gutter, so the words end on the column's edge
+          <Button variant="ghost" size="sm" onClick={onSkip} className="-mr-3.5 text-muted">
             {skipLabel}
           </Button>
         ) : (
@@ -128,16 +144,15 @@ export function NameStep({ s, draft, patch, save, next, back }: StepProps) {
         )
       }
     >
-      <Field label="Nome da loja" htmlFor="ob-name">
-        <TextInput
-          id="ob-name"
-          maxLength={80}
-          autoComplete="off"
-          value={draft.name}
-          onChange={(e) => patch({ name: e.target.value })}
-          placeholder="Ex.: Doces da Maria"
-        />
-      </Field>
+      <AnswerLine
+        id="ob-name"
+        label="Nome da loja"
+        maxLength={80}
+        autoComplete="off"
+        value={draft.name}
+        onChange={(e) => patch({ name: e.target.value })}
+        placeholder="Doces da Maria"
+      />
     </Frame>
   );
 }
@@ -153,19 +168,13 @@ export function LogoStep({ draft, patch, save, next, back, skip }: StepProps) {
       onSkip={draft.logoUrl ? undefined : skip}
       onSubmit={() => next('Ficou lindo!')}
     >
-      <div className="w-44">
-        <PhotoField
-          label="logo"
-          aspect="1:1"
-          max={1}
-          photos={draft.logoUrl ? [{ url: draft.logoUrl }] : []}
-          onChange={async (p) => {
-            const logoUrl = p[0]?.url ?? null;
-            patch({ logoUrl });
-            await save({ profile: { logoUrl } });
-          }}
-        />
-      </div>
+      <AnswerLogo
+        url={draft.logoUrl}
+        onChange={async (logoUrl) => {
+          patch({ logoUrl });
+          await save({ profile: { logoUrl } });
+        }}
+      />
     </Frame>
   );
 }
@@ -191,21 +200,23 @@ export function TaglineStep({ s, draft, patch, save, next, back, skip, segment }
         )
       }
     >
-      <Field label="Frase" htmlFor="ob-tag">
-        <TextInput
-          id="ob-tag"
-          maxLength={120}
-          value={draft.tagline}
-          onChange={(e) => patch({ tagline: e.target.value })}
-          placeholder={`Ex.: ${segment.taglines[0]}`}
-        />
-      </Field>
-      <Chips
-        label="ideias de frase"
-        value={tag}
-        onChange={(v) => patch({ tagline: v })}
-        options={segment.taglines.map((t) => ({ value: t, label: t }))}
+      <AnswerLine
+        id="ob-tag"
+        label="Frase"
+        maxLength={120}
+        value={draft.tagline}
+        onChange={(e) => patch({ tagline: e.target.value })}
+        placeholder={segment.taglines[0]}
       />
+      <div className="space-y-2">
+        <p className="t-caption text-muted">Ideias para lojas como a sua</p>
+        <Chips
+          label="ideias de frase"
+          value={tag}
+          onChange={(v) => patch({ tagline: v })}
+          options={segment.taglines.map((t) => ({ value: t, label: t }))}
+        />
+      </div>
     </Frame>
   );
 }
@@ -241,17 +252,14 @@ export function WhatsappStep({ s, save, next, back, me }: StepProps) {
         )
       }
     >
-      <Field
-        label={
-          <span className="inline-flex items-center gap-2">
-            <WhatsappLogo weight="fill" className="size-5 text-success" /> WhatsApp com DDD
-          </span>
-        }
-        htmlFor="ob-wa"
-        helper={shown && !ok ? 'Faltam números: DDD + o número, como (22) 99999-0000.' : undefined}
-      >
-        <PhoneInput id="ob-wa" value={shown} onChange={(v) => setShown(v)} />
-      </Field>
+      <AnswerPhone
+        id="ob-wa"
+        label="WhatsApp com DDD"
+        value={shown}
+        onChange={(v) => setShown(v)}
+        lead={<WhatsappLogo weight="fill" className="text-success" aria-hidden />}
+        helper={shown && !ok ? 'Faltam números: DDD + o número, como (22) 99999-0000.' : 'Com DDD.'}
+      />
     </Frame>
   );
 }
@@ -522,15 +530,22 @@ export function Choice({
       }}
       className={cn(
         // the ring inside the card, so its edges are the column's (like the fields')
-        'flex min-h-24 w-full items-center gap-4 rounded-lg p-4 text-left ring-2 ring-inset transition-[background-color,box-shadow,scale] duration-(--duration-quick) active:scale-[0.99]',
-        on ? 'bg-spark-soft ring-primary' : 'bg-surface ring-line-strong hover:bg-hover',
+        'flex min-h-24 w-full items-center gap-4 rounded-lg p-4 text-left ring-inset transition-[background-color,box-shadow,scale] duration-(--duration-quick) active:scale-[0.99]',
+        on
+          ? 'bg-spark-soft ring-2 ring-primary'
+          : 'bg-surface ring-1 ring-line-strong hover:bg-hover',
       )}
     >
-      <span className="grid size-14 shrink-0 place-items-center rounded-full bg-sunken [&_svg]:size-7">
+      <span
+        className={cn(
+          'grid size-14 shrink-0 place-items-center rounded-full transition-colors duration-(--duration-quick) [&_svg]:size-7',
+          on ? 'bg-spark text-on-spark' : 'bg-sunken text-ink',
+        )}
+      >
         {icon}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="t-title-2 block">{title}</span>
+        <span className="block text-[1.125rem] font-semibold leading-6">{title}</span>
         <span className="t-body block text-muted">{body}</span>
       </span>
       <span
@@ -800,6 +815,18 @@ export function ProductsStep({
             </Field>
           </div>
         </div>
+        {/* the other way in, inside the same card: a list pasted from WhatsApp */}
+        {paste ? null : (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ClipboardText />}
+            className="-mx-3.5 -mb-2 text-muted"
+            onClick={() => setPaste(true)}
+          >
+            tenho a lista no WhatsApp, quero colar
+          </Button>
+        )}
       </Card>
       {paste ? (
         <PasteList
@@ -811,16 +838,7 @@ export function ProductsStep({
           }}
           onCancel={() => setPaste(false)}
         />
-      ) : (
-        <Button
-          variant="ghost"
-          icon={<ClipboardText />}
-          className="-mx-3.5"
-          onClick={() => setPaste(true)}
-        >
-          tenho a lista no WhatsApp, quero colar
-        </Button>
-      )}
+      ) : null}
     </Frame>
   );
 }
