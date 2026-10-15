@@ -12,6 +12,7 @@ import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, Field, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { OrdersTabs } from './OrdersTabs.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
@@ -145,157 +146,160 @@ export default function History() {
   ];
 
   return (
-    <PageBody>
-      <PageHeader title="Histórico de pedidos" back="/pedidos" />
-      <div className="mb-4 space-y-3">
-        <div className="flex gap-2">
-          <div className="min-w-0 flex-1">
-            <TextInput
-              type="search"
-              aria-label="buscar pedido"
-              placeholder="Nº, nome ou telefone"
-              lead={<MagnifyingGlass className="size-5" />}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
-          <Button
-            variant="secondary"
-            icon={<Faders />}
-            aria-haspopup="dialog"
-            onClick={() => setSheet(true)}
-            className="shrink-0"
-          >
-            filtros
-            {active.length ? (
-              <span className="tnum grid min-w-6 place-items-center rounded-full bg-primary px-1.5 text-xs text-on-primary">
-                {active.length}
-              </span>
-            ) : null}
-          </Button>
-        </div>
-        <div className="scroll-row -mx-4 px-4">
-          <div className="flex w-max items-center gap-2">
-            <Chips
-              label="período"
-              value={f.period}
-              onChange={(v) => setF({ period: v })}
-              className="flex-nowrap"
-              options={PERIODS}
-            />
-            {active.length ? <span aria-hidden className="mx-1 h-6 w-px bg-line" /> : null}
-            {active.map((a) => (
-              <button
-                key={a.key}
-                type="button"
-                onClick={a.clear}
-                aria-label={`tirar o filtro ${a.label}`}
-                className="press t-label inline-flex min-h-12 items-center gap-1.5 rounded-full bg-primary pl-4 pr-3 text-on-primary"
-              >
-                {a.label} <X weight="bold" className="size-4" aria-hidden />
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      {list.error ? (
-        <ErrorState error={list.error} retry={() => void list.refetch()} />
-      ) : list.isPending ? (
-        <RowsSkeleton rows={7} avatar={false} />
-      ) : rows.length ? (
-        <>
-          <Card
-            as="section"
-            aria-busy={list.isPlaceholderData}
-            className={cn(
-              'overflow-hidden transition-opacity',
-              list.isPlaceholderData && 'opacity-60',
-            )}
-          >
-            <ul>
-              {rows.map((o) => (
-                <OrderRowView key={o.id} o={o} />
-              ))}
-            </ul>
-          </Card>
-          {list.hasNextPage ? (
-            <Button
-              variant="secondary"
-              block
-              className="mt-4"
-              loading={list.isFetchingNextPage}
-              onClick={() => void list.fetchNextPage()}
-            >
-              carregar mais
-            </Button>
-          ) : null}
-        </>
-      ) : (
-        <EmptyState
-          art={<Mascote pose="sem-resultados" />}
-          title={f.q ? `Nenhum pedido com "${f.q}"` : 'Nenhum pedido com esses filtros'}
-          body="Tente outro período ou tire os filtros."
-          {...(active.length
-            ? {
-                action: (
-                  <Button
-                    variant="secondary"
-                    onClick={() => setF({ state: '', method: '', mode: '', unpaid: false })}
-                  >
-                    tirar os filtros
-                  </Button>
-                ),
-              }
-            : {})}
-        />
-      )}
-
-      <Sheet
-        open={sheet}
-        onOpenChange={setSheet}
-        title="Filtrar pedidos"
-        footer={
-          <Button size="lg" block onClick={() => setSheet(false)}>
-            ver pedidos
-          </Button>
-        }
-      >
-        <div className="space-y-6 pt-2">
-          <Field label="Situação">
-            <Chips
-              label="situação"
-              value={f.state}
-              onChange={(v) => setF({ state: v === f.state ? '' : v })}
-              options={STATES}
-            />
-          </Field>
-          <Field label="Pagamento">
-            <div className="space-y-3">
-              <Chips
-                label="forma de pagamento"
-                value={f.method}
-                onChange={(v) => setF({ method: v === f.method ? '' : v })}
-                options={METHODS.map((m) => ({ value: m, label: METHOD_SHORT[m] }))}
-              />
-              <Chips
-                label="pagamento pendente"
-                multi
-                value={f.unpaid ? ['unpaid'] : []}
-                onChange={() => setF({ unpaid: !f.unpaid })}
-                options={[{ value: 'unpaid', label: 'só os não pagos' }]}
+    <PageBody full>
+      <PageHeader title="Pedidos" subtitle="Histórico: todos os pedidos, com busca e filtros." />
+      <OrdersTabs />
+      <div className="max-w-[880px]">
+        <div className="mb-4 space-y-3">
+          <div className="flex gap-2">
+            <div className="min-w-0 flex-1">
+              <TextInput
+                type="search"
+                aria-label="buscar pedido"
+                placeholder="Nº, nome ou telefone"
+                lead={<MagnifyingGlass className="size-5" />}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
               />
             </div>
-          </Field>
-          <Field label="Entrega">
-            <Chips
-              label="entrega"
-              value={f.mode}
-              onChange={(v) => setF({ mode: v === f.mode ? '' : v })}
-              options={MODES}
-            />
-          </Field>
+            <Button
+              variant="secondary"
+              icon={<Faders />}
+              aria-haspopup="dialog"
+              onClick={() => setSheet(true)}
+              className="shrink-0"
+            >
+              filtros
+              {active.length ? (
+                <span className="tnum grid min-w-6 place-items-center rounded-full bg-primary px-1.5 text-xs text-on-primary">
+                  {active.length}
+                </span>
+              ) : null}
+            </Button>
+          </div>
+          <div className="scroll-row -mx-4 px-4">
+            <div className="flex w-max items-center gap-2">
+              <Chips
+                label="período"
+                value={f.period}
+                onChange={(v) => setF({ period: v })}
+                className="flex-nowrap"
+                options={PERIODS}
+              />
+              {active.length ? <span aria-hidden className="mx-1 h-6 w-px bg-line" /> : null}
+              {active.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={a.clear}
+                  aria-label={`tirar o filtro ${a.label}`}
+                  className="press t-label inline-flex min-h-12 items-center gap-1.5 rounded-full bg-primary pl-4 pr-3 text-on-primary"
+                >
+                  {a.label} <X weight="bold" className="size-4" aria-hidden />
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-      </Sheet>
+        {list.error ? (
+          <ErrorState error={list.error} retry={() => void list.refetch()} />
+        ) : list.isPending ? (
+          <RowsSkeleton rows={7} avatar={false} />
+        ) : rows.length ? (
+          <>
+            <Card
+              as="section"
+              aria-busy={list.isPlaceholderData}
+              className={cn(
+                'overflow-hidden transition-opacity',
+                list.isPlaceholderData && 'opacity-60',
+              )}
+            >
+              <ul>
+                {rows.map((o) => (
+                  <OrderRowView key={o.id} o={o} />
+                ))}
+              </ul>
+            </Card>
+            {list.hasNextPage ? (
+              <Button
+                variant="secondary"
+                block
+                className="mt-4"
+                loading={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
+                carregar mais
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <EmptyState
+            art={<Mascote pose="sem-resultados" />}
+            title={f.q ? `Nenhum pedido com "${f.q}"` : 'Nenhum pedido com esses filtros'}
+            body="Tente outro período ou tire os filtros."
+            {...(active.length
+              ? {
+                  action: (
+                    <Button
+                      variant="secondary"
+                      onClick={() => setF({ state: '', method: '', mode: '', unpaid: false })}
+                    >
+                      tirar os filtros
+                    </Button>
+                  ),
+                }
+              : {})}
+          />
+        )}
+
+        <Sheet
+          open={sheet}
+          onOpenChange={setSheet}
+          title="Filtrar pedidos"
+          footer={
+            <Button size="lg" block onClick={() => setSheet(false)}>
+              ver pedidos
+            </Button>
+          }
+        >
+          <div className="space-y-6 pt-2">
+            <Field label="Situação">
+              <Chips
+                label="situação"
+                value={f.state}
+                onChange={(v) => setF({ state: v === f.state ? '' : v })}
+                options={STATES}
+              />
+            </Field>
+            <Field label="Pagamento">
+              <div className="space-y-3">
+                <Chips
+                  label="forma de pagamento"
+                  value={f.method}
+                  onChange={(v) => setF({ method: v === f.method ? '' : v })}
+                  options={METHODS.map((m) => ({ value: m, label: METHOD_SHORT[m] }))}
+                />
+                <Chips
+                  label="pagamento pendente"
+                  multi
+                  value={f.unpaid ? ['unpaid'] : []}
+                  onChange={() => setF({ unpaid: !f.unpaid })}
+                  options={[{ value: 'unpaid', label: 'só os não pagos' }]}
+                />
+              </div>
+            </Field>
+            <Field label="Entrega">
+              <Chips
+                label="entrega"
+                value={f.mode}
+                onChange={(v) => setF({ mode: v === f.mode ? '' : v })}
+                options={MODES}
+              />
+            </Field>
+          </div>
+        </Sheet>
+      </div>
     </PageBody>
   );
 }

@@ -71,16 +71,19 @@ export function PageBody({
   children,
   className,
   wide,
+  full,
 }: {
   children: ReactNode;
   className?: string;
   wide?: boolean;
+  /** the order board's width, for the views beside it (Pedidos' tabs) */
+  full?: boolean;
 }) {
   return (
     <div
       className={cn(
         'mx-auto w-full px-4 pb-32 pt-4 md:px-8 md:pb-16 md:pt-8',
-        wide ? 'max-w-[1320px]' : 'max-w-[880px]',
+        full ? 'max-w-[1600px]' : wide ? 'max-w-[1320px]' : 'max-w-[880px]',
         className,
       )}
     >

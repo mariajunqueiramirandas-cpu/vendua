@@ -125,9 +125,9 @@ and Loja moves to the top of "Mais"; its everyday tasks stay in the status pill 
 
 Every area sits in one of four groups, the same on the sidebar, the rail and
 "Mais" (`app/nav.ts`): **Dia a dia** (Início, Pedidos, PDV, Cozinha, Copiloto),
-**Sua loja** (Cardápio, Loja, Aparência), **Vender mais** (Duá, Clientes,
-Marketing, Relatórios) and **Ajustes** (Pagamentos, WhatsApp, Impressoras,
-Equipe, Conta e plano), with Ajuda last on its own.
+**Sua loja** (Cardápio, Loja, Aparência, Pagamentos), **Vender mais** (Duá,
+Clientes, Marketing, Relatórios) and **Ajustes** (WhatsApp, Impressoras, Equipe,
+Conta e plano), with Ajuda last on its own.
 
 "Mais" opens a sheet with every area the bar doesn't hold, under those group
 headings, as large tiles with a live hint each ("3 cupons ativos", "Mercado
@@ -140,6 +140,35 @@ items expanded, icons + short labels, a rule between groups.
 **Desktop (≥ 1200 px): sidebar** with every area under its group heading, the store switcher at the
 top, and the status pill pinned at the bottom of the sidebar.
 
+**Inside an area, one job per screen.** A screen holds what its name says, and
+anything else lives where its name says (the reminders are Marketing's, not
+WhatsApp's; the custom domain is Loja's, not the bill's). Three shapes, picked
+by what the area is:
+
+- **Tabs** when an area has sibling views of the same thing: Pedidos (Agora ·
+  Encomendas · Histórico), Cardápio (Produtos · Estoque · Festa · Planos),
+  Pagamentos (Recebimentos · Formas de pagamento), Marketing (Ofertas ·
+  Divulgar · Lembretes), Equipe (Pessoas · Atividade), Meu perfil (Você ·
+  Avisos · Aparelhos). Each tab is its own address (`app/tabs.ts`), shown as an
+  underlined strip so it never reads as a filter; tabs swap in place, so back
+  leaves the area. A count rides on the tab that has work waiting.
+- **A hub** when an area is many settings: Loja is a list of its parts, each
+  row saying what is set there now ("Hoje: 9h às 22h"; a part that keeps the
+  store from selling says why in warning colour), and each part is its own
+  screen with a back to Loja: Horários, Entrega e retirada, Tempo de preparo,
+  Encomendas, Perfil da loja, Site e endereço.
+- **Section chips** when a page is long but one subject (Relatórios, Conta e
+  plano): chips under the header that stay while the page scrolls, the section
+  in view lit, a tap jumping to it.
+
+Old addresses keep working: a moved section's link lands on its new screen
+(`movedTo` in `app/nav.ts`).
+
+**Scrolling says so.** A page much taller than the screen shows a thin scroll
+rail at the right edge on touch screens, and a themed scrollbar with a pointer.
+Rows that scroll sideways (chips, tabs) and sheets fade at the edge with more
+to show.
+
 ### 3.2 Always present
 
 - **The status pill** (top of every phone screen, sidebar on desktop): the
@@ -147,7 +176,9 @@ top, and the status pill pinned at the bottom of the sidebar.
   opens the status sheet: pause now (15 min, 1 h, rest of day, custom), with
   the shopper-facing message and its preview; change today's hours.
 - **Search**: pull down on any list or tap the search field. It searches orders
-  (number, name, phone), products and customers together, grouped.
+  (number, name, phone), products and customers together, grouped, and the
+  screens themselves ("frete", "pix", "horário" lead to the screen that sets
+  it; `app/screens.ts`).
 - **Create (+)**: on Cardápio (product, category, kit) and Marketing (cupom).
   Never a global "+" menu of everything.
 
@@ -518,6 +549,10 @@ over realistic data. No screen uses a raw element where a component exists.
 | `ZoneMap`                                 | map with radius rings or bairro polygons, fee per zone inline                                                                |
 | `Sheet`                                   | bottom sheet on phones (snap 50/92%), side panel on desktop; drag to dismiss; focus trapped                                  |
 | `ActionBar`                               | sticky bottom primary action on phones, safe-area aware                                                                      |
+| `PageTabs`                                | an area's sibling views as an underlined strip; each its own address, swapped in place; a count per tab                      |
+| `SectionNav`                              | a long page's sticky section chips; the section in view lit                                                                  |
+| `LinkRow`, `LinkList`                     | a row that opens a screen: icon, title, what is set there now (warning colour when it blocks sales), chevron                 |
+| `ScrollRail`                              | the touch scroll indicator for pages much taller than the screen                                                             |
 | `Toggle`, `Segmented`, `Chips`, `Stepper` | 48 px min height on touch; haptic tick                                                                                       |
 | `Field` family                            | label above, helper below, inline validation after blur, per-field "salvo" state                                             |
 | `Toast`                                   | bottom on phones, bottom-right on desktop; undo action; stacks max 2                                                         |
@@ -573,14 +608,16 @@ Phone: a segmented control across the top (Novos · Em preparo · Prontos/Saiu �
 Concluídos) with counts; Novos is default when anything waits. Cards stack;
 swipe right advances, swipe left opens more (cancel, contact, print).
 Tablet/desktop: a four-lane board with drag between lanes, and the detail as a
-side panel. Encomendas appear in a separate "agendados" view as a calendar.
+side panel. Tabs above it: Agora (the board), Encomendas (a calendar of
+scheduled orders) and Histórico.
 Order detail: number in `display`, state timeline, items with modifiers,
 notes highlighted in a warm callout, customer with a WhatsApp button, delivery
 with a map snippet, payment status, and the actions in the ActionBar.
 
 ### Cardápio
 
-Categories as horizontal chips (drag to reorder); grid of ProductTiles
+Tabs: Produtos · Estoque · Festa · Planos (Estoque counts what needs
+restocking). Categories as horizontal chips (drag to reorder); grid of ProductTiles
 (2 columns on phones, 4–6 on desktop) with a list-view toggle for bulk work.
 Bulk mode: select, then change availability, category or price by a percent.
 Product editor: photo first (big), then name, price and description, then
@@ -589,9 +626,15 @@ each with a one-line summary when collapsed ("2 grupos, 7 opções").
 
 ### Loja
 
-Grouped cards: Horários (TimeRangeField week view + special days
-calendar), Entrega e retirada (ZoneMap, fees, minimum order), Perfil (logo,
-name, contacts, address), Mensagens (pause and closed copy with previews).
+A hub: the store as the customer meets it (logo, name, link to copy), then
+rows in three groups, each opening its own screen. **Funcionamento**: Horários
+(TimeRangeField week view, special days, and the pause and closed messages
+with previews), Entrega e retirada (how the customer receives, then where the
+store delivers: ZoneMap, fees, minimum order), Tempo de preparo (prep time,
+accept target, "muitos pedidos agora", the automatic brake) and Encomendas.
+**Como a loja aparece**: Perfil da loja (logo, name, contacts, address),
+Aparência, Site e endereço (the store's addresses, custom domain, site sob
+medida). **Recebimento**: Formas de pagamento.
 
 ### Aparência
 
@@ -612,7 +655,8 @@ page tabs; with the keyboard up the preview steps aside for the field.
 
 Period chips (hoje · 7 dias · 30 dias · personalizado) → headline KPIs with
 comparison deltas → sales chart → funnel → top products (with photos) → peak
-hours heatmap → zones. Every number explains itself on tap in one sentence.
+hours heatmap → zones, with section chips under the KPIs. Every number
+explains itself on tap in one sentence.
 
 ---
 

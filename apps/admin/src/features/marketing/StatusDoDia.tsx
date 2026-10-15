@@ -74,7 +74,7 @@ export default function StatusDoDia() {
     <PageBody wide>
       <PageHeader
         title="Status do dia"
-        back="/marketing"
+        back="/marketing/divulgar"
         subtitle="Todo dia, o status da loja pronto no seu visual, com o link para pedir. Você posta do celular em dois toques."
       />
       {!data ? (

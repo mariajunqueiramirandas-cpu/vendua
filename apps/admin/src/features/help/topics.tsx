@@ -68,8 +68,9 @@ export const TOPICS: Record<TopicId, Topic> = {
         q: 'Quero ser avisado de cada pedido',
         a: (
           <>
-            Em <L to="/perfil">Meu perfil</L>, ligue <strong>Avisos no celular</strong> e toque em{' '}
-            <strong>testar aviso</strong> para conferir se chega.
+            Em <L to="/perfil/avisos">Meu perfil › Avisos</L>, ligue{' '}
+            <strong>Avisos no celular</strong> e toque em <strong>testar aviso</strong> para
+            conferir se chega.
           </>
         ),
       },
@@ -171,7 +172,7 @@ export const TOPICS: Record<TopicId, Topic> = {
   },
   loja: {
     title: 'Loja',
-    intro: 'Horários, entrega, retirada e como a loja se apresenta.',
+    intro: 'Horários, entrega, tempo de preparo, encomendas e como a loja se apresenta.',
     items: [
       {
         q: 'Como mudo os horários?',
@@ -197,8 +198,10 @@ export const TOPICS: Record<TopicId, Topic> = {
         q: 'O que a loja diz quando está fechada?',
         a: (
           <>
-            Em Mensagens, escreva o recado de pausa e o de fechada. Com muita gente pedindo, ligue{' '}
-            <strong>Muitos pedidos agora</strong> para avisar que o preparo está demorando mais.
+            Em <L to="/loja/horarios#mensagens">Horários › Mensagens</L>, escreva o recado de pausa
+            e o de fechada. Com muita gente pedindo, ligue <strong>Muitos pedidos agora</strong> em{' '}
+            <L to="/loja/preparo">Tempo de preparo</L> para avisar que o preparo está demorando
+            mais.
           </>
         ),
       },
@@ -307,15 +310,19 @@ export const TOPICS: Record<TopicId, Topic> = {
     items: [
       {
         q: 'Como divulgo a loja?',
-        a: 'Em Compartilhar a loja, copie o link, mande pelo WhatsApp ou baixe o QR code para imprimir.',
+        a: 'Em Divulgar, copie o link, mande pelo WhatsApp ou baixe o QR code para imprimir. O status do dia e o cartão da sacola também ficam lá.',
       },
       {
         q: 'Como crio um cupom?',
-        a: 'Em Cupons, toque em “criar cupom” e escolha: porcentagem, valor fixo ou entrega grátis.',
+        a: 'Em Ofertas › Cupons, toque em “criar cupom” e escolha: porcentagem, valor fixo ou entrega grátis.',
       },
       {
         q: 'Cartão fidelidade e lista de espera',
-        a: 'No cartão fidelidade, cada pedido entregue vale um selo, e os selos viram um prêmio. A lista de espera mostra quem quer ser avisado quando um produto esgotado voltar.',
+        a: 'No cartão fidelidade (em Ofertas), cada pedido entregue vale um selo, e os selos viram um prêmio. A lista de espera (em Lembretes) mostra quem quer ser avisado quando um produto esgotado voltar.',
+      },
+      {
+        q: 'Lembrar quem deixou a sacola ou o pedido de sempre',
+        a: 'Em Lembretes: os dois saem do WhatsApp da loja, só para quem pediu para ser lembrado.',
       },
       {
         q: 'Uma faixa com recado no topo da loja',
@@ -371,7 +378,7 @@ export const TOPICS: Record<TopicId, Topic> = {
         a: (
           <>
             Lugares onde alguém quis entrega e nenhuma área sua atende. Pode valer uma área nova em{' '}
-            <L to="/loja#entrega">Loja › Entrega e retirada</L>.
+            <L to="/loja/entrega">Loja › Entrega e retirada</L>.
           </>
         ),
       },
@@ -405,7 +412,7 @@ export const TOPICS: Record<TopicId, Topic> = {
   },
   conta: {
     title: 'Conta e plano',
-    intro: 'Seu plano, faturas e o endereço da loja.',
+    intro: 'Seu plano, as faturas e o indique e ganhe.',
     items: [
       {
         q: 'Como pago o plano?',
@@ -417,7 +424,12 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
       {
         q: 'Posso usar meu próprio domínio?',
-        a: 'Sim, no plano Venduá PRO+. O painel mostra o que configurar no seu domínio e confere quando estiver pronto.',
+        a: (
+          <>
+            Sim, no plano Venduá PRO+. Em <L to="/loja/site">Loja › Site e endereço</L>, o painel
+            mostra o que configurar no seu domínio e confere quando estiver pronto.
+          </>
+        ),
       },
     ],
   },
@@ -431,7 +443,7 @@ export const TOPICS: Record<TopicId, Topic> = {
       },
       {
         q: 'Os avisos estão chegando?',
-        a: 'Em “Seus avisos”, toque em “testar aviso”. A lista mostra cada aparelho e se o último aviso chegou.',
+        a: 'Em Avisos › “Seus avisos”, toque em “testar aviso”. A lista mostra cada aparelho e se o último aviso chegou.',
       },
       {
         q: 'E se o aviso não chegar?',
@@ -593,18 +605,36 @@ const BY_ROUTE: Partial<Record<RouteId, TopicId>> = {
   scheduled: 'pedidos',
   menu: 'cardapio',
   product: 'cardapio',
+  stock: 'cardapio',
+  festa: 'cardapio',
+  planos: 'cardapio',
+  importMenu: 'cardapio',
   store: 'loja',
+  storeProfile: 'loja',
+  storeHours: 'loja',
+  storeDelivery: 'loja',
+  storePrep: 'loja',
+  storeEncomendas: 'loja',
+  storeSite: 'loja',
   payments: 'pagamentos',
+  paymentMethods: 'pagamentos',
   whatsapp: 'whatsapp',
   printers: 'impressoras',
   customers: 'clientes',
   customer: 'clientes',
   marketing: 'marketing',
+  marketingShare: 'marketing',
+  marketingReminders: 'marketing',
+  bagCard: 'marketing',
+  statusDoDia: 'marketing',
   appearance: 'aparencia',
   reports: 'relatorios',
   team: 'equipe',
+  teamActivity: 'equipe',
   account: 'conta',
   profile: 'perfil',
+  profileAlerts: 'perfil',
+  profileDevices: 'perfil',
   vendedorHome: 'vendedor',
   vendedorTrain: 'vendedor',
   vendedorConversations: 'vendedor',

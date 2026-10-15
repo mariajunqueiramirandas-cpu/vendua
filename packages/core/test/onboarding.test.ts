@@ -118,16 +118,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
       finishedAt: null,
       dismissedAt: null,
       checklist: [
-        { id: 'profile', label: 'Logo e WhatsApp da loja', done: false, href: '/loja#perfil' },
-        { id: 'hours', label: 'Horário de funcionamento', done: false, href: '/loja#horarios' },
-        { id: 'delivery', label: 'Entrega ou retirada', done: false, href: '/loja#entrega' },
-        { id: 'pix', label: 'Chave Pix para receber', done: false, href: '/pagamentos' },
+        { id: 'profile', label: 'Logo e WhatsApp da loja', done: false, href: '/loja/perfil' },
+        { id: 'hours', label: 'Horário de funcionamento', done: false, href: '/loja/horarios' },
+        { id: 'delivery', label: 'Entrega ou retirada', done: false, href: '/loja/entrega' },
+        { id: 'pix', label: 'Chave Pix para receber', done: false, href: '/pagamentos/formas' },
         { id: 'menu', label: '3 produtos com foto', done: false, href: '/cardapio' },
         {
           id: 'first_order',
           label: 'Primeiro pedido',
           done: false,
-          href: '/marketing#compartilhar',
+          href: '/marketing/divulgar',
         },
       ],
     });

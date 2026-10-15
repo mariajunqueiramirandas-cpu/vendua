@@ -468,3 +468,27 @@ export function CalendarSkeleton() {
     </SkeletonGroup>
   );
 }
+
+/** An area's tabs (PageTabs) while the screen loads: the real labels, the current one lit. */
+export function TabsSkeleton({ labels, active = 0 }: { labels: string[]; active?: number }) {
+  return (
+    <div aria-hidden className="-mx-4 mb-6 overflow-hidden px-4 md:mx-0 md:mb-7 md:px-0">
+      <div className="flex w-max min-w-full border-b border-line md:min-w-0 md:gap-2">
+        {labels.map((l, i) => (
+          <span
+            key={l}
+            className={cn(
+              't-label relative flex min-h-12 flex-1 items-center justify-center whitespace-nowrap px-2.5 sm:px-4 md:flex-none',
+              i === active ? 'text-ink' : 'text-muted',
+            )}
+          >
+            {l}
+            {i === active ? (
+              <span className="absolute inset-x-2 -bottom-px h-[3px] rounded-full bg-primary" />
+            ) : null}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}

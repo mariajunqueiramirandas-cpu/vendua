@@ -44,13 +44,13 @@ export async function setupChecklist(
       id: 'profile',
       label: 'Logo e WhatsApp da loja',
       done: !!s.logo_url && !!s.whatsapp,
-      href: '/loja#perfil',
+      href: '/loja/perfil',
     },
     {
       id: 'hours',
       label: 'Horário de funcionamento',
       done: (s.hours?.windows?.length ?? 0) > 0,
-      href: '/loja#horarios',
+      href: '/loja/horarios',
     },
     {
       id: 'delivery',
@@ -59,14 +59,14 @@ export async function setupChecklist(
       done:
         (s.delivery_enabled && (counts.zones > 0 || !!s.distance_pricing)) ||
         (s.pickup_enabled && !s.delivery_enabled),
-      href: '/loja#entrega',
+      href: '/loja/entrega',
     },
     {
       id: 'pix',
       label: 'Chave Pix para receber',
       // a store that doesn't take Pix has no key to set
       done: !!s.pix_key || !(s.payment_methods ?? ['pix']).includes('pix'),
-      href: '/pagamentos',
+      href: '/pagamentos/formas',
     },
     {
       id: 'menu',
@@ -78,7 +78,7 @@ export async function setupChecklist(
       id: 'first_order',
       label: 'Primeiro pedido',
       done: counts.orders > 0,
-      href: '/marketing#compartilhar',
+      href: '/marketing/divulgar',
     },
   ];
   return { checklist, orders: counts.orders };

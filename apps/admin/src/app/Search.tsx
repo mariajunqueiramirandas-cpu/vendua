@@ -1,4 +1,4 @@
-import { MagnifyingGlass, Receipt, User } from '@phosphor-icons/react';
+import { Compass, MagnifyingGlass, Receipt, User } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -10,6 +10,8 @@ import { TextInput } from '../ui/fields.tsx';
 import { EmptyState } from '../ui/feedback.tsx';
 import { RowsSkeleton } from '../ui/skeletons.tsx';
 import { Mascote } from '../ui/Mascote.tsx';
+import { can, useSession } from '../lib/session.ts';
+import { findScreens } from './screens.ts';
 
 /** One field, three kinds of answer, grouped, as they type (§3.2). */
 export function SearchSheet({
@@ -40,6 +42,9 @@ export function SearchSheet({
     nav(to);
   };
   const empty = data && !data.orders.length && !data.products.length && !data.customers.length;
+  // "where do I change the hours?": the screens answer as they type, no request needed
+  const role = useSession().user.role;
+  const screens = findScreens(q, (e) => can(role, e.min));
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title="Buscar" wide>
       <div className="sticky top-0 z-10 bg-surface pb-3 pt-1">
@@ -47,90 +52,108 @@ export function SearchSheet({
           autoFocus
           type="search"
           enterKeyHint="search"
-          aria-label="buscar pedidos, produtos e clientes"
-          placeholder="Pedido, nome, telefone ou produto"
+          aria-label="buscar pedidos, produtos, clientes e telas"
+          placeholder="Pedido, cliente, produto ou tela"
           lead={<MagnifyingGlass className="size-5" />}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
       </div>
-      {!debounced ? (
+      {!q.trim() ? (
         <div className="flex flex-col items-center px-4 pb-4 pt-6 text-center">
           <Mascote pose="avatar-pensando" size={96} className="mb-3 w-24" />
           <p className="t-body max-w-sm text-muted">
-            Digite o número do pedido (ex.: 128), o nome ou o telefone do cliente, ou o nome de um
-            produto.
+            Digite o número do pedido (ex.: 128), o nome ou o telefone do cliente, o nome de um
+            produto, ou o que quer mudar na loja (ex.: horário, frete, Pix).
           </p>
         </div>
-      ) : empty && !isFetching ? (
-        <EmptyState
-          art={<Mascote pose="sem-resultados" />}
-          title={`Nada encontrado para "${debounced}"`}
-          body="Confira a grafia ou tente só uma parte do nome."
-        />
-      ) : !data ? (
-        <RowsSkeleton rows={4} />
       ) : (
         <div className="space-y-5">
-          {data?.orders.length ? (
-            <Group title="Pedidos">
-              {data.orders.map((o) => (
-                <Hit
-                  key={o.id}
-                  onClick={() => go(`/pedidos/${o.id}`)}
-                  icon={<Receipt className="size-5" />}
-                >
+          {screens.length ? (
+            <Group title="Telas">
+              {screens.map((e) => (
+                <Hit key={e.to} onClick={() => go(e.to)} icon={<Compass className="size-5" />}>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold">
-                      #{o.number} · {o.name}
-                    </span>
-                    <span className="t-caption text-muted">
-                      {money(o.totalCents)} · {ago(o.placedAt)}
-                    </span>
-                  </span>
-                  <StateChip state={o.state} />
-                </Hit>
-              ))}
-            </Group>
-          ) : null}
-          {data?.products.length ? (
-            <Group title="Produtos">
-              {data.products.map((p) => (
-                <Hit
-                  key={p.id}
-                  onClick={() => go(`/cardapio/produto/${p.id}`)}
-                  icon={
-                    <span className="block size-10 overflow-hidden rounded-sm bg-sunken">
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt="" className="size-full object-cover" />
-                      ) : null}
-                    </span>
-                  }
-                >
-                  <span className="min-w-0 flex-1 truncate font-semibold">{p.name}</span>
-                  <span className="tnum text-muted">{money(p.priceCents)}</span>
-                </Hit>
-              ))}
-            </Group>
-          ) : null}
-          {data?.customers.length ? (
-            <Group title="Clientes">
-              {data.customers.map((c) => (
-                <Hit
-                  key={c.phone}
-                  onClick={() => go(`/clientes/${c.phone}`)}
-                  icon={<User className="size-5" />}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold">{c.name}</span>
-                    <span className="t-caption text-muted">
-                      {phone(c.phone)} · {c.orders} {c.orders === 1 ? 'pedido' : 'pedidos'}
-                    </span>
+                    <span className="block truncate font-semibold">{e.label}</span>
+                    <span className="t-caption text-muted">{e.where}</span>
                   </span>
                 </Hit>
               ))}
             </Group>
           ) : null}
+          {!debounced ? null : empty && !isFetching ? (
+            screens.length ? null : (
+              <EmptyState
+                art={<Mascote pose="sem-resultados" />}
+                title={`Nada encontrado para "${debounced}"`}
+                body="Confira a grafia ou tente só uma parte do nome."
+              />
+            )
+          ) : !data ? (
+            <RowsSkeleton rows={4} />
+          ) : (
+            <>
+              {data?.orders.length ? (
+                <Group title="Pedidos">
+                  {data.orders.map((o) => (
+                    <Hit
+                      key={o.id}
+                      onClick={() => go(`/pedidos/${o.id}`)}
+                      icon={<Receipt className="size-5" />}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-semibold">
+                          #{o.number} · {o.name}
+                        </span>
+                        <span className="t-caption text-muted">
+                          {money(o.totalCents)} · {ago(o.placedAt)}
+                        </span>
+                      </span>
+                      <StateChip state={o.state} />
+                    </Hit>
+                  ))}
+                </Group>
+              ) : null}
+              {data?.products.length ? (
+                <Group title="Produtos">
+                  {data.products.map((p) => (
+                    <Hit
+                      key={p.id}
+                      onClick={() => go(`/cardapio/produto/${p.id}`)}
+                      icon={
+                        <span className="block size-10 overflow-hidden rounded-sm bg-sunken">
+                          {p.imageUrl ? (
+                            <img src={p.imageUrl} alt="" className="size-full object-cover" />
+                          ) : null}
+                        </span>
+                      }
+                    >
+                      <span className="min-w-0 flex-1 truncate font-semibold">{p.name}</span>
+                      <span className="tnum text-muted">{money(p.priceCents)}</span>
+                    </Hit>
+                  ))}
+                </Group>
+              ) : null}
+              {data?.customers.length ? (
+                <Group title="Clientes">
+                  {data.customers.map((c) => (
+                    <Hit
+                      key={c.phone}
+                      onClick={() => go(`/clientes/${c.phone}`)}
+                      icon={<User className="size-5" />}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-semibold">{c.name}</span>
+                        <span className="t-caption text-muted">
+                          {phone(c.phone)} · {c.orders} {c.orders === 1 ? 'pedido' : 'pedidos'}
+                        </span>
+                      </span>
+                    </Hit>
+                  ))}
+                </Group>
+              ) : null}
+            </>
+          )}
         </div>
       )}
     </Sheet>

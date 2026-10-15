@@ -15,7 +15,7 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { whatsappUrl } from '@vendua/kernel/rules';
 import {
   api,
@@ -53,37 +53,130 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { PlanLocked } from '../../ui/PlanLocked.tsx';
 import { isPlanRequired, useFeature } from '../../lib/session.ts';
 import { toast } from '../../ui/Toast.tsx';
+import { LinkList, LinkRow } from '../../ui/LinkRow.tsx';
+import { Notice } from '../../ui/Notice.tsx';
+import { PageTabs } from '../../ui/Tabs.tsx';
+import { TABS } from '../../app/tabs.ts';
+import {
+  CartReminderCard,
+  linkedOf,
+  reminderLine,
+  UsualReminderCard,
+  usualLine,
+} from '../whatsapp/reminders.tsx';
 import { shareCard } from './shareCard.ts';
 import { useStoreQuery } from '../store/StatusPill.tsx';
 
-export default function Marketing() {
-  const { data, error, refetch } = useQuery({ queryKey: qk.marketing, queryFn: api.marketing });
-  if (error && !data)
-    return (
-      <PageBody>
-        <ErrorState error={error} retry={() => void refetch()} />
-      </PageBody>
-    );
+// Marketing in three views, one job each: Ofertas (what the customer gets: cupons, the loyalty
+// card, the banner), Divulgar (spreading the link) and Lembretes (bringing people back: the
+// WhatsApp reminders and the waitlist).
+
+function MarketingFrame({ children }: { children: ReactNode }) {
   return (
     <PageBody wide>
       <PageHeader title="Marketing" subtitle="Traga gente nova e faça quem já comprou voltar." />
-      {!data ? (
+      <PageTabs tabs={TABS.marketing} label="Marketing" />
+      {children}
+    </PageBody>
+  );
+}
+
+const useMarketing = () => useQuery({ queryKey: qk.marketing, queryFn: api.marketing });
+
+export default function Marketing() {
+  const { data, error, refetch } = useMarketing();
+  return (
+    <MarketingFrame>
+      {error && !data ? (
+        <ErrorState error={error} retry={() => void refetch()} />
+      ) : !data ? (
         <SectionsSkeleton columns={2} />
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-          {/* offers to customers first (on phones too), spreading the word beside them */}
+          <Coupons coupons={data.coupons} />
           <div className="space-y-8">
-            <Coupons coupons={data.coupons} />
             <Loyalty data={data} />
-            <Waitlist data={data} />
-          </div>
-          <div className="space-y-8">
-            <Share />
             <Announcement data={data} />
           </div>
         </div>
       )}
-    </PageBody>
+    </MarketingFrame>
+  );
+}
+
+export function MarketingShare() {
+  return (
+    <MarketingFrame>
+      <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
+        <Share />
+        <Section title="Para levar mais longe" hint="Prontos para imprimir ou postar.">
+          <LinkList label="para levar mais longe">
+            <LinkRow
+              to="/marketing/status"
+              Icon={Sparkle}
+              title="Status do dia"
+              line="A imagem do dia para o status do WhatsApp, com o link para pedir."
+            />
+            <LinkRow
+              to="/marketing/cartao"
+              Icon={Printer}
+              title="Cartão da sacola"
+              line="Para os pedidos dos apps de delivery: da próxima vez, o cliente pede direto."
+            />
+          </LinkList>
+        </Section>
+      </div>
+    </MarketingFrame>
+  );
+}
+
+export function MarketingReminders() {
+  const m = useMarketing();
+  const wa = useQuery({ queryKey: qk.whatsapp, queryFn: api.whatsapp });
+  const error = m.error ?? wa.error;
+  return (
+    <MarketingFrame>
+      {error && !(m.data && wa.data) ? (
+        <ErrorState
+          error={error}
+          retry={() => {
+            void m.refetch();
+            void wa.refetch();
+          }}
+        />
+      ) : !m.data || !wa.data ? (
+        <SectionsSkeleton columns={2} />
+      ) : (
+        <>
+          {!linkedOf(wa.data) ? (
+            <Notice
+              tone="info"
+              className="mb-8"
+              icon={<WhatsappLogo weight="fill" />}
+              title="Os lembretes saem do WhatsApp da loja"
+              action={
+                <ButtonLink to="/whatsapp" size="sm">
+                  conectar
+                </ButtonLink>
+              }
+            >
+              Conecte o número da loja para eles começarem a sair.
+            </Notice>
+          ) : null}
+          <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
+            <div className="space-y-8">
+              <Section title="Lembrete de sacola" hint={reminderLine(wa.data)}>
+                <CartReminderCard data={wa.data} />
+              </Section>
+              <Section title="Pedido de sempre" hint={usualLine(wa.data)}>
+                <UsualReminderCard data={wa.data} />
+              </Section>
+            </div>
+            <Waitlist data={m.data} />
+          </div>
+        </>
+      )}
+    </MarketingFrame>
   );
 }
 
@@ -109,7 +202,7 @@ function Share() {
     <Section
       id="compartilhar"
       title="Compartilhar a loja"
-      hint="O link, o QR code, o cartão para a sacola dos apps, o status do dia e cartões para o WhatsApp."
+      hint="O link e o QR code da loja, e um cartão de cada produto para mandar no WhatsApp."
     >
       <Card className="space-y-4 p-5">
         <div className="flex items-center gap-2 rounded-md bg-sunken p-2 pl-4">
@@ -139,18 +232,12 @@ function Share() {
           <Button variant="secondary" icon={<QrCode />} onClick={() => setQrOpen(true)}>
             QR code
           </Button>
-          <ButtonLink to="/marketing/cartao" variant="secondary" icon={<Printer />}>
-            cartão da sacola
-          </ButtonLink>
-          <ButtonLink to="/marketing/status" variant="secondary" icon={<Sparkle />}>
-            status do dia
-          </ButtonLink>
         </div>
       </Card>
       {data?.products.length ? (
         <div className="mt-4">
           <p className="t-label mb-2 px-1">Cartões de produto</p>
-          <ul className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-2 md:-mx-0 md:px-0">
+          <ul className="scroll-row -mx-4 flex gap-3 px-4 pb-2 md:-mx-0 md:px-0">
             {data.products.slice(0, 12).map((p) => (
               <li key={p.id} className="w-40 shrink-0">
                 <button

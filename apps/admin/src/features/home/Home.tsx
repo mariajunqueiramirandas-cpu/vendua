@@ -601,7 +601,7 @@ function Best({ data }: { data: HomeData }) {
       <DuaNote
         pose="catalogo"
         action={
-          <ButtonLink to="/marketing#compartilhar" variant="secondary">
+          <ButtonLink to="/marketing/divulgar" variant="secondary">
             compartilhar a loja
           </ButtonLink>
         }

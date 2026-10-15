@@ -31,6 +31,7 @@ import { DuaNote, ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Field, Select, Stepper, TextArea, TextInput, Toggle } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { MenuTabs } from './MenuTabs.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
@@ -98,11 +99,10 @@ export default function Planos() {
   const plans = data?.plans ?? [];
   const link = `${s.store.url}/planos`;
   return (
-    <PageBody>
+    <PageBody wide>
       <PageHeader
-        title="Planos semanais"
-        subtitle="Uma cesta que o cliente recebe toda semana, no mesmo dia. A loja faz o pedido sozinha e avisa o cliente pelo WhatsApp."
-        back="/cardapio"
+        title="Cardápio"
+        subtitle="Planos semanais: uma cesta que o cliente recebe toda semana, no mesmo dia. A loja faz o pedido sozinha e avisa o cliente pelo WhatsApp."
         actions={
           manager ? (
             <Button icon={<Plus />} onClick={() => setEdit({ id: null, draft: BLANK })}>
@@ -111,82 +111,96 @@ export default function Planos() {
           ) : null
         }
       />
-      {error && !data ? (
-        <ErrorState error={error} retry={() => void refetch()} />
-      ) : !data ? (
-        <RowsSkeleton rows={3} />
-      ) : (
-        <div className="space-y-8">
-          {data.blocked === 'whatsapp' ? (
-            <Notice
-              tone="warning"
-              title="Conecte o WhatsApp da loja"
-              icon={<ChatCircleText />}
-              action={
-                <ButtonLink to="/whatsapp" size="sm" variant="secondary">
-                  conectar
-                </ButtonLink>
-              }
-            >
-              Os planos só aparecem na loja com o WhatsApp conectado: é por ele que o cliente
-              confirma, recebe o Pix de cada semana e pula uma semana.
-            </Notice>
-          ) : data.blocked === 'pix' ? (
-            <Notice
-              tone="warning"
-              title="Cadastre a chave Pix da loja"
-              icon={<QrCode />}
-              action={
-                <ButtonLink to="/pagamentos" size="sm" variant="secondary">
-                  pagamentos
-                </ButtonLink>
-              }
-            >
-              Cada semana é paga por Pix. Com a chave da loja, o código vai na mensagem do WhatsApp;
-              com o Mercado Pago conectado, o Pix se confirma sozinho.
-            </Notice>
-          ) : (
-            <p className="t-caption text-muted">
-              Cada semana é paga por Pix: o código vai pelo WhatsApp com o pedido, e um lembrete sai
-              na véspera se o dinheiro não chegou. Sem Mercado Pago, abra o pedido e marque como
-              pago quando o Pix cair: o cliente recebe a confirmação.
-            </p>
-          )}
-          {plans.length === 0 ? (
-            <DuaNote pose="avatar-feliz" title="Crie o primeiro plano">
-              Uma cesta de hortifruti, o pão da semana, as marmitas de segunda: escolha os produtos
-              e o dia. Na loja, aparece em {link.replace('https://', '')}.
-            </DuaNote>
-          ) : (
-            <div className="space-y-3">
-              {plans.map((p) => (
-                <PlanRow
-                  key={p.id}
-                  plan={p}
-                  disabled={!manager}
-                  onOpen={() => setEdit({ id: p.id, draft: toDraft(p) })}
-                />
-              ))}
-              {data.offered ? (
-                <div className="flex flex-wrap items-end gap-x-4 gap-y-2 pt-1">
-                  <CopyValue label="Link dos planos" value={link} copied="Link copiado" />
-                  <a
-                    href={link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="t-label inline-flex min-h-11 items-center gap-1.5 px-1 text-muted underline underline-offset-2"
-                  >
-                    ver na loja <ArrowSquareOut className="size-4" />
-                  </a>
-                </div>
-              ) : null}
-            </div>
-          )}
-          {data.subscriptions.length ? (
-            <Subscribers subs={data.subscriptions} plans={plans} manager={manager} />
-          ) : null}
-        </div>
-      )}
+      <MenuTabs />
+      <div className="max-w-[880px]">
+        {error && !data ? (
+          <ErrorState error={error} retry={() => void refetch()} />
+        ) : !data ? (
+          <RowsSkeleton rows={3} />
+        ) : (
+          <div className="space-y-8">
+            {data.blocked === 'whatsapp' ? (
+              <Notice
+                tone="warning"
+                title="Conecte o WhatsApp da loja"
+                icon={<ChatCircleText />}
+                action={
+                  <ButtonLink to="/whatsapp" size="sm" variant="secondary">
+                    conectar
+                  </ButtonLink>
+                }
+              >
+                Os planos só aparecem na loja com o WhatsApp conectado: é por ele que o cliente
+                confirma, recebe o Pix de cada semana e pula uma semana.
+              </Notice>
+            ) : data.blocked === 'pix' ? (
+              <Notice
+                tone="warning"
+                title="Cadastre a chave Pix da loja"
+                icon={<QrCode />}
+                action={
+                  <ButtonLink to="/pagamentos/formas" size="sm" variant="secondary">
+                    cadastrar a chave
+                  </ButtonLink>
+                }
+              >
+                Cada semana é paga por Pix. Com a chave da loja, o código vai na mensagem do
+                WhatsApp; com o Mercado Pago conectado, o Pix se confirma sozinho.
+              </Notice>
+            ) : (
+              <p className="t-caption text-muted">
+                Cada semana é paga por Pix: o código vai pelo WhatsApp com o pedido, e um lembrete
+                sai na véspera se o dinheiro não chegou. Sem Mercado Pago, abra o pedido e marque
+                como pago quando o Pix cair: o cliente recebe a confirmação.
+              </p>
+            )}
+            {plans.length === 0 ? (
+              <DuaNote pose="avatar-feliz" title="Crie o primeiro plano">
+                Uma cesta de hortifruti, o pão da semana, as marmitas de segunda: escolha os
+                produtos e o dia. Na loja, aparece em {link.replace('https://', '')}.
+              </DuaNote>
+            ) : (
+              <div className="space-y-3">
+                {plans.map((p) => (
+                  <PlanRow
+                    key={p.id}
+                    plan={p}
+                    disabled={!manager}
+                    onOpen={() => setEdit({ id: p.id, draft: toDraft(p) })}
+                  />
+                ))}
+                {data.offered ? (
+                  <div className="flex flex-wrap items-end gap-x-4 gap-y-2 pt-1">
+                    <CopyValue label="Link dos planos" value={link} copied="Link copiado" />
+                    <a
+                      href={link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="t-label inline-flex min-h-11 items-center gap-1.5 px-1 text-muted underline underline-offset-2"
+                    >
+                      ver na loja <ArrowSquareOut className="size-4" />
+                    </a>
+                  </div>
+                ) : null}
+              </div>
+            )}
+            {data.subscriptions.length ? (
+              <Subscribers subs={data.subscriptions} plans={plans} manager={manager} />
+            ) : null}
+          </div>
+        )}
+        {manager && data ? (
+          <Button
+            variant="secondary"
+            block
+            className="mt-4 md:hidden"
+            icon={<Plus />}
+            onClick={() => setEdit({ id: null, draft: BLANK })}
+          >
+            novo plano
+          </Button>
+        ) : null}
+      </div>
       <PlanSheet edit={edit} onClose={() => setEdit(null)} />
     </PageBody>
   );

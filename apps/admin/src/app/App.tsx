@@ -36,20 +36,32 @@ const ImportPage = screen(chunks.importMenu, (m) => m.default);
 const Stock = screen(chunks.stock, (m) => m.default);
 const Festa = screen(chunks.festa, (m) => m.default);
 const Planos = screen(chunks.planos, (m) => m.default);
-const Store = screen(chunks.store, (m) => m.default);
+const StoreHub = screen(chunks.store, (m) => m.default);
+const StoreProfile = screen(chunks.storePages, (m) => m.StoreProfile);
+const StoreHours = screen(chunks.storePages, (m) => m.StoreHours);
+const StoreDelivery = screen(chunks.storePages, (m) => m.StoreDelivery);
+const StorePace = screen(chunks.storePages, (m) => m.StorePace);
+const StoreEncomendas = screen(chunks.storePages, (m) => m.StoreEncomendas);
+const StoreSite = screen(chunks.storeSite, (m) => m.default);
 const Payments = screen(chunks.payments, (m) => m.default);
+const PaymentMethods = screen(chunks.payments, (m) => m.PaymentMethods);
 const Whatsapp = screen(chunks.whatsapp, (m) => m.default);
 const Printers = screen(chunks.printers, (m) => m.default);
 const Customers = screen(chunks.customers, (m) => m.default);
 const CustomerPage = screen(chunks.customer, (m) => m.default);
 const Marketing = screen(chunks.marketing, (m) => m.default);
+const MarketingShare = screen(chunks.marketing, (m) => m.MarketingShare);
+const MarketingReminders = screen(chunks.marketing, (m) => m.MarketingReminders);
 const BagCard = screen(chunks.bagCard, (m) => m.default);
 const StatusDoDia = screen(chunks.statusDoDia, (m) => m.default);
 const Appearance = screen(chunks.appearance, (m) => m.default);
 const Reports = screen(chunks.reports, (m) => m.default);
 const Team = screen(chunks.team, (m) => m.default);
+const TeamActivity = screen(chunks.team, (m) => m.TeamActivity);
 const Account = screen(chunks.account, (m) => m.default);
 const Profile = screen(chunks.profile, (m) => m.default);
+const ProfileAlerts = screen(chunks.profile, (m) => m.ProfileAlerts);
+const ProfileDevices = screen(chunks.profile, (m) => m.ProfileDevices);
 const Help = screen(chunks.help, (m) => m.default);
 const Onboarding = screen(chunks.onboarding, (m) => m.default);
 const Signup = screen(chunks.signup, (m) => m.default);
@@ -208,21 +220,33 @@ export default function App() {
                   <Route path="cardapio/estoque" element={<Stock />} />
                   <Route path="cardapio/festa" element={<Festa />} />
                   <Route path="cardapio/planos" element={<Planos />} />
-                  <Route path="loja" element={<Store />} />
+                  <Route path="loja" element={<StoreHub />} />
+                  <Route path="loja/perfil" element={<StoreProfile />} />
+                  <Route path="loja/horarios" element={<StoreHours />} />
+                  <Route path="loja/entrega" element={<StoreDelivery />} />
+                  <Route path="loja/preparo" element={<StorePace />} />
+                  <Route path="loja/encomendas" element={<StoreEncomendas />} />
+                  <Route path="loja/site" element={<StoreSite />} />
                   <Route path="pagamentos" element={<Payments />} />
+                  <Route path="pagamentos/formas" element={<PaymentMethods />} />
                   <Route path="whatsapp" element={<Whatsapp />} />
                   <Route path="impressoras" element={<Printers />} />
                   <Route path="impressoras/parear" element={<Printers />} />
                   <Route path="clientes" element={<Customers />} />
                   <Route path="clientes/:phone" element={<CustomerPage />} />
                   <Route path="marketing" element={<Marketing />} />
+                  <Route path="marketing/divulgar" element={<MarketingShare />} />
+                  <Route path="marketing/lembretes" element={<MarketingReminders />} />
                   <Route path="marketing/cartao" element={<BagCard />} />
                   <Route path="marketing/status" element={<StatusDoDia />} />
                   <Route path="aparencia" element={<Appearance />} />
                   <Route path="relatorios" element={<Reports />} />
                   <Route path="equipe" element={<Team />} />
+                  <Route path="equipe/atividade" element={<TeamActivity />} />
                   <Route path="conta" element={<Account />} />
                   <Route path="perfil" element={<Profile />} />
+                  <Route path="perfil/avisos" element={<ProfileAlerts />} />
+                  <Route path="perfil/aparelhos" element={<ProfileDevices />} />
                   <Route path="ajuda" element={<Help />} />
                   {/* Duá Copilot: managers and owners; a plan without it shows the upsell there */}
                   {manager ? <Route path="copiloto" element={<Copilot />} /> : null}

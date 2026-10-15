@@ -85,7 +85,7 @@ export function FreioCard({ className = '' }: { className?: string }) {
       className={className}
       action={
         <Link
-          to="/loja#freio"
+          to="/loja/preparo#freio"
           className="t-label inline-flex min-h-11 items-center gap-1 text-muted hover:text-ink"
         >
           ajustar <ArrowRight className="size-4" />

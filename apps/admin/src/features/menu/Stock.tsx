@@ -36,6 +36,7 @@ import { DuaNote, EmptyState, ErrorState, Hint, messageOf } from '../../ui/feedb
 import { Field, Segmented, Stepper, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { MenuTabs } from './MenuTabs.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { ChipsSkeleton, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -415,133 +416,169 @@ export default function Stock() {
   const noun = kind === 'produtos' ? 'produto' : 'adicional';
 
   return (
-    <PageBody>
-      <PageHeader title="Estoque" back="/cardapio" subtitle={subtitle} />
-
-      {error && !data ? (
-        <ErrorState error={error} retry={() => void refetch()} />
-      ) : isPending ? (
-        <div className="space-y-4">
-          <ChipsSkeleton count={3} />
-          <RowsSkeleton rows={6} />
-        </div>
-      ) : !all.length ? (
-        <EmptyState
-          art={<Mascote pose="catalogo" />}
-          title="Nenhum produto ainda"
-          body="Crie seus produtos no Cardápio. Depois você conta o estoque deles aqui."
-          action={<ButtonLink to="/cardapio">ir para o Cardápio</ButtonLink>}
-        />
-      ) : (
-        <>
-          {overview.data ? (
-            <Overview
-              ov={overview.data}
-              restock={restock.length}
-              onList={() => {
-                flush();
-                setListOpen(true);
-              }}
-              onUncosted={showUncosted}
-            />
-          ) : null}
-
-          <div role="tablist" aria-label="o que contar" className="mb-3 flex gap-2">
-            {(
-              [
-                ['produtos', 'Produtos'],
-                ['adicionais', 'Adicionais'],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                role="tab"
-                aria-selected={kind === k}
-                onClick={() => switchKind(k)}
-                className={cn(
-                  'press t-label min-h-11 rounded-full px-4 ring-1 transition-[color,background-color] duration-(--duration-quick)',
-                  kind === k
-                    ? 'bg-primary text-on-primary ring-primary'
-                    : 'bg-surface text-ink ring-line-strong hover:bg-hover',
-                )}
-              >
-                {label}
-              </button>
-            ))}
+    <PageBody wide>
+      <PageHeader title="Cardápio" subtitle={subtitle} />
+      <MenuTabs />
+      <div className="max-w-[880px]">
+        {error && !data ? (
+          <ErrorState error={error} retry={() => void refetch()} />
+        ) : isPending ? (
+          <div className="space-y-4">
+            <ChipsSkeleton count={3} />
+            <RowsSkeleton rows={6} />
           </div>
-
-          {kind === 'adicionais' && addonsQ.error && !addonsQ.data ? (
-            <ErrorState error={addonsQ.error} retry={() => void addonsQ.refetch()} />
-          ) : kind === 'adicionais' && addonsQ.isPending ? (
-            <div className="space-y-4">
-              <ChipsSkeleton count={3} />
-              <RowsSkeleton rows={4} avatar={false} />
-            </div>
-          ) : kind === 'adicionais' && !addons.length ? (
-            <EmptyState
-              art={<Mascote pose="catalogo" />}
-              title="Nenhum adicional pago ainda"
-              body="Adicionais como “Bacon extra” aparecem aqui quando um produto tem opções com preço."
-              action={<ButtonLink to="/cardapio">ir para o Cardápio</ButtonLink>}
-            />
-          ) : (
-            <>
-              <Segmented
-                label="mostrar"
-                value={shown}
-                onChange={(v) => {
+        ) : !all.length ? (
+          <EmptyState
+            art={<Mascote pose="catalogo" />}
+            title="Nenhum produto ainda"
+            body="Crie seus produtos no Cardápio. Depois você conta o estoque deles aqui."
+            action={<ButtonLink to="/cardapio">ir para o Cardápio</ButtonLink>}
+          />
+        ) : (
+          <>
+            {overview.data ? (
+              <Overview
+                ov={overview.data}
+                restock={restock.length}
+                onList={() => {
                   flush();
-                  setUncosted(false);
-                  setFilter(v);
+                  setListOpen(true);
                 }}
-                className="mb-4"
-                options={[
-                  { value: 'repor', label: 'Para repor', count: counts.repor },
-                  { value: 'contando', label: 'Contando', count: counts.contando },
-                  { value: 'sem', label: 'Sem contar', count: counts.sem },
-                ]}
+                onUncosted={showUncosted}
               />
-              {total > 8 ? (
-                <div className="mb-4">
-                  <TextInput
-                    type="search"
-                    aria-label={`buscar ${noun}`}
-                    placeholder={kind === 'produtos' ? 'Buscar produto' : 'Buscar adicional'}
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    lead={<MagnifyingGlass className="size-5" />}
-                  />
-                </div>
-              ) : null}
-              {uncosted ? (
-                <div className="mb-5 flex items-center gap-3 rounded-md bg-spark-soft py-1.5 pl-4 pr-1.5">
-                  <p className="t-body min-w-0 flex-1">
-                    Só os que estão sem custo. Toque no número e ponha quanto custa cada um.
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-11 shrink-0"
-                    onClick={() => setUncosted(false)}
-                  >
-                    ver todos
-                  </Button>
-                </div>
-              ) : kind === 'produtos' ? (
-                <Hint id="stock-screen" className="mb-5">
-                  Cada venda desconta sozinha. Quando chega a zero, o produto aparece como esgotado
-                  na loja. Toque no número para digitar uma contagem ou o que chegou.
-                </Hint>
-              ) : (
-                <Hint id="stock-addons" className="mb-5">
-                  Um adicional com o mesmo nome em vários produtos tem um estoque só. Cada pedido
-                  desconta sozinho e, no zero, ele aparece como esgotado em todos.
-                </Hint>
-              )}
+            ) : null}
 
-              {kind === 'produtos' ? (
-                !groups.length ? (
+            <div role="tablist" aria-label="o que contar" className="mb-3 flex gap-2">
+              {(
+                [
+                  ['produtos', 'Produtos'],
+                  ['adicionais', 'Adicionais'],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={kind === k}
+                  onClick={() => switchKind(k)}
+                  className={cn(
+                    'press t-label min-h-11 rounded-full px-4 ring-1 transition-[color,background-color] duration-(--duration-quick)',
+                    kind === k
+                      ? 'bg-primary text-on-primary ring-primary'
+                      : 'bg-surface text-ink ring-line-strong hover:bg-hover',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {kind === 'adicionais' && addonsQ.error && !addonsQ.data ? (
+              <ErrorState error={addonsQ.error} retry={() => void addonsQ.refetch()} />
+            ) : kind === 'adicionais' && addonsQ.isPending ? (
+              <div className="space-y-4">
+                <ChipsSkeleton count={3} />
+                <RowsSkeleton rows={4} avatar={false} />
+              </div>
+            ) : kind === 'adicionais' && !addons.length ? (
+              <EmptyState
+                art={<Mascote pose="catalogo" />}
+                title="Nenhum adicional pago ainda"
+                body="Adicionais como “Bacon extra” aparecem aqui quando um produto tem opções com preço."
+                action={<ButtonLink to="/cardapio">ir para o Cardápio</ButtonLink>}
+              />
+            ) : (
+              <>
+                <Segmented
+                  label="mostrar"
+                  value={shown}
+                  onChange={(v) => {
+                    flush();
+                    setUncosted(false);
+                    setFilter(v);
+                  }}
+                  className="mb-4"
+                  options={[
+                    { value: 'repor', label: 'Para repor', count: counts.repor },
+                    { value: 'contando', label: 'Contando', count: counts.contando },
+                    { value: 'sem', label: 'Sem contar', count: counts.sem },
+                  ]}
+                />
+                {total > 8 ? (
+                  <div className="mb-4">
+                    <TextInput
+                      type="search"
+                      aria-label={`buscar ${noun}`}
+                      placeholder={kind === 'produtos' ? 'Buscar produto' : 'Buscar adicional'}
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      lead={<MagnifyingGlass className="size-5" />}
+                    />
+                  </div>
+                ) : null}
+                {uncosted ? (
+                  <div className="mb-5 flex items-center gap-3 rounded-md bg-spark-soft py-1.5 pl-4 pr-1.5">
+                    <p className="t-body min-w-0 flex-1">
+                      Só os que estão sem custo. Toque no número e ponha quanto custa cada um.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-11 shrink-0"
+                      onClick={() => setUncosted(false)}
+                    >
+                      ver todos
+                    </Button>
+                  </div>
+                ) : kind === 'produtos' ? (
+                  <Hint id="stock-screen" className="mb-5">
+                    Cada venda desconta sozinha. Quando chega a zero, o produto aparece como
+                    esgotado na loja. Toque no número para digitar uma contagem ou o que chegou.
+                  </Hint>
+                ) : (
+                  <Hint id="stock-addons" className="mb-5">
+                    Um adicional com o mesmo nome em vários produtos tem um estoque só. Cada pedido
+                    desconta sozinho e, no zero, ele aparece como esgotado em todos.
+                  </Hint>
+                )}
+
+                {kind === 'produtos' ? (
+                  !groups.length ? (
+                    <Empty
+                      kind={kind}
+                      shown={shown}
+                      q={q}
+                      uncosted={uncosted}
+                      onSem={() => setFilter('sem')}
+                    />
+                  ) : (
+                    <div className="space-y-6">
+                      {groups.map(({ c, rows }) => (
+                        <section key={c.id} aria-labelledby={`stock-cat-${c.id}`}>
+                          <h2 id={`stock-cat-${c.id}`} className="t-label mb-2 px-1 text-muted">
+                            {c.name}
+                          </h2>
+                          <Card className="divide-y divide-line overflow-hidden">
+                            {rows.map((p) => {
+                              const sk = `p:${p.id}`;
+                              return (
+                                <StockRow
+                                  key={p.id}
+                                  p={p}
+                                  count={countOf(sk, p.stockQuantity)}
+                                  dirty={!!pending[sk]}
+                                  flash={flash === sk}
+                                  onTap={(by) => tap(sk, by)}
+                                  onEdit={() => edit({ type: 'product', p })}
+                                />
+                              );
+                            })}
+                          </Card>
+                        </section>
+                      ))}
+                    </div>
+                  )
+                ) : !addonRows.length ? (
                   <Empty
                     kind={kind}
                     shown={shown}
@@ -550,81 +587,47 @@ export default function Stock() {
                     onSem={() => setFilter('sem')}
                   />
                 ) : (
-                  <div className="space-y-6">
-                    {groups.map(({ c, rows }) => (
-                      <section key={c.id} aria-labelledby={`stock-cat-${c.id}`}>
-                        <h2 id={`stock-cat-${c.id}`} className="t-label mb-2 px-1 text-muted">
-                          {c.name}
-                        </h2>
-                        <Card className="divide-y divide-line overflow-hidden">
-                          {rows.map((p) => {
-                            const sk = `p:${p.id}`;
-                            return (
-                              <StockRow
-                                key={p.id}
-                                p={p}
-                                count={countOf(sk, p.stockQuantity)}
-                                dirty={!!pending[sk]}
-                                flash={flash === sk}
-                                onTap={(by) => tap(sk, by)}
-                                onEdit={() => edit({ type: 'product', p })}
-                              />
-                            );
-                          })}
-                        </Card>
-                      </section>
-                    ))}
-                  </div>
-                )
-              ) : !addonRows.length ? (
-                <Empty
-                  kind={kind}
-                  shown={shown}
-                  q={q}
-                  uncosted={uncosted}
-                  onSem={() => setFilter('sem')}
-                />
-              ) : (
-                <Card className="divide-y divide-line overflow-hidden">
-                  {addonRows.map((a) => {
-                    const sk = `a:${a.key}`;
-                    return (
-                      <AddonRow
-                        key={a.key}
-                        a={a}
-                        count={countOf(sk, a.stockQuantity)}
-                        dirty={!!pending[sk]}
-                        onTap={(by) => tap(sk, by)}
-                        onEdit={() => edit({ type: 'addon', a })}
-                      />
-                    );
-                  })}
-                </Card>
-              )}
-            </>
-          )}
-        </>
-      )}
+                  <Card className="divide-y divide-line overflow-hidden">
+                    {addonRows.map((a) => {
+                      const sk = `a:${a.key}`;
+                      return (
+                        <AddonRow
+                          key={a.key}
+                          a={a}
+                          count={countOf(sk, a.stockQuantity)}
+                          dirty={!!pending[sk]}
+                          onTap={(by) => tap(sk, by)}
+                          onEdit={() => edit({ type: 'addon', a })}
+                        />
+                      );
+                    })}
+                  </Card>
+                )}
+              </>
+            )}
+          </>
+        )}
 
-      <CountSheet
-        s={editing}
-        costFirst={uncosted}
-        onClose={() => setEditing(null)}
-        onAdd={(s, add, reason) => run([{ sk: skOf(s), add, reason }])}
-        settled={() => Promise.all([...inflight.current])}
-        onPricing={(p) => {
-          setEditing(null);
-          // after the count sheet's history entry is gone, or its back-pop closes this one too
-          setTimeout(() => setPricing(p), 320);
-        }}
-      />
-      <PricingSheet product={pricing} onClose={() => setPricing(null)} />
-      <ShoppingSheet
-        open={listOpen}
-        items={restock}
-        store={store}
-        onClose={() => setListOpen(false)}
-      />
+        <CountSheet
+          s={editing}
+          costFirst={uncosted}
+          onClose={() => setEditing(null)}
+          onAdd={(s, add, reason) => run([{ sk: skOf(s), add, reason }])}
+          settled={() => Promise.all([...inflight.current])}
+          onPricing={(p) => {
+            setEditing(null);
+            // after the count sheet's history entry is gone, or its back-pop closes this one too
+            setTimeout(() => setPricing(p), 320);
+          }}
+        />
+        <PricingSheet product={pricing} onClose={() => setPricing(null)} />
+        <ShoppingSheet
+          open={listOpen}
+          items={restock}
+          store={store}
+          onClose={() => setListOpen(false)}
+        />
+      </div>
     </PageBody>
   );
 }

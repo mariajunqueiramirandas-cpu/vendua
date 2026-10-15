@@ -85,6 +85,7 @@ export const NAV: NavItem[] = [
   },
   { to: '/loja', label: 'Loja', Icon: Storefront, min: 'manager', group: 'loja', primary: true },
   { to: '/aparencia', label: 'Aparência', Icon: PaintBrush, min: 'manager', group: 'loja' },
+  { to: '/pagamentos', label: 'Pagamentos', Icon: Wallet, min: 'manager', group: 'loja' },
   // in the bar while it's on, in "Mais" before (navFor)
   {
     to: '/vendedor',
@@ -97,7 +98,6 @@ export const NAV: NavItem[] = [
   { to: '/clientes', label: 'Clientes', Icon: Users, min: 'manager', group: 'vender' },
   { to: '/marketing', label: 'Marketing', Icon: Megaphone, min: 'manager', group: 'vender' },
   { to: '/relatorios', label: 'Relatórios', Icon: ChartLineUp, min: 'manager', group: 'vender' },
-  { to: '/pagamentos', label: 'Pagamentos', Icon: Wallet, min: 'manager', group: 'ajustes' },
   { to: '/whatsapp', label: 'WhatsApp', Icon: WhatsappLogo, min: 'manager', group: 'ajustes' },
   {
     to: '/impressoras',
@@ -159,6 +159,24 @@ export function moreOf(items: NavItem[], vendedorOn: boolean): NavSection[] {
   return more;
 }
 
+// An area's tabs (PageTabs) are its views side by side: depth 0 like the area's root, swapped
+// with a cross-fade, and no back button. `title` names the view in a drill-down's back button.
+const SIBLINGS: { match: RegExp; root: string; title: string }[] = [
+  { match: /^\/pedidos\/agendados$/, root: '/pedidos', title: 'Encomendas' },
+  { match: /^\/pedidos\/historico$/, root: '/pedidos', title: 'Histórico' },
+  { match: /^\/cardapio\/estoque$/, root: '/cardapio', title: 'Estoque' },
+  { match: /^\/cardapio\/festa$/, root: '/cardapio', title: 'Festa' },
+  { match: /^\/cardapio\/planos$/, root: '/cardapio', title: 'Planos' },
+  { match: /^\/pagamentos\/formas$/, root: '/pagamentos', title: 'Formas de pagamento' },
+  { match: /^\/marketing\/divulgar$/, root: '/marketing', title: 'Divulgar' },
+  { match: /^\/marketing\/lembretes$/, root: '/marketing', title: 'Lembretes' },
+  { match: /^\/equipe\/atividade$/, root: '/equipe', title: 'Atividade' },
+  // Meu perfil lives in the person's menu, not the nav: its views are siblings all the same
+  { match: /^\/perfil$/, root: '/perfil', title: 'Meu perfil' },
+  { match: /^\/perfil\/avisos$/, root: '/perfil', title: 'Avisos' },
+  { match: /^\/perfil\/aparelhos$/, root: '/perfil', title: 'Aparelhos' },
+];
+
 // Phones stack screens left to right (§3.3): tab and "Mais" roots are depth 0, a drill-down
 // is depth 1 with the root it belongs to. `title` names the screen in the next one's back button.
 const DEEP: { match: RegExp; parent: string; title: string }[] = [
@@ -170,14 +188,18 @@ const DEEP: { match: RegExp; parent: string; title: string }[] = [
   { match: /^\/pdv\/mesas\/qr$/, parent: '/pdv/mesas', title: 'QR das mesas' },
   { match: /^\/pdv\/comanda\/[^/]+$/, parent: '/pdv/mesas', title: 'Comanda' },
   { match: /^\/pdv\/caixa\/[^/]+$/, parent: '/pdv/caixa', title: 'Fechamento' },
-  { match: /^\/pedidos\/historico$/, parent: '/pedidos', title: 'Histórico' },
-  { match: /^\/pedidos\/agendados$/, parent: '/pedidos', title: 'Encomendas' },
   { match: /^\/pedidos\/[^/]+$/, parent: '/pedidos', title: 'Pedido' },
   { match: /^\/cardapio\/produto\/[^/]+$/, parent: '/cardapio', title: 'Produto' },
   { match: /^\/cardapio\/importar$/, parent: '/cardapio', title: 'Importar' },
-  { match: /^\/cardapio\/estoque$/, parent: '/cardapio', title: 'Estoque' },
-  { match: /^\/cardapio\/festa$/, parent: '/cardapio', title: 'Festa' },
-  { match: /^\/cardapio\/planos$/, parent: '/cardapio', title: 'Planos' },
+  // Loja is a hub: each part of the store's setup is its own screen
+  { match: /^\/loja\/perfil$/, parent: '/loja', title: 'Perfil da loja' },
+  { match: /^\/loja\/horarios$/, parent: '/loja', title: 'Horários' },
+  { match: /^\/loja\/entrega$/, parent: '/loja', title: 'Entrega' },
+  { match: /^\/loja\/preparo$/, parent: '/loja', title: 'Tempo de preparo' },
+  { match: /^\/loja\/encomendas$/, parent: '/loja', title: 'Encomendas' },
+  { match: /^\/loja\/site$/, parent: '/loja', title: 'Site e endereço' },
+  { match: /^\/marketing\/cartao$/, parent: '/marketing/divulgar', title: 'Cartão da sacola' },
+  { match: /^\/marketing\/status$/, parent: '/marketing/divulgar', title: 'Status do dia' },
   { match: /^\/clientes\/[^/]+$/, parent: '/clientes', title: 'Cliente' },
   { match: /^\/vendedor\/conversas\/[^/]+$/, parent: '/vendedor/conversas', title: 'Conversa' },
   { match: /^\/vendedor\/conversas$/, parent: '/vendedor', title: 'Conversas' },
@@ -198,6 +220,9 @@ export interface Place {
 }
 
 export function placeOf(pathname: string): Place | null {
+  // before DEEP: /pedidos/agendados is a tab of Pedidos, not an order
+  const sib = SIBLINGS.find((d) => d.match.test(pathname));
+  if (sib) return { depth: 0, root: sib.root, title: sib.title };
   const deep = DEEP.find((d) => d.match.test(pathname));
   if (deep) return { depth: 1, root: deep.parent, title: deep.title };
   const top = NAV.find((n) => n.to === pathname);
@@ -206,4 +231,29 @@ export function placeOf(pathname: string): Place | null {
 
 // a drill-down's parent is a tab or "Mais" root, or another drill-down (a conversation's list)
 export const rootLabel = (root: string) =>
-  NAV.find((n) => n.to === root)?.label ?? DEEP.find((d) => d.match.test(root))?.title ?? 'Voltar';
+  NAV.find((n) => n.to === root)?.label ??
+  SIBLINGS.find((d) => d.match.test(root))?.title ??
+  DEEP.find((d) => d.match.test(root))?.title ??
+  'Voltar';
+
+// Sections that became screens of their own: links from before (Core's checklist and Início
+// rows, notifications already sent, the help) land where the section lives now.
+const MOVED: Record<string, Record<string, string>> = {
+  '/loja': {
+    perfil: '/loja/perfil',
+    horarios: '/loja/horarios',
+    'dias-especiais': '/loja/horarios#dias-especiais',
+    mensagens: '/loja/horarios#mensagens',
+    entrega: '/loja/entrega',
+    freio: '/loja/preparo#freio',
+    encomendas: '/loja/encomendas',
+  },
+  '/conta': { enderecos: '/loja/site', dominio: '/loja/site#dominio', site: '/loja/site#site' },
+  '/marketing': { compartilhar: '/marketing/divulgar' },
+  '/perfil': { avisos: '/perfil/avisos' },
+};
+
+/** Where an old `path#section` address lives now, or null when it hasn't moved. */
+export function movedTo(pathname: string, hash: string): string | null {
+  return MOVED[pathname]?.[hash.replace(/^#/, '')] ?? null;
+}

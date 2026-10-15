@@ -8,23 +8,26 @@ import {
   WarningCircle,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, type ReactNode } from 'react';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { api, type Payments as PaymentsData, type PayMethod } from '../../lib/api.ts';
 import { ago, money, plural } from '../../lib/format.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
-import { Button } from '../../ui/Button.tsx';
+import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { RankBars } from '../../ui/charts.tsx';
 import { DuaNote, ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Chips, Field, TextInput, Toggle } from '../../ui/fields.tsx';
+import { Notice } from '../../ui/Notice.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { payError, REVIEW } from '../../ui/PaymentChip.tsx';
 import { PixQr } from '../../ui/PixCode.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
+import { PageTabs } from '../../ui/Tabs.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { TABS } from '../../app/tabs.ts';
 import { useMarkPaid } from '../orders/actions.ts';
 import { AdjustmentLine } from './Adjustments.tsx';
 import { MercadoPagoCard, mpLive, useMpArrival } from './MercadoPago.tsx';
@@ -55,78 +58,142 @@ const METHOD: Record<PayMethod, { label: string; Icon: typeof PixLogo; hint: str
   cash: { label: 'Dinheiro', Icon: Money, hint: 'Na entrega ou retirada.' },
 };
 
-export default function Payments() {
-  const { data, error, refetch } = useQuery({ queryKey: qk.payments, queryFn: api.payments });
-  const owner = useCan('owner');
-  useMpArrival();
-  if (error && !data)
-    return (
-      <PageBody>
-        <ErrorState error={error} retry={() => void refetch()} />
-      </PageBody>
-    );
-  // the month only tells something once money can arrive through Mercado Pago
-  const showMonth = data && (data.mercadoPago.status !== 'not_connected' || data.month.count > 0);
-  const pixSection = data ? (
-    <Section
-      title="Sua chave Pix"
-      hint={
-        mpLive(data.mercadoPago)
-          ? 'Fica de reserva: se o Mercado Pago sair do ar para a sua loja, o Pix volta para esta chave.'
-          : 'O Pix que aparece na sua loja, com o valor do pedido já preenchido.'
-      }
-    >
-      <PixCard data={data} canEdit={owner} />
-    </Section>
-  ) : null;
+// Pagamentos in two views: Recebimentos (what needs a look today and what came in) and Formas
+// de pagamento (how the store gets paid: the methods, the Pix key, Mercado Pago).
+
+function usePayments() {
+  return useQuery({ queryKey: qk.payments, queryFn: api.payments });
+}
+
+function PaymentsFrame({
+  data,
+  error,
+  retry,
+  children,
+}: {
+  data: PaymentsData | undefined;
+  error: unknown;
+  retry: () => void;
+  children: (d: PaymentsData) => ReactNode;
+}) {
   return (
     <PageBody wide>
-      <PageHeader title="Pagamentos" subtitle="Como sua loja recebe." />
-      {!data ? (
+      <PageHeader title="Pagamentos" subtitle="Como sua loja recebe, e o que já chegou." />
+      <PageTabs tabs={TABS.pagamentos} label="Pagamentos" />
+      {error && !data ? (
+        <ErrorState error={error} retry={retry} />
+      ) : !data ? (
         <SectionsSkeleton columns={2} />
       ) : (
-        <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-          <div className="space-y-8">
-            <Review data={data} />
-            <Awaiting data={data} />
-            {/* where the money arrives; Mercado Pago first once it's live, the key then being its backup */}
-            {mpLive(data.mercadoPago) ? null : pixSection}
-            <MercadoPagoCard data={data} owner={owner} />
-            {mpLive(data.mercadoPago) ? pixSection : null}
-          </div>
-          <div className="space-y-8">
-            <Section
-              title="Formas de pagamento"
-              hint={owner ? undefined : 'Só quem é dono da loja muda isto.'}
-            >
-              <Methods data={data} canEdit={owner} />
-            </Section>
-            {showMonth ? (
-              <Section
-                title="Este mês"
-                hint={`O que chegou pelo Mercado Pago em ${monthName(data.month.month)}.`}
-              >
-                <MonthCard data={data} />
-              </Section>
-            ) : null}
-            <Section title="Últimos 30 dias">
-              <Card className="p-5">
-                <RankBars
-                  title="Vendas por forma de pagamento"
-                  summary={summary30(data)}
-                  format={money}
-                  rows={data.last30ByMethod.map((r) => ({
-                    key: r.method,
-                    label: METHOD[r.method]?.label ?? r.method,
-                    value: r.cents,
-                  }))}
-                />
-              </Card>
-            </Section>
-          </div>
-        </div>
+        children(data)
       )}
     </PageBody>
+  );
+}
+
+export default function Payments() {
+  const [search] = useSearchParams();
+  const { data, error, refetch } = usePayments();
+  // Mercado Pago sends the owner back to /pagamentos: the connection lives in Formas
+  if (search.get('mp')) return <Navigate to={`/pagamentos/formas?${search}`} replace />;
+  return (
+    <PaymentsFrame data={data} error={error} retry={() => void refetch()}>
+      {(d) => {
+        // the month only tells something once money can arrive through Mercado Pago
+        const showMonth = d.mercadoPago.status !== 'not_connected' || d.month.count > 0;
+        // nothing set to receive with yet: the way there before anything else
+        const unset = !d.pix && !mpLive(d.mercadoPago);
+        return (
+          <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
+            <div className="space-y-8">
+              {unset ? (
+                <Notice
+                  tone="warning"
+                  title="Falta dizer como a loja recebe"
+                  action={
+                    <ButtonLink to="/pagamentos/formas" replace state={{ vt: 'fade' }} size="sm">
+                      configurar
+                    </ButtonLink>
+                  }
+                >
+                  Cadastre a chave Pix ou conecte o Mercado Pago para receber pelo site.
+                </Notice>
+              ) : null}
+              <Review data={d} />
+              <Awaiting data={d} />
+            </div>
+            <div className="space-y-8">
+              {showMonth ? (
+                <Section
+                  title="Este mês"
+                  hint={`O que chegou pelo Mercado Pago em ${monthName(d.month.month)}.`}
+                >
+                  <MonthCard data={d} />
+                </Section>
+              ) : null}
+              <Section title="Últimos 30 dias">
+                <Card className="p-5">
+                  <RankBars
+                    title="Vendas por forma de pagamento"
+                    summary={summary30(d)}
+                    format={money}
+                    rows={d.last30ByMethod.map((r) => ({
+                      key: r.method,
+                      label: METHOD[r.method]?.label ?? r.method,
+                      value: r.cents,
+                    }))}
+                  />
+                </Card>
+              </Section>
+            </div>
+          </div>
+        );
+      }}
+    </PaymentsFrame>
+  );
+}
+
+export function PaymentMethods() {
+  const { data, error, refetch } = usePayments();
+  const owner = useCan('owner');
+  useMpArrival();
+  return (
+    <PaymentsFrame data={data} error={error} retry={() => void refetch()}>
+      {(d) => {
+        const pixSection = (
+          <Section
+            title="Sua chave Pix"
+            hint={
+              mpLive(d.mercadoPago)
+                ? 'Fica de reserva: se o Mercado Pago sair do ar para a sua loja, o Pix volta para esta chave.'
+                : 'O Pix que aparece na sua loja, com o valor do pedido já preenchido.'
+            }
+          >
+            <PixCard data={d} canEdit={owner} />
+          </Section>
+        );
+        return (
+          <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
+            <Section
+              title="O que a loja aceita"
+              hint={
+                owner
+                  ? 'Só aparecem na loja as que estão ligadas.'
+                  : 'Só quem é dono da loja muda isto.'
+              }
+            >
+              <Methods data={d} canEdit={owner} />
+            </Section>
+            <div className="space-y-8">
+              {/* where the money arrives; Mercado Pago first once it's live, the key then being its backup */}
+              {mpLive(d.mercadoPago) ? null : pixSection}
+              <MercadoPagoCard data={d} owner={owner} />
+              {mpLive(d.mercadoPago) ? pixSection : null}
+            </div>
+          </div>
+        );
+      }}
+    </PaymentsFrame>
   );
 }
 

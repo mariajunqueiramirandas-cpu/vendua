@@ -15,10 +15,11 @@ import {
   Trash,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { instagramHandle, whatsappDigits } from '@vendua/kernel/rules';
 import { api, ApiError, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
+import { useLandOnHash } from '../../lib/hash.ts';
 import { dateShort, hhmm, isoDate, money, phone } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
@@ -46,31 +47,114 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useHeld } from '../menu/held.ts';
-import { BillingHoldNotice } from './BillingHold.tsx';
 import { holidaysAhead, type Holiday } from './holidays.ts';
-import { StatusPill, useStoreQuery } from './StatusPill.tsx';
+import { useStoreQuery } from './StatusPill.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { FreioSettings } from './Freio.tsx';
 import { Encomendas } from './Encomendas.tsx';
 
 const ZoneMap = lazy(() => import('../../ui/ZoneMap.tsx').then((m) => ({ default: m.ZoneMap })));
 
-export default function Store() {
+type Patch = (b: Record<string, unknown>) => void;
+type Run = (b: Record<string, unknown>) => Promise<StoreView>;
+
+/**
+ * One part of the store's setup on a screen of its own: Loja's hub (Hub.tsx) opens each. Every
+ * field saves as it's left; the header says when it's saved.
+ */
+function StoreScreen({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: (s: StoreView, patch: Patch, run: Run) => ReactNode;
+}) {
   const { data, error, refetch } = useStoreQuery();
-  if (error && !data)
-    return (
-      <PageBody>
+  const { run, state } = useStorePatch();
+  useLandOnHash(!!data);
+  const patch = (b: Record<string, unknown>) => void run(b).catch(() => undefined);
+  return (
+    <PageBody>
+      <PageHeader
+        title={title}
+        back="/loja"
+        subtitle={
+          <span className="inline-flex flex-wrap items-center gap-x-2">
+            {subtitle} <SaveMark state={state} />
+          </span>
+        }
+      />
+      {data ? (
+        <div className="space-y-8">{children(data, patch, run)}</div>
+      ) : error ? (
         <ErrorState error={error} retry={() => void refetch()} />
-      </PageBody>
-    );
-  if (!data)
-    return (
-      <PageBody>
-        <PageHeader title="Loja" />
-        <SectionsSkeleton columns={2} />
-      </PageBody>
-    );
-  return <StoreEditor s={data} />;
+      ) : (
+        <SectionsSkeleton />
+      )}
+    </PageBody>
+  );
+}
+
+export function StoreProfile() {
+  return (
+    <StoreScreen title="Perfil da loja" subtitle="Nome, logo, contatos e endereço.">
+      {(s, patch, run) => <Profile s={s} patch={patch} run={run} />}
+    </StoreScreen>
+  );
+}
+
+export function StoreHours() {
+  return (
+    <StoreScreen
+      title="Horários"
+      subtitle="Quando a loja aceita pedidos, e o que ela diz quando não aceita."
+    >
+      {(s, patch, run) => (
+        <>
+          <Hours s={s} patch={patch} />
+          <SpecialDays s={s} run={run} />
+          <Messages s={s} patch={patch} />
+        </>
+      )}
+    </StoreScreen>
+  );
+}
+
+export function StoreDelivery() {
+  return (
+    <StoreScreen
+      title="Entrega e retirada"
+      subtitle="Como o pedido chega ao cliente, e por quanto."
+    >
+      {(s, patch, run) => <Delivery s={s} patch={patch} run={run} />}
+    </StoreScreen>
+  );
+}
+
+export function StorePace() {
+  return (
+    <StoreScreen
+      title="Tempo de preparo"
+      subtitle="O tempo que a loja promete, e o que ela faz quando a cozinha enche."
+    >
+      {(s, patch, run) => (
+        <>
+          <Pace s={s} patch={patch} run={run} />
+          <FreioSettings />
+        </>
+      )}
+    </StoreScreen>
+  );
+}
+
+export function StoreEncomendas() {
+  return (
+    <StoreScreen title="Encomendas" subtitle="Pedidos para outro dia: bolos, festas, kits.">
+      {(s, _patch, run) => <Encomendas s={s} run={run} />}
+    </StoreScreen>
+  );
 }
 
 // every section saves on its own: only the newest reply may paint, an older one asks for the truth
@@ -98,102 +182,92 @@ function useStorePatch() {
   return { run, state: save.state };
 }
 
-function StoreEditor({ s }: { s: StoreView }) {
-  const { run, state } = useStorePatch();
-  useEffect(() => {
-    // deep links from elsewhere (Relatórios → /loja#entrega) land on their section
-    const id = location.hash.slice(1);
-    if (id) document.getElementById(id)?.scrollIntoView({ block: 'start' });
-  }, []);
-  const patch = (b: Record<string, unknown>) => void run(b).catch(() => undefined);
+/** What the store says while it isn't taking orders (the pause and the closed message). */
+function Messages({ s, patch }: { s: StoreView; patch: Patch }) {
   return (
-    <PageBody wide>
-      <PageHeader
-        title="Loja"
-        subtitle={
-          <span className="inline-flex flex-wrap items-center gap-2">
-            <a
-              href={s.url}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2"
-            >
-              {s.url.replace('https://', '')}
-            </a>
-            <SaveMark state={state} />
-          </span>
-        }
-        actions={<StatusPill />}
-      />
-      {s.status.billingHold ? <BillingHoldNotice className="mb-6" /> : null}
-      <nav aria-label="seções" className="scroll-row -mx-4 mb-6 px-4 md:-mx-8 md:px-8">
-        <ul className="flex w-max gap-2">
-          {[
-            // the page's order on a phone (one column)
-            ['horarios', 'Horários'],
-            ['encomendas', 'Encomendas'],
-            ['mensagens', 'Mensagens'],
-            ['perfil', 'Perfil'],
-            ['entrega', 'Entrega e retirada'],
-            ['freio', 'Freio automático'],
-          ].map(([id, label]) => (
-            <li key={id}>
-              <a
-                href={`#${id}`}
-                className="t-label inline-flex min-h-11 items-center rounded-full bg-surface px-4 ring-1 ring-line-strong hover:bg-hover"
-              >
-                {label}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
-        <div className="space-y-8">
-          <Hours s={s} patch={patch} />
-          <SpecialDays s={s} run={run} />
-          <Encomendas s={s} run={run} />
-          <Section
-            id="mensagens"
-            title="Mensagens"
-            hint="O que a loja diz quando não está aceitando pedidos."
-          >
-            <Card className="space-y-5 p-5">
-              <Field label="Quando pausada" htmlFor="m-pause" optional>
-                <CommitInput
-                  id="m-pause"
-                  multiline
-                  maxLength={200}
-                  value={s.status.pauseMessage ?? ''}
-                  placeholder="Ex.: Voltamos às 18h com fornada nova!"
-                  onCommit={(v) => patch({ messages: { pause: v || null } })}
-                />
-              </Field>
-              <Field
-                label="Quando fechada"
-                htmlFor="m-closed"
-                optional
-                helper="Sem recado, a loja mostra quando abre de novo."
-              >
-                <CommitInput
-                  id="m-closed"
-                  multiline
-                  maxLength={200}
-                  value={s.status.closedMessage ?? ''}
-                  placeholder="Ex.: Abrimos amanhã às 9h. Já dá para encomendar!"
-                  onCommit={(v) => patch({ messages: { closed: v || null } })}
-                />
-              </Field>
-            </Card>
-          </Section>
-          <Profile s={s} patch={patch} run={run} />
+    <Section
+      id="mensagens"
+      title="Mensagens"
+      hint="O que a loja diz quando não está aceitando pedidos."
+    >
+      <Card className="space-y-5 p-5">
+        <Field label="Quando pausada" htmlFor="m-pause" optional>
+          <CommitInput
+            id="m-pause"
+            multiline
+            maxLength={200}
+            value={s.status.pauseMessage ?? ''}
+            placeholder="Ex.: Voltamos às 18h com fornada nova!"
+            onCommit={(v) => patch({ messages: { pause: v || null } })}
+          />
+        </Field>
+        <Field
+          label="Quando fechada"
+          htmlFor="m-closed"
+          optional
+          helper="Sem recado, a loja mostra quando abre de novo."
+        >
+          <CommitInput
+            id="m-closed"
+            multiline
+            maxLength={200}
+            value={s.status.closedMessage ?? ''}
+            placeholder="Ex.: Abrimos amanhã às 9h. Já dá para encomendar!"
+            onCommit={(v) => patch({ messages: { closed: v || null } })}
+          />
+        </Field>
+      </Card>
+    </Section>
+  );
+}
+
+/** The kitchen's pace: what the store promises, how fast it accepts, and "muitos pedidos agora". */
+function Pace({ s, patch, run }: { s: StoreView; patch: Patch; run: Run }) {
+  const o = s.operations;
+  return (
+    <Section
+      id="preparo"
+      title="Preparo e aceite"
+      hint="O cliente vê o tempo de preparo na loja, somado ao da entrega."
+    >
+      <Card className="space-y-2 p-5">
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field label="Tempo de preparo de sempre" helper="Vem marcado ao aceitar um pedido.">
+            <SavedStepper
+              label="tempo de preparo"
+              value={o.prepTimeMinutes}
+              min={5}
+              max={240}
+              step={5}
+              suffix=" min"
+              onSave={(v) => run({ operations: { prepTimeMinutes: v } }).catch(() => undefined)}
+            />
+          </Field>
+          <Field label="Aceitar pedidos em até" helper="Depois disso o pedido fica em destaque.">
+            <SavedStepper
+              label="tempo para aceitar"
+              value={o.acceptTargetMinutes}
+              min={1}
+              max={60}
+              suffix=" min"
+              onSave={(v) => run({ operations: { acceptTargetMinutes: v } }).catch(() => undefined)}
+            />
+          </Field>
         </div>
-        <div className="space-y-8">
-          <Delivery s={s} patch={patch} run={run} />
-          <FreioSettings />
+        <div className="border-t border-line pt-2">
+          <Toggle
+            checked={o.demand === 'high'}
+            onChange={(v) => patch({ operations: { demand: v ? 'high' : 'normal' } })}
+            label={
+              <span className="inline-flex items-center gap-2">
+                <Fire className="size-5 text-warning" /> Muitos pedidos agora
+              </span>
+            }
+            description={`Avisa na loja que o preparo está levando mais que os ~${o.prepTimeMinutes} min de sempre.`}
+          />
         </div>
-      </div>
-    </PageBody>
+      </Card>
+    </Section>
   );
 }
 
@@ -208,7 +282,7 @@ function Hours({ s, patch }: { s: StoreView; patch: (b: Record<string, unknown>)
   return (
     <Section
       id="horarios"
-      title="Horários"
+      title="A semana"
       hint="Quando a loja aceita pedidos para agora."
       action={<SaveMark state={state} />}
     >
@@ -624,240 +698,219 @@ function Delivery({
   };
   const neighborhoodZones = zones.filter((z) => z.kind === 'neighborhood');
   return (
-    <Section id="entrega" title="Entrega e retirada">
-      <Card className="space-y-2 p-5">
-        <Toggle
-          checked={o.pickupEnabled}
-          onChange={(v) => patch({ operations: { pickupEnabled: v } })}
-          label="Retirada na loja"
-          description={
-            o.pickupEnabled
-              ? 'O cliente busca o pedido no endereço abaixo.'
-              : 'Deixe o cliente buscar o pedido.'
-          }
-        />
-        {o.pickupEnabled ? (
-          <div className="animate-fade-up space-y-4 rounded-md p-4 ring-1 ring-line">
-            <Field
-              label="Onde retirar"
-              htmlFor="pk-addr"
-              helper="Aparece para quem escolhe retirar, na loja e no pedido."
-            >
-              <CommitInput
-                id="pk-addr"
-                maxLength={200}
-                autoComplete="off"
-                value={o.pickupAddress ?? ''}
-                placeholder={s.profile.address ?? 'Ex.: Rua das Flores, 120 — Centro'}
-                onCommit={(v) => patch({ operations: { pickupAddress: v || null } })}
-              />
-            </Field>
-            {!o.pickupAddress && s.profile.address ? (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="-mt-2"
-                onClick={() => patch({ operations: { pickupAddress: s.profile.address } })}
+    <>
+      <Section id="entrega" title="Como o cliente recebe">
+        <Card className="space-y-2 p-5">
+          <Toggle
+            checked={o.pickupEnabled}
+            onChange={(v) => patch({ operations: { pickupEnabled: v } })}
+            label="Retirada na loja"
+            description={
+              o.pickupEnabled
+                ? 'O cliente busca o pedido no endereço abaixo.'
+                : 'Deixe o cliente buscar o pedido.'
+            }
+          />
+          {o.pickupEnabled ? (
+            <div className="animate-fade-up space-y-4 rounded-md p-4 ring-1 ring-line">
+              <Field
+                label="Onde retirar"
+                htmlFor="pk-addr"
+                helper="Aparece para quem escolhe retirar, na loja e no pedido."
               >
-                usar o endereço da loja
-              </Button>
-            ) : null}
+                <CommitInput
+                  id="pk-addr"
+                  maxLength={200}
+                  autoComplete="off"
+                  value={o.pickupAddress ?? ''}
+                  placeholder={s.profile.address ?? 'Ex.: Rua das Flores, 120 — Centro'}
+                  onCommit={(v) => patch({ operations: { pickupAddress: v || null } })}
+                />
+              </Field>
+              {!o.pickupAddress && s.profile.address ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="-mt-2"
+                  onClick={() => patch({ operations: { pickupAddress: s.profile.address } })}
+                >
+                  usar o endereço da loja
+                </Button>
+              ) : null}
+              <Field
+                label="Como retirar"
+                optional
+                htmlFor="pk-how"
+                helper="Um recado curto: onde parar, a quem chamar, que horas."
+              >
+                <CommitInput
+                  id="pk-how"
+                  multiline
+                  maxLength={400}
+                  value={o.pickupInstructions ?? ''}
+                  placeholder="Ex.: Toque o interfone da casa 2. Retiradas até as 18h."
+                  onCommit={(v) => patch({ operations: { pickupInstructions: v || null } })}
+                />
+              </Field>
+            </div>
+          ) : null}
+          <Toggle
+            checked={o.deliveryEnabled}
+            onChange={(v) => patch({ operations: { deliveryEnabled: v } })}
+            label="Entrega"
+            description={
+              s.distancePricing.enabled
+                ? 'Pela distância até a porta do cliente.'
+                : 'Nos bairros ou raio abaixo.'
+            }
+          />
+          {!o.pickupEnabled && !o.deliveryEnabled ? (
+            <Notice tone="danger" title="Ninguém consegue pedir" role="alert">
+              Com retirada e entrega desligadas, a loja não aceita pedidos. Ligue pelo menos uma das
+              duas.
+            </Notice>
+          ) : null}
+          <div className="border-t border-line pt-4">
             <Field
-              label="Como retirar"
-              optional
-              htmlFor="pk-how"
-              helper="Um recado curto: onde parar, a quem chamar, que horas."
+              label="Pedido mínimo"
+              htmlFor="minorder"
+              helper="Deixe vazio para não ter mínimo."
             >
-              <CommitInput
-                id="pk-how"
-                multiline
-                maxLength={400}
-                value={o.pickupInstructions ?? ''}
-                placeholder="Ex.: Toque o interfone da casa 2. Retiradas até as 18h."
-                onCommit={(v) => patch({ operations: { pickupInstructions: v || null } })}
+              <MoneyField
+                id="minorder"
+                allowEmpty
+                cents={o.minOrderCents || null}
+                onCommit={(v) => patch({ operations: { minOrderCents: v ?? 0 } })}
               />
             </Field>
           </div>
-        ) : null}
-        <Toggle
-          checked={o.deliveryEnabled}
-          onChange={(v) => patch({ operations: { deliveryEnabled: v } })}
-          label="Entrega"
-          description={
-            s.distancePricing.enabled
-              ? 'Pela distância até a porta do cliente.'
-              : 'Nos bairros ou raio abaixo.'
-          }
-        />
-        {!o.pickupEnabled && !o.deliveryEnabled ? (
-          <Notice tone="danger" title="Ninguém consegue pedir" role="alert">
-            Com retirada e entrega desligadas, a loja não aceita pedidos. Ligue pelo menos uma das
-            duas.
-          </Notice>
-        ) : null}
-        <div className="grid gap-5 border-t border-line pt-4 sm:grid-cols-2">
-          <Field label="Tempo de preparo de sempre" helper="Vem marcado ao aceitar um pedido.">
-            <SavedStepper
-              label="tempo de preparo"
-              value={o.prepTimeMinutes}
-              min={5}
-              max={240}
-              step={5}
-              suffix=" min"
-              onSave={(v) => run({ operations: { prepTimeMinutes: v } }).catch(() => undefined)}
-            />
-          </Field>
-          <Field label="Aceitar pedidos em até" helper="Depois disso o pedido fica em destaque.">
-            <SavedStepper
-              label="tempo para aceitar"
-              value={o.acceptTargetMinutes}
-              min={1}
-              max={60}
-              suffix=" min"
-              onSave={(v) => run({ operations: { acceptTargetMinutes: v } }).catch(() => undefined)}
-            />
-          </Field>
-          <Field label="Pedido mínimo" htmlFor="minorder" helper="Deixe vazio para não ter mínimo.">
-            <MoneyField
-              id="minorder"
-              allowEmpty
-              cents={o.minOrderCents || null}
-              onCommit={(v) => patch({ operations: { minOrderCents: v ?? 0 } })}
-            />
-          </Field>
-        </div>
-        <div className="border-t border-line pt-2">
-          <Toggle
-            checked={o.demand === 'high'}
-            onChange={(v) => patch({ operations: { demand: v ? 'high' : 'normal' } })}
-            label={
-              <span className="inline-flex items-center gap-2">
-                <Fire className="size-5 text-warning" /> Muitos pedidos agora
-              </span>
-            }
-            description={`Avisa na loja que o preparo está levando mais que os ~${o.prepTimeMinutes} min de sempre.`}
-          />
-        </div>
-      </Card>
+        </Card>
+      </Section>
 
       {o.deliveryEnabled ? (
-        <div className="mt-4 space-y-4">
-          <Card className="overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div className="min-w-0 flex-1 basis-60">
-                <p className="font-semibold">Área de entrega</p>
+        <Section
+          id="areas"
+          title="Onde a loja entrega"
+          hint="Cada área com a sua taxa e o seu tempo."
+        >
+          <div className="space-y-4">
+            <Card className="overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="min-w-0 flex-1 basis-60">
+                  <p className="font-semibold">Área de entrega</p>
+                  <p className="t-caption text-muted">
+                    {!s.location
+                      ? 'Marque onde fica a loja para entregar por distância.'
+                      : s.distancePricing.enabled
+                        ? 'O pino da loja é de onde a distância é medida.'
+                        : 'Os círculos e as áreas desenhadas mostram até onde vai cada taxa.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {s.profile.address && !locating ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<MagnifyingGlass />}
+                      loading={finding}
+                      onClick={() => void findByAddress()}
+                    >
+                      pelo endereço
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant={locating ? 'primary' : 'secondary'}
+                    size="sm"
+                    icon={<Crosshair />}
+                    onClick={() => setLocating((v) => !v)}
+                  >
+                    {locating ? 'toque no mapa' : s.location ? 'mudar local' : 'marcar loja'}
+                  </Button>
+                </div>
+              </div>
+              <Suspense fallback={<div className="skeleton h-72" />}>
+                <ZoneMap
+                  center={s.location}
+                  zones={zones}
+                  className="h-72 w-full"
+                  onPick={
+                    locating
+                      ? (loc) => {
+                          setLocating(false);
+                          patch({ location: loc });
+                          toast('Local da loja salvo');
+                        }
+                      : undefined
+                  }
+                />
+              </Suspense>
+            </Card>
+            <DistancePricing s={s} patch={patch} run={run} />
+            {s.distancePricing.enabled ? (
+              <div className="px-1 pt-2">
+                <p className="font-semibold">Áreas de reserva</p>
                 <p className="t-caption text-muted">
-                  {!s.location
-                    ? 'Marque onde fica a loja para entregar por distância.'
-                    : s.distancePricing.enabled
-                      ? 'O pino da loja é de onde a distância é medida.'
-                      : 'Os círculos e as áreas desenhadas mostram até onde vai cada taxa.'}
+                  Valem só quando o endereço chega sem o local no mapa.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {s.profile.address && !locating ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<MagnifyingGlass />}
-                    loading={finding}
-                    onClick={() => void findByAddress()}
-                  >
-                    pelo endereço
-                  </Button>
-                ) : null}
-                <Button
-                  variant={locating ? 'primary' : 'secondary'}
-                  size="sm"
-                  icon={<Crosshair />}
-                  onClick={() => setLocating((v) => !v)}
+            ) : null}
+            <Card className="divide-y divide-line">
+              {zones.map((z) => (
+                <button
+                  key={z.id}
+                  type="button"
+                  onClick={() => setEdit(z)}
+                  className="flex min-h-18 w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover"
                 >
-                  {locating ? 'toque no mapa' : s.location ? 'mudar local' : 'marcar loja'}
-                </Button>
-              </div>
-            </div>
-            <Suspense fallback={<div className="skeleton h-72" />}>
-              <ZoneMap
-                center={s.location}
-                zones={zones}
-                className="h-72 w-full"
-                onPick={
-                  locating
-                    ? (loc) => {
-                        setLocating(false);
-                        patch({ location: loc });
-                        toast('Local da loja salvo');
-                      }
-                    : undefined
-                }
-              />
-            </Suspense>
-          </Card>
-          <DistancePricing s={s} patch={patch} run={run} />
-          {s.distancePricing.enabled ? (
-            <div className="px-1 pt-2">
-              <p className="font-semibold">Áreas de reserva</p>
-              <p className="t-caption text-muted">
-                Valem só quando o endereço chega sem o local no mapa.
-              </p>
-            </div>
-          ) : null}
-          <Card className="divide-y divide-line">
-            {zones.map((z) => (
-              <button
-                key={z.id}
-                type="button"
-                onClick={() => setEdit(z)}
-                className="flex min-h-18 w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover"
-              >
-                {z.kind === 'radius' ? (
-                  <MapPin className="size-6 shrink-0 text-muted" />
-                ) : z.kind === 'polygon' ? (
-                  <Polygon className="size-6 shrink-0 text-muted" />
-                ) : (
-                  <Moped className="size-6 shrink-0 text-muted" />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block font-semibold">
-                    {z.name}
-                    {!z.active ? (
-                      <span className="t-caption ml-2 text-muted">(pausada)</span>
+                  {z.kind === 'radius' ? (
+                    <MapPin className="size-6 shrink-0 text-muted" />
+                  ) : z.kind === 'polygon' ? (
+                    <Polygon className="size-6 shrink-0 text-muted" />
+                  ) : (
+                    <Moped className="size-6 shrink-0 text-muted" />
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold">
+                      {z.name}
+                      {!z.active ? (
+                        <span className="t-caption ml-2 text-muted">(pausada)</span>
+                      ) : null}
+                    </span>
+                    <span className="t-caption block truncate text-muted">
+                      {z.kind === 'radius'
+                        ? `até ${z.maxDistanceKm} km`
+                        : z.kind === 'polygon'
+                          ? 'desenhada no mapa'
+                          : z.neighborhoods.join(', ')}{' '}
+                      · {z.etaMin}–{z.etaMax} min
+                    </span>
+                  </span>
+                  <span className="tnum shrink-0 text-right">
+                    <span className="block font-semibold">
+                      {z.feeCents ? money(z.feeCents) : 'grátis'}
+                    </span>
+                    {z.freeDeliveryOverCents ? (
+                      <span className="t-caption text-muted">
+                        grátis acima de {money(z.freeDeliveryOverCents)}
+                      </span>
                     ) : null}
                   </span>
-                  <span className="t-caption block truncate text-muted">
-                    {z.kind === 'radius'
-                      ? `até ${z.maxDistanceKm} km`
-                      : z.kind === 'polygon'
-                        ? 'desenhada no mapa'
-                        : z.neighborhoods.join(', ')}{' '}
-                    · {z.etaMin}–{z.etaMax} min
-                  </span>
-                </span>
-                <span className="tnum shrink-0 text-right">
-                  <span className="block font-semibold">
-                    {z.feeCents ? money(z.feeCents) : 'grátis'}
-                  </span>
-                  {z.freeDeliveryOverCents ? (
-                    <span className="t-caption text-muted">
-                      grátis acima de {money(z.freeDeliveryOverCents)}
-                    </span>
-                  ) : null}
-                </span>
-                <PencilSimple className="size-5 shrink-0 text-muted" />
-              </button>
-            ))}
-            <div className="p-3">
-              <Button variant="ghost" block icon={<Plus />} onClick={() => setEdit('new')}>
-                nova área de entrega
-              </Button>
-            </div>
-          </Card>
-          {neighborhoodZones.length ? (
-            <p className="t-caption px-1 text-muted">
-              Áreas por bairro valem pelo nome do bairro que o cliente informa.
-            </p>
-          ) : null}
-        </div>
+                  <PencilSimple className="size-5 shrink-0 text-muted" />
+                </button>
+              ))}
+              <div className="p-3">
+                <Button variant="ghost" block icon={<Plus />} onClick={() => setEdit('new')}>
+                  nova área de entrega
+                </Button>
+              </div>
+            </Card>
+            {neighborhoodZones.length ? (
+              <p className="t-caption px-1 text-muted">
+                Áreas por bairro valem pelo nome do bairro que o cliente informa.
+              </p>
+            ) : null}
+          </div>
+        </Section>
       ) : null}
       <ZoneSheet
         zone={edit}
@@ -882,7 +935,7 @@ function Delivery({
           );
         }}
       />
-    </Section>
+    </>
   );
 }
 
@@ -1312,108 +1365,122 @@ function Profile({
       },
     );
   return (
-    <Section id="perfil" title="Perfil" hint="Como a loja se apresenta.">
-      <Card className="space-y-5 p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-          <div className="w-28 shrink-0">
-            <PhotoField
-              label="logo da loja"
-              aspect="1:1"
-              max={1}
-              photos={p.logoUrl ? [{ url: p.logoUrl }] : []}
-              onChange={(next) => run({ profile: { logoUrl: next[0]?.url ?? null } })}
-            />
+    <>
+      <Section
+        id="perfil"
+        title="Como a loja se apresenta"
+        hint="Aparece no topo da loja e quando o link é compartilhado."
+      >
+        <Card className="space-y-5 p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="w-28 shrink-0">
+              <PhotoField
+                label="logo da loja"
+                aspect="1:1"
+                max={1}
+                photos={p.logoUrl ? [{ url: p.logoUrl }] : []}
+                onChange={(next) => run({ profile: { logoUrl: next[0]?.url ?? null } })}
+              />
+            </div>
+            <div className="min-w-0 flex-1 space-y-4">
+              <Field label="Nome da loja" htmlFor="pf-name">
+                <CommitInput
+                  id="pf-name"
+                  maxLength={80}
+                  value={p.name}
+                  onCommit={(v) => patch({ profile: { name: v } })}
+                  validate={(v) =>
+                    v.trim().length < 2 ? 'O nome precisa de pelo menos 2 letras.' : null
+                  }
+                />
+              </Field>
+              <Field label="Frase curta" optional htmlFor="pf-tag">
+                <CommitInput
+                  id="pf-tag"
+                  maxLength={120}
+                  value={p.tagline ?? ''}
+                  placeholder="Ex.: Pudins sem furinhos"
+                  onCommit={(v) => patch({ profile: { tagline: v || null } })}
+                />
+              </Field>
+            </div>
           </div>
-          <div className="min-w-0 flex-1 space-y-4">
-            <Field label="Nome da loja" htmlFor="pf-name">
+          <Field label="Sobre a loja" optional htmlFor="pf-desc">
+            <CommitInput
+              id="pf-desc"
+              multiline
+              maxLength={1000}
+              value={p.description ?? ''}
+              onCommit={(v) => patch({ profile: { description: v || null } })}
+            />
+          </Field>
+        </Card>
+      </Section>
+      <Section
+        id="contatos"
+        title="Contatos e endereço"
+        hint="Para o cliente falar com a loja e achar onde ela fica."
+      >
+        <Card className="space-y-5 p-5">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="WhatsApp da loja" htmlFor="pf-wa" error={waErr}>
+              <TextInput
+                id="pf-wa"
+                type="tel"
+                inputMode="tel"
+                value={waDraft}
+                aria-invalid={!!waErr || undefined}
+                onChange={(e) => setWaDraft(e.target.value)}
+                onBlur={() => {
+                  const raw = waDraft.trim();
+                  const d = raw ? whatsappDigits(raw) : null;
+                  if (raw && !d) return setWaErr(CONTACT_ERROR.whatsapp);
+                  setWaErr(null);
+                  if (d !== (p.whatsapp ?? null)) contact('whatsapp', d);
+                }}
+              />
+            </Field>
+            <Field label="Instagram" optional htmlFor="pf-ig" error={igErr}>
               <CommitInput
-                id="pf-name"
+                id="pf-ig"
+                maxLength={60}
+                value={p.instagram ? `@${p.instagram}` : ''}
+                placeholder="@sualoja"
+                validate={(v) => (v && !instagramHandle(v) ? CONTACT_ERROR.instagram : null)}
+                onCommit={(v) => contact('instagram', v || null)}
+              />
+            </Field>
+            <Field label="E-mail" optional htmlFor="pf-mail">
+              <CommitInput
+                id="pf-mail"
+                type="email"
+                maxLength={200}
+                value={p.email ?? ''}
+                onCommit={(v) => patch({ profile: { email: v || null } })}
+              />
+            </Field>
+            <Field label="Cidade" optional htmlFor="pf-city">
+              <CommitInput
+                id="pf-city"
                 maxLength={80}
-                value={p.name}
-                onCommit={(v) => patch({ profile: { name: v } })}
-                validate={(v) =>
-                  v.trim().length < 2 ? 'O nome precisa de pelo menos 2 letras.' : null
-                }
-              />
-            </Field>
-            <Field label="Frase curta" optional htmlFor="pf-tag">
-              <CommitInput
-                id="pf-tag"
-                maxLength={120}
-                value={p.tagline ?? ''}
-                placeholder="Ex.: Pudins sem furinhos"
-                onCommit={(v) => patch({ profile: { tagline: v || null } })}
+                value={p.city ?? ''}
+                onCommit={(v) => patch({ profile: { city: v || null } })}
               />
             </Field>
           </div>
-        </div>
-        <Field label="Sobre a loja" optional htmlFor="pf-desc">
-          <CommitInput
-            id="pf-desc"
-            multiline
-            maxLength={1000}
-            value={p.description ?? ''}
-            onCommit={(v) => patch({ profile: { description: v || null } })}
-          />
-        </Field>
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="WhatsApp da loja" htmlFor="pf-wa" error={waErr}>
-            <TextInput
-              id="pf-wa"
-              type="tel"
-              inputMode="tel"
-              value={waDraft}
-              aria-invalid={!!waErr || undefined}
-              onChange={(e) => setWaDraft(e.target.value)}
-              onBlur={() => {
-                const raw = waDraft.trim();
-                const d = raw ? whatsappDigits(raw) : null;
-                if (raw && !d) return setWaErr(CONTACT_ERROR.whatsapp);
-                setWaErr(null);
-                if (d !== (p.whatsapp ?? null)) contact('whatsapp', d);
-              }}
-            />
-          </Field>
-          <Field label="Instagram" optional htmlFor="pf-ig" error={igErr}>
+          <Field label="Endereço da loja" optional htmlFor="pf-addr">
             <CommitInput
-              id="pf-ig"
-              maxLength={60}
-              value={p.instagram ? `@${p.instagram}` : ''}
-              placeholder="@sualoja"
-              validate={(v) => (v && !instagramHandle(v) ? CONTACT_ERROR.instagram : null)}
-              onCommit={(v) => contact('instagram', v || null)}
+              id="pf-addr"
+              maxLength={300}
+              value={p.address ?? ''}
+              onCommit={(v) => patch({ profile: { address: v || null } })}
             />
           </Field>
-          <Field label="E-mail" optional htmlFor="pf-mail">
-            <CommitInput
-              id="pf-mail"
-              type="email"
-              maxLength={200}
-              value={p.email ?? ''}
-              onCommit={(v) => patch({ profile: { email: v || null } })}
-            />
-          </Field>
-          <Field label="Cidade" optional htmlFor="pf-city">
-            <CommitInput
-              id="pf-city"
-              maxLength={80}
-              value={p.city ?? ''}
-              onCommit={(v) => patch({ profile: { city: v || null } })}
-            />
-          </Field>
-        </div>
-        <Field label="Endereço da loja" optional htmlFor="pf-addr">
-          <CommitInput
-            id="pf-addr"
-            maxLength={300}
-            value={p.address ?? ''}
-            onCommit={(v) => patch({ profile: { address: v || null } })}
-          />
-        </Field>
-      </Card>
-      <p className="t-caption mt-2 flex items-center gap-1.5 px-1 text-muted">
-        <Storefront className="size-4" /> Mudanças no perfil aparecem na loja na hora.
-      </p>
-    </Section>
+        </Card>
+        <p className="t-caption mt-2 flex items-center gap-1.5 px-1 text-muted">
+          <Storefront className="size-4" /> Mudanças no perfil aparecem na loja na hora.
+        </p>
+      </Section>
+    </>
   );
 }

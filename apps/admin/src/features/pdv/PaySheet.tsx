@@ -492,7 +492,7 @@ function PixBox({ cents, manager }: { cents: number; manager: boolean }) {
         title="A loja ainda não tem chave Pix"
         action={
           manager ? (
-            <ButtonLink to="/pagamentos" variant="secondary">
+            <ButtonLink to="/pagamentos/formas" variant="secondary">
               cadastrar a chave
             </ButtonLink>
           ) : undefined

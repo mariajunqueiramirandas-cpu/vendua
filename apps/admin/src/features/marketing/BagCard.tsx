@@ -68,7 +68,7 @@ export default function BagCardPage() {
     <PageBody>
       <PageHeader
         title="Cartão da sacola"
-        back="/marketing"
+        back="/marketing/divulgar"
         subtitle="Para a sacola dos pedidos que chegam pelos apps de delivery: da próxima vez, o cliente pede direto pelo seu site."
         actions={
           <Button icon={<Printer />} onClick={() => window.print()}>

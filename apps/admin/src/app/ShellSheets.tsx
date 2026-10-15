@@ -97,7 +97,7 @@ function MoreSheet({
 }
 
 const HINTS: Record<string, string> = {
-  '/loja': 'horários, entrega e pausa',
+  '/loja': 'horários, entrega e perfil',
   '/cozinha': 'tela da cozinha',
   '/clientes': 'quem compra de você',
   '/whatsapp': 'avisos aos clientes',
@@ -105,7 +105,7 @@ const HINTS: Record<string, string> = {
   '/aparencia': 'página e cores',
   '/relatorios': 'vendas e horários',
   '/equipe': 'quem ajuda na loja',
-  '/conta': 'plano e endereço',
+  '/conta': 'plano e faturas',
   '/ajuda': 'fale com a Venduá',
 };
 

@@ -373,7 +373,9 @@ function Flow({
           {
             id: 'mp',
             label: 'Receber cartão pelo site',
-            to: steps.includes('mercadopago') ? '/bem-vindo?passo=mercadopago' : '/pagamentos',
+            to: steps.includes('mercadopago')
+              ? '/bem-vindo?passo=mercadopago'
+              : '/pagamentos/formas',
           },
         ]
       : []),

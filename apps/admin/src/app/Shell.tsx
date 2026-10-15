@@ -17,7 +17,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
 import {
@@ -43,7 +43,8 @@ import { barOf, moreOf, navFor, sectionsOf } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
 import { useScrollMemory, useTabNav } from './nativeFeel.ts';
 import { useKeyboard } from '../ui/keyboard.ts';
-import { placeOf } from './nav.ts';
+import { movedTo, placeOf } from './nav.ts';
+import { ScrollRail } from './ScrollRail.tsx';
 import { useBack } from './Router.tsx';
 import { PullToRefresh } from './PullToRefresh.tsx';
 
@@ -206,6 +207,8 @@ export function Shell({ children }: { children: ReactNode }) {
     return onUpdate(announce);
   }, []);
   useEffect(() => setMoreOpen(false), [loc.pathname]);
+  // a section that became a screen of its own: an old link (/loja#entrega) lands there
+  const moved = movedTo(loc.pathname, loc.hash);
 
   const badge = (to: string) =>
     to === '/pedidos' ? placed : to === '/vendedor' && vendedorOn ? waiting : 0;
@@ -261,7 +264,10 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           ) : null}
         </div>
-        <nav aria-label="principal" className="flex-1 overflow-y-auto px-3 py-2 lg:px-4">
+        <nav
+          aria-label="principal"
+          className="scroll-fade-b flex-1 overflow-y-auto px-3 py-2 lg:px-4"
+        >
           {/* the button above is Copiloto's way in on the rail */}
           {sectionsOf(items.filter((n) => !(copilot && n.to === '/copiloto'))).map((g, i) => (
             <section
@@ -398,7 +404,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 </Suspense>
               }
             >
-              {children}
+              {moved ? <Navigate to={moved} replace /> : children}
             </Suspense>
           </Boundary>
         </main>
@@ -494,6 +500,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {helpOpen || helpSeen ? <HelpSheet open={helpOpen} onOpenChange={setHelpOpen} /> : null}
       </Suspense>
       {bare ? null : <PullToRefresh />}
+      {bare ? null : <ScrollRail />}
       <Toaster />
       <div ref={liveRegion} aria-live="assertive" className="sr-only" />
     </div>
