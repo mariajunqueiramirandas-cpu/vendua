@@ -475,7 +475,7 @@ export function ConversationPane({
       ) : null}
       <div className="flex-1 px-4 pb-4 pt-2 md:px-8">{content}</div>
       {floorEl ? (
-        <div className="sticky bottom-(--tabbar-h) z-20 md:bottom-0 md:px-8 md:pb-4">
+        <div className="sticky bottom-(--tabbar-h) z-20 md:bottom-0 md:px-8 md:pb-4 kb:bottom-(--kb)">
           <div className="md:overflow-hidden md:rounded-lg md:depth-2">{floorEl}</div>
         </div>
       ) : null}

@@ -105,7 +105,8 @@ export function TimeRangeField({
               </div>
             </div>
             {editing && isOpen ? (
-              <div className="animate-fade-up mb-2 space-y-2 rounded-md bg-sunken p-3">
+              // the fields are sunken too: on the sunken panel they'd read as plain text
+              <div className="animate-fade-up mb-2 space-y-2 rounded-md bg-sunken p-3 [&_textarea]:bg-surface">
                 {ranges.map((r, i) => (
                   <div key={i} className="flex items-center gap-1.5">
                     <TimeInput

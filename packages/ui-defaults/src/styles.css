@@ -3101,6 +3101,7 @@
     resize: vertical;
     min-height: 72px;
     font: inherit;
+    font-size: max(16px, 1em); /* the shorthand above resets .v-input's; iOS zooms under 16px */
   }
   .v-counter {
     text-align: end;
