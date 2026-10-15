@@ -141,3 +141,9 @@ export function greeting(tz?: string) {
   );
   return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
 }
+
+/** 00000-000 as it's typed */
+export const maskCep = (v: string) => {
+  const d = v.replace(/\D/g, '').slice(0, 8);
+  return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+};

@@ -403,7 +403,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
     sql,
     sessionSecret: 's',
     controlSecret: 'ctl',
-    cepLookup: async () => null,
+    cepLookup: async (cep) =>
+      cep === '28994444'
+        ? {
+            cep,
+            street: 'Avenida Ademar Avelino Barreto',
+            neighborhood: 'Verde Vale (Bacaxá)',
+            city: 'Saquarema',
+            state: 'RJ',
+          }
+        : null,
     geocoder: async (q) =>
       q.city || q.text ? { lat: -22.931, lng: -42.48, precision: 'street' } : null,
     places: async (q, client) => {
@@ -558,6 +567,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('distance pricing (db)', () => {
       enabled: true,
       ...PRICING,
     });
+    // the store's CEP: kept as 8 digits, refused otherwise; the admin reads its address
+    const cep = await admin('PATCH', '/store', { profile: { cep: '28994-444' } });
+    expect(cep.status).toBe(200);
+    expect((await admin('GET', '/store')).body.profile.cep).toBe('28994444');
+    expect((await admin('PATCH', '/store', { profile: { cep: '2899' } })).body.error).toMatchObject(
+      {
+        details: { field: 'cep' },
+      },
+    );
+    expect((await admin('GET', '/cep/28994-444')).body.address).toMatchObject({
+      street: 'Avenida Ademar Avelino Barreto',
+      city: 'Saquarema',
+    });
+    expect((await admin('GET', '/cep/01001000')).status).toBe(404);
+    expect((await admin('GET', '/cep/123')).status).toBe(400);
     // the store pin can't be dropped while it prices by distance
     expect((await admin('PATCH', '/store', { location: null })).body.error.code).toBe(
       'LOCATION_REQUIRED',

@@ -1,14 +1,8 @@
 import { MapPinLine, Moped, PencilSimple, UserCircleCheck } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import {
-  api,
-  type PdvCustomer,
-  type PdvDeliveryIn,
-  type PdvQuote,
-  type PlaceSuggestion,
-} from '../../lib/api.ts';
-import { money, phone as phoneText } from '../../lib/format.ts';
+import { api, type PdvCustomer, type PdvDeliveryIn, type PdvQuote } from '../../lib/api.ts';
+import { maskCep, money, phone as phoneText } from '../../lib/format.ts';
 import { parsePhone } from '../../lib/parse.ts';
 import { qk } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -17,6 +11,7 @@ import { Field, MoneyField, PhoneInput, TextArea, TextInput } from '../../ui/fie
 import { Notice } from '../../ui/Notice.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
+import { useStreetSuggest } from '../../ui/StreetSuggest.tsx';
 import { useDebounced } from './data.ts';
 
 // A phone order: who asked (the phone first, which brings back a returning customer's name and
@@ -51,16 +46,6 @@ export interface Who {
 }
 
 export const cepDigits = (cep: string) => cep.replace(/\D/g, '');
-const maskCep = (v: string) => {
-  const d = cepDigits(v).slice(0, 8);
-  return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
-};
-
-/** "Ponte Preta, Campinas – SP" */
-function placeWhere(s: PlaceSuggestion) {
-  const city = s.city ? (s.state ? `${s.city} – ${s.state}` : s.city) : null;
-  return [s.neighborhood, city].filter(Boolean).join(', ');
-}
 
 export const addressDone = (a: Address) => !!a.street.trim() && !!a.neighborhood.trim();
 export const whoDone = (c: Who) => c.name.trim().length >= 2 && !!c.digits;
@@ -325,9 +310,19 @@ export function DeliverySheet({
   const [shown, setShown] = useState(!!who.digits);
   const [tried, setTried] = useState(false);
   const [fromLast, setFromLast] = useState(false);
-  // what the attendant typed in "Rua", for the street suggestions
-  const [streetTyped, setStreetTyped] = useState('');
   const filled = useRef<string | null>(null);
+  // streets for the typed "Rua" (typing only: a returning customer's address stays quiet)
+  const street = useStreetSuggest((s) => {
+    setFromLast(false);
+    setA((x) => ({
+      ...x,
+      street: s.street,
+      number: x.number.trim() ? x.number : (s.number ?? ''),
+      neighborhood: x.neighborhood.trim() ? x.neighborhood : (s.neighborhood ?? ''),
+      // the door itself when OSM has the typed number; a street's middle is left to the geocoder
+      pin: s.precision === 'address' ? { lat: s.lat, lng: s.lng } : null,
+    }));
+  }, open);
   const ids = {
     phone: useId(),
     name: useId(),
@@ -346,7 +341,7 @@ export function DeliverySheet({
     setShown(!!who.digits || !!who.name || addressDone(address));
     setTried(false);
     setFromLast(false);
-    setStreetTyped('');
+    street.reset();
     filled.current = who.digits;
     // the values it opened with
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -397,37 +392,20 @@ export function DeliverySheet({
     setA((x) => ({ ...x, ...p, pin: null }));
   };
 
-  // streets for the typed "Rua" (typing only: a returning customer's address stays quiet)
-  const [listOpen, setListOpen] = useState(false);
-  const [active, setActive] = useState(-1);
-  const closing = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(closing.current), []);
-  const placeQ = useDebounced(streetTyped.trim(), 300);
-  const placesQuery = useQuery({
-    queryKey: qk.places(placeQ),
-    queryFn: () => api.places(placeQ),
-    enabled: open && placeQ.length >= 3,
-    staleTime: 5 * 60_000,
-    retry: false,
-    placeholderData: (prev) => prev,
-  });
-  const places: PlaceSuggestion[] =
-    streetTyped.trim().length >= 3 ? (placesQuery.data?.places ?? []) : [];
-  const listShown = open && listOpen && places.length > 0;
-  useEffect(() => setActive(-1), [placesQuery.data]);
-  const pickStreet = (s: PlaceSuggestion) => {
-    setFromLast(false);
-    setListOpen(false);
-    setActive(-1);
-    setStreetTyped('');
-    setA((x) => ({
-      ...x,
-      street: s.street,
-      number: x.number.trim() ? x.number : (s.number ?? ''),
-      neighborhood: x.neighborhood.trim() ? x.neighborhood : (s.neighborhood ?? ''),
-      // the door itself when OSM has the typed number; a street's middle is left to the geocoder
-      pin: s.precision === 'address' ? { lat: s.lat, lng: s.lng } : null,
-    }));
+  // a CEP fills the street and bairro still blank (ViaCEP, through Core)
+  const cepFill = async (digits: string) => {
+    const found = await api.cep(digits).catch(() => null);
+    const c = found?.address;
+    if (!c) return;
+    setA((x) =>
+      cepDigits(x.cep) !== digits
+        ? x
+        : {
+            ...x,
+            street: x.street.trim() ? x.street : (c.street ?? ''),
+            neighborhood: x.neighborhood.trim() ? x.neighborhood : (c.neighborhood ?? ''),
+          },
+    );
   };
 
   const badPhone = c.phone.trim() !== '' && !parsePhone(c.phone);
@@ -523,72 +501,13 @@ export function DeliverySheet({
                   maxLength={120}
                   autoComplete="off"
                   value={a.street}
-                  role="combobox"
-                  aria-autocomplete="list"
-                  aria-expanded={listShown}
-                  aria-controls={`${ids.street}-list`}
-                  aria-activedescendant={
-                    listShown && active >= 0 ? `${ids.street}-${active}` : undefined
-                  }
+                  {...street.input}
                   onChange={(e) => {
                     setAddr({ street: e.target.value });
-                    setStreetTyped(e.target.value);
-                    setListOpen(true);
-                  }}
-                  onFocus={() => clearTimeout(closing.current)}
-                  // a tap on a row lands before the list goes away
-                  onBlur={() => {
-                    closing.current = setTimeout(() => setListOpen(false), 150);
-                  }}
-                  onKeyDown={(e) => {
-                    if (!places.length) return;
-                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                      e.preventDefault();
-                      setListOpen(true);
-                      const n = places.length;
-                      setActive((i) =>
-                        e.key === 'ArrowDown' ? (i + 1) % n : i <= 0 ? n - 1 : i - 1,
-                      );
-                    } else if (e.key === 'Enter' && listShown && active >= 0) {
-                      e.preventDefault();
-                      pickStreet(places[active]!);
-                    } else if (e.key === 'Escape' && listShown) {
-                      // the sheet stays open: Escape only closes the list
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setListOpen(false);
-                    }
+                    street.typing(e.target.value);
                   }}
                 />
-                <div hidden={!listShown} className="rounded-md bg-surface ring-1 ring-line depth-2">
-                  <ul id={`${ids.street}-list`} role="listbox" aria-label="Ruas" className="p-1">
-                    {places.map((s, i) => (
-                      <li
-                        key={`${s.street}|${s.number}|${s.neighborhood}|${s.city}`}
-                        id={`${ids.street}-${i}`}
-                        role="option"
-                        aria-selected={i === active}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onMouseEnter={() => setActive(i)}
-                        onClick={() => pickStreet(s)}
-                        className={cn(
-                          'flex min-h-12 cursor-pointer flex-col justify-center rounded-sm px-3 py-2',
-                          i === active && 'bg-sunken',
-                        )}
-                      >
-                        <span className="font-semibold">
-                          {s.number ? `${s.street}, ${s.number}` : s.street}
-                        </span>
-                        {placeWhere(s) ? (
-                          <span className="t-caption text-muted">{placeWhere(s)}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="t-caption px-4 pb-2 text-right text-muted" aria-hidden="true">
-                    © OpenStreetMap
-                  </p>
-                </div>
+                {street.list}
               </Field>
               <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
                 <Field label="Número" htmlFor={ids.number} error={err('delivery.number')}>
@@ -648,7 +567,11 @@ export function DeliverySheet({
                   autoComplete="off"
                   placeholder="00000-000"
                   value={a.cep}
-                  onChange={(e) => setAddr({ cep: maskCep(e.target.value) })}
+                  onChange={(e) => {
+                    const cep = maskCep(e.target.value);
+                    setAddr({ cep });
+                    if (cepDigits(cep).length === 8 && cep !== a.cep) void cepFill(cepDigits(cep));
+                  }}
                   className="tnum max-w-44"
                 />
               </Field>

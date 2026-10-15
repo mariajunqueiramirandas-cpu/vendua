@@ -3212,6 +3212,7 @@ export function createApp({
     publicOrigin: adminOrigin,
     geocode,
     places,
+    cepLookup: cepLookup ?? viaCep,
     domains: domainProviders,
     fleet: fleetD,
     copilotMedia: ears,

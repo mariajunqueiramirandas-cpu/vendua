@@ -35,7 +35,7 @@ import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
-import { parsePolygon, type LatLng } from '../modules/geo.ts';
+import { normalizeCep, parsePolygon, type LatLng } from '../modules/geo.ts';
 import { PLACE_QUERY_MAX, PLACE_QUERY_MIN, storeNearby } from '../modules/geocode.ts';
 
 /** encomendas: the offline methods a preorder may be limited to */
@@ -143,6 +143,7 @@ export async function storeView(
       email: s.email ?? null,
       city: s.city,
       address: s.address,
+      cep: s.cep ?? null,
       logoUrl: s.logo_url ?? null,
     },
     status: {
@@ -419,6 +420,22 @@ export function mountStore(d: AdminDeps) {
     return c.json({ point });
   });
 
+  // a CEP's street, bairro and city (ViaCEP): the store's own, and a phone order's at the PDV
+  admin.get('/cep/:cep', async (c) => {
+    need(c as AdminCtx, 'attendant');
+    const cep = normalizeCep(c.req.param('cep'));
+    if (!cep) throw new HttpError(400, 'INVALID_CEP', 'cep must have 8 digits');
+    let found;
+    try {
+      found = await d.cepLookup(cep);
+    } catch {
+      throw new HttpError(503, 'CEP_UNAVAILABLE', 'cep lookup is unavailable — type the address');
+    }
+    if (!found) throw new HttpError(404, 'CEP_NOT_FOUND', 'unknown cep');
+    c.header('cache-control', 'no-store');
+    return c.json({ address: found });
+  });
+
   // street suggestions while an address is typed (the PDV's delivery address), the store's area first
   const nearStore = storeNearby(d.sql, d.geocode);
   admin.get('/places', async (c) => {
@@ -463,6 +480,14 @@ export function mountStore(d: AdminDeps) {
             set[col] = optText(p[k], k, max) ?? null;
             changed.push(k);
           }
+        if (p.cep !== undefined) {
+          const raw = p.cep === null ? '' : String(p.cep).trim();
+          const cep = raw === '' ? null : raw.length <= 12 ? normalizeCep(raw) : null;
+          if (raw !== '' && cep === null)
+            throw new HttpError(422, 'BAD_REQUEST', 'CEP needs 8 digits', { field: 'cep' });
+          set.cep = cep;
+          changed.push('cep');
+        }
         // stored as the storefront serves them: 55 + DDD + number, and the bare handle
         if (p.whatsapp !== undefined) {
           const raw = p.whatsapp === null ? '' : String(p.whatsapp).trim();
