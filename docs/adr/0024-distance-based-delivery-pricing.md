@@ -25,7 +25,8 @@ geocoding and routing.
 **The customer confirms the door on a map; that point is what gets priced.** Free geocoders are
 weak on Brazilian house numbers, so geocoding is only used to open the map in the right area:
 Core places the typed address (`GET /storefront/v1/geocode`, OpenStreetMap's public Nominatim:
-1 request/second, an identifying User-Agent, cached), the shopper drags the map until the pin is
+1 request/second, an identifying User-Agent, cached; OSM barely knows Brazilian CEPs, so a CEP
+is placed by the street and then the bairro ViaCEP names for it, before the city), the shopper drags the map until the pin is
 on their door, or uses the device's location, and confirms. "Lembrar meus dados" keeps the pin,
 so a returning customer doesn't confirm it again. The store's own pin is set the same way in the
 admin (`GET /admin/v1/geocode` from the store's address, then a tap on the map).

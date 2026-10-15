@@ -207,6 +207,54 @@ describe('providers', () => {
     expect(await down({ city: 'Saquarema' })).toBeNull();
   });
 
+  test("nominatimGeocoder: a CEP is placed by ViaCEP's street, then its bairro", async () => {
+    const asked: Record<string, string>[] = [];
+    const geocode = nominatimGeocoder(
+      {},
+      async (url) => {
+        const p = Object.fromEntries(new URL(url).searchParams);
+        asked.push(p);
+        return new Response(
+          JSON.stringify(
+            p.q === 'Bacaxá, Saquarema, RJ'
+              ? [{ lat: '-22.8939', lon: '-42.4663', type: 'suburb', place_rank: 18 }]
+              : [],
+          ),
+        );
+      },
+      async (cep) => ({
+        cep,
+        street: 'Avenida Ademar Avelino Barreto',
+        neighborhood: 'Verde Vale (Bacaxá)',
+        city: 'Saquarema',
+        state: 'RJ',
+      }),
+    );
+    expect(await geocode({ cep: '28994-444', city: 'Rio de Janeiro' })).toEqual({
+      lat: -22.8939,
+      lng: -42.4663,
+      precision: 'postcode',
+    });
+    expect(asked.map((p) => p.street ?? p.q)).toEqual([
+      'Avenida Ademar Avelino Barreto',
+      'Verde Vale, Saquarema, RJ',
+      'Bacaxá, Saquarema, RJ',
+    ]);
+    expect(asked[0]!.city).toBe('Saquarema');
+    expect(asked.some((p) => 'postalcode' in p)).toBe(false);
+    // ViaCEP down: the city still answers
+    const noCep = nominatimGeocoder(
+      {},
+      async () => new Response(JSON.stringify([{ lat: '-22.92', lon: '-42.51', place_rank: 16 }])),
+      async () => {
+        throw new Error('viacep 503');
+      },
+    );
+    expect(await noCep({ cep: '28994444', city: 'Saquarema' })).toMatchObject({
+      precision: 'area',
+    });
+  });
+
   test('mapTilesFromEnv: https XYZ templates only', () => {
     expect(mapTilesFromEnv({}).url).toBe('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(

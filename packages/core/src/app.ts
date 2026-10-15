@@ -576,7 +576,7 @@ export function createApp({
   const ears = duaMedia ?? { media: mediaProviders(sql), gateway: hostGateway(sql) };
   const cache = readCache ?? new StoreReadCache(sql, { strict: true });
   const provider = paymentProvider ?? createPaymentProvider();
-  const geocode = geocoder ?? nominatimGeocoder();
+  const geocode = geocoder ?? nominatimGeocoder(process.env, fetch, cepLookup ?? viaCep);
   const tiles = mapTiles ?? mapTilesFromEnv();
   const routeQuote = routeQuoter(router === undefined ? orsRouter() : router);
   /** The road leg store → this pin, fetched before the request's tx (an HTTP call never holds

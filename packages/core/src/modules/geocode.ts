@@ -4,6 +4,7 @@
 // policy, an identifying User-Agent, results cached. NOMINATIM_URL points at another instance.
 
 import { windowCounter } from '../platform/http.ts';
+import { viaCep, type CepLookup } from './geo.ts';
 
 export interface GeoQuery {
   /** a one-line address ("Rua das Flores, 120 — Centro, Saquarema"), tried first */
@@ -56,6 +57,7 @@ function precisionOf(h: NominatimHit): GeoPoint['precision'] {
 export function nominatimGeocoder(
   env: Record<string, string | undefined> = process.env,
   fetchImpl: Fetch = fetch,
+  cepLookup: CepLookup = viaCep,
 ): Geocoder {
   const base = (env.NOMINATIM_URL?.trim() || 'https://nominatim.openstreetmap.org').replace(
     /\/+$/,
@@ -107,32 +109,71 @@ export function nominatimGeocoder(
 
   return async (q, client) => {
     const cep = q.cep?.replace(/\D/g, '');
-    const street = q.street?.trim();
-    const city = q.city?.trim();
-    const state = q.state?.trim();
-    // most precise first; each attempt is a request, so stop at the first hit
-    const attempts: Record<string, string>[] = [];
     const text = q.text?.trim();
-    if (text) attempts.push({ q: text });
-    if (street && city)
-      attempts.push({
-        street: q.number?.trim() ? `${q.number.trim()} ${street}` : street,
-        city,
-        ...(state ? { state } : {}),
-      });
-    if (cep?.length === 8) attempts.push({ postalcode: `${cep.slice(0, 5)}-${cep.slice(5)}` });
-    if (city) attempts.push({ city, ...(state ? { state } : {}) });
+    const street = q.street?.trim();
+    const number = q.number?.trim();
+    let city = q.city?.trim();
+    let state = q.state?.trim();
+    const tried = new Set<string>();
+    // stop at the first hit: each attempt is a request
+    const attempt = async (params: Record<string, string>, as?: GeoPoint['precision']) => {
+      const key = JSON.stringify(params);
+      if (tried.has(key)) return null;
+      tried.add(key);
+      const found = await search(params, client);
+      if (found === 'busy') throw new Error('busy');
+      return found && as ? { ...found, precision: as } : found;
+    };
+    const onStreet = (name: string) =>
+      city
+        ? attempt({
+            street: number ? `${number} ${name}` : name,
+            city,
+            ...(state ? { state } : {}),
+          })
+        : null;
     try {
-      for (const params of attempts) {
-        const found = await search(params, client);
-        if (found === 'busy') return null;
+      if (text) {
+        const found = await attempt({ q: text });
         if (found) return found;
       }
+      if (street) {
+        const found = await onStreet(street);
+        if (found) return found;
+      }
+      // OSM barely knows Brazilian CEPs, so a postalcode search finds nothing: ViaCEP names the
+      // CEP's street and bairro, and the bairro (when the street isn't mapped) is still close
+      const place = cep?.length === 8 ? await cepLookup(cep).catch(() => null) : null;
+      // the CEP's city beats a caller's guess (the checkout sends the store's when it has none)
+      if (place?.city) {
+        city = place.city;
+        state = place.state ?? state;
+        if (place.street) {
+          const found = await onStreet(place.street);
+          if (found) return found;
+        }
+        for (const bairro of bairrosOf(place.neighborhood)) {
+          const found = await attempt(
+            { q: [bairro, city, state].filter(Boolean).join(', ') },
+            'postcode',
+          );
+          if (found) return found;
+        }
+      }
+      if (city) return await attempt({ city, ...(state ? { state } : {}) });
     } catch {
       return null;
     }
     return null;
   };
+}
+
+/** ViaCEP's "Verde Vale (Bacaxá)" is a bairro inside a larger one: try the inner, then the outer */
+function bairrosOf(name: string | null | undefined): string[] {
+  const n = name?.trim();
+  if (!n) return [];
+  const m = /^(.+?)\s*\((.+)\)$/.exec(n);
+  return m ? [m[1]!.trim(), m[2]!.trim()] : [n];
 }
 
 export interface MapTiles {
