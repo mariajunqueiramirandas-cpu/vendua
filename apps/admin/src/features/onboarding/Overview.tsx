@@ -57,6 +57,10 @@ export function ChapterList({
               <span className="t-caption tnum shrink-0 font-semibold text-muted">
                 {p.done}/{p.total}
               </span>
+            ) : p ? (
+              <span className="t-caption tnum shrink-0 text-muted">
+                {p.total} {p.total === 1 ? 'pergunta' : 'perguntas'}
+              </span>
             ) : null}
           </li>
         );

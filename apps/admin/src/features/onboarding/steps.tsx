@@ -54,9 +54,9 @@ export interface StepProps {
   me: { name: string; phone: string };
 }
 
-/** One question per screen (StepFrame) with a quiet "pular" beside the main button. */
+/** One question per screen (StepFrame) with a quiet "pular" under the main button, beside "voltar". */
 export function Frame({
-  skipLabel = 'pular',
+  skipLabel = 'deixar para depois',
   onSkip,
   ...p
 }: Parameters<typeof StepFrame>[0] & { onSkip?: (() => void) | undefined; skipLabel?: string }) {
@@ -65,7 +65,7 @@ export function Frame({
       {...p}
       aside={
         onSkip ? (
-          <Button variant="quiet" size="lg" onClick={onSkip}>
+          <Button variant="ghost" onClick={onSkip} className="-mr-3 text-muted">
             {skipLabel}
           </Button>
         ) : (
@@ -97,10 +97,10 @@ export function SegmentStep({
     <Frame
       eyebrow={eyebrow}
       title="O que a sua loja vende?"
-      hint="Assim eu já sugiro horários, frases e exemplos que combinam com você."
+      hint="É só tocar. Assim eu já sugiro horários, frases e exemplos que combinam com você."
       back={back}
       busy={busy}
-      disabled={!current}
+      hidePrimary
       onSubmit={() => current && void run(onPick(current as SegmentId))}
     >
       <SegmentPicker value={current} busy={busy} onPick={(id) => void run(onPick(id))} />
@@ -732,11 +732,11 @@ export function ProductsStep({
       back={back}
       busy={add.isPending}
       disabled={!ready && !products.length}
-      label={ready ? 'Adicionar ao cardápio' : 'Terminei'}
+      label={ready || !products.length ? 'Adicionar ao cardápio' : 'Terminei'}
       onSkip={products.length ? undefined : skip}
       aside={
         ready && products.length ? (
-          <Button variant="quiet" size="lg" onClick={() => next('Cardápio no ar!')}>
+          <Button variant="ghost" onClick={() => next('Cardápio no ar!')} className="-mr-3">
             Terminei
           </Button>
         ) : undefined
