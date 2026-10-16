@@ -422,6 +422,42 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
+  # Self-hosted text-to-speech in pt-BR (services/tts, ADR 0045): Pocket TTS on our C++ engine.
+  # Nothing calls it yet, so it's opt-in: `docker compose --profile tts up tts`. Internal only;
+  # without TTS_SECRET it idles and refuses every call. The build downloads 360 MB from Hugging Face.
+  tts:
+    profiles: [tts]
+    build:
+      context: ./services/tts
+    cpus: ${TTS_CPUS:-2}
+    mem_limit: ${TTS_MEM_LIMIT:-1g}
+    environment:
+      TTS_SECRET: ${TTS_SECRET:-}
+      # defaults spelled out: the service parses these with int()/float(), so empty would crash it.
+      # Threads follow `cpus` (TTS_CPUS); TTS_THREADS has no safe empty value, so it isn't passed.
+      TTS_MAX_BATCH: ${TTS_MAX_BATCH:-8}
+      TTS_MAX_ACTIVE: ${TTS_MAX_ACTIVE:-16}
+      TTS_MAX_CHARS: ${TTS_MAX_CHARS:-2000}
+      TTS_REQUEST_TIMEOUT_S: ${TTS_REQUEST_TIMEOUT_S:-120}
+      TTS_VOICE: ${TTS_VOICE:-rafael}
+      TTS_OPUS_BITRATE: ${TTS_OPUS_BITRATE:-32000}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8793/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
   # Staff CRM — attach the staff domain here, never on core (shortens the proxy
   # chain and breaks VENDUA_PROXY_HOPS accounting for the login limiter).
   crm:

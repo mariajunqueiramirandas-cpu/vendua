@@ -119,6 +119,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0041](adr/0041-zero-downtime-deploys.md)              | Deploys without downtime: storefronts from CI, the platform as a start-first stack        |
 | [0042](adr/0042-signup-coupons.md)                     | Signup coupons: free days and/or a discount on the first paid months                      |
 | [0044](adr/0044-admin-native-app.md)                   | The merchant admin as an iOS and Android app, from the same code                          |
+| [0045](adr/0045-self-hosted-tts.md)                    | Replies can be spoken: Pocket TTS on our own C++ engine (built, not yet called)           |
 
 ## Conventions
 
