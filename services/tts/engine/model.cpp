@@ -12,7 +12,7 @@ namespace pk {
 namespace {
 
 constexpr char kMagic[8] = {'P', 'K', 'T', 'T', 'S', 0, 0, 0};
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr int kNameLen = 56;
 constexpr int kConfigInts = 20;
 
@@ -27,7 +27,7 @@ struct Entry {
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error(msg); }
 
-size_t elem_size(uint32_t dt) { return dt == kF32 || dt == kI32 ? 4 : dt == kF16 ? 2 : 1; }
+size_t tensor_bytes(uint32_t dt, size_t count) { return dt == kU4 ? count / 2 : count * (dt == kF32 || dt == kI32 ? 4 : dt == kF16 ? 2 : 1); }
 
 }  // namespace
 
@@ -99,8 +99,8 @@ ModelFile::ModelFile(const std::string& path) {
     std::memcpy(t.dims, e.dims, sizeof t.dims);
     t.data = base + e.offset;
     t.nbytes = e.nbytes;
-    // packed int8 matrices declare their logical [N, K] shape; their bytes are N*K too
-    if (count * elem_size(e.dtype) != e.nbytes) fail(path + ": size mismatch for " + e.name);
+    // packed int8 and int4 matrices declare their logical [N, K] shape
+    if (e.dtype > kU4 || tensor_bytes(e.dtype, count) != e.nbytes) fail(path + ": size mismatch for " + e.name);
     tensors_.emplace(e.name, t);
   }
   const bool dims_ok = c.d_model % c.heads == 0 && c.head_dim() % 16 == 0 && c.head_dim() <= 64 &&
@@ -136,6 +136,23 @@ QW ModelFile::q8(const std::string& name, int N, int K, bool bias) const {
   if (z.dtype != kI32 || z.nbytes != size_t(N) * 4) fail("bad shape for " + name + ".z");
   w.z = static_cast<const int32_t*>(z.data);
   w.b = bias ? f32(name + ".b", N) : nullptr;
+  if (has(name + ".r")) {
+    if (K > kMaxRotK || K < 16 || (K & (K - 1))) fail("cannot rotate " + name);
+    w.r = f32(name + ".r", K);
+  }
+  return w;
+}
+
+QW4 ModelFile::q4(const std::string& name, int N, int K, bool bias) const {
+  const Tensor& t = get(name + ".u");
+  if (t.dtype != kU4 || t.dims[0] != N || t.dims[1] != K || N % 16 || K % 32 || K > kMaxRotK || (K & (K - 1)))
+    fail("bad shape for " + name);
+  QW4 w;
+  w.N = N, w.K = K;
+  w.q = static_cast<const uint8_t*>(t.data);
+  w.s = f32(name + ".s4", N);
+  w.b = bias ? f32(name + ".b", N) : nullptr;
+  w.r = f32(name + ".r", K);
   return w;
 }
 
@@ -149,8 +166,14 @@ PW ModelFile::panels(const std::string& name, int N, int K, bool bias) const {
   return w;
 }
 
-Linear ModelFile::linear(const std::string& name, int N, int K, bool bias) const {
+Linear ModelFile::linear(const std::string& name, int N, int K, bool bias, bool int4) const {
   Linear l;
+  if (int4) {
+    if (!has(name + ".u")) fail("model file has no int4 copy of " + name + " (pack it with --int4)");
+    l.q4 = true;
+    l.w4 = q4(name, N, K, bias);
+    return l;
+  }
   l.q8 = has(name + ".q");
   if (l.q8) l.q = q8(name, N, K, bias);
   if (!l.q8 || has(name + ".p")) l.f = panels(name, N, K, bias);
@@ -164,7 +187,7 @@ std::vector<std::string> ModelFile::voices() const {
   return out;
 }
 
-LMWeights load_lm(const ModelFile& f) {
+LMWeights load_lm(const ModelFile& f, bool int4) {
   const Config& c = f.cfg;
   LMWeights w;
   const int D = c.d_model, F = c.flow_dim;
@@ -176,10 +199,10 @@ LMWeights load_lm(const ModelFile& f) {
     LMLayer l;
     l.n1w = f.f32(p + "n1.w", D), l.n1b = f.f32(p + "n1.b", D);
     l.n2w = f.f32(p + "n2.w", D), l.n2b = f.f32(p + "n2.b", D);
-    l.qkv = f.linear(p + "qkv", 3 * D, D, false);
-    l.o = f.linear(p + "o", D, D, false);
-    l.ff1 = f.linear(p + "ff1", c.ff, D, false);
-    l.ff2 = f.linear(p + "ff2", D, c.ff, false);
+    l.qkv = f.linear(p + "qkv", 3 * D, D, false, int4);
+    l.o = f.linear(p + "o", D, D, false, int4);
+    l.ff1 = f.linear(p + "ff1", c.ff, D, false, int4);
+    l.ff2 = f.linear(p + "ff2", D, c.ff, false, int4);
     w.layers.push_back(l);
   }
   w.onw = f.f32("on.w", D), w.onb = f.f32("on.b", D);

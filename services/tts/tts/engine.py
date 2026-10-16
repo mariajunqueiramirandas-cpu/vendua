@@ -20,6 +20,7 @@ class _Options(ctypes.Structure):
         ("max_tokens", ctypes.c_int),
         ("chunk", ctypes.c_int),
         ("isa", ctypes.c_char_p),
+        ("speech_bits", ctypes.c_int),
     ]
 
 
@@ -30,6 +31,7 @@ def _load(path: str | None = None) -> ctypes.CDLL:
         "pk_open": (vp, [ctypes.c_char_p, ctypes.POINTER(_Options), ctypes.c_char_p, ctypes.c_int]),
         "pk_close": (None, [vp]),
         "pk_isa": (ctypes.c_char_p, [vp]),
+        "pk_speech_bits": (ctypes.c_int, [vp]),
         "pk_decoder_mode": (ctypes.c_char_p, [vp]),
         "pk_sample_rate": (ctypes.c_int, [vp]),
         "pk_voice_count": (ctypes.c_int, [vp]),
@@ -66,14 +68,16 @@ class Engine:
         chunk: int = 8,
         isa: str | None = None,
         lib: str | None = None,
+        speech_bits: int = 8,
     ):
         self._lib = _load(lib)
-        opt = _Options(lm_threads, mimi_threads, max_batch, max_tokens, chunk, isa.encode() if isa else None)
+        opt = _Options(lm_threads, mimi_threads, max_batch, max_tokens, chunk, isa.encode() if isa else None, speech_bits)
         err = ctypes.create_string_buffer(512)
         self._h = self._lib.pk_open(str(model_path).encode(), ctypes.byref(opt), err, len(err))
         if not self._h:
             raise RuntimeError(err.value.decode() or "cannot open model")
         self.isa = self._lib.pk_isa(self._h).decode()
+        self.speech_bits = self._lib.pk_speech_bits(self._h)
         self.decoder_mode = self._lib.pk_decoder_mode(self._h).decode()
         self.sample_rate = self._lib.pk_sample_rate(self._h)
         self.max_tokens = self._lib.pk_max_tokens(self._h)

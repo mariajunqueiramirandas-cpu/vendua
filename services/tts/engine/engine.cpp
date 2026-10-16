@@ -73,6 +73,7 @@ struct Seq {
   std::vector<float> latents;
   int decoded = 0;
   bool lm_done = false, finished = false, released = false, failed = false;
+  bool busy = false;  // a thread is decoding its next chunk
   MimiState ms;
   bool mimi_started = false;
   std::vector<int16_t> audio;
@@ -91,6 +92,7 @@ const Kernels& pick_kernels(const char* force) {
   const bool leaf7 = __get_cpuid_count(7, 0, &a, &b, &c, &d) && __get_cpuid_count(7, 1, &a1, &b1, &c1, &d1);
   // AMX-BF16 (edx 22), AMX-TILE (edx 24), AVX512-BF16 (leaf 7.1 eax 5)
   const bool amx_cpu = avx512 && leaf7 && (d >> 22 & 1) && (d >> 24 & 1) && (a1 >> 5 & 1);
+  const bool avxvnni = avx2 && leaf7 && (a1 >> 4 & 1);  // leaf 7.1 eax 4
   const std::string f = force ? force : "";
   if (f == "amx") {
     if (!amx_cpu) throw std::runtime_error("this CPU lacks AMX-BF16");
@@ -101,6 +103,10 @@ const Kernels& pick_kernels(const char* force) {
     if (!avx512) throw std::runtime_error("this CPU lacks AVX-512 VNNI");
     return kernels_avx512();
   }
+  if (f == "avxvnni") {
+    if (!avxvnni) throw std::runtime_error("this CPU lacks AVX-VNNI");
+    return kernels_avxvnni();
+  }
   if (f == "avx2") {
     if (!avx2) throw std::runtime_error("this CPU lacks AVX2/FMA/F16C");
     return kernels_avx2();
@@ -108,6 +114,7 @@ const Kernels& pick_kernels(const char* force) {
   if (!f.empty()) throw std::runtime_error("unknown isa " + f);
   if (amx_cpu && amx_enable()) return kernels_amx();
   if (avx512) return kernels_avx512();
+  if (avxvnni) return kernels_avxvnni();
   if (avx2) return kernels_avx2();
   throw std::runtime_error("needs a CPU with AVX2, FMA and F16C");
 }
@@ -117,7 +124,7 @@ class Engine {
   Engine(const char* path, const pk_options& o)
       : file_(path),
         k_(pick_kernels(o.isa)),
-        lw_(load_lm(file_)),
+        lw_(load_lm(file_, o.speech_bits == 4)),
         mw_(load_mimi(file_)),
         opt_(o),
         max_frames_(max_frames_for(o.max_tokens, double(file_.cfg.sample_rate) / file_.cfg.frame_samples())),
@@ -126,12 +133,9 @@ class Engine {
         lm_(file_.cfg, lw_, k_, lm_pool_, rows_budget(o), voice_max() + o.max_tokens + max_frames_ + 16),
         mimi_(file_.cfg, mw_, k_, mimi_pool_, o.chunk, max_frames_) {
     if (lw_.voices.empty()) throw std::runtime_error("model file has no voices");
-    if (o.max_batch > 0 && o.mimi_threads > 1)
-      for (int i = 0; i < o.mimi_threads; i++) {
-        solo_pools_.push_back(std::make_unique<Pool>(1));
-        solo_.push_back(std::make_unique<Mimi>(mimi_, *solo_pools_.back()));
-      }
     if (o.max_batch > 0) {
+      mimi_dec_ = std::make_unique<Decoders>(mimi_, mimi_pool_, true);
+      lm_dec_ = std::make_unique<Decoders>(mimi_, lm_pool_, false);
       lm_thread_ = std::thread([this] { lm_loop(); });
       mimi_thread_ = std::thread([this] { mimi_loop(); });
     }
@@ -150,6 +154,7 @@ class Engine {
 
   const Kernels& kernels() const { return k_; }
   const char* decoder_mode() const { return mimi_.mode(); }
+  int speech_bits() const { return lw_.layers[0].qkv.q4 ? 4 : 8; }
   const Config& cfg() const { return file_.cfg; }
   const LMWeights& lw() const { return lw_; }
   int max_tokens() const { return opt_.max_tokens; }
@@ -271,27 +276,39 @@ class Engine {
     std::vector<float> x(size_t(budget) * D), cbuf(size_t(budget) * D), xin, noise, lat, eos;
     std::vector<const float*> prevs;
     std::vector<std::shared_ptr<Seq>> live, dead;
+    std::vector<DecodeJob> jobs(lm_dec_->width());
     for (;;) {
+      int k = 0;
       {
         std::unique_lock<std::mutex> g(mu_);
-        lm_cv_.wait(g, [&] { return stop_ || !pending_.empty() || !active_.empty(); });
+        lm_cv_.wait(g, [&] {
+          return stop_ || !pending_.empty() || !active_.empty() || (k = claim(jobs, lm_dec_->width())) > 0;
+        });
         if (stop_) return;
-        active_.erase(std::remove_if(active_.begin(), active_.end(), [](auto& s) { return s->released; }),
-                      active_.end());
-        int rows_used = int(active_.size());
-        while (!pending_.empty() && int(active_.size()) < opt_.max_batch) {
-          auto& s = pending_.front();
-          if (s->released) {
+        if (!k) {
+          active_.erase(std::remove_if(active_.begin(), active_.end(), [](auto& s) { return s->released; }),
+                        active_.end());
+          int rows_used = int(active_.size());
+          while (!pending_.empty() && int(active_.size()) < opt_.max_batch) {
+            auto& s = pending_.front();
+            if (s->released) {
+              pending_.pop_front();
+              continue;
+            }
+            const int need = int(s->tokens.size()) + 1;
+            if (rows_used + need > budget) break;
+            rows_used += need;
+            active_.push_back(s);
             pending_.pop_front();
-            continue;
           }
-          const int need = int(s->tokens.size()) + 1;
-          if (rows_used + need > budget) break;
-          rows_used += need;
-          active_.push_back(s);
-          pending_.pop_front();
+          batch = active_;
         }
-        batch = active_;
+      }
+      if (k) {  // nothing to step: decode a chunk, then look again
+        decode(*lm_dec_, jobs, k);
+        std::lock_guard<std::mutex> g(mu_);
+        deliver(jobs, k);
+        continue;
       }
       if (batch.empty()) continue;
       // rows: per sequence, its text rows (first step only), then its decode row
@@ -357,13 +374,34 @@ class Engine {
     std::vector<float> lat, audio;
   };
 
-  // Up to max sequences with enough latents for a chunk (or their last ones), oldest first.
-  int pick_for_mimi(std::vector<DecodeJob>& jobs, int max) {
+  // Decoders for one thread pool: a lead whose pool splits each matrix, for a single sequence, and
+  // single-threaded copies sharing its weights, one per thread, for several side by side.
+  struct Decoders {
+    Pool& pool;
+    std::unique_ptr<Mimi> own;  // the lead, unless it is mimi_ itself
+    Mimi* lead;
+    std::vector<std::unique_ptr<Pool>> solo_pools;
+    std::vector<std::unique_ptr<Mimi>> solo;
+    Decoders(Mimi& base, Pool& p, bool is_base) : pool(p) {
+      if (!is_base) own = std::make_unique<Mimi>(base, p);
+      lead = is_base ? &base : own.get();
+      if (p.size() > 1)
+        for (int i = 0; i < p.size(); i++) {
+          solo_pools.push_back(std::make_unique<Pool>(1));
+          solo.push_back(std::make_unique<Mimi>(base, *solo_pools.back()));
+        }
+    }
+    int width() const { return std::max(1, int(solo.size())); }
+  };
+
+  // Under mu_: claims up to max sequences that no thread is decoding and that have enough latents
+  // for a chunk (or their last ones), oldest first, and copies their latents out.
+  int claim(std::vector<DecodeJob>& jobs, int max) {
     const int min_chunk = std::max(1, opt_.chunk / 2), L = cfg().ldim;
     int k = 0;
     for (auto& kv : seqs_) {
       auto& s = kv.second;
-      if (s->failed || s->finished) continue;
+      if (s->failed || s->finished || s->busy) continue;
       const int avail = int(s->latents.size()) / L - s->decoded;
       if (avail <= 0) {
         if (s->lm_done) {  // nothing (more) to decode
@@ -380,17 +418,17 @@ class Engine {
       }
       if (at < max) jobs[at].s = s, jobs[at].n = std::min(avail, opt_.chunk);
     }
+    for (int i = 0; i < k; i++) {
+      Seq& s = *jobs[i].s;
+      s.busy = true;
+      jobs[i].lat.assign(s.latents.begin() + size_t(s.decoded) * L, s.latents.begin() + size_t(s.decoded + jobs[i].n) * L);
+    }
     return k;
   }
 
-  // One sequence ready: the lead decoder splits each matrix across the pool. Several: each pool
-  // thread decodes its own sequence on a single-threaded decoder, with no syncs between them.
-  void mimi_loop() {
-    const Config& c = cfg();
-    const int fs = c.frame_samples(), D = std::max(1, int(solo_.size()));
-    std::vector<DecodeJob> jobs(D);
+  void decode(Decoders& d, std::vector<DecodeJob>& jobs, int k) {
     auto run = [&](Mimi& m, DecodeJob& j) {
-      j.audio.resize(size_t(j.n) * fs);
+      j.audio.resize(size_t(j.n) * cfg().frame_samples());
       j.failed = false;
       try {
         if (!j.s->mimi_started) {
@@ -402,40 +440,50 @@ class Engine {
         j.failed = true;
       }
     };
+    if (k == 1)
+      run(*d.lead, jobs[0]);
+    else
+      d.pool.run(k, [&](int i) { run(*d.solo[i], jobs[i]); });
+  }
+
+  // Under mu_: hands the audio over and frees the sequences for the next chunk.
+  void deliver(std::vector<DecodeJob>& jobs, int k) {
+    const int L = cfg().ldim;
+    for (int i = 0; i < k; i++) {
+      DecodeJob& j = jobs[i];
+      Seq& s = *j.s;
+      s.busy = false;
+      if (j.failed) {
+        fail(j.s);
+      } else {
+        for (float v : j.audio) {
+          const float y = std::nearbyint(std::min(1.0f, std::max(-1.0f, v)) * 32767.0f);
+          s.audio.push_back(int16_t(y));
+        }
+        s.decoded += j.n;
+        if (s.lm_done && s.decoded == int(s.latents.size()) / L) s.finished = true;
+        s.cv.notify_all();
+      }
+      j.s.reset();
+    }
+    mimi_cv_.notify_one();  // re-check: more may be waiting
+    lm_cv_.notify_one();
+  }
+
+  // The decoder's thread. The speech model's thread decodes too whenever it has nothing to step
+  // (lm_loop), so a reply's later chunks don't wait on one thread while the other idles.
+  void mimi_loop() {
+    std::vector<DecodeJob> jobs(mimi_dec_->width());
     for (;;) {
       int k = 0;
       {
         std::unique_lock<std::mutex> g(mu_);
-        mimi_cv_.wait(g, [&] { return stop_ || (k = pick_for_mimi(jobs, D)) > 0; });
+        mimi_cv_.wait(g, [&] { return stop_ || (k = claim(jobs, mimi_dec_->width())) > 0; });
         if (stop_) return;
-        for (int i = 0; i < k; i++) {
-          const auto& lat = jobs[i].s->latents;
-          jobs[i].lat.assign(lat.begin() + size_t(jobs[i].s->decoded) * c.ldim,
-                             lat.begin() + size_t(jobs[i].s->decoded + jobs[i].n) * c.ldim);
-        }
       }
-      if (k == 1)
-        run(mimi_, jobs[0]);
-      else
-        mimi_pool_.run(k, [&](int i) { run(*solo_[i], jobs[i]); });
+      decode(*mimi_dec_, jobs, k);
       std::lock_guard<std::mutex> g(mu_);
-      for (int i = 0; i < k; i++) {
-        DecodeJob& j = jobs[i];
-        Seq& s = *j.s;
-        if (j.failed) {
-          fail(j.s);
-        } else {
-          for (float v : j.audio) {
-            const float y = std::nearbyint(std::min(1.0f, std::max(-1.0f, v)) * 32767.0f);
-            s.audio.push_back(int16_t(y));
-          }
-          s.decoded += j.n;
-          if (s.lm_done && s.decoded == int(s.latents.size()) / c.ldim) s.finished = true;
-          s.cv.notify_all();
-        }
-        j.s.reset();
-      }
-      mimi_cv_.notify_one();  // re-check: more may be waiting
+      deliver(jobs, k);
     }
   }
 
@@ -448,8 +496,7 @@ class Engine {
   Pool lm_pool_, mimi_pool_;
   LM lm_;
   Mimi mimi_;
-  std::vector<std::unique_ptr<Pool>> solo_pools_;
-  std::vector<std::unique_ptr<Mimi>> solo_;
+  std::unique_ptr<Decoders> mimi_dec_, lm_dec_;
   std::mutex mu_, debug_mu_;
   std::condition_variable lm_cv_, mimi_cv_;
   std::unordered_map<int64_t, std::shared_ptr<Seq>> seqs_;
@@ -480,6 +527,7 @@ pk_engine* pk_open(const char* model_path, const pk_options* opt, char* err, int
     o.max_tokens = std::clamp(o.max_tokens, 1, 1000);
     o.chunk = std::clamp(o.chunk, 1, 64);
     o.max_batch = std::clamp(o.max_batch, 0, 256);
+    if (o.speech_bits != 4 && o.speech_bits != 8) throw std::runtime_error("speech_bits must be 4 or 8");
     return new pk_engine(model_path, o);
   } catch (const std::exception& ex) {
     if (err && errlen > 0) {
@@ -492,6 +540,7 @@ pk_engine* pk_open(const char* model_path, const pk_options* opt, char* err, int
 
 void pk_close(pk_engine* e) { delete e; }
 const char* pk_isa(const pk_engine* e) { return e->e.kernels().name; }
+int pk_speech_bits(const pk_engine* e) { return e->e.speech_bits(); }
 const char* pk_decoder_mode(const pk_engine* e) { return e->e.decoder_mode(); }
 int pk_sample_rate(const pk_engine* e) { return e->e.cfg().sample_rate; }
 int pk_voice_count(const pk_engine* e) { return int(e->voices.size()); }

@@ -42,15 +42,24 @@ LM::LM(const Config& c, const LMWeights& w, const Kernels& k, Pool& pool, int ma
   xh_.resize(size_t(R) * F);
   t_.resize(size_t(R) * F);
   const int Kmax = c.ff > D ? c.ff : D;
-  qa_.resize(k.q8.qact_bytes(R, Kmax));
+  qa_.resize(std::max(k.q8.qact_bytes(R, Kmax), k.q4.qact_bytes(R, Kmax)));
   vk_.resize(w.voices.size());
   vv_.resize(w.voices.size());
 }
 
 void LM::linear(const Linear& l, const float* x, int ldx, int M, float* y, int ldy, bool accumulate) {
   const int N = l.N();
-  if (l.q8) {
-    k_.q8.quantize(x, ldx, M, l.q.K, qa_.data());
+  if (l.q4) {
+    k_.q4.quantize(x, ldx, M, l.w4.K, l.w4.r, qa_.data());
+    const int step = 64, tasks = (N + step - 1) / step;
+    const int per = (tasks + pool_.size() - 1) / pool_.size();
+    const int jobs = (tasks + per - 1) / per;
+    pool_.run(jobs, [&](int j) {
+      const int n0 = j * per * step, n1 = std::min(N, (j + 1) * per * step);
+      k_.q4.gemm(qa_.data(), M, l.w4, n0, n1, y, ldy, accumulate);
+    });
+  } else if (l.q8) {
+    k_.q8.quantize(x, ldx, M, l.q.K, l.q.r, qa_.data());
     // column slices of 64 (four 16-row VNNI blocks), spread over the pool
     const int step = 64, tasks = (N + step - 1) / step;
     const int per = (tasks + pool_.size() - 1) / pool_.size();

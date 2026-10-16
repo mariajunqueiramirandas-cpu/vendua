@@ -113,6 +113,29 @@ void f32_to_f16(const float* x, int n, uint16_t* y) {
   for (; i < n; i++) y[i] = _cvtss_sh(x[i], _MM_FROUND_TO_NEAREST_INT);
 }
 
+// y = H (signs * x), H the n x n Sylvester Hadamard matrix (unnormalized), n a power of two >= 16.
+void hadamard(const float* x, int n, const float* signs, float* y) {
+  const __m512 s1 = _mm512_setr_ps(1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1);
+  const __m512 s2 = _mm512_setr_ps(1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1);
+  const __m512 s4 = _mm512_setr_ps(1, 1, 1, 1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1);
+  const __m512 s8 = _mm512_setr_ps(1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1);
+  for (int i = 0; i < n; i += 16) {
+    __m512 v = _mm512_mul_ps(_mm512_loadu_ps(x + i), _mm512_loadu_ps(signs + i));
+    v = _mm512_fmadd_ps(v, s1, _mm512_permute_ps(v, 0xB1));
+    v = _mm512_fmadd_ps(v, s2, _mm512_permute_ps(v, 0x4E));
+    v = _mm512_fmadd_ps(v, s4, _mm512_shuffle_f32x4(v, v, 0xB1));
+    v = _mm512_fmadd_ps(v, s8, _mm512_shuffle_f32x4(v, v, 0x4E));
+    _mm512_storeu_ps(y + i, v);
+  }
+  for (int h = 16; h < n; h *= 2)
+    for (int i = 0; i < n; i += 2 * h)
+      for (int j = i; j < i + h; j += 16) {
+        const __m512 a = _mm512_loadu_ps(y + j), b = _mm512_loadu_ps(y + j + h);
+        _mm512_storeu_ps(y + j, _mm512_add_ps(a, b));
+        _mm512_storeu_ps(y + j + h, _mm512_sub_ps(a, b));
+      }
+}
+
 float dot(const float* a, const float* b, int n) {
   __m512 s0 = _mm512_setzero_ps(), s1 = s0;
   int i = 0;
@@ -140,12 +163,14 @@ inline size_t qa_head(int M) { return (size_t(M) * 8 + 63) & ~size_t(63); }
 
 size_t qact_bytes(int M, int K) { return qa_head(M) + size_t(M) * K; }
 
-void quantize(const float* x, int ldx, int M, int K, void* qa) {
+void quantize(const float* x, int ldx, int M, int K, const float* rot, void* qa) {
   float* scale = (float*)qa;
   int32_t* zero = (int32_t*)((char*)qa + size_t(M) * 4);
   uint8_t* out = (uint8_t*)qa + qa_head(M);
+  alignas(64) float buf[kMaxRotK];
   for (int m = 0; m < M; m++) {
     const float* r = x + size_t(m) * ldx;
+    if (rot) hadamard(r, K, rot, buf), r = buf;
     __m512 lo = _mm512_setzero_ps(), hi = _mm512_setzero_ps();
     int k = 0;
     for (; k + 16 <= K; k += 16) {
@@ -261,11 +286,13 @@ constexpr float kQ12 = 2047.0f;
 
 size_t qact_bytes12(int M, int K) { return qa_head(M) + size_t(M) * K * 2; }
 
-void quantize12(const float* x, int ldx, int M, int K, void* qa) {
+void quantize12(const float* x, int ldx, int M, int K, const float* rot, void* qa) {
   float* scale = (float*)qa;
   int16_t* out = (int16_t*)((char*)qa + qa_head(M));
+  alignas(64) float buf[kMaxRotK];
   for (int m = 0; m < M; m++) {
     const float* r = x + size_t(m) * ldx;
+    if (rot) hadamard(r, K, rot, buf), r = buf;
     __m512 mx = _mm512_setzero_ps();
     int k = 0;
     for (; k + 16 <= K; k += 16) mx = _mm512_max_ps(mx, _mm512_abs_ps(_mm512_loadu_ps(r + k)));
@@ -348,6 +375,102 @@ void q12_gemm(const void* qa, int M, const QW& w, int n0, int n1, float* y, int 
     for (; b + 4 <= b1; b += 4) q12_slab<4>(qa, M, w, b, y, ldy, accumulate);
   for (; b + 2 <= b1; b += 2) q12_slab<2>(qa, M, w, b, y, ldy, accumulate);
   for (; b < b1; b++) q12_slab<1>(qa, M, w, b, y, ldy, accumulate);
+}
+
+// ---- int4 weights x int8 activations (vpdpbusd) --------------------------------------------
+// The speech model's int4 matrices (QW4): the unsigned codes (u = w + 8) against signed 8-bit
+// activations, one vpdpbusd per nibble of a 64-byte block. sum a * (u - 8) = sum a * u - 8 * sum a.
+// qa layout: float scale[M] | int32 8 * sum(q)[M] | int8 rows [M][K]
+
+size_t qact_bytes4(int M, int K) { return qa_head(M) + size_t(M) * K; }
+
+void quantize4(const float* x, int ldx, int M, int K, const float* rot, void* qa) {
+  float* scale = (float*)qa;
+  int32_t* zs = (int32_t*)((char*)qa + size_t(M) * 4);
+  int8_t* out = (int8_t*)qa + qa_head(M);
+  alignas(64) float buf[kMaxRotK];
+  for (int m = 0; m < M; m++) {
+    const float* r = x + size_t(m) * ldx;
+    if (rot) hadamard(r, K, rot, buf), r = buf;
+    __m512 mx = _mm512_setzero_ps();
+    for (int k = 0; k < K; k += 16) mx = _mm512_max_ps(mx, _mm512_abs_ps(_mm512_loadu_ps(r + k)));
+    const float a = _mm512_reduce_max_ps(mx), s = a > 0 ? a / 127.0f : 1.0f;
+    scale[m] = s;
+    const __m512 inv = _mm512_set1_ps(1.0f / s);
+    __m512i sum = _mm512_setzero_si512();
+    int8_t* o = out + size_t(m) * K;
+    for (int k = 0; k < K; k += 16) {
+      const __m512i q = _mm512_cvtps_epi32(_mm512_mul_ps(_mm512_loadu_ps(r + k), inv));
+      sum = _mm512_add_epi32(sum, q);
+      _mm_storeu_si128((__m128i*)(o + k), _mm512_cvtsepi32_epi8(q));
+    }
+    zs[m] = 8 * _mm512_reduce_add_epi32(sum);
+  }
+}
+
+template <int RM, int NB>
+void q4_block(const void* qa, int M, int m0, const QW4& w, int blk0, float* y, int ldy, bool accumulate) {
+  const float* scale = (const float*)qa;
+  const int32_t* zs = (const int32_t*)((const char*)qa + size_t(M) * 4);
+  const int8_t* xq = (const int8_t*)qa + qa_head(M);
+  const int K8 = w.K / 8;
+  const size_t bstride = size_t(K8) * 64;
+  const uint8_t* wb = w.q + size_t(blk0) * bstride;
+  const __m512i nib = _mm512_set1_epi8(0x0F);
+  const int8_t* rows[RM];
+  for (int r = 0; r < RM; r++) rows[r] = xq + size_t(m0 + r) * w.K;
+  __m512i acc[RM][NB];
+  for (int r = 0; r < RM; r++)
+    for (int j = 0; j < NB; j++) acc[r][j] = _mm512_setzero_si512();
+#pragma GCC unroll 2
+  for (int kq = 0; kq < K8; kq++) {
+    __m512i lo[NB], hi[NB];
+    for (int j = 0; j < NB; j++) {
+      const uint8_t* p = wb + j * bstride + size_t(kq) * 64;
+      _mm_prefetch((const char*)p + 1024, _MM_HINT_T0);
+      const __m512i v = _mm512_load_si512((const void*)p);
+      lo[j] = _mm512_and_si512(v, nib);
+      hi[j] = _mm512_and_si512(_mm512_srli_epi16(v, 4), nib);
+    }
+    for (int r = 0; r < RM; r++) {
+      int32_t a[2];
+      std::memcpy(a, rows[r] + size_t(kq) * 8, 8);
+      const __m512i alo = _mm512_set1_epi32(a[0]), ahi = _mm512_set1_epi32(a[1]);
+      for (int j = 0; j < NB; j++) acc[r][j] = _mm512_dpbusd_epi32(_mm512_dpbusd_epi32(acc[r][j], lo[j], alo), hi[j], ahi);
+    }
+  }
+  for (int j = 0; j < NB; j++) {
+    const int n = (blk0 + j) * 16;
+    const __m512 ws = _mm512_loadu_ps(w.s + n);
+    const __m512 bias = w.b ? _mm512_loadu_ps(w.b + n) : _mm512_setzero_ps();
+    for (int r = 0; r < RM; r++) {
+      const __m512i v = _mm512_sub_epi32(acc[r][j], _mm512_set1_epi32(zs[m0 + r]));
+      __m512 f = _mm512_fmadd_ps(_mm512_cvtepi32_ps(v), _mm512_mul_ps(ws, _mm512_set1_ps(scale[m0 + r])), bias);
+      float* dst = y + size_t(m0 + r) * ldy + n;
+      if (accumulate) f = _mm512_add_ps(f, _mm512_loadu_ps(dst));
+      _mm512_storeu_ps(dst, f);
+    }
+  }
+}
+
+template <int NB>
+void q4_slab(const void* qa, int M, const QW4& w, int b, float* y, int ldy, bool acc) {
+  int m = 0;
+  for (; m + 4 <= M; m += 4) q4_block<4, NB>(qa, M, m, w, b, y, ldy, acc);
+  switch (M - m) {
+    case 3: q4_block<3, NB>(qa, M, m, w, b, y, ldy, acc); break;
+    case 2: q4_block<2, NB>(qa, M, m, w, b, y, ldy, acc); break;
+    case 1: q4_block<1, NB>(qa, M, m, w, b, y, ldy, acc); break;
+  }
+}
+
+void q4_gemm(const void* qa, int M, const QW4& w, int n0, int n1, float* y, int ldy, bool accumulate) {
+  int b = n0 / 16;
+  const int b1 = n1 / 16;
+  if (M <= 2)
+    for (; b + 4 <= b1; b += 4) q4_slab<4>(qa, M, w, b, y, ldy, accumulate);
+  for (; b + 2 <= b1; b += 2) q4_slab<2>(qa, M, w, b, y, ldy, accumulate);
+  for (; b < b1; b++) q4_slab<1>(qa, M, w, b, y, ldy, accumulate);
 }
 
 // ---- float32 GEMM ---------------------------------------------------------------------------
@@ -474,7 +597,8 @@ const Kernels kTable = {
     {qact_bytes12, quantize12, q12_gemm},
     {qact_bytes, quantize, q8_gemm},
     8,
-    f32_gemm, attn_f16, layernorm, gelu_tanh, silu, elu, softmax_exp, f32_to_f16, dot,
+    {qact_bytes4, quantize4, q4_gemm},
+    f32_gemm, attn_f16, layernorm, gelu_tanh, silu, elu, softmax_exp, f32_to_f16, dot, hadamard,
     nullptr, nullptr, nullptr,
 };
 

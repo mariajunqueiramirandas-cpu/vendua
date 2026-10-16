@@ -3,7 +3,7 @@
   POST /v1/speak   Authorization: Bearer $TTS_SECRET
                    body {"text", "voice"?, "format"?: "ogg" | "wav", "seed"?}
                    -> audio/ogg (Opus, mono) or audio/wav, 24 kHz; x-tts-seconds: its length
-  GET  /healthz    -> 200 once the model is loaded and warm: {ok, active, isa, decoder, voices}
+  GET  /healthz    -> 200 once the model is loaded and warm: {ok, active, isa, decoder, speech_bits, voice, voices}
 
 Texts are replies to shoppers: never logged, never kept.
 """
@@ -52,7 +52,8 @@ class Config:
         self.request_timeout = float(env.get("TTS_REQUEST_TIMEOUT_S", "120"))
         self.voice = env.get("TTS_VOICE", "rafael")
         self.bitrate = int(env.get("TTS_OPUS_BITRATE", "32000"))
-        self.isa = env.get("TTS_ISA") or None  # avx2 | avx512 | amx; default: the best the CPU has
+        self.isa = env.get("TTS_ISA") or None  # avx2 | avxvnni | avx512 | amx; default: the best the CPU has
+        self.speech_bits = int(env.get("TTS_SPEECH_BITS", "4"))  # the speech model's weights: 4 or 8
 
 
 class App:
@@ -202,11 +203,17 @@ def serve(cfg: Config) -> None:
 
     t = time.monotonic()
     lm, mimi = split_threads(cfg.threads)
-    engine = Engine(Path(cfg.model_dir) / "pocket.bin", lm, mimi, cfg.max_batch, isa=cfg.isa)
+    engine = Engine(Path(cfg.model_dir) / "pocket.bin", lm, mimi, cfg.max_batch, isa=cfg.isa, speech_bits=cfg.speech_bits)
     speaker = Speaker.load(engine, cfg.model_dir)
     if cfg.voice not in engine.voices:
         sys.exit(f"TTS_VOICE={cfg.voice} is not in the model: {', '.join(engine.voices)}")
-    info = {"isa": engine.isa, "decoder": engine.decoder_mode, "voice": cfg.voice, "voices": sorted(engine.voices)}
+    info = {
+        "isa": engine.isa,
+        "decoder": engine.decoder_mode,
+        "speech_bits": engine.speech_bits,
+        "voice": cfg.voice,
+        "voices": sorted(engine.voices),
+    }
     httpd, app = build(cfg, speaker, info)
     threading.Thread(target=httpd.serve_forever, name="http", daemon=True).start()
     speaker.speak("Olá! Tudo pronto por aqui.", cfg.voice, 60, lambda pcm: None)  # pages the weights in
@@ -218,6 +225,7 @@ def serve(cfg: Config) -> None:
         threads=f"{lm}+{mimi}",
         isa=engine.isa,
         decoder=engine.decoder_mode,
+        speech_bits=engine.speech_bits,
         load_s=round(time.monotonic() - t, 1),
         secret=bool(cfg.secret),
     )

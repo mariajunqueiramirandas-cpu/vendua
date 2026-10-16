@@ -46,7 +46,13 @@ design and every number):
 - **6.6× the reference's speed on the CPUs every server has (AVX2):** 11× real time on 2 cores,
   19× on 4. With AVX-512 it's 16× and 27–30×; with AMX, 21–28× and 34–55×. A 22-second reply
   is ready in 2 s on AVX2 and under 1 s on AMX.
-- **Kernels picked at startup** from the CPU, so one image runs on whatever host the VPS is.
+- **Kernels picked at startup** from the CPU (AVX2, AVX-VNNI, AVX-512 or AMX), so one image runs on
+  whatever host the VPS is.
+- **The speech model in 4 bits.** Its matrices are Hadamard-rotated (QuaRot), which also makes
+  int8 more precise than before, and quantized to int4 by GPTQ at build time, halving what each
+  step reads. Transcribed by `stt`, the int4 voice is not told apart from float32 (sign test over
+  294 clips), and its spectrum is within 0.2 dB. `TTS_SPEECH_BITS=8` goes back to int8 without a
+  rebuild.
 - **A Brazilian-Portuguese normalizer** in front: the tokenizer has no digits, so prices,
   installments, times and dates are spelled out ("R$ 49,90 em 10x" → "quarenta e nove reais e
   noventa centavos em dez vezes").

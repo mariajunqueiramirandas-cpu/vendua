@@ -15,13 +15,15 @@ typedef struct {
   int max_batch;     /* sequences decoded per step; 0 = manual mode (pk_debug_* only, no threads) */
   int max_tokens;    /* tokens per sequence */
   int chunk;         /* latents per decoder call (80 ms each) */
-  const char* isa;   /* "avx512", "avx2" or NULL for the best the CPU has */
+  const char* isa;   /* "amx", "avx512", "avxvnni", "avx2" or NULL for the best the CPU has */
+  int speech_bits;   /* the speech model's transformer weights: 8, or 4 (a file packed with int4) */
 } pk_options;
 
 pk_engine* pk_open(const char* model_path, const pk_options* opt, char* err, int errlen);
 void pk_close(pk_engine* e);
 
 const char* pk_isa(const pk_engine* e);
+int pk_speech_bits(const pk_engine* e);
 /* How the audio decoder's transformer runs: "f32", "q12", "q8" (timed at startup) or "bf16" (AMX). */
 const char* pk_decoder_mode(const pk_engine* e);
 int pk_sample_rate(const pk_engine* e);

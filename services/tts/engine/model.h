@@ -9,7 +9,7 @@
 
 namespace pk {
 
-enum DType : uint32_t { kF32 = 0, kF16 = 1, kI8 = 2, kI32 = 3 };
+enum DType : uint32_t { kF32 = 0, kF16 = 1, kI8 = 2, kI32 = 3, kU4 = 4 };  // kU4: two codes per byte
 
 struct Tensor {
   uint32_t dtype = 0, ndim = 0;
@@ -30,8 +30,10 @@ class ModelFile {
   const Tensor& get(const std::string& name) const;
   const float* f32(const std::string& name, size_t count) const;
   QW q8(const std::string& name, int N, int K, bool bias) const;
+  QW4 q4(const std::string& name, int N, int K, bool bias) const;
   PW panels(const std::string& name, int N, int K, bool bias) const;
-  Linear linear(const std::string& name, int N, int K, bool bias) const;
+  // int4: the file's int4 copy (QW4) where it has one, required
+  Linear linear(const std::string& name, int N, int K, bool bias, bool int4 = false) const;
   std::vector<std::string> voices() const;
 
  private:
@@ -95,7 +97,7 @@ struct MimiWeights {
   float clb;
 };
 
-LMWeights load_lm(const ModelFile& f);
+LMWeights load_lm(const ModelFile& f, bool int4);
 MimiWeights load_mimi(const ModelFile& f);
 
 }  // namespace pk

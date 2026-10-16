@@ -1,12 +1,17 @@
 """Packs Pocket TTS weights (safetensors) into the C++ engine's model file.
 
-  python -m tts.pack <model.safetensors> <voices dir> <out.bin> [--f32 <names>]
+  python -m tts.pack <model.safetensors> <voices dir> <out.bin> [--f32 <names>] [--int4 gptq|rtn|none]
 
 Everything the engine would otherwise do per request is done here, once:
 
 - Matrices the speech model reads per frame become int8 with one scale per output row, laid out
   for VNNI: blocks of 16 rows x 4 columns, 64 bytes, so one vpdpbusd consumes one block. Each row
   also gets the sum of its int8 weights, which undoes the activations' zero point.
+- The transformer's and flow head's matrices are rotated first (QuaRot): W becomes W D H / K, with H
+  a Hadamard matrix and D random signs, and the engine turns each input x into x D H as it
+  quantizes it. The product is unchanged, and neither side keeps the outliers that set its scale.
+- The transformer's matrices are also stored as int4 (one scale per row), quantized by GPTQ on
+  inputs from calibration replies (tts/gptq.py). The engine runs int4 or int8 (TTS_SPEECH_BITS).
 - The audio decoder's transformer and first conv are int8 the same way, and also float32 for
   CPUs with AMX, which run the whole decoder in bfloat16. Its later convs stay float32, packed in
   panels of 32 columns: int8 there puts audible noise into pauses.
@@ -31,16 +36,17 @@ from pathlib import Path
 
 import numpy as np
 
+from . import gptq
 from .config import ModelConfig
 from .weights import read_safetensors
 
 MAGIC = b"PKTTS\0\0\0"
-VERSION = 1
+VERSION = 2
 ALIGN = 64
 
-# dtype codes shared with engine/model.h
-F32, F16, I8, I32 = 0, 1, 2, 3
-_CODES = {np.float32: F32, np.float16: F16, np.int8: I8, np.int32: I32}
+# dtype codes shared with engine/model.h; U4 is two 4-bit codes per byte
+F32, F16, I8, I32, U4 = 0, 1, 2, 3, 4
+_CODES = {np.float32: F32, np.float16: F16, np.int8: I8, np.int32: I32, np.uint8: U4}
 NAME_LEN = 56
 # int32 fields of the header, in engine/model.h's order
 CONFIG_FIELDS = (
@@ -57,6 +63,34 @@ def quantize_rows(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     scale = np.where(amax > 0, amax / 127.0, 1.0).astype(np.float32)
     q = np.clip(np.rint(w / scale[:, None]), -127, 127).astype(np.int8)
     return q, scale
+
+
+def hadamard(a: np.ndarray) -> np.ndarray:
+    """a @ H along the last axis, H the Sylvester Hadamard matrix (unnormalized) the engine uses."""
+    n = a.shape[-1]
+    h = 1
+    while h < n:
+        a = a.reshape(*a.shape[:-1], n // (2 * h), 2, h)
+        a = np.stack([a[..., 0, :] + a[..., 1, :], a[..., 0, :] - a[..., 1, :]], axis=-2)
+        a = a.reshape(*a.shape[:-3], n)
+        h *= 2
+    return a
+
+
+def rotate(w: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """W [N, K] -> (W D H / K, signs): the engine multiplies inputs by D H, and H H = K I."""
+    k = w.shape[1]
+    signs = np.random.default_rng(seed).choice(np.array([-1.0, 1.0], np.float32), k)
+    return (hadamard(w.astype(np.float64) * signs) / k).astype(np.float32), signs
+
+
+def int4_layout(q: np.ndarray) -> np.ndarray:
+    """[N, K] int4 -> [N/16, K/8, 64] bytes of codes q + 8: per 8 k, 16 columns x 4 bytes, byte j of a
+    column holding k j (low nibble) and k j + 4 (high)."""
+    n, k = q.shape
+    assert n % 16 == 0 and k % 32 == 0, (n, k)
+    u = (q.astype(np.int16) + 8).astype(np.uint8).reshape(n // 16, 16, k // 8, 2, 4).transpose(0, 2, 1, 4, 3)
+    return np.ascontiguousarray(u[..., 0] | (u[..., 1] << 4))
 
 
 def vnni_layout(q: np.ndarray) -> np.ndarray:
@@ -84,8 +118,11 @@ class Packer:
         a = np.ascontiguousarray(a)
         self.tensors.append((name, a, tuple(shape if shape is not None else a.shape)))
 
-    def linear_q8(self, name: str, w: np.ndarray, bias: np.ndarray | None = None):
-        """y = x @ w.T (+ bias); w [N, K]."""
+    def linear_q8(self, name: str, w: np.ndarray, bias: np.ndarray | None = None, rot: int | None = None):
+        """y = x @ w.T (+ bias); w [N, K]. rot: seed of the input's rotation, if any."""
+        if rot is not None:
+            w, signs = rotate(w, rot)
+            self.raw(name + ".r", signs)
         q, scale = quantize_rows(w.astype(np.float32))
         n, k = w.shape
         self.raw(name + ".q", vnni_layout(q), (n, k))
@@ -94,14 +131,24 @@ class Packer:
         if bias is not None:
             self.raw(name + ".b", bias.astype(np.float32))
 
+    def linear_q4(self, name: str, q: np.ndarray, scale: np.ndarray):
+        """The int4 copy of a rotated int8 linear (linear_q8 with rot), sharing its rotation and bias:
+        W D H / K = scale * q."""
+        n, k = q.shape
+        self.raw(name + ".u", int4_layout(q), (n, k))
+        self.raw(name + ".s4", scale.astype(np.float32))
+
     def linear_f32(self, name: str, w: np.ndarray, bias: np.ndarray | None = None):
         n, k = w.shape
         self.raw(name + ".p", panel_layout(w.T.astype(np.float32)), (n, k))
         if bias is not None:
             self.raw(name + ".b", bias.astype(np.float32))
 
-    def linear(self, name: str, w, bias=None, f32: bool = False):
-        (self.linear_f32 if f32 else self.linear_q8)(name, w, bias)
+    def linear(self, name: str, w, bias=None, f32: bool = False, rot: int | None = None):
+        if f32:
+            self.linear_f32(name, w, bias)
+        else:
+            self.linear_q8(name, w, bias, rot)
 
     def linear_both(self, name: str, w, bias=None, f32: bool = False):
         """int8 for the VNNI kernels, plus the float32 panels AMX converts to bfloat16."""
@@ -155,7 +202,17 @@ def time_constant(sd: dict[str, np.ndarray]) -> np.ndarray:
     return ((te(0, 0.0) + te(1, 1.0)) / np.float32(2)).astype(np.float32)
 
 
-def pack(sd: dict[str, np.ndarray], voices: dict[str, dict[str, np.ndarray]], cfg: ModelConfig, f32: set[str]) -> Packer:
+def pack(
+    sd: dict[str, np.ndarray],
+    voices: dict[str, dict[str, np.ndarray]],
+    cfg: ModelConfig,
+    f32: set[str],
+    rotated: bool = True,
+    int4: bool = True,
+    calib: dict[int, np.ndarray] | None = None,
+) -> Packer:
+    """int4: also store the transformer's matrices as int4, by GPTQ on calib (gptq.calibrate's
+    inputs) or, without it, by rounding to nearest."""
     p = Packer(cfg)
     g = lambda k: sd[k].astype(np.float32)
     hd = cfg.d_model // cfg.heads
@@ -168,12 +225,21 @@ def pack(sd: dict[str, np.ndarray], voices: dict[str, dict[str, np.ndarray]], cf
         qkv[: cfg.d_model] *= np.float32(1 / np.sqrt(hd))  # a power of two for 64-wide heads
         p.raw(f"l{i}.n1.w", g(f + "norm1.weight"))
         p.raw(f"l{i}.n1.b", g(f + "norm1.bias"))
-        p.linear(f"l{i}.qkv", qkv, f32="qkv" in f32)
-        p.linear(f"l{i}.o", g(f + "self_attn.out_proj.weight"), f32="o" in f32)
+
+        def lin(j: int, kind: str, w: np.ndarray):
+            name, seed = f"l{i}.{('qkv', 'o', 'ff1', 'ff2')[j]}", 4 * i + j
+            p.linear(name, w, f32=kind in f32, rot=seed if rotated else None)
+            if int4 and rotated and kind not in f32:
+                wr, signs = rotate(w, seed)
+                q, s = gptq.quantize(wr, hadamard(calib[seed] * signs)) if calib else gptq.round_to_nearest(wr)
+                p.linear_q4(name, q, s)
+
+        lin(0, "qkv", qkv)
+        lin(1, "o", g(f + "self_attn.out_proj.weight"))
         p.raw(f"l{i}.n2.w", g(f + "norm2.weight"))
         p.raw(f"l{i}.n2.b", g(f + "norm2.bias"))
-        p.linear(f"l{i}.ff1", g(f + "linear1.weight"), f32="ff" in f32)
-        p.linear(f"l{i}.ff2", g(f + "linear2.weight"), f32="ff" in f32)
+        lin(2, "ff", g(f + "linear1.weight"))
+        lin(3, "ff", g(f + "linear2.weight"))
     p.raw("on.w", g("flow_lm.out_norm.weight"))
     p.raw("on.b", g("flow_lm.out_norm.bias"))
     p.raw("eos.w", g("flow_lm.out_eos.weight")[0])
@@ -181,19 +247,20 @@ def pack(sd: dict[str, np.ndarray], voices: dict[str, dict[str, np.ndarray]], cf
 
     fl = "flow_lm.flow_net."
     flow32 = "flow" in f32
-    p.linear("f.cond", g(fl + "cond_embed.weight"), g(fl + "cond_embed.bias") + time_constant(sd), f32=flow32)
+    frot = (lambda seed: seed) if rotated else (lambda seed: None)
+    p.linear("f.cond", g(fl + "cond_embed.weight"), g(fl + "cond_embed.bias") + time_constant(sd), f32=flow32, rot=frot(100))
     p.linear_f32("f.in", g(fl + "input_proj.weight"), g(fl + "input_proj.bias"))
     ada_w = [g(f"{fl}res_blocks.{i}.adaLN_modulation.1.weight") for i in range(cfg.flow_depth)]
     ada_b = [g(f"{fl}res_blocks.{i}.adaLN_modulation.1.bias") for i in range(cfg.flow_depth)]
     ada_w.append(g(fl + "final_layer.adaLN_modulation.1.weight"))
     ada_b.append(g(fl + "final_layer.adaLN_modulation.1.bias"))
-    p.linear("f.ada", np.concatenate(ada_w), np.concatenate(ada_b), f32=flow32)
+    p.linear("f.ada", np.concatenate(ada_w), np.concatenate(ada_b), f32=flow32, rot=frot(101))
     for i in range(cfg.flow_depth):
         b = f"{fl}res_blocks.{i}."
         p.raw(f"f{i}.ln.w", g(b + "in_ln.weight"))
         p.raw(f"f{i}.ln.b", g(b + "in_ln.bias"))
-        p.linear(f"f{i}.m0", g(b + "mlp.0.weight"), g(b + "mlp.0.bias"), f32=flow32)
-        p.linear(f"f{i}.m2", g(b + "mlp.2.weight"), g(b + "mlp.2.bias"), f32=flow32)
+        p.linear(f"f{i}.m0", g(b + "mlp.0.weight"), g(b + "mlp.0.bias"), f32=flow32, rot=frot(102 + 2 * i))
+        p.linear(f"f{i}.m2", g(b + "mlp.2.weight"), g(b + "mlp.2.bias"), f32=flow32, rot=frot(103 + 2 * i))
     p.linear_f32("f.out", g(fl + "final_layer.linear.weight"), g(fl + "final_layer.linear.bias"))
 
     # Mimi: latent denormalization folded into the input projection
@@ -262,11 +329,19 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("voices")
     ap.add_argument("out")
     ap.add_argument("--f32", default="", help="comma list of qkv,o,ff,flow,mimi kept in float32")
+    ap.add_argument("--no-rotate", action="store_true", help="int8 transformer matrices without the Hadamard rotation")
+    ap.add_argument("--int4", default="gptq", choices=("gptq", "rtn", "none"), help="the speech model's int4 copy")
+    ap.add_argument("--tokenizer", help="for GPTQ's calibration (default: tokenizer.json beside the weights)")
     a = ap.parse_args(argv)
     sd = read_safetensors(a.weights)
     cfg = ModelConfig.from_weights(sd)
     f32 = {x for x in a.f32.split(",") if x}
-    p = pack(sd, load_voices(Path(a.voices)), cfg, f32)
+    voices = load_voices(Path(a.voices))
+    calib = None
+    if a.int4 == "gptq":
+        tok = Path(a.tokenizer) if a.tokenizer else Path(a.weights).with_name("tokenizer.json")
+        calib = gptq.calibrate(sd, cfg, voices["rafael"] if "rafael" in voices else next(iter(voices.values())), tok)
+    p = pack(sd, voices, cfg, f32, rotated=not a.no_rotate, int4=a.int4 != "none", calib=calib)
     p.write(Path(a.out))
     print(f"{a.out}: {len(p.tensors)} tensors, {Path(a.out).stat().st_size / 1e6:.1f} MB", file=sys.stderr)
 

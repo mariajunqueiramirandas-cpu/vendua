@@ -1,4 +1,4 @@
-"""The C++ engine against tests/reference.py on a tiny random model, on every instruction set this
+"""The C++ engine against tts/reference.py on a tiny random model, on every instruction set this
 CPU has. Needs engine/build/libpocket.so (make -C engine)."""
 
 import os
@@ -9,10 +9,11 @@ from pathlib import Path
 
 import numpy as np
 
-from tests import reference as ref
+from tts import reference as ref
 from tests import tiny
 from tts.engine import Engine
-from tts.pack import pack
+from tts.gptq import round_to_nearest
+from tts.pack import hadamard, pack, rotate
 
 ALL_F32 = {"qkv", "o", "ff", "flow", "mimi"}
 TOKENS = [3, 17, 5, 22, 9, 31, 2, 14, 8]
@@ -20,7 +21,7 @@ TOKENS = [3, 17, 5, 22, 9, 31, 2, 14, 8]
 
 def isas() -> list[str]:
     out = []
-    for isa in ("avx2", "avx512", "amx"):
+    for isa in ("avx2", "avxvnni", "avx512", "amx"):
         try:
             Engine(Model.f32, max_batch=0, isa=isa).close()
             out.append(isa)
@@ -35,9 +36,29 @@ def snr(x: np.ndarray, ref_: np.ndarray) -> float:
 
 
 class Model:
-    """Packed once for the module: float32 everywhere, int8 as shipped, and one that ends early."""
+    """Packed once for the module: float32 everywhere, as shipped (int8 and int4), and one that ends
+    early."""
 
     f32 = q8 = eos = ""
+
+
+def int4_weights(sd: dict) -> dict:
+    """The transformer's matrices as the int4 model holds them, back in float32 and unrotated."""
+    out = dict(sd)
+    hd = CFG.d_model // CFG.heads
+    for i in range(CFG.layers):
+        f = f"flow_lm.transformer.layers.{i}."
+        for j, k in enumerate(("self_attn.in_proj", "self_attn.out_proj", "linear1", "linear2")):
+            w = sd[f + k + ".weight"].copy()
+            if j == 0:
+                w[: CFG.d_model] /= np.sqrt(hd)  # as pack scales the query rows
+            wr, signs = rotate(w, 4 * i + j)
+            q, s = round_to_nearest(wr)
+            back = (hadamard(q.astype(np.float64) * s[:, None]) * signs).astype(np.float32)
+            if j == 0:
+                back[: CFG.d_model] *= np.sqrt(hd)
+            out[f + k + ".weight"] = back
+    return out
 
 
 def setUpModule():
@@ -61,28 +82,38 @@ def tearDownModule():
 class SpeechModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.lm = ref.FlowLM(SD, CFG)
         steps = ref.max_frames(len(TOKENS))
         rng = np.random.default_rng(1)
         cls.noise = (rng.standard_normal((steps, CFG.ldim)) * np.sqrt(0.3)).astype(np.float32)
-        cls.want = ref.generate(cls.lm, VOICES["bia"], TOKENS, cls.noise, frames_after_eos=0)
+        cls.want = ref.generate(ref.FlowLM(SD, CFG), VOICES["bia"], TOKENS, cls.noise, frames_after_eos=0)
+        # what the int4 model should say: the reference on its weights, so the error left is the rest's
+        cls.want4 = ref.generate(ref.FlowLM(int4_weights(SD), CFG), VOICES["bia"], TOKENS, cls.noise, frames_after_eos=0)
 
     # Teacher forcing: every step reads the reference's previous latent, so the error is one step's,
     # without the drift of feeding back its own (the KV cache is float16 even in float32 models).
-    def check(self, model: str, max_err: float):
+    def check(self, model: str, max_err: float, want: np.ndarray | None = None, speech_bits: int = 8):
+        want = self.want if want is None else want
         for isa in ISAS:
-            with self.subTest(isa=isa, model=model):
-                e = Engine(model, max_batch=0, isa=isa)
+            with self.subTest(isa=isa, model=model, speech_bits=speech_bits):
+                e = Engine(model, max_batch=0, isa=isa, speech_bits=speech_bits)
+                self.assertEqual(e.speech_bits, speech_bits)
                 free, _ = e.debug_generate(e.voice_id("bia"), TOKENS, self.noise, frames_after_eos=0)
-                self.assertEqual(free.shape, self.want.shape)
-                got, _ = e.debug_generate(e.voice_id("bia"), TOKENS, self.noise, 0, teacher=self.want)
-                self.assertLess(np.linalg.norm(got - self.want) / np.linalg.norm(self.want), max_err)
+                self.assertEqual(free.shape, want.shape)
+                got, _ = e.debug_generate(e.voice_id("bia"), TOKENS, self.noise, 0, teacher=want)
+                self.assertLess(np.linalg.norm(got - want) / np.linalg.norm(want), max_err)
 
     def test_float32_matches_reference(self):
         self.check(Model.f32, 5e-4)  # measured 6e-5
 
     def test_int8_close_to_reference(self):
         self.check(Model.q8, 0.05)  # measured 1.4%
+
+    def test_int4_runs_its_weights(self):
+        self.check(Model.q8, 0.05, self.want4, speech_bits=4)  # measured 1.4%
+
+    def test_int4_needs_a_file_with_it(self):
+        with self.assertRaisesRegex(RuntimeError, "no int4 copy"):
+            Engine(Model.f32, max_batch=0, speech_bits=4)
 
 
 class DecoderTest(unittest.TestCase):

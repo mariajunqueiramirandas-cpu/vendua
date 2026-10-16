@@ -1,8 +1,8 @@
 """Round trip through our own speech-to-text: how intelligible the engine's speech is, per kernel
 set, decoder mode and voice, and how fast it was made.
 
-  python bench.py speak <out> [--model-dir D] [--isa avx2] [--mode q8] [--voices a,b] [--seeds 1,2]
-                              [--threads N] [--raw]
+  python bench.py speak <out> [--model-dir D] [--isa avx2] [--mode q8] [--bits 4|8] [--voices a,b]
+                              [--seeds 1,2] [--threads N] [--raw]
       synthesizes bench_replies.txt into <out>/<voice>/<seed>_<n>.wav and prints the speed.
       --raw skips the text normalizer (digits go to the model as they are).
   python bench.py score <stt model dir> <dir>... [--wav] [-v]
@@ -70,7 +70,7 @@ def speak(a) -> None:
     if a.raw:
         tts.speak.normalize = lambda t: t
     lm, mimi = split_threads(a.threads)
-    e = Engine(Path(a.model_dir) / "pocket.bin", lm, mimi, 8, isa=a.isa)
+    e = Engine(Path(a.model_dir) / "pocket.bin", lm, mimi, 8, isa=a.isa, speech_bits=a.bits)
     sp = Speaker.load(e, a.model_dir)
     voices = a.voices.split(",") if a.voices != "all" else sorted(e.voices)
     sp.speak("Olá! Tudo pronto por aqui.", voices[0], 60, lambda p: None)
@@ -86,7 +86,7 @@ def speak(a) -> None:
                 wall += time.perf_counter() - t
                 audio += n / e.sample_rate
                 write_wav(out / f"{seed}_{i:03d}.wav", np.concatenate(parts), e.sample_rate)
-    print(f"{a.out}: {e.isa}/{e.decoder_mode} {lm}+{mimi} threads, {len(voices)} voices: "
+    print(f"{a.out}: {e.isa}/{e.decoder_mode} int{e.speech_bits} {lm}+{mimi} threads, {len(voices)} voices: "
           f"{audio:.0f} s of audio in {wall:.1f} s, RTFx {audio / wall:.1f}")
 
 
@@ -174,6 +174,7 @@ def main() -> None:
     s.add_argument("--model-dir", default=os.environ.get("TTS_MODEL_DIR", "/models"))
     s.add_argument("--isa")
     s.add_argument("--mode", help="decoder mode: f32, q12 or q8 (PK_MIMI_MODE)")
+    s.add_argument("--bits", type=int, default=8, help="the speech model's weights: 8 or 4")
     s.add_argument("--voices", default="rafael", help="comma list, or all")
     s.add_argument("--seeds", default="1")
     s.add_argument("--threads", type=int, default=os.cpu_count())

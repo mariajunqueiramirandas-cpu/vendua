@@ -1,14 +1,15 @@
 """Pocket TTS in plain numpy, float32, written from kyutai-labs/pocket-tts (MIT).
 
 The oracle the C++ engine is tested against: it reads the original weight names, so it checks
-the packer too. Slow and simple on purpose; nothing here is optimized.
+the packer too. Slow and simple on purpose; nothing here is optimized. The packer also runs it to
+calibrate GPTQ (tts/gptq.py).
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from tts.config import ModelConfig
+from .config import ModelConfig
 
 F32 = np.float32
 
@@ -66,14 +67,18 @@ class Transformer:
     def __init__(self, sd, prefix, layers, heads, max_period, context=None, scaled=False):
         self.w = [{k[len(f"{prefix}{i}.") :]: v for k, v in sd.items() if k.startswith(f"{prefix}{i}.")} for i in range(layers)]
         self.heads, self.max_period, self.context, self.scaled = heads, max_period, context, scaled
+        self.taps: dict[int, list] | None = None  # when set: the inputs of layer i's matrices at 4 i + 0..3
 
     def __call__(self, x, cache, offset):
         """x [T, D] at positions offset.. ; cache: per layer (k, v) [Tc, H, Dh] covering 0..offset."""
         t = x.shape[0]
         pos = np.arange(offset, offset + t)
         out_cache = []
-        for w, (ck, cv) in zip(self.w, cache):
+        tap = (lambda i, j, a: self.taps.setdefault(4 * i + j, []).append(a)) if self.taps is not None else None
+        for i, (w, (ck, cv)) in enumerate(zip(self.w, cache)):
             h = layer_norm(x, w["norm1.weight"], w["norm1.bias"], 1e-5)
+            if tap:
+                tap(i, 0, h)
             qkv = (h @ w["self_attn.in_proj.weight"].T).reshape(t, 3, self.heads, -1)
             q = rope(qkv[:, 0], pos, self.max_period)
             k = rope(qkv[:, 1], pos, self.max_period)
@@ -83,12 +88,18 @@ class Transformer:
                 v = np.concatenate([cv, v])
             out_cache.append((k, v))
             a = attend(q, k, v, pos, np.arange(k.shape[0]), self.context)
+            if tap:
+                tap(i, 1, a)
             a = a @ w["self_attn.out_proj.weight"].T
             if self.scaled:
                 a = a * w["layer_scale_1.scale"]
             x = x + a
             h = layer_norm(x, w["norm2.weight"], w["norm2.bias"], 1e-5)
-            f = gelu_tanh(h @ w["linear1.weight"].T) @ w["linear2.weight"].T
+            g = gelu_tanh(h @ w["linear1.weight"].T)
+            if tap:
+                tap(i, 2, h)
+                tap(i, 3, g)
+            f = g @ w["linear2.weight"].T
             if self.scaled:
                 f = f * w["layer_scale_2.scale"]
             x = (x + f).astype(F32)

@@ -24,10 +24,10 @@ shoppers, so they are never logged or kept here.
 
 ## API
 
-| Route            | Auth                 | Body                                  | Returns                                             |
-| ---------------- | -------------------- | ------------------------------------- | --------------------------------------------------- |
-| `POST /v1/speak` | `Bearer $TTS_SECRET` | `{text, voice?, format?, seed?}` JSON | the audio; `x-tts-seconds` is its length            |
-| `GET /healthz`   | none                 |                                       | 200 once warm, `{ok, active, isa, decoder, voices}` |
+| Route            | Auth                 | Body                                  | Returns                                                                 |
+| ---------------- | -------------------- | ------------------------------------- | ----------------------------------------------------------------------- |
+| `POST /v1/speak` | `Bearer $TTS_SECRET` | `{text, voice?, format?, seed?}` JSON | the audio; `x-tts-seconds` is its length                                |
+| `GET /healthz`   | none                 |                                       | 200 once warm, `{ok, active, isa, decoder, speech_bits, voice, voices}` |
 
 `format` is `ogg` (default: Ogg/Opus at 32 kbps, what WhatsApp plays as a voice note) or `wav`
 (16-bit PCM). `voice` defaults to `TTS_VOICE`. `seed` (0 to 2⁶³) picks another take; without one
@@ -46,20 +46,21 @@ Errors are `{error: code}` with a stable status:
 
 ## Env
 
-| Var                     | Default        | Notes                                                       |
-| ----------------------- | -------------- | ----------------------------------------------------------- |
-| `TTS_SECRET`            | —              | unset = every speak call gets 503 (idle)                    |
-| `TTS_ADDR`              | `0.0.0.0:8793` |                                                             |
-| `TTS_THREADS`           | CPU quota      | follows compose `cpus` (cgroup); split as in "Threads"      |
-| `TTS_MAX_BATCH`         | `8`            | text chunks per speech-model step                           |
-| `TTS_MAX_ACTIVE`        | `16`           | requests in flight; beyond it, 503 `overloaded`             |
-| `TTS_MAX_CHARS`         | `2000`         | about 2.5 minutes of speech                                 |
-| `TTS_REQUEST_TIMEOUT_S` | `120`          |                                                             |
-| `TTS_VOICE`             | `rafael`       | the default voice; `/healthz` lists them all                |
-| `TTS_OPUS_BITRATE`      | `32000`        |                                                             |
-| `TTS_ISA`               | best available | `avx2`, `avx512` or `amx`, to compare kernels               |
-| `PK_MIMI_MODE`          | timed          | `f32`, `q12` or `q8`: the decoder's matrices (not with AMX) |
-| `PK_PROFILE`            | —              | `1`: the engine times its sections (`Engine.profile_dump`)  |
+| Var                     | Default        | Notes                                                        |
+| ----------------------- | -------------- | ------------------------------------------------------------ |
+| `TTS_SECRET`            | —              | unset = every speak call gets 503 (idle)                     |
+| `TTS_ADDR`              | `0.0.0.0:8793` |                                                              |
+| `TTS_THREADS`           | CPU quota      | follows compose `cpus` (cgroup); split as in "Threads"       |
+| `TTS_MAX_BATCH`         | `8`            | text chunks per speech-model step                            |
+| `TTS_MAX_ACTIVE`        | `16`           | requests in flight; beyond it, 503 `overloaded`              |
+| `TTS_MAX_CHARS`         | `2000`         | about 2.5 minutes of speech                                  |
+| `TTS_REQUEST_TIMEOUT_S` | `120`          |                                                              |
+| `TTS_VOICE`             | `rafael`       | the default voice; `/healthz` lists them all                 |
+| `TTS_OPUS_BITRATE`      | `32000`        |                                                              |
+| `TTS_SPEECH_BITS`       | `4`            | the speech model's weights: `4` (GPTQ) or `8`; see "Numbers" |
+| `TTS_ISA`               | best available | `avx2`, `avxvnni`, `avx512` or `amx`, to compare kernels     |
+| `PK_MIMI_MODE`          | timed          | `f32`, `q12` or `q8`: the decoder's matrices (not with AMX)  |
+| `PK_PROFILE`            | —              | `1`: the engine times its sections (`Engine.profile_dump`)   |
 
 ## Text (`tts/text.py`)
 
@@ -98,13 +99,31 @@ seven adaLN projections fused into one matrix; convolutions turned into GEMMs ov
 buffers; voices as float16 KV caches. The engine maps the file, so voices nobody uses stay on
 disk.
 
-**Kernels.** `libpocket.so` carries three kernel sets, each file built for its instruction set,
-and picks one at startup from cpuid: AVX2 (any x86-64 server since 2013), AVX-512 VNNI, or AMX
-(Sapphire Rapids and later).
+**Rotation (QuaRot).** Every matrix of the speech model is stored rotated, W D H / K (H a
+Hadamard matrix, D random signs), and the engine turns its input x into x D H as it quantizes it:
+a fast Walsh–Hadamard transform, under a microsecond per row. The product is the same, but
+neither side keeps the few large values that set its quantization scale, so int8 loses less:
+the speech model's hidden states went from 2.85% to 2.39% off float32, and its latents from 1.88%
+to 1.38%, for nothing measurable in speed.
 
-- **Speech model:** int8 weights times 12-bit activations, on every set (AVX2 `vpmaddwd`, AVX-512
-  `vpdpwssd`). Its hidden states are 2.85% off float32, where int8 weights alone give 2.82%.
-  8-bit activations were faster but gave 3.95%. The KV cache is float16.
+**int4 (GPTQ).** The transformer's matrices are also stored as 4-bit codes with one scale per
+row, half the bytes of int8. Rounding to nearest leaves the hidden states 35% off; GPTQ
+(`tts/gptq.py`) quantizes one input column at a time and pushes each column's error onto the
+ones left, weighted by the inputs' covariance on 32 calibration replies run through the numpy
+model, which brings it to 12%. Per-row scales: groups of 128 or 32 only reach 10% and 9%. The
+kernels take the codes as unsigned (w + 8) against 8-bit activations: on AVX2 `vpmaddubsw`
+multiplies them 32 at a time and cannot saturate (a pair is at most 2 × 15 × 127), so four steps
+of 8 sum in int16 before one `vpmaddwd`; VNNI sets use `vpdpbusd`. `TTS_SPEECH_BITS` picks int4 or
+int8 at startup; both are in the file.
+
+**Kernels.** `libpocket.so` carries four kernel sets, each file built for its instruction set,
+and picks one at startup from cpuid: AVX2 (any x86-64 server since 2013), AVX-VNNI (AVX2 with
+`vpdpbusd`/`vpdpwssd` on 256-bit registers: Sierra Forest Xeons, which have no AVX-512, and
+Alder Lake and later), AVX-512 VNNI, or AMX (Sapphire Rapids and later).
+
+- **Speech model:** int4 weights times 8-bit activations (above), or int8 weights times 12-bit
+  activations (AVX2 `vpmaddwd`, VNNI `vpdpwssd`), both after the rotation. The KV cache is
+  float16.
 - **Decoder transformer and first conv:** int8, 12-bit or float32, whichever is fastest at
   startup, preferring precision within 10%. On AVX2 that's 8-bit activations against 7-bit
   weights (`vpmaddubsw` saturates past that), built at startup from the float32 copy.
@@ -205,7 +224,7 @@ TTS_SECRET=dev TTS_MODEL_DIR=/tmp/models .venv/bin/python -m tts.server
 curl -sS -H 'authorization: Bearer dev' -d '{"text": "Seu pedido saiu para entrega!"}' localhost:8793/v1/speak > reply.ogg
 ```
 
-`tests/test_engine.py` checks the engine against `tests/reference.py`, a plain numpy Pocket TTS,
+`tests/test_engine.py` checks the engine against `tts/reference.py`, a plain numpy Pocket TTS,
 on every kernel set the CPU has. `tts.pack --f32 qkv,o,ff,flow,mimi` packs a float32 model to
 compare against. `bench.py` (its docstring has the commands) synthesizes `bench_replies.txt` and
 scores it with `services/stt`.

@@ -251,7 +251,7 @@ void Mimi::qgemm(const Q8& q, const QW& w, const float* A, int lda, int M, float
   pool_.run(jobs, [&](int j) {
     const int m0 = j * qa_rows_, m = std::min(M - m0, qa_rows_);
     void* qa = qa_.p + j * qa_slot_;
-    q.quantize(A + size_t(m0) * lda, lda, m, w.K, qa);
+    q.quantize(A + size_t(m0) * lda, lda, m, w.K, w.r, qa);
     q.gemm(qa, m, w, 0, w.N, C + size_t(m0) * ldc, ldc, accumulate);
   });
 }
