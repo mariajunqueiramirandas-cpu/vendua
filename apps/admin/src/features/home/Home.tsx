@@ -2,6 +2,7 @@ import {
   ArrowRight,
   Bell,
   BellSlash,
+  CaretDown,
   CheckCircle,
   Circle,
   ClockCountdown,
@@ -115,7 +116,6 @@ export default function Home() {
         <div className="contents space-y-5 lg:block lg:space-y-6">
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
           <Section title="Agora na loja" className="order-3 lg:order-none">
-            <Presence />
             {data ? <Feed data={data} /> : <RowsSkeleton rows={4} trailing={false} />}
           </Section>
         </div>
@@ -402,7 +402,10 @@ const TONE_DISC: Record<Tone, string> = {
 };
 
 function Attention({ data }: { data: HomeData }) {
-  const items = data.attention.slice(0, 3);
+  // three lead; the rest is one tap away, never silently dropped
+  const [all, setAll] = useState(false);
+  const items = all ? data.attention : data.attention.slice(0, 3);
+  const more = data.attention.length - items.length;
   if (!items.length)
     return (
       <DuaNote pose="avatar-feliz" title="Tudo em dia">
@@ -442,6 +445,15 @@ function Attention({ data }: { data: HomeData }) {
           </Link>
         );
       })}
+      {more > 0 ? (
+        <button
+          type="button"
+          onClick={() => setAll(true)}
+          className="press-row t-label flex min-h-12 w-full items-center justify-center gap-1.5 text-muted hover:bg-hover hover:text-ink"
+        >
+          ver mais {more} <CaretDown weight="bold" className="size-4" />
+        </button>
+      ) : null}
     </Card>
   );
 }
@@ -527,6 +539,8 @@ function Checklist({
   );
 }
 
+const FEED_ROWS = 8;
+
 function Feed({ data }: { data: HomeData }) {
   const preload = usePreload();
   const [, tick] = useState(0);
@@ -534,27 +548,52 @@ function Feed({ data }: { data: HomeData }) {
     const i = setInterval(() => tick((n) => n + 1), 30_000);
     return () => clearInterval(i);
   }, []);
+  // Who's in the store: the live stream counts open tabs and sacolas now; without it (offline,
+  // reconnecting) Início's own last-30-minutes numbers stand in. One pair, never both.
+  const { presence } = useLiveState();
+  const viewers = presence?.viewers ?? data.live.visitors;
+  const carts = presence?.carts ?? data.live.carts;
+  // one row per order, at its latest step: Core sends it so, and an older Core mid-deploy sent
+  // every step (newest first)
+  const seen = new Set<string>();
+  const rows = data.feed
+    .filter((f) => !seen.has(f.orderId) && !!seen.add(f.orderId))
+    .slice(0, FEED_ROWS);
   return (
     <Card className="overflow-hidden">
-      <div className="grid grid-cols-2 divide-x divide-line border-b border-line">
+      <div
+        className="grid grid-cols-2 divide-x divide-line border-b border-line"
+        aria-live="polite"
+        data-testid="presence"
+      >
         <div className="flex items-center gap-3 p-4">
-          <Eye weight="duotone" className="size-7 text-muted" />
-          <div>
-            <p className="tnum font-display text-2xl font-semibold">{num(data.live.visitors)}</p>
-            <p className="t-caption text-muted">olhando a loja (30 min)</p>
+          <Eye weight="duotone" className="size-7 shrink-0 text-muted max-sm:hidden" />
+          <div className="min-w-0">
+            <p className="tnum font-display text-2xl font-semibold">{num(viewers)}</p>
+            <p className="t-caption text-muted">
+              {presence ? 'vendo a loja agora' : 'olharam a loja'}
+            </p>
+            {!presence ? (
+              <p className="t-caption text-muted">nos últimos 30 min</p>
+            ) : data.live.visitors > viewers ? (
+              <p className="t-caption text-muted">{num(data.live.visitors)} nos últimos 30 min</p>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-3 p-4">
-          <ShoppingBag weight="duotone" className="size-7 text-muted" />
-          <div>
-            <p className="tnum font-display text-2xl font-semibold">{num(data.live.carts)}</p>
-            <p className="t-caption text-muted">com sacola montada</p>
+          <ShoppingBag weight="duotone" className="size-7 shrink-0 text-muted max-sm:hidden" />
+          <div className="min-w-0">
+            <p className="tnum font-display text-2xl font-semibold">{num(carts)}</p>
+            <p className="t-caption text-muted">
+              {carts === 1 ? 'sacola montada' : 'sacolas montadas'}
+            </p>
+            <p className="t-caption text-muted">nos últimos 30 min</p>
           </div>
         </div>
       </div>
-      {data.feed.length ? (
+      {rows.length ? (
         <ol className="divide-y divide-line">
-          {data.feed.map((f, i) => {
+          {rows.map((f, i) => {
             const m = STATE_META[f.to];
             return (
               <li key={i}>
@@ -637,29 +676,5 @@ function Best({ data }: { data: HomeData }) {
         </Card>
       ))}
     </div>
-  );
-}
-
-// Live from the admin stream: open storefront tabs, and sacolas with items touched in the last 30 min.
-function Presence() {
-  const { presence } = useLiveState();
-  if (!presence) return null;
-  return (
-    <p
-      className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 t-body text-muted"
-      aria-live="polite"
-      data-testid="presence"
-    >
-      <span className="inline-flex items-center gap-1.5">
-        <Eye size={16} weight="duotone" aria-hidden />
-        {presence.viewers === 0
-          ? 'Ninguém olhando agora'
-          : plural(presence.viewers, 'pessoa vendo a loja', 'pessoas vendo a loja')}
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <ShoppingBag size={16} weight="duotone" aria-hidden />
-        {plural(presence.carts, 'sacola com itens', 'sacolas com itens')}
-      </span>
-    </p>
   );
 }

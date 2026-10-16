@@ -276,6 +276,10 @@ export const SCREENS: ScreenEntry[] = [
 export const fold = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
 
+/** a word of `text` starts with `t` ("hora" finds "Horários", "ana" doesn't find "semanais") */
+export const startsWord = (text: string, t: string) =>
+  text.split(/\s+/).some((w) => w.startsWith(t));
+
 /** Screens whose name or words hold every word typed, best first (a name match leads). */
 export function findScreens(q: string, allowed: (e: ScreenEntry) => boolean, max = 4) {
   const terms = fold(q).split(/\s+/).filter(Boolean);
@@ -283,9 +287,9 @@ export function findScreens(q: string, allowed: (e: ScreenEntry) => boolean, max
   return SCREENS.filter(allowed)
     .map((e) => {
       const name = fold(e.label);
-      const hay = `${name} ${e.words}`;
-      if (!terms.every((t) => hay.includes(t))) return null;
-      return { e, score: terms.filter((t) => name.includes(t)).length };
+      const hay = `${name} ${e.words}`.split(/\s+/);
+      if (!terms.every((t) => hay.some((w) => w.startsWith(t)))) return null;
+      return { e, score: terms.filter((t) => startsWord(name, t)).length };
     })
     .filter((x): x is { e: ScreenEntry; score: number } => !!x)
     .sort((a, b) => b.score - a.score)

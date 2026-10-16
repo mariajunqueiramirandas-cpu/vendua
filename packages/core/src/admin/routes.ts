@@ -678,7 +678,7 @@ export function mountAdmin(o: MountAdminOpts) {
       `;
       if (m.role === 'attendant') return { orders, products: [], customers: [] };
       const products = await tx`
-        select p.id, p.name, p.status, p.base_price_cents as "priceCents",
+        select p.id, p.name, p.status, p.base_price_cents as "priceCents", p.stock_quantity as "stockQuantity",
           (select url from product_media where product_id = p.id order by sort limit 1) as "imageUrl"
         from products p where p.tenant_id = ${tenant.id} and p.deleted_at is null
           and translate(lower(p.name), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') like ${like}

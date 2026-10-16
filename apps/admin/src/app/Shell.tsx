@@ -181,8 +181,14 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('pointerdown', arm);
   }, []);
   useEffect(() => {
-    // "/" searches, "?" is help — never while typing
+    // "/" searches, "?" is help — never while typing; ⌘K / Ctrl+K searches from anywhere
     const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        if (bareRef.current) return;
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+        return;
+      }
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, [contenteditable]')) return;
       if (e.metaKey || e.ctrlKey || e.altKey || bareRef.current) return;

@@ -39,5 +39,7 @@ export function useDockOpen() {
 }
 
 /** "⌘J" on Apple keyboards, "Ctrl J" elsewhere */
-export const dockKeys = () =>
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘J' : 'Ctrl J';
+const mac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+export const dockKeys = () => (mac() ? '⌘J' : 'Ctrl J');
+/** Buscar from anywhere, typing included (Shell) */
+export const searchKeys = () => (mac() ? '⌘K' : 'Ctrl K');
