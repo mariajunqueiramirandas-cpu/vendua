@@ -1,7 +1,7 @@
 # ADR 0044: The merchant admin as an iOS and Android app, from the same code
 
-- Status: Proposed (no code yet; the open decisions were settled by the user on 2026-10-15, at the
-  end)
+- Status: Accepted. Phases 1–3 are built (2026-10-16, "As built" below); Phase 0's accounts,
+  Phase 4's store review and Phase 5 wait on the calendar and on decisions, not on code.
 - Date: 2026-10-15
 - Amends: [ADR 0020](0020-merchant-identity.md) (a session can also travel as a bearer token) and,
   in its last phase, [ADR 0027](0027-print-agents.md) (the Android print agent moves into the app)
@@ -352,6 +352,71 @@ Total: about four to five weeks of work from Phase 1 to submission, plus Phase 0
      event data carries no phone.
 4. **The print agent moves into the app later** (Phase 5), not in v1. Until then the Android
    print agent keeps shipping as an APK on GitHub Releases (ADR 0027), unchanged.
+
+## As built (2026-10-16)
+
+Phases 1–3 follow the decision above. Where the code settled a detail the text left open, or
+differs from it:
+
+- **The seam.** `src/platform/index.ts` re-exports `@platform-impl`, which Vite points at `web.ts`
+  or `native.ts` (`vite.config.ts`). `tools/check-admin-platform.mjs` (CI `admin-native`) enforces
+  §1. The website's PWA code moved under `platform/web/`.
+- **Who is calling.** The website sends `web/<commit>`, the app
+  `ios|android/<store version>/<native>/<bundle>`, and the alert buttons
+  `…/<native>/alert`. The bundle is named by content, `<store version>-<hash>`
+  (`scripts/bundle-native.ts`), and the app reads it from the bundle's own `bundle.json`.
+- **Photos.** `/v1/media` answers with `Access-Control-Allow-Origin: *`: its URLs are already
+  public, and the app loads them from its own origin. Private media (a copilot photo) goes through
+  `platform.http.privateMedia`, a bearer fetch to a blob URL.
+- **CORS for development.** Outside production, `VENDUA_ADMIN_APP_ORIGINS` adds origins to the two
+  (CI's smoke serves the app's bundle from `http://localhost:5197`).
+- **The stores' update.** A 426 shows `StoreUpdate` over everything; a bundle that needs a newer
+  shell shows a toast once and the app keeps its current bundle. The Play link is fixed; the App
+  Store link is `VITE_APP_STORE_URL`, set once the listing exists (Phase 4). Without it the screen
+  names the store and shows no button.
+- **Alerts in the app.** "Aceitar" sends the service worker's own key, `push-accept-<orderId>`, so
+  a tap on the website's alert and on the app's can't confirm twice. While it is on its way the
+  Android alert loses its buttons ("Aceitando o pedido…"); a refusal replaces it with "Não deu para
+  aceitar daqui", which opens the order. "Assumir" opens the app (Android 12+ lets no notification
+  receiver start an activity), takes the conversation natively, then routes there. With the app
+  open, iOS lists an order or a waiting shopper in the notification centre without a banner, since
+  the board already rang. Android has three channels: "Pedidos novos", "Clientes esperando" and
+  "Avisos da loja".
+- **The shell.** Android is Java (the Capacitor template's language, no Kotlin plugin to add to
+  the build). The session is AES-GCM under a Keystore key, and backups and device transfer exclude
+  the app's data. iOS uses the Keychain
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) and its own `UNUserNotificationCenter`
+  delegate (`ios.handleApplicationNotifications: false`), set before launch ends so an "Aceitar"
+  that cold-launches the app is answered. Printing is `UIPrintInteractionController` and
+  `PrintManager` over a WebView of the ticket's HTML. Android's safe areas come from Capacitor 8's
+  `SystemBars`: older WebViews are padded inside the bars, newer ones get `env()`.
+- **A browser stand-in.** `VenduaShell` has a web implementation (`platform/native/shell-web.ts`,
+  session in `sessionStorage`) so the app's bundle runs in a desktop browser for live reload and
+  CI's smoke. It is imported eagerly: `main.tsx` awaits `platform.ready()` at the top level, so a
+  lazy chunk that imports from the entry would deadlock.
+- **Art and sound** come from scripts, committed with their output: `scripts/app-assets.ts` (icons,
+  adaptive and themed icons, splash for Creme and Noite, from `public/icons/icon.svg`) and
+  `scripts/render-chime.ts` (`NEW_ORDER` in `lib/sound.ts`, rendered offline).
+- **CI.** `ci.yml`'s `admin-native` job runs the seam check, `tools/check-admin-native.mjs`,
+  `scripts/native-version.ts --check`, the app's bundle under the website's budgets, the
+  cross-origin smoke (`scripts/native-smoke.ts`: sign-in on screen, bearer and no cookie, CORS,
+  a new order over the stream), and the bundle Core offers against its checksum.
+  `admin-app.yml` builds Android (`assembleDebug lintDebug`) and iOS (simulator, unsigned) on PRs
+  that touch the shell, iOS only when the iOS side changed. On `main` it runs Fastlane to Play's
+  internal track and TestFlight once the secrets in `apps/admin/fastlane/README.md` exist.
+- **The edge.** `painel.vendua.com.br` is the admin's own nginx (`apps/admin/nginx.conf`), which
+  proxies `/.well-known/` to Core; the storefront edge needs nothing.
+- **Configuration**, all off when unset:
+  - Core: `APNS_KEY_P8`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_SANDBOX=1` (development
+    builds), `FCM_SERVICE_ACCOUNT_JSON`, `VENDUA_ADMIN_MIN_NATIVE`, `VENDUA_IOS_APP_IDS`,
+    `VENDUA_ANDROID_CERT_SHA256`, `VENDUA_REVIEW_LOGIN`, and `VENDUA_ADMIN_APP_ORIGINS` (development
+    only).
+  - The app's build: `VITE_API_ORIGIN` (default `https://painel.vendua.com.br`),
+    `VITE_APP_STORE_URL`, and `CAP_SERVER_URL` for live reload.
+
+Still open: the plan screen's wording inside the app (decision 1 hides every button; the plan's
+name and state still show, and their words need the user's approval), the listing's visibility
+(decision 2), and everything in Phase 0, 4 and 5.
 
 ## Consequences
 
