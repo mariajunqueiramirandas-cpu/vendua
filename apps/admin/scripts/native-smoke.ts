@@ -107,12 +107,14 @@ try {
   if (!stream) problems.push('the stream (/admin/v1/events) never opened');
   await page.waitForTimeout(1500);
   const before = calls.length;
-  const placed = spawnSync('bun', ['scripts/demo-orders.ts', '1'], {
+  // a random demo cart can be refused (a minimum, a method the store lacks): five, all kept live
+  const placed = spawnSync('bun', ['scripts/demo-orders.ts', '5'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)),
     encoding: 'utf8',
     env: { ...process.env, CORE },
   });
-  if (placed.status !== 0) problems.push(`demo-orders failed: ${placed.stderr.slice(-400)}`);
+  if (placed.status !== 0 || /placed 0 orders/.test(placed.stdout))
+    problems.push(`demo-orders placed nothing: ${(placed.stdout + placed.stderr).slice(-400)}`);
   const deadline = Date.now() + 15_000;
   while (
     Date.now() < deadline &&
