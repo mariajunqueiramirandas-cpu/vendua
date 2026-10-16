@@ -1,0 +1,54 @@
+# The admin app's store builds (ADR 0044 §8), run by .github/workflows/admin-app.yml from
+# apps/admin after `bun run build:native && bunx cap sync`. Secrets come from the environment;
+# fastlane/README.md lists them.
+
+default_platform(:ios)
+
+platform :ios do
+  desc 'TestFlight: a signed build of ios/ with this commit bundled'
+  lane :beta do
+    setup_ci
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch('ASC_KEY_ID'),
+      issuer_id: ENV.fetch('ASC_ISSUER_ID'),
+      key_content: ENV.fetch('ASC_KEY_P8')
+    )
+    match(type: 'appstore', readonly: true, app_identifier: 'br.com.vendua.painel', api_key: api_key)
+    increment_build_number(
+      xcodeproj: 'ios/App/App.xcodeproj',
+      build_number: ENV.fetch('VENDUA_BUILD_NUMBER')
+    )
+    update_code_signing_settings(
+      path: 'ios/App/App.xcodeproj',
+      use_automatic_signing: false,
+      team_id: ENV.fetch('APPLE_TEAM_ID'),
+      targets: ['App'],
+      code_sign_identity: 'Apple Distribution',
+      profile_name: 'match AppStore br.com.vendua.painel'
+    )
+    build_app(
+      project: 'ios/App/App.xcodeproj',
+      scheme: 'App',
+      configuration: 'Release',
+      export_method: 'app-store',
+      output_directory: 'build/ios'
+    )
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
+  end
+end
+
+platform :android do
+  desc "Play's internal track: a signed bundle of android/ with this commit bundled"
+  lane :internal do
+    gradle(project_dir: 'android', task: 'bundle', build_type: 'Release')
+    upload_to_play_store(
+      package_name: 'br.com.vendua.painel',
+      track: 'internal',
+      aab: 'android/app/build/outputs/bundle/release/app-release.aab',
+      json_key_data: ENV.fetch('PLAY_SERVICE_ACCOUNT_JSON'),
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+end

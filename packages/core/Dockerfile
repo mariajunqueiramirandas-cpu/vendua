@@ -32,11 +32,14 @@ COPY packages/agent-runtime packages/agent-runtime
 COPY apps/control apps/control
 RUN cd apps/control && bun run build
 
-# Merchant admin SPA — Core serves apps/admin/dist at /admin/.
+# Merchant admin SPA — Core serves apps/admin/dist at /admin/; and the iOS/Android app's
+# over-the-air bundle from the same commit (ADR 0044 §2), served from apps/admin/bundles.
 # the mascot art the admin imports from /brand (an empty glob would ship broken images)
 COPY brand brand
 COPY apps/admin apps/admin
-RUN cd apps/admin && bun run build
+# the website's x-vendua-client names its commit
+ARG GIT_COMMIT=
+RUN cd apps/admin && GIT_COMMIT=$GIT_COMMIT bun run build && bun run build:native
 
 COPY packages/core packages/core
 

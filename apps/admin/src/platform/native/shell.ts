@@ -1,4 +1,5 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { VenduaShellWeb } from './shell-web.ts';
 
 // The app's own native code (ios/App/App/VenduaShell.swift, android/…/VenduaShellPlugin.kt): the
 // session token in the Keychain/Keystore, the order alerts it draws and answers itself, and the
@@ -24,4 +25,8 @@ export interface VenduaShell {
   addListener(e: 'alertOpened', fn: (d: { url: string }) => void): Promise<PluginListenerHandle>;
 }
 
-export const Shell = registerPlugin<VenduaShell>('VenduaShell');
+// main.tsx awaits platform.ready() at the top level, so the stand-in can't be a lazy chunk: a
+// chunk importing from the entry would wait on the entry, which waits on it
+export const Shell = registerPlugin<VenduaShell>('VenduaShell', {
+  web: () => new VenduaShellWeb(),
+});

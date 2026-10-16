@@ -1,0 +1,160 @@
+name: admin-app
+
+# The merchant admin as an iOS and Android app (ADR 0044 §8): the native projects build on every PR
+# that touches them, and on main they go to TestFlight and Play's internal track once the store
+# secrets exist (apps/admin/fastlane/README.md). The JS side (the seam, the bundle's budgets, the
+# cross-origin smoke) is ci.yml's admin-native job; the bundle phones run day to day comes from
+# Core's image (packages/core/Dockerfile), not from here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/admin/android/**'
+      - 'apps/admin/ios/**'
+      - 'apps/admin/app-version.json'
+      - 'apps/admin/capacitor.config.ts'
+      - 'apps/admin/package.json'
+      - 'apps/admin/fastlane/**'
+      - '.github/workflows/admin-app.yml'
+  pull_request:
+    paths:
+      - 'apps/admin/android/**'
+      - 'apps/admin/ios/**'
+      - 'apps/admin/app-version.json'
+      - 'apps/admin/capacitor.config.ts'
+      - 'apps/admin/package.json'
+      - 'apps/admin/src/platform/**'
+      - 'apps/admin/fastlane/**'
+      - '.github/workflows/admin-app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: admin-app-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # macOS minutes cost ten Linux ones: a PR builds iOS only when the iOS shell itself changed
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      ios: ${{ steps.diff.outputs.ios }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -z "$BASE_REF" ]; then echo "ios=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if git diff --name-only "origin/$BASE_REF...HEAD" |
+            grep -qE '^(apps/admin/ios/|apps/admin/app-version\.json$|apps/admin/package\.json$|apps/admin/capacitor\.config\.ts$|\.github/workflows/admin-app\.yml$)'; then
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ios=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/admin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: Java 21 and the SDK pieces the build compiles against
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' > /dev/null
+      - name: The app's bundle, into the project
+        run: bun run build:native && bunx cap sync android
+      - name: Build and lint
+        working-directory: apps/admin/android
+        run: ./gradlew --no-daemon assembleDebug lintDebug
+      - name: Store secrets (main only, when they exist)
+        id: store
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -z "$PLAY_JSON" ] || [ -z "$KEYSTORE_B64" ] || [ -z "$GOOGLE_SERVICES_B64" ]; then
+            echo "::warning::the Play secrets are not set: built, not uploaded (apps/admin/fastlane/README.md)"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "$GOOGLE_SERVICES_B64" | base64 -d > android/app/google-services.json
+          {
+            echo "VENDUA_UPLOAD_KEYSTORE=$RUNNER_TEMP/upload.jks"
+            echo "VENDUA_UPLOAD_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "VENDUA_UPLOAD_KEY_ALIAS=$KEY_ALIAS"
+            echo "VENDUA_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "upload=true" >> "$GITHUB_OUTPUT"
+      - name: Play internal testing
+        if: steps.store.outputs.upload == 'true'
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          VENDUA_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          gem install fastlane -v 2.228.0 --no-document
+          fastlane android internal
+
+  ios:
+    needs: scope
+    if: needs.scope.outputs.ios == 'true'
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apps/admin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: The app's bundle, into the project
+        run: bun run build:native && bunx cap sync ios
+      - name: Build for the simulator (unsigned)
+        run: |
+          xcodebuild -quiet -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Store secrets (main only, when they exist)
+        id: store
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+        run: |
+          if [ -z "$ASC_KEY_P8" ] || [ -z "$MATCH_GIT_URL" ]; then
+            echo "::warning::the App Store secrets are not set: built, not uploaded (apps/admin/fastlane/README.md)"
+            exit 0
+          fi
+          echo "upload=true" >> "$GITHUB_OUTPUT"
+      - name: TestFlight
+        if: steps.store.outputs.upload == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          VENDUA_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          gem install fastlane -v 2.228.0 --no-document
+          fastlane ios beta
