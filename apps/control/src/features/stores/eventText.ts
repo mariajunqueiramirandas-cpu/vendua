@@ -142,6 +142,8 @@ export function eventText(e: StoreEvent): string | null {
         s(d.plan) && `plano ${s(d.plan)}`,
         s(d.coupon) && `cupom ${s(d.coupon)}`,
       );
+    case 'store.reset':
+      return 'zerada pela equipe — de volta ao onboarding';
     case 'store.onboarding':
       return ONBOARDING[s(d.step) ?? ''] ?? s(d.step);
     case 'billing.paid':

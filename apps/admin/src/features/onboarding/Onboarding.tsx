@@ -46,7 +46,7 @@ import { StepMap, type Mark } from './StepMap.tsx';
 import { StoreCard } from './StoreCard.tsx';
 import { SPOT_LINE, Vitrine } from './Vitrine.tsx';
 import { planState, PlanBanner, PlanPix, usePlan } from './PlanPay.tsx';
-import { markLeft, readStep, saveStep } from './progress.ts';
+import { forgetIfReset, markLeft, readStep, saveStep } from './progress.ts';
 import { GENERIC, segmentOf, type SegmentId } from './segments.ts';
 import {
   HoursStep,
@@ -209,6 +209,7 @@ function Flow({
   // where to open: a deep link (?passo=), Mercado Pago's return, the saved place, or the start
   const first = useRef<{ step: StepId; solo: boolean; resume: StepId | null } | null>(null);
   if (!first.current) {
+    forgetIfReset(storeId, ob.resetAt);
     const passo = params.get('passo');
     // a saved question that dropped out of this store's list (answered elsewhere, Mercado Pago
     // connected) resumes at the one after it

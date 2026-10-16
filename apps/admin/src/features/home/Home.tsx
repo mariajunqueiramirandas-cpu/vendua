@@ -52,7 +52,7 @@ import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
 import { SavingsCard } from './SavingsCard.tsx';
 import { FreioCard } from '../store/Freio.tsx';
-import { hasLeft } from '../onboarding/progress.ts';
+import { forgetIfReset, hasLeft } from '../onboarding/progress.ts';
 import { usePreload } from '../../app/routes.ts';
 import { mediaUrl } from '../../lib/media.ts';
 import { platform } from '../../platform/index.ts';
@@ -85,6 +85,7 @@ export default function Home() {
   // never chose to leave it; "continuar depois" is kept by Core, so no device steers them back
   // (automated browsers skip it)
   const ob = data?.onboarding;
+  forgetIfReset(s.store.id, ob?.resetAt);
   if (
     data &&
     !navigator.webdriver &&
