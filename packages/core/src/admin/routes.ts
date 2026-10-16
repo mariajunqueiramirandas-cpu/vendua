@@ -644,10 +644,15 @@ export function mountAdmin(o: MountAdminOpts) {
 
   admin.post('/push/devices/remove', async (c) => {
     const tenant = c.get('tenant');
+    const m = c.get('merchant');
     return o.idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const token = text(body.token, 'token', 4096);
-      await tx`delete from push_devices where tenant_id = ${tenant.id} and token = ${token}`;
+      // only the caller's own device: another member's alerts are theirs to turn off
+      await tx`
+        delete from push_devices
+        where tenant_id = ${tenant.id} and user_id = ${m.userId} and token = ${token}
+      `;
       await emitAdminTx(tx, tenant.id, 'alerts');
       return { status: 200, body: { registered: false } };
     })(c);
