@@ -3,6 +3,7 @@ import type { Product } from '../lib/api.ts';
 import { money } from '../lib/format.ts';
 import { cn } from './cn.ts';
 import { ArtPudim } from './illustrations.tsx';
+import { mediaUrl } from '../lib/media.ts';
 
 /** Core's live status in the merchant's words. Rows Core serves none on (an import preview, a
  *  waitlist entry) read it from status and stock, Core's own rule: stock 0 is sold out. */
@@ -57,7 +58,7 @@ export function ProductTile({
       >
         {p.imageUrl ? (
           <img
-            src={p.imageUrl}
+            src={mediaUrl(p.imageUrl)}
             alt=""
             loading="lazy"
             draggable={false}

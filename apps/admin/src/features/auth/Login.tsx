@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError, type SignInResult, type StoreRef } from '../../lib/api.ts';
 import { phone as fmtPhone } from '../../lib/format.ts';
 import { resetClient } from '../../lib/persist.ts';
-import { applyUpdate, checkForUpdate, onUpdate, updateReady } from '../../lib/pwa.ts';
+import { platform } from '../../platform/index.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -23,6 +23,7 @@ import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { useKeyboard } from '../../ui/keyboard.ts';
 import { EMAIL_RE, expiry, loadPending, savePending } from './pending.ts';
+import { appPath } from '../../app/paths.ts';
 
 type Step =
   | { kind: 'phone' }
@@ -52,14 +53,14 @@ export function Login() {
   holding.current = step.kind === 'pick' || step.kind === 'link';
   useEffect(() => {
     const take = () => {
-      if (updateReady() && !holding.current) applyUpdate();
+      if (platform.updates.ready() && !holding.current) platform.updates.apply();
     };
     take();
-    checkForUpdate();
+    platform.updates.check();
     const away = () => {
       if (document.visibilityState === 'hidden') take();
     };
-    const off = onUpdate(away);
+    const off = platform.updates.onReady(away);
     document.addEventListener('visibilitychange', away);
     return () => {
       off();
@@ -71,11 +72,11 @@ export function Login() {
     // an e-mail link opened while another store was signed in: nothing of it may carry over
     if (qc.getQueryData(qk.session)) {
       await resetClient(qc);
-      window.location.assign('/admin/');
+      window.location.assign(appPath('/'));
       return;
     }
     void qc.invalidateQueries({ queryKey: qk.session });
-    window.history.replaceState(null, '', '/admin/');
+    window.history.replaceState(null, '', appPath('/'));
   };
   const signedIn = (r: SignInResult) =>
     r.signedIn ? void enter() : setStep({ kind: 'pick', token: r.pickerToken, stores: r.stores });
@@ -300,18 +301,21 @@ function PhoneStep({
       <Button variant="ghost" block icon={<EnvelopeSimple />} onClick={onEmail}>
         entrar com e-mail
       </Button>
-      <div className="mt-3 border-t border-line pt-2">
-        <Link
-          to="/comecar"
-          className="-mx-2 flex min-h-14 items-center gap-3 rounded-md px-2 hover:bg-hover"
-        >
-          <span className="min-w-0 flex-1">
-            <span className="t-caption block text-muted">Ainda não vende com a Venduá?</span>
-            <span className="t-label block">Criar minha loja</span>
-          </span>
-          <CaretRight className="size-5 text-muted" aria-hidden />
-        </Link>
-      </div>
+      {/* signup ends in the plan's first payment: the website's, never the app's (ADR 0044) */}
+      {platform.canPay ? (
+        <div className="mt-3 border-t border-line pt-2">
+          <Link
+            to="/comecar"
+            className="-mx-2 flex min-h-14 items-center gap-3 rounded-md px-2 hover:bg-hover"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="t-caption block text-muted">Ainda não vende com a Venduá?</span>
+              <span className="t-label block">Criar minha loja</span>
+            </span>
+            <CaretRight className="size-5 text-muted" aria-hidden />
+          </Link>
+        </div>
+      ) : null}
     </Counter>
   );
 }
@@ -578,7 +582,7 @@ function LinkStep({
         setErr(e);
         // a refused link won't change; only a network failure is worth another tap on it
         if (!(e instanceof ApiError && e.status === 0))
-          window.history.replaceState(null, '', '/admin/entrar');
+          window.history.replaceState(null, '', appPath('/entrar'));
       },
     );
     return () => {

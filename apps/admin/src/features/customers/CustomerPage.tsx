@@ -29,6 +29,7 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { OrderRowView } from '../orders/OrderRowView.tsx';
 import { CustomerFacts } from '../vendedor/CustomerFacts.tsx';
+import { platform } from '../../platform/index.ts';
 
 export default function CustomerPage() {
   const { phone: ph = '' } = useParams();
@@ -61,14 +62,10 @@ export default function CustomerPage() {
   const exportJson = async () => {
     try {
       const body = await api.exportCustomer(ph);
-      const url = URL.createObjectURL(
+      await platform.share.save(
         new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' }),
+        `cliente-${ph}.json`,
       );
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `cliente-${ph}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
     } catch (e) {
       toast.error(messageOf(e));
     }

@@ -61,6 +61,7 @@ import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../auth/pending.ts';
 import { DocumentGate, needsDocument } from './DocumentGate.tsx';
 import { Referrals } from './Referrals.tsx';
 import { Callout, Chip, hostOf, useAccountWrite } from './domain/kit.tsx';
+import { platform } from '../../platform/index.ts';
 
 type Sub = NonNullable<AccountData['subscription']>;
 type Method = 'card' | 'pix';
@@ -128,11 +129,12 @@ function TrialCallout({
       icon={Gift}
       title={`Teste grátis até ${end}`}
       action={
-        needsAuth ? (
+        // the app shows the plan, never a way to pay it (ADR 0044, decision 1)
+        !platform.canPay ? null : needsAuth ? (
           <Button
             size="sm"
             icon={<ArrowSquareOut />}
-            onClick={() => window.location.assign(s.checkoutUrl!)}
+            onClick={() => platform.openExternal(s.checkoutUrl!)}
           >
             autorizar no Mercado Pago
           </Button>
@@ -249,6 +251,9 @@ function AccountView({ a }: { a: AccountData }) {
     () => api.resumeSubscription(),
     () => toast('Assinatura mantida ✓'),
   );
+  // the app shows the plan and its state, never a way to buy, pay or change it: the stores'
+  // billing rules (ADR 0044, decision 1). The website does all of that.
+  const pay = platform.canPay;
 
   return (
     <div className="space-y-8">
@@ -256,12 +261,12 @@ function AccountView({ a }: { a: AccountData }) {
         items={[
           { id: 'plano', label: 'Seu plano' },
           ...(a.plan.features.vendedor ? [{ id: 'vendedor', label: 'Duá' }] : []),
-          ...(live && a.billing.available ? [{ id: 'pagamento', label: 'Pagamento' }] : []),
+          ...(live && a.billing.available && pay ? [{ id: 'pagamento', label: 'Pagamento' }] : []),
           { id: 'faturas', label: 'Faturas' },
           { id: 'indique', label: 'Indique e ganhe' },
         ]}
       />
-      {a.billing.available && needsDocument(a) ? (
+      {a.billing.available && pay && needsDocument(a) ? (
         <Callout
           tone="warning"
           icon={IdentificationCard}
@@ -293,7 +298,7 @@ function AccountView({ a }: { a: AccountData }) {
             icon={WarningCircle}
             title="O pagamento do plano não entrou"
             action={
-              openInvoice ? (
+              openInvoice && pay ? (
                 <Button size="sm" onClick={() => setSheet({ kind: 'invoice', id: openInvoice.id })}>
                   pagar agora
                 </Button>
@@ -310,11 +315,11 @@ function AccountView({ a }: { a: AccountData }) {
             icon={Clock}
             title="Falta o primeiro pagamento"
             action={
-              s.method === 'card' && s.checkoutUrl ? (
+              !pay ? null : s.method === 'card' && s.checkoutUrl ? (
                 <Button
                   size="sm"
                   icon={<ArrowSquareOut />}
-                  onClick={() => window.location.assign(s.checkoutUrl!)}
+                  onClick={() => platform.openExternal(s.checkoutUrl!)}
                 >
                   autorizar no Mercado Pago
                 </Button>
@@ -341,14 +346,16 @@ function AccountView({ a }: { a: AccountData }) {
             icon={Info}
             title={`A assinatura termina ${s.currentPeriodEnd ? `em ${dateShort(s.currentPeriodEnd)}` : 'no fim do período'}`}
             action={
-              <Button
-                size="sm"
-                variant="secondary"
-                loading={resume.isPending}
-                onClick={() => resume.mutate(undefined)}
-              >
-                manter a assinatura
-              </Button>
+              pay ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={resume.isPending}
+                  onClick={() => resume.mutate(undefined)}
+                >
+                  manter a assinatura
+                </Button>
+              ) : null
             }
           >
             Até lá, tudo continua funcionando. Mudou de ideia? Dá para manter.
@@ -365,18 +372,18 @@ function AccountView({ a }: { a: AccountData }) {
         />
       </Section>
 
-      {next ? (
+      {next && pay ? (
         <Upsell next={next} a={a} onGo={a.billing.available ? () => choose(next.id) : undefined} />
       ) : null}
 
       {a.plan.features.vendedor ? (
-        <Vendedor a={a} onInvoice={(id) => setSheet({ kind: 'invoice', id })} />
+        <Vendedor a={a} onInvoice={pay ? (id) => setSheet({ kind: 'invoice', id }) : undefined} />
       ) : null}
 
-      {live && a.billing.available ? <MethodSection a={a} s={s} /> : null}
+      {live && a.billing.available && pay ? <MethodSection a={a} s={s} /> : null}
 
       <Section title="Faturas" id="faturas">
-        <Invoices a={a} onOpen={(id) => setSheet({ kind: 'invoice', id })} />
+        <Invoices a={a} onOpen={pay ? (id) => setSheet({ kind: 'invoice', id }) : undefined} />
       </Section>
 
       <Section title="Indique e ganhe" id="indique">
@@ -521,13 +528,15 @@ function PlanHero({
                 até {dateShort(s.pendingUpgrade.until)}.
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  icon={<PixLogo />}
-                  onClick={() => onInvoice(s.pendingUpgrade!.invoice.id)}
-                >
-                  pagar {money(s.pendingUpgrade.amountCents)}
-                </Button>
+                {platform.canPay ? (
+                  <Button
+                    size="sm"
+                    icon={<PixLogo />}
+                    onClick={() => onInvoice(s.pendingUpgrade!.invoice.id)}
+                  >
+                    pagar {money(s.pendingUpgrade.amountCents)}
+                  </Button>
+                ) : null}
                 <Button
                   size="sm"
                   variant="secondary"
@@ -559,7 +568,7 @@ function PlanHero({
         </div>
       ) : null}
 
-      {!a.billing.available ? (
+      {!platform.canPay ? null : !a.billing.available ? (
         <p className="t-caption relative mt-5 flex items-start gap-2 rounded-md bg-sunken p-3 text-muted">
           <Info className="mt-0.5 size-4 shrink-0" aria-hidden />A troca de plano e a cobrança pelo
           painel ainda não estão disponíveis. Seu plano continua como está.
@@ -567,10 +576,7 @@ function PlanHero({
       ) : (
         <div className="relative mt-5 flex flex-wrap gap-2">
           {s?.status === 'pending' && s.method === 'card' && s.checkoutUrl ? (
-            <Button
-              icon={<ArrowSquareOut />}
-              onClick={() => window.location.assign(s.checkoutUrl!)}
-            >
+            <Button icon={<ArrowSquareOut />} onClick={() => platform.openExternal(s.checkoutUrl!)}>
               autorizar no Mercado Pago
             </Button>
           ) : (s?.status === 'pending' || s?.status === 'past_due' || s?.status === 'trialing') &&
@@ -676,7 +682,14 @@ function Upsell({ next, a, onGo }: { next: Plan; a: AccountData; onGo: (() => vo
 
 const n = (x: number) => x.toLocaleString('pt-BR');
 
-function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) => void }) {
+function Vendedor({
+  a,
+  onInvoice,
+}: {
+  a: AccountData;
+  /** absent in the app: a pack is bought on the website */
+  onInvoice: ((id: string) => void) | undefined;
+}) {
   const ai = a.ai;
   const s = a.subscription;
   const [needsPaid, setNeedsPaid] = useState(false);
@@ -685,7 +698,7 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
     mutationFn: (pack: AiPack) => api.buyAiPack(pack),
     onSuccess: (r) => {
       qc.setQueryData(qk.account, r);
-      onInvoice(r.invoiceId);
+      onInvoice?.(r.invoiceId);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'AI_PACK_NEEDS_PAID_PLAN') setNeedsPaid(true);
@@ -800,7 +813,7 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
             </ul>
           </>
         )}
-        {openPack ? (
+        {openPack && onInvoice ? (
           <div className="flex flex-col gap-3 rounded-md bg-warning-soft p-4 sm:flex-row sm:items-center">
             <p className="t-body min-w-0 flex-1">
               <strong>Pacote {openPack.aiPackName ?? 'de conversas'} esperando o Pix</strong> de{' '}
@@ -816,7 +829,7 @@ function Vendedor({ a, onInvoice }: { a: AccountData; onInvoice: (id: string) =>
             </Button>
           </div>
         ) : null}
-        {(openPack ? [] : a.aiPacks).map((p) => (
+        {(openPack || !onInvoice ? [] : a.aiPacks).map((p) => (
           <div
             key={p.id}
             className="flex flex-col gap-3 rounded-md bg-sunken p-4 sm:flex-row sm:items-center"
@@ -903,7 +916,7 @@ function PlanSheet({
       api.startSubscription(v),
     (n) => {
       const url = n.subscription?.checkoutUrl;
-      if (n.subscription?.method === 'card' && url) return window.location.assign(url);
+      if (n.subscription?.method === 'card' && url) return platform.openExternal(url);
       const inv = n.invoices.find((i) => i.status === 'open' && i.kind === 'period');
       if (inv) onInvoice(inv.id);
       else onClose();
@@ -1184,7 +1197,7 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
               <Button
                 size="sm"
                 icon={<ArrowSquareOut />}
-                onClick={() => window.location.assign(s.checkoutUrl!)}
+                onClick={() => platform.openExternal(s.checkoutUrl!)}
               >
                 autorizar no Mercado Pago
               </Button>
@@ -1253,7 +1266,7 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
 
 // ── invoices ────────────────────────────────────────────────────────────────
 
-function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void }) {
+function Invoices({ a, onOpen }: { a: AccountData; onOpen: ((id: string) => void) | undefined }) {
   if (!a.invoices.length)
     return (
       <DuaNote pose="pagamento" title="Nenhuma fatura ainda">
@@ -1297,7 +1310,7 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
             </>
           );
           const cls = 'flex min-h-18 w-full items-center gap-3 px-4 py-3 text-left';
-          return payable ? (
+          return payable && onOpen ? (
             <button
               key={i.id}
               type="button"

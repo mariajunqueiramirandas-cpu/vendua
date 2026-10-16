@@ -1,5 +1,7 @@
 import { money } from '../../lib/format.ts';
 import { toast } from '../../ui/Toast.tsx';
+import { mediaUrl } from '../../lib/media.ts';
+import { platform } from '../../platform/index.ts';
 
 // A WhatsApp-ready card (§A4 Marketing): the product photo, name, price and the
 // store's name on cream, as a 1080×1350 image. Shared as a file where the phone
@@ -11,7 +13,7 @@ function loadImg(src: string) {
     i.crossOrigin = 'anonymous';
     i.onload = () => res(i);
     i.onerror = rej;
-    i.src = src;
+    i.src = mediaUrl(src);
   });
 }
 
@@ -84,19 +86,8 @@ export async function shareCard(p: {
     type: 'image/png',
   });
   const text = `${p.name} por ${money(p.priceCents)} na ${p.storeName}: ${p.url}`;
-  if (navigator.canShare?.({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], text });
-      return;
-    } catch {
-      /* cancelled */
-      return;
-    }
-  }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = file.name;
-  a.click();
+  if ((await platform.share.files([file], text)) !== 'unsupported') return;
+  await platform.share.save(blob, file.name);
   void navigator.clipboard?.writeText(text).catch(() => undefined);
   toast('Cartão baixado. O texto com o link foi copiado para colar junto.');
 }

@@ -28,7 +28,6 @@ import {
   usePendingWrites,
   usePollWhenOffline,
 } from '../lib/live.ts';
-import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
 import { qk } from '../lib/query.ts';
 import { can, featureOpen, ROLE_LABEL, useSession } from '../lib/session.ts';
 import { setVolume, unlockAudio } from '../lib/sound.ts';
@@ -69,7 +68,8 @@ function useSeen(open: boolean) {
 }
 import { StoreAvatar } from './StoreAvatar.tsx';
 import { resetClient } from '../lib/persist.ts';
-import { disablePush } from '../lib/push.ts';
+import { appPath, routeOf } from './paths.ts';
+import { platform } from '../platform/index.ts';
 
 function usePlacedCount() {
   // orders are pushed over the stream; a slow safety net stays for the one screen that can't miss
@@ -94,7 +94,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const moreSeen = useSeen(moreOpen);
   const searchSeen = useSeen(searchOpen);
   const placed = usePlacedCount();
-  useEffect(() => setBadge(placed + waiting), [placed, waiting]);
+  useEffect(() => platform.badge(placed + waiting), [placed, waiting]);
   const live = useLiveState();
   const pending = usePendingWrites();
   const loc = useLocation();
@@ -198,10 +198,10 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   useEffect(() => {
-    // a tapped notification, an app shortcut or a relaunch (lib/pwa.ts)
+    // a tapped notification, an app shortcut, a relaunch or a link into the app (src/platform)
     const onOpen = (e: Event) => {
       const url = (e as CustomEvent<string>).detail;
-      nav(url.replace(/^\/admin/, '') || '/');
+      nav(routeOf(url));
     };
     window.addEventListener('vendua:open', onOpen);
     return () => window.removeEventListener('vendua:open', onOpen);
@@ -211,10 +211,10 @@ export function Shell({ children }: { children: ReactNode }) {
       toast('Tem uma versão nova do app.', {
         tone: 'info',
         ms: 24 * 60 * 60_000,
-        action: { label: 'atualizar', run: applyUpdate },
+        action: { label: 'atualizar', run: platform.updates.apply },
       });
-    if (updateReady()) announce();
-    return onUpdate(announce);
+    if (platform.updates.ready()) announce();
+    return platform.updates.onReady(announce);
   }, []);
   useEffect(() => setMoreOpen(false), [loc.pathname]);
   // a section that became a screen of its own: an old link (/loja#entrega) lands there
@@ -627,10 +627,10 @@ export function UserMenu() {
         aria-label="sair"
         title="sair"
         onClick={async () => {
-          await disablePush().catch(() => undefined);
+          await platform.push.disable().catch(() => undefined);
           await api.auth.logout().catch(() => undefined);
           await resetClient(qc);
-          window.location.assign('/admin/entrar');
+          window.location.assign(appPath('/entrar'));
         }}
         className="grid size-11 shrink-0 place-items-center rounded-full text-muted hover:bg-hover hover:text-ink md:hidden lg:grid"
       >

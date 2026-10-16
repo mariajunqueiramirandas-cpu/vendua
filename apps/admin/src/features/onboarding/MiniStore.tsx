@@ -13,6 +13,7 @@ import { DishGlyph, DishPrint, dishOf, type Dish } from './dishes.tsx';
 import type { Spot } from './flow.ts';
 import type { WeekModel } from '../../ui/TimeRangeField.tsx';
 import { fromWeek } from '../../ui/TimeRangeField.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 export interface Draft {
   name: string;
@@ -153,7 +154,11 @@ export function MiniStore({
               )}
             >
               {draft.logoUrl ? (
-                <img src={draft.logoUrl} alt="" className="size-full bg-white object-cover" />
+                <img
+                  src={mediaUrl(draft.logoUrl)}
+                  alt=""
+                  className="size-full bg-white object-cover"
+                />
               ) : (
                 (name.slice(0, 1) || '?').toUpperCase()
               )}
@@ -253,7 +258,11 @@ export function MiniStore({
                     >
                       <div className="aspect-[4/3] bg-[#efe9d8]">
                         {p.imageUrl ? (
-                          <img src={p.imageUrl} alt="" className="size-full object-cover" />
+                          <img
+                            src={mediaUrl(p.imageUrl)}
+                            alt=""
+                            className="size-full object-cover"
+                          />
                         ) : (
                           <span className="grid size-full place-items-center">
                             <DishGlyph dish={dishOf(p.name)} className="h-4/5" />

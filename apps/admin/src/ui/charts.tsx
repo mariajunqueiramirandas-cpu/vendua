@@ -2,6 +2,7 @@ import { Table } from '@phosphor-icons/react';
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { cn } from './cn.ts';
 import { NoPhoto } from './illustrations.tsx';
+import { mediaUrl } from '../lib/media.ts';
 
 // Chart family (§7): single-series marks in one forest hue (--chart), the current
 // period in --chart-now. Every chart carries a one-sentence text summary for
@@ -392,7 +393,12 @@ export function RankBars({
             {r.image !== undefined ? (
               <span className="size-11 shrink-0 overflow-hidden rounded-sm bg-sunken">
                 {r.image ? (
-                  <img src={r.image} alt="" className="size-full object-cover" loading="lazy" />
+                  <img
+                    src={mediaUrl(r.image)}
+                    alt=""
+                    className="size-full object-cover"
+                    loading="lazy"
+                  />
                 ) : (
                   <NoPhoto />
                 )}

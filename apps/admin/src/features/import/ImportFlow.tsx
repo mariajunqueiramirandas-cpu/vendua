@@ -44,6 +44,7 @@ import {
   readableNames,
   startError,
 } from './copy.ts';
+import { mediaUrl } from '../../lib/media.ts';
 
 // "Cole o link do seu cardápio" (docs/menu-import.md §2): paste → Core reads the old store in
 // the background → the merchant sees what came and what didn't → one tap applies it, and the
@@ -737,7 +738,7 @@ function ProductLine({ p }: { p: ImportPreviewProduct }) {
       <span className="size-12 shrink-0 overflow-hidden rounded-sm bg-sunken">
         {p.image && !broken ? (
           <img
-            src={p.image}
+            src={mediaUrl(p.image)}
             alt=""
             loading="lazy"
             referrerPolicy="no-referrer"

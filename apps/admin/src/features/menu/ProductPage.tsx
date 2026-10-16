@@ -40,7 +40,7 @@ import { useAutosave } from '../../lib/autosave.ts';
 import { money, plural } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { qk, useMutation } from '../../lib/query.ts';
-import { takeSharedPhoto } from '../../lib/share.ts';
+import { platform } from '../../platform/index.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -71,13 +71,14 @@ import { PromoEditor } from './PromoEditor.tsx';
 import { outsideNow } from './schedule.ts';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 import { useHeld } from './held.ts';
+import { mediaUrl } from '../../lib/media.ts';
 
 export default function ProductPage() {
   const { id = '' } = useParams();
   const [search] = useSearchParams();
   const [sharedFile, setSharedFile] = useState<File | null>(null);
   useEffect(() => {
-    if (search.get('foto') === 'compartilhada') void takeSharedPhoto().then(setSharedFile);
+    if (search.get('foto') === 'compartilhada') void platform.takeSharedPhoto().then(setSharedFile);
   }, [search]);
   const { data, error, refetch } = useQuery({
     queryKey: qk.product(id),
@@ -339,7 +340,7 @@ function Editor({
             <Card className="flex gap-3 p-3">
               <span className="size-20 shrink-0 overflow-hidden rounded-sm bg-sunken">
                 {p.imageUrl ? (
-                  <img src={p.imageUrl} alt="" className="size-full object-cover" />
+                  <img src={mediaUrl(p.imageUrl)} alt="" className="size-full object-cover" />
                 ) : null}
               </span>
               <div className="min-w-0">
@@ -1309,7 +1310,7 @@ function CopyOptionsSheet({
                   <span className="size-11 shrink-0 overflow-hidden rounded-sm bg-sunken">
                     {x.imageUrl ? (
                       <img
-                        src={x.imageUrl}
+                        src={mediaUrl(x.imageUrl)}
                         alt=""
                         className="size-full object-cover"
                         loading="lazy"

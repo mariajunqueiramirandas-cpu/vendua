@@ -53,6 +53,8 @@ import { SavingsCard } from './SavingsCard.tsx';
 import { FreioCard } from '../store/Freio.tsx';
 import { hasLeft } from '../onboarding/progress.ts';
 import { usePreload } from '../../app/routes.ts';
+import { mediaUrl } from '../../lib/media.ts';
+import { platform } from '../../platform/index.ts';
 
 export default function Home() {
   const s = useSession();
@@ -249,7 +251,7 @@ function Hero({ data }: { data: HomeData }) {
           <span className={cn('t-body', muted)}>{countdown}</span>
         ) : null}
         {hold ? (
-          owner ? (
+          owner && platform.canPay ? (
             <Link
               to="/conta"
               className="press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-warning-soft px-3.5 text-warning"
@@ -615,7 +617,12 @@ function Best({ data }: { data: HomeData }) {
         <Card key={b.productId ?? i} className="overflow-hidden">
           <div className="relative aspect-[4/3] bg-sunken">
             {b.imageUrl ? (
-              <img src={b.imageUrl} alt="" className="size-full object-cover" loading="lazy" />
+              <img
+                src={mediaUrl(b.imageUrl)}
+                alt=""
+                className="size-full object-cover"
+                loading="lazy"
+              />
             ) : (
               <NoPhoto />
             )}

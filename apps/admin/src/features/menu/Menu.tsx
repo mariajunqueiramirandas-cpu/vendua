@@ -46,6 +46,7 @@ import {
 } from './BulkSheets.tsx';
 import { useHeld } from './held.ts';
 import { MenuTabs } from './MenuTabs.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 type View = 'grade' | 'lista';
 type Avail = 'available' | 'sold_out_today' | 'sold_out' | 'hidden';
@@ -1130,7 +1131,7 @@ function ListRow({
           >
             {p.imageUrl ? (
               <img
-                src={p.imageUrl}
+                src={mediaUrl(p.imageUrl)}
                 alt=""
                 draggable={false}
                 className="size-full object-cover"

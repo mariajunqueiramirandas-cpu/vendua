@@ -12,6 +12,7 @@ import { RowsSkeleton } from '../ui/skeletons.tsx';
 import { Mascote } from '../ui/Mascote.tsx';
 import { can, useSession } from '../lib/session.ts';
 import { findScreens } from './screens.ts';
+import { mediaUrl } from '../lib/media.ts';
 
 /** One field, three kinds of answer, grouped, as they type (§3.2). */
 export function SearchSheet({
@@ -123,7 +124,11 @@ export function SearchSheet({
                       icon={
                         <span className="block size-10 overflow-hidden rounded-sm bg-sunken">
                           {p.imageUrl ? (
-                            <img src={p.imageUrl} alt="" className="size-full object-cover" />
+                            <img
+                              src={mediaUrl(p.imageUrl)}
+                              alt=""
+                              className="size-full object-cover"
+                            />
                           ) : null}
                         </span>
                       }

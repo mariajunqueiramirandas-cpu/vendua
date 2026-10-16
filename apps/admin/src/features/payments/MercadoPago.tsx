@@ -22,6 +22,7 @@ import { cn } from '../../ui/cn.ts';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { payError, TONE, type Tone } from '../../ui/PaymentChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { platform } from '../../platform/index.ts';
 
 type Mp = PaymentsData['mercadoPago'];
 
@@ -86,7 +87,7 @@ export const mpLive = (mp: Mp) => mp.status === 'connected' || mp.status === 'ex
 function useConnect() {
   return useMutation({
     mutationFn: () => api.mpConnect(),
-    onSuccess: ({ url }) => location.assign(url),
+    onSuccess: ({ url }) => platform.openExternal(url),
     onError: (e) => toast.error(payError(e)),
   });
 }

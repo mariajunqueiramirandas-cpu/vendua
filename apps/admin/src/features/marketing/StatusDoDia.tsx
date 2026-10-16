@@ -15,6 +15,8 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { renderStatusImage } from './statusImage.ts';
+import { mediaUrl } from '../../lib/media.ts';
+import { platform } from '../../platform/index.ts';
 
 // Marketing › Status do dia (0124, docs/features/status-do-dia.md S1): every day at the owner's
 // hour Core prepares the store's Status — products available now, prices from the catalog, a
@@ -280,22 +282,13 @@ function Today({
   const share = async () => {
     // iOS may drop the text with files: the caption is on the clipboard first
     const copied = await copyCaption();
-    if (files.length && navigator.canShare?.({ files })) {
-      try {
-        await navigator.share({ files, text: today.caption });
-        onState('shared');
-        if (copied) toast('Se a legenda não aparecer, ela está copiada: é só colar.');
-      } catch {
-        /* cancelled */
-      }
-      return;
+    const r = files.length ? await platform.share.files(files, today.caption) : 'unsupported';
+    if (r === 'shared') {
+      onState('shared');
+      if (copied) toast('Se a legenda não aparecer, ela está copiada: é só colar.');
     }
-    for (const [i, m] of images.entries()) {
-      const a = document.createElement('a');
-      a.href = m.url;
-      a.download = files[i]!.name;
-      a.click();
-    }
+    if (r !== 'unsupported') return;
+    for (const [i, m] of images.entries()) await platform.share.save(m.blob, files[i]!.name);
     toast('Imagens baixadas e legenda copiada. Poste no status pelo WhatsApp.');
   };
 
@@ -324,7 +317,7 @@ function Today({
                 <div className="aspect-[9/16] overflow-hidden rounded-md bg-sunken ring-1 ring-line">
                   {img ? (
                     <img
-                      src={img.url}
+                      src={mediaUrl(img.url)}
                       alt={`status de ${p.name}`}
                       className="size-full object-cover"
                     />
@@ -453,7 +446,7 @@ function SwapSheet({
                 <span className="size-11 shrink-0 overflow-hidden rounded-sm bg-sunken">
                   {p.imageUrl ? (
                     <img
-                      src={p.imageUrl}
+                      src={mediaUrl(p.imageUrl)}
                       alt=""
                       className="size-full object-cover"
                       loading="lazy"

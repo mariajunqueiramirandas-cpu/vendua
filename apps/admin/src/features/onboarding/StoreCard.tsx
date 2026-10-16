@@ -8,6 +8,7 @@ import { fromWeek } from '../../ui/TimeRangeField.tsx';
 import { DishPrint } from './dishes.tsx';
 import type { Spot } from './flow.ts';
 import type { Draft } from './MiniStore.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 /** "Hoje: 9h–18h" for the store's own day, or "Sáb: fechado". */
 export function todayLine(draft: Draft, timeZone: string, specialDays: SpecialDay[]) {
@@ -152,7 +153,11 @@ export function StoreCard({
             )}
           >
             {draft.logoUrl ? (
-              <img src={draft.logoUrl} alt="" className="size-full bg-white object-cover" />
+              <img
+                src={mediaUrl(draft.logoUrl)}
+                alt=""
+                className="size-full bg-white object-cover"
+              />
             ) : (
               (name.slice(0, 1) || '?').toUpperCase()
             )}

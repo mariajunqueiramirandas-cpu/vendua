@@ -23,6 +23,7 @@ import { Skeleton } from './feedback.tsx';
 import { PageBody, PageHeader } from './Page.tsx';
 import { Mascote } from './Mascote.tsx';
 import { cheapestWith, perMonth, PlanBadge } from './PlanCard.tsx';
+import { platform } from '../platform/index.ts';
 
 // A feature the store's plan doesn't open: the screen stays reachable and becomes the upsell.
 // Which plan has it comes from the public plan list (cheapest first), never from a hardcoded id.
@@ -171,7 +172,7 @@ export function PlanLocked({
             <p className="t-caption mb-2 flex flex-wrap items-center gap-2 text-muted">
               {unpaid ? 'no seu plano' : 'a partir do'}
               <PlanBadge strong={plan.recommended}>{plan.name}</PlanBadge>
-              {!unpaid && perMonth(plan) ? (
+              {!unpaid && perMonth(plan) && platform.canPay ? (
                 <span className="tnum font-semibold text-ink">{perMonth(plan)}</span>
               ) : null}
             </p>
@@ -196,7 +197,8 @@ export function PlanLocked({
               </li>
             ))}
           </ul>
-          {owner ? (
+          {/* the app never leads to buying a plan (ADR 0044, decision 1) */}
+          {!platform.canPay ? null : owner ? (
             <ButtonLink
               to="/conta"
               variant={unpaid ? 'primary' : 'spark'}

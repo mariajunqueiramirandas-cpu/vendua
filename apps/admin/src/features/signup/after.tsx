@@ -20,6 +20,7 @@ import { DocumentGate, needsDocument } from '../account/DocumentGate.tsx';
 import { ChapterList } from '../onboarding/Overview.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import type { Draft } from './progress.ts';
+import { platform } from '../../platform/index.ts';
 
 const paid = (a: Account | undefined) => a?.subscription?.status === 'active';
 
@@ -74,7 +75,7 @@ export function CardHandoff({
     if (!url) return;
     setGoing(true);
     onLeave();
-    window.location.assign(url);
+    platform.openExternal(url);
   };
   const leaveRef = useRef(leave);
   leaveRef.current = leave;
@@ -228,7 +229,7 @@ export function CardConfirm({ onPaid, onLater }: { onPaid: () => void; onLater: 
               variant="ghost"
               block
               icon={<ArrowSquareOut />}
-              onClick={() => window.location.assign(checkout)}
+              onClick={() => platform.openExternal(checkout)}
             >
               abrir o Mercado Pago de novo
             </Button>

@@ -11,6 +11,7 @@ import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { holdAction, transitionOptions } from './transition.ts';
 import { useStoreQuery } from '../store/StatusPill.tsx';
+import { platform } from '../../platform/index.ts';
 
 type OrderData = { customer: unknown; order: Order };
 
@@ -318,14 +319,11 @@ ${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
 <div class="t">${esc(money(o.totalCents))} · ${esc(PAY_LABEL[o.payment.method] ?? o.payment.method)}${
     o.payment.status === 'paid' ? ' (pago)' : ''
   }</div>
-<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),300)}</script></body></html>`;
-  const w = window.open('', '_blank', 'width=420,height=640');
-  if (!w) {
-    toast.error('O navegador bloqueou a janela de impressão. Permita pop-ups para esta página.');
-    return;
-  }
-  w.document.write(html);
-  w.document.close();
+</body></html>`;
+  void platform.print({ html, title: `Pedido #${o.number}` }).then((ok) => {
+    if (!ok)
+      toast.error('O navegador bloqueou a janela de impressão. Permita pop-ups para esta página.');
+  });
 }
 
 /** "imprimir comanda": the store's printers when a device holding one is online (ADR 0027),

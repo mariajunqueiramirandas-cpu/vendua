@@ -54,6 +54,7 @@ import {
   type Voice,
 } from './media.ts';
 import { useRecorder } from './useRecorder.ts';
+import { mediaUrl, usePrivateMedia } from '../../lib/media.ts';
 
 // Duá Copilot (ADR 0034): a manager or owner asks Duá about the store, or asks for a change, and
 // he prepares it as a card that only "confirmar" applies. One chat, two homes: the /copiloto
@@ -607,7 +608,8 @@ function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
 }
 
 /** a photo the person sent, above its caption: a tap opens it whole in a new tab */
-function SentPhoto({ src, caption }: { src: string; caption: boolean }) {
+function SentPhoto({ src: path, caption }: { src: string; caption: boolean }) {
+  const src = usePrivateMedia(path);
   return (
     <a
       href={src}
@@ -838,7 +840,7 @@ function Composer({
         <div className="flex items-center gap-3">
           <div className="relative shrink-0">
             <img
-              src={photo.url}
+              src={mediaUrl(photo.url)}
               alt="Foto escolhida"
               className="size-16 rounded-md bg-sunken object-cover ring-1 ring-line"
             />

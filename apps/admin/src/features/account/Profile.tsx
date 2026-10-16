@@ -19,13 +19,6 @@ import { useEffect, useState } from 'react';
 import { api, type Alerts, type Session } from '../../lib/api.ts';
 import { ago, phone, when } from '../../lib/format.ts';
 import { setSoundOn } from '../../lib/live.ts';
-import {
-  currentSubscription,
-  disablePush,
-  enablePush,
-  liveSubscription,
-  pushSupported,
-} from '../../lib/push.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { can, ROLE_LABEL, useSession } from '../../lib/session.ts';
 import { chimeNewOrder, setVolume } from '../../lib/sound.ts';
@@ -50,7 +43,8 @@ import { PageTabs } from '../../ui/Tabs.tsx';
 import { TABS } from '../../app/tabs.ts';
 import { toast } from '../../ui/Toast.tsx';
 import { resetClient } from '../../lib/persist.ts';
-import { isIOS, standalone } from '../../lib/pwa.ts';
+import { platform } from '../../platform/index.ts';
+import { appPath } from '../../app/paths.ts';
 
 type View = 'voce' | 'avisos' | 'aparelhos';
 
@@ -75,11 +69,7 @@ function ProfileView({ view }: { view: View }) {
   const [theme, setThemeState] = useState<ThemePref>(readTheme());
   const [push, setPush] = useState<'on' | 'off' | 'unsupported' | 'denied'>('off');
   useEffect(() => {
-    if (!pushSupported()) return setPush('unsupported');
-    // a subscription under an old VAPID key reads as off: turning it on re-subscribes
-    void (s.push.publicKey ? liveSubscription(s.push.publicKey) : currentSubscription()).then(
-      (sub) => setPush(sub ? 'on' : Notification.permission === 'denied' ? 'denied' : 'off'),
-    );
+    void platform.push.state(s.push).then(setPush, () => setPush('off'));
   }, []);
   const patch = (body: Parameters<typeof api.updateMe>[0]) =>
     void save
@@ -259,11 +249,11 @@ function ProfileView({ view }: { view: View }) {
                 <div className="border-t border-line pt-4">
                   <Toggle
                     checked={push === 'on'}
-                    disabled={push === 'unsupported' || !s.push.publicKey}
+                    disabled={push === 'unsupported' || !platform.push.configured(s.push)}
                     onChange={async (v) => {
                       try {
                         if (v) {
-                          const r = await enablePush(s.push.publicKey!);
+                          const r = await platform.push.enable(s.push);
                           setPush(r);
                           if (r === 'denied')
                             toast.error(
@@ -271,7 +261,7 @@ function ProfileView({ view }: { view: View }) {
                             );
                           else toast('Avisos ligados neste aparelho ✓');
                         } else {
-                          await disablePush();
+                          await platform.push.disable();
                           setPush('off');
                         }
                         void setPref({ push: v });
@@ -285,10 +275,10 @@ function ProfileView({ view }: { view: View }) {
                       </span>
                     }
                     description={
-                      !s.push.publicKey
+                      !platform.push.configured(s.push)
                         ? 'Os avisos ainda não estão ligados na Venduá. O som funciona com o painel aberto.'
                         : push === 'unsupported'
-                          ? isIOS() && !standalone()
+                          ? platform.install.mode() === 'ios'
                             ? 'No iPhone, os avisos chegam pelo app: toque em Compartilhar › Adicionar à Tela de Início e abra por lá.'
                             : 'Este navegador não recebe avisos.'
                           : push === 'denied'
@@ -392,10 +382,10 @@ function ProfileView({ view }: { view: View }) {
                 className="mt-3 text-danger"
                 icon={<SignOut />}
                 onClick={async () => {
-                  await disablePush().catch(() => undefined);
+                  await platform.push.disable().catch(() => undefined);
                   await api.auth.logout().catch(() => undefined);
                   await resetClient(qc);
-                  window.location.assign('/admin/entrar');
+                  window.location.assign(appPath('/entrar'));
                 }}
               >
                 sair deste aparelho
@@ -509,6 +499,9 @@ function DuaWhatsappSection({
 }
 
 function deviceName(ua: string) {
+  // the store app's own sessions (Core writes `VenduaApp/<platform> <version> (<ua>)`)
+  if (/^VenduaApp\/ios\b/.test(ua)) return /iPad/.test(ua) ? 'App iPad' : 'App iPhone';
+  if (/^VenduaApp\/android\b/.test(ua)) return 'App Android';
   if (/iPhone/.test(ua)) return 'iPhone';
   if (/iPad/.test(ua)) return 'iPad';
   if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Celular Android' : 'Tablet Android';

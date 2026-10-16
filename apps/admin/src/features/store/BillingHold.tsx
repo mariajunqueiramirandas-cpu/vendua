@@ -3,6 +3,7 @@ import { ApiError } from '../../lib/api.ts';
 import { useCan } from '../../lib/session.ts';
 import { ButtonLink } from '../../ui/Button.tsx';
 import { Notice } from '../../ui/Notice.tsx';
+import { platform } from '../../platform/index.ts';
 
 export const isBillingHold = (e: unknown) => e instanceof ApiError && e.code === 'BILLING_HOLD';
 
@@ -25,7 +26,7 @@ export function BillingHoldNotice({
       title="Falta pagar o plano"
       className={className}
       action={
-        owner ? (
+        owner && platform.canPay ? (
           <ButtonLink to="/conta" size="sm" onClick={onNavigate}>
             ver o plano e pagar
           </ButtonLink>

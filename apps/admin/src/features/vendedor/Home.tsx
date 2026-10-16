@@ -36,6 +36,7 @@ import { toast } from '../../ui/Toast.tsx';
 import { PersonaAvatar, ReasonChip } from '../../ui/vendedor/index.ts';
 import { COVERAGE_LABEL, FirstUse, useAgentSwitch } from './Home.parts.tsx';
 import { PauseSheet, useLapse, usePause } from './Pause.tsx';
+import { platform } from '../../platform/index.ts';
 
 export default function VendedorHome() {
   const session = useSession();
@@ -137,7 +138,7 @@ function OutOfConversations({ data, owner }: { data: Data; owner: boolean }) {
       tone="warning"
       title="O Duá ficou sem conversas"
       action={
-        owner ? (
+        owner && platform.canPay ? (
           <ButtonLink to={month ? '/conta#vendedor' : '/conta'} size="sm">
             {month ? 'comprar mais conversas' : 'ver os planos'}
           </ButtonLink>

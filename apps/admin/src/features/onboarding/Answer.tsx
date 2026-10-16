@@ -5,6 +5,7 @@ import { Button } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { LineInput } from '../../ui/fields.tsx';
 import { CropSheet } from '../../ui/PhotoField.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 // A question with one answer in words (the name, the phrase, the WhatsApp) is answered on a
 // line, not in a box: the title is the label, the answer is set in the display face, big, over a
@@ -140,7 +141,7 @@ export function AnswerLogo({
       {url ? (
         <div className="flex items-center gap-4 rounded-lg bg-surface p-3 depth-1">
           <img
-            src={url}
+            src={mediaUrl(url)}
             alt="logo da loja"
             className="size-20 shrink-0 rounded-[22%] bg-sunken object-cover ring-1 ring-line"
           />

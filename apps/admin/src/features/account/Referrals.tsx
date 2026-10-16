@@ -8,6 +8,7 @@ import { Card, Divided } from '../../ui/Card.tsx';
 import { ErrorState, Skeleton } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Chip } from './domain/kit.tsx';
+import { platform } from '../../platform/index.ts';
 
 // Indique e ganhe (migration 0120): the store's own link to signup. The store it brings gets a
 // month free on top of its trial; once that store pays its first month, this one gets its next
@@ -18,7 +19,7 @@ export function Referrals() {
   if (q.error && !q.data) return <ErrorState error={q.error} retry={() => void q.refetch()} />;
   if (!q.data) return <Skeleton className="h-44 w-full" />;
   const r = q.data;
-  const url = `${window.location.origin}/admin/comecar?indica=${encodeURIComponent(r.code)}`;
+  const url = platform.publicUrl(`/admin/comecar?indica=${encodeURIComponent(r.code)}`);
   const text = `Uso o Venduá na minha loja e recomendo. Criando a sua por este link, você ganha um mês grátis além do teste: ${url}`;
   const earned = r.appliedMonths + r.pendingMonths;
   return (

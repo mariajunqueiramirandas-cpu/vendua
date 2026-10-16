@@ -1,3 +1,5 @@
+import { platform } from '../platform/index.ts';
+
 // Privacy-first page views (Core's /analytics/v1/collect, first-party through the admin's own
 // nginx): no cookie, nothing kept in the browser, no third party, no ids in the path. Core counts
 // a visitor per day from a hash it can't reverse; it never sees who is signed in.
@@ -52,9 +54,11 @@ export function trackPageview(pathname: string): void {
     },
   });
   try {
+    const url = platform.http.url('/analytics/v1/collect');
+    // a beacon is same-origin only here: the app's is a cross-origin POST Core allows (CORS)
     const blob = new Blob([body], { type: 'application/json' });
-    if (navigator.sendBeacon?.('/analytics/v1/collect', blob)) return;
-    void fetch('/analytics/v1/collect', { method: 'POST', body, keepalive: true }).catch(() => {});
+    if (!platform.shell && navigator.sendBeacon?.(url, blob)) return;
+    void fetch(url, { method: 'POST', body, keepalive: true }).catch(() => {});
   } catch {
     /* lossy by design: analytics never gets in the way */
   }

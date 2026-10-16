@@ -8,6 +8,7 @@ import { messageOf } from './feedback.tsx';
 import { Chips, Toggle } from './fields.tsx';
 import { Sheet } from './Sheet.tsx';
 import { toast } from './Toast.tsx';
+import { mediaUrl } from '../lib/media.ts';
 
 export interface Photo {
   url: string;
@@ -107,7 +108,7 @@ export function PhotoField({
           style={{ aspectRatio: ASPECTS[aspect] }}
           data-vt-dst={vtKey}
         >
-          <img src={cover.url} alt={cover.alt ?? ''} className="size-full object-cover" />
+          <img src={mediaUrl(cover.url)} alt={cover.alt ?? ''} className="size-full object-cover" />
           {max === 1 ? (
             <button
               type="button"
@@ -164,7 +165,7 @@ export function PhotoField({
           {photos.map((p, i) => (
             <li key={p.url + i} className="relative w-28 shrink-0">
               <img
-                src={p.url}
+                src={mediaUrl(p.url)}
                 alt=""
                 className={cn(
                   'aspect-[4/3] w-full rounded-sm object-cover',
@@ -350,7 +351,7 @@ export function CropSheet({
         >
           {url && bmp ? (
             <img
-              src={url}
+              src={mediaUrl(url)}
               alt="prévia do corte"
               draggable={false}
               className="absolute max-w-none"

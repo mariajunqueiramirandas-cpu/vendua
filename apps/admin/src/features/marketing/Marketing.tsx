@@ -66,6 +66,7 @@ import {
 } from '../whatsapp/reminders.tsx';
 import { shareCard } from './shareCard.ts';
 import { useStoreQuery } from '../store/StatusPill.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 // Marketing in three views, one job each: Ofertas (what the customer gets: cupons, the loyalty
 // card, the banner), Divulgar (spreading the link) and Lembretes (bringing people back: the
@@ -257,7 +258,7 @@ function Share() {
                   <span className="block aspect-square bg-sunken">
                     {p.imageUrl ? (
                       <img
-                        src={p.imageUrl}
+                        src={mediaUrl(p.imageUrl)}
                         alt=""
                         className="size-full object-cover"
                         loading="lazy"
@@ -922,7 +923,7 @@ function Waitlist({ data }: { data: M }) {
                 <div className="flex items-center gap-3">
                   <span className="size-12 shrink-0 overflow-hidden rounded-sm bg-sunken">
                     {w.imageUrl ? (
-                      <img src={w.imageUrl} alt="" className="size-full object-cover" />
+                      <img src={mediaUrl(w.imageUrl)} alt="" className="size-full object-cover" />
                     ) : (
                       <NoPhoto />
                     )}

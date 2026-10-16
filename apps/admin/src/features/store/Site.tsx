@@ -15,6 +15,7 @@ import { Addresses } from '../account/domain/Addresses.tsx';
 import { CustomDomain } from '../account/domain/CustomDomain.tsx';
 import { SiteRequest } from './SiteRequest.tsx';
 import { useStoreQuery } from './StatusPill.tsx';
+import { platform } from '../../platform/index.ts';
 
 // Loja › Site e endereço: where customers find the store on the web. The Venduá address is
 // everyone's; the custom domain and the site sob medida come with the plan, so they're the
@@ -69,7 +70,7 @@ function OwnerView() {
           <SiteRequest a={a} />
         </Section>
       ) : null}
-      {!domain || !a.plan.features.customSite ? <Upgrade a={a} /> : null}
+      {(!domain || !a.plan.features.customSite) && platform.canPay ? <Upgrade a={a} /> : null}
     </div>
   );
 }

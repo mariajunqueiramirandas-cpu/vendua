@@ -14,6 +14,7 @@ import { LockedPage, PlanLocked, reasonOf } from '../../ui/PlanLocked.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
 import { usePdvState } from './data.ts';
 import { QrCard } from './QrCard.tsx';
+import { platform } from '../../platform/index.ts';
 
 // The QR codes to put on the tables (ADR 0036), on screen as a preview and on A4 when printed:
 // four cards a page, with a dashed edge to cut along. `?mesa=<id>` prints just that table.
@@ -56,7 +57,7 @@ function QrScreen() {
     return () => void delete root.dataset.qrPrint;
   }, []);
 
-  const print = () => window.print();
+  const print = () => void platform.print();
   const canPrint = ready.length > 0;
 
   const body = (c: React.ReactNode) => (

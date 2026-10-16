@@ -2,11 +2,11 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { queryClient, qk } from './query.ts';
 import { chimeNewOrder, chimePaid } from './sound.ts';
 import { haptic } from './haptics.ts';
-import { checkForUpdate, ordersSeen } from './pwa.ts';
+import { platform } from '../platform/index.ts';
 import type { Board, Order } from './api.ts';
 import { money } from './format.ts';
 
-// One EventSource per signed-in tab (Core: GET /admin/v1/events). Each change
+// One stream per signed-in tab (Core: GET /admin/v1/events, read by platform.stream). Each change
 // invalidates what shows it; a new order also rings: chime + double vibration +
 // a live-region announcement, repeating every 20 s until someone looks (§5.2, §6.3).
 
@@ -156,7 +156,7 @@ function ring() {
 
 /** The board calls this when it's on screen — the merchant has seen them. */
 export function markOrdersSeen() {
-  ordersSeen();
+  platform.ordersSeen();
   if (state.unseen.length) set({ unseen: [] });
 }
 
@@ -277,7 +277,7 @@ const SILENT_MS = 50_000;
 export function useLiveStream(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
-    let es: EventSource | null = null;
+    let stop: (() => void) | null = null;
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
     let hellos = 0;
@@ -286,51 +286,37 @@ export function useLiveStream(enabled: boolean) {
     // armed by the first ping, so a Core without pings never trips it
     let pinged = false;
     const seen = () => void (lastSeen = Date.now());
-    const open = () => {
-      if (closed) return;
-      clearTimeout(retry);
-      es?.close();
-      pinged = false;
+    const handle = (name: string, data: string) => {
       seen();
-      const src = new EventSource('/admin/v1/events');
-      es = src;
-      src.addEventListener('hello', () => {
-        seen();
+      if (name === 'hello') {
         failures = 0;
         // events sent while we were away (a reconnect, Core's stream lifetime) are gone: catch
         // up, and a Core that went away may have been a deploy: look for the new app version
         if (hellos++ > 0) {
           queueInvalidate('all');
-          checkForUpdate();
+          platform.updates.check();
         }
         set({ streaming: true });
-      });
-      // signed out elsewhere (sair on another device, encerrar sessão, removed from the team):
-      // straight to sign-in, no refresh needed
-      src.addEventListener('signedout', () => {
+      } else if (name === 'signedout') {
+        // signed out elsewhere (sair on another device, encerrar sessão, removed from the team):
+        // straight to sign-in, no refresh needed
         closed = true;
-        src.close();
+        stop?.();
         set({ streaming: false, presence: null });
         window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
-      });
-      src.addEventListener('ping', () => {
-        seen();
+      } else if (name === 'ping') {
         pinged = true;
-      });
-      src.addEventListener('presence', (ev) => {
-        seen();
+      } else if (name === 'presence') {
         try {
-          const p = JSON.parse((ev as MessageEvent).data) as { viewers: number; carts: number };
+          const p = JSON.parse(data) as { viewers: number; carts: number };
           if (Number.isFinite(p.viewers) && Number.isFinite(p.carts)) set({ presence: p });
         } catch {
           /* ignored: the next one replaces it */
         }
-      });
-      src.addEventListener('change', (ev) => {
-        seen();
+      } else if (name === 'change') {
         let e: { topic: Topic; id: string };
         try {
-          e = JSON.parse((ev as MessageEvent).data) as { topic: Topic; id: string };
+          e = JSON.parse(data) as { topic: Topic; id: string };
         } catch {
           return queueInvalidate('all');
         }
@@ -340,19 +326,32 @@ export function useLiveStream(enabled: boolean) {
           paidWatch.add(e.id);
         if (e.topic === 'order.placed' && e.id) void onPlaced(e.id);
         if (e.topic === 'vendedor.waiting' && e.id) void onShopperWaiting(e.id);
+      }
+    };
+    const open = () => {
+      if (closed) return;
+      clearTimeout(retry);
+      stop?.();
+      pinged = false;
+      seen();
+      const mine = platform.stream('/admin/v1/events', {
+        event: handle,
+        closed: (status) => {
+          if (stop !== mine || closed) return;
+          set({ streaming: false, presence: null });
+          // Core refused the stream (a 401, a proxy error mid-deploy): maybe the session is gone
+          // (signed out, a redeploy with a fresh database). Re-checking the session drops to
+          // sign-in on a 401, without a refresh.
+          if (status) {
+            void queryClient.invalidateQueries({ queryKey: qk.session });
+            platform.updates.check();
+          }
+          // Core ends every stream after its lifetime, and a network blip ends it too: back at
+          // once the first time, then easing off to a minute (a redeploy is back in seconds)
+          retry = setTimeout(open, Math.min(60_000, (failures ? 2000 : 500) * 2 ** failures++));
+        },
       });
-      src.onerror = () => {
-        if (es !== src) return;
-        set({ streaming: false, presence: null });
-        // the browser retries by itself; a hard close (a 401, a proxy error mid-deploy) needs us to
-        if (src.readyState !== EventSource.CLOSED) return;
-        // Core refused the stream: maybe the session is gone (signed out, a redeploy with a fresh
-        // database). Re-checking the session drops to sign-in on a 401, without a refresh.
-        void queryClient.invalidateQueries({ queryKey: qk.session });
-        checkForUpdate();
-        // quick at first (a redeploy is back in seconds), then easing off to a minute
-        retry = setTimeout(open, Math.min(60_000, 2000 * 2 ** failures++));
-      };
+      stop = mine;
     };
     open();
     const check = () => {
@@ -371,18 +370,24 @@ export function useLiveStream(enabled: boolean) {
     const down = () => set({ online: false, streaming: false, presence: null });
     window.addEventListener('online', up);
     window.addEventListener('offline', down);
-    // a closed laptop lid or a backgrounded phone misses events: catch up on return
+    // a closed laptop lid or a backgrounded phone misses events: catch up on return. The app's
+    // WebView is suspended in the background, so its stream may be long dead: open a new one
     const vis = () => {
       if (document.visibilityState !== 'visible') return;
       void queryClient.invalidateQueries({ queryKey: ['orders'] });
-      check();
+      if (platform.shell && !closed) {
+        set({ streaming: false, presence: null });
+        failures = 0;
+        open();
+        platform.updates.check();
+      } else check();
     };
     document.addEventListener('visibilitychange', vis);
     return () => {
       closed = true;
       clearTimeout(retry);
       clearInterval(watchdog);
-      es?.close();
+      stop?.();
       window.removeEventListener('online', up);
       window.removeEventListener('offline', down);
       document.removeEventListener('visibilitychange', vis);

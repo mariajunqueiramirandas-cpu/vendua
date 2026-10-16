@@ -3,8 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
-import { enablePush, liveSubscription, pushSupported } from '../../lib/push.ts';
-import { installMode, onInstallChange, promptInstall, standalone } from '../../lib/pwa.ts';
+import { platform } from '../../platform/index.ts';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -29,16 +28,16 @@ function usePushOff() {
   const s = useSession();
   const [off, setOff] = useState(false);
   useEffect(() => {
-    if (!s.push.publicKey || !pushSupported() || Notification.permission === 'denied') return;
-    void liveSubscription(s.push.publicKey).then((sub) => setOff(!sub));
-  }, [s.push.publicKey]);
+    // denied stays quiet here: Perfil › Avisos says how to undo it
+    void platform.push.state(s.push).then((st) => setOff(st === 'off'));
+  }, [s.push]);
   return off;
 }
 
 export function DeviceCard({ className }: { className?: string }) {
   const s = useSession();
   const qc = useQueryClient();
-  const mode = useSyncExternalStore(onInstallChange, installMode);
+  const mode = useSyncExternalStore(platform.install.onChange, platform.install.mode);
   const pushOff = usePushOff();
   const nav = useNavigate();
   const [hidden, setHidden] = useState<string[]>([]);
@@ -50,7 +49,7 @@ export function DeviceCard({ className }: { className?: string }) {
       ? 'install'
       : // on iPhone only the installed app can receive notifications
         pushOff &&
-          (standalone() || mode !== 'ios') &&
+          (platform.install.installed() || mode !== 'ios') &&
           !dismissed('push') &&
           !hidden.includes('push')
         ? 'push'
@@ -94,12 +93,13 @@ export function DeviceCard({ className }: { className?: string }) {
             onClick={async () => {
               if (card === 'install') {
                 if (mode === 'ios') return setHowto(true);
-                if (await promptInstall()) toast('Pronto! O app está na sua tela de início.');
+                if (await platform.install.prompt())
+                  toast('Pronto! O app está na sua tela de início.');
                 return;
               }
               setBusy(true);
               try {
-                const r = await enablePush(s.push.publicKey!);
+                const r = await platform.push.enable(s.push);
                 if (r === 'on') {
                   await api.updateMe({ prefs: { push: true } });
                   void qc.invalidateQueries({ queryKey: qk.session });
