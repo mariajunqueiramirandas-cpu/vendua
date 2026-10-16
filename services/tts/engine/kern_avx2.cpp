@@ -461,6 +461,7 @@ void attn_f16(const float* q, const uint16_t* K, const uint16_t* V, int n, int D
     __m256 a0 = _mm256_setzero_ps(), a1 = a0, a2 = a0, a3 = a0;
     const uint16_t* k0 = K + size_t(b) * D * 16;
     const uint16_t* k1 = k0 + size_t(D) * 16;
+    for (int d = 0; d < D; d += 2) _mm_prefetch((const char*)(k0 + size_t(D) * 32 + d * 16), _MM_HINT_T0);  // the next pair
     for (int d = 0; d < D; d++) {
       __m256 qd = _mm256_broadcast_ss(q + d);
       a0 = _mm256_fmadd_ps(qd, _mm256_cvtph_ps(_mm_loadu_si128((const __m128i*)(k0 + d * 16))), a0);
@@ -491,6 +492,7 @@ void attn_f16(const float* q, const uint16_t* K, const uint16_t* V, int n, int D
   for (int t = 0; t < n; t++) {
     __m256 p = _mm256_broadcast_ss(scores + t);
     const uint16_t* v = V + size_t(t) * D;
+    _mm_prefetch((const char*)(v + size_t(D) * 8), _MM_HINT_T0);
     for (int j = 0; j < dv; j++) acc[j] = _mm256_fmadd_ps(p, _mm256_cvtph_ps(_mm_loadu_si128((const __m128i*)(v + j * 8))), acc[j]);
   }
   __m256 inv = _mm256_set1_ps(1.0f / sum);
