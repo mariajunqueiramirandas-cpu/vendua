@@ -247,6 +247,42 @@ describe.skipIf(!OWNER_URL)('Duá Copilot: site sob medida (db)', () => {
     expect(JSON.stringify(r.adapter.requests.at(1))).toContain('só o dono da loja');
   });
 
+  test('when a spec is next, read_site_request brings the whole store; while building it does not', async () => {
+    const s = await store();
+    await sql`update store_settings set tagline = 'Pudim de vó, feito à mão',
+      description = 'Pudins artesanais da receita da família desde 1998.', instagram = 'queropudim',
+      city = 'Campinas' where tenant_id = ${s.tenantId}`;
+    const [c] = await sql<{ id: string }[]>`
+      insert into categories (tenant_id, slug, name) values (${s.tenantId}, 'pudins', 'Pudins') returning id`;
+    await sql`
+      insert into products (tenant_id, category_id, slug, name, base_price_cents, description, dietary)
+      values (${s.tenantId}, ${c!.id}, 'pudim-leite', 'Pudim de leite', 2500, 'O clássico, com calda de caramelo.',
+              ${['sem_gluten']}),
+             (${s.tenantId}, ${c!.id}, 'pudim-velho', 'Pudim antigo', 2500, null, ${[]})`;
+    await sql`update products set status = 'archived' where tenant_id = ${s.tenantId} and slug = 'pudim-velho'`;
+
+    const { adapter } = await turn(s, 'Monta meu site', tools(call('read_site_request')));
+    const result = JSON.stringify(adapter.requests.at(1));
+    expect(result).toContain('TUDO SOBRE A LOJA PARA O SITE');
+    expect(result).toContain('Pudins artesanais da receita da família');
+    expect(result).toContain('@queropudim');
+    expect(result).toContain(
+      'Pudim de leite: O clássico, com calda de caramelo. [sem foto, sem gluten]',
+    );
+    expect(result).toContain('1 produtos em 1 categorias');
+    expect(result).not.toContain('Pudim antigo');
+    // the Vendedor is off: its default tone isn't the store's voice
+    expect(result).not.toContain('Tom escolhido');
+    // no amount reaches the model from the dossier
+    expect(result.slice(result.indexOf('TUDO SOBRE'))).not.toMatch(/R\$|25,00/);
+
+    await sql`update site_requests set status = 'in_progress' where id = ${s.requestId}`;
+    const later = await turn(s, 'Como está meu site?', tools(call('read_site_request')));
+    const status = JSON.stringify((later.adapter.requests.at(1) as any).messages.at(-1));
+    expect(status).toContain('em construção');
+    expect(status).not.toContain('TUDO SOBRE A LOJA');
+  });
+
   test('an invalid spec is a tool error Duá can fix, and nothing is proposed', async () => {
     const s = await store();
     const bad = {

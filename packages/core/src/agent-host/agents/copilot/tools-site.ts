@@ -3,6 +3,7 @@ import type { SiteBuildInput, SiteReviseInput } from '../../../copilot/actions.t
 import { planHas } from '../../../modules/billing/plans.ts';
 import { SPEC_VERSION, validateSpec, type DesignSpec } from '../../../modules/site-builder/spec.ts';
 import type { Sql } from '../../../platform/db.ts';
+import { siteDossier } from './site-context.ts';
 import { propose } from './tools-propose.ts';
 import { at, who, type Ctx, type Who } from './shared.ts';
 
@@ -112,7 +113,7 @@ const STAGE: Record<string, string> = {
 export const readSiteRequestTool = defineTool<Record<string, never>, Sql>({
   name: 'read_site_request',
   description:
-    'O pedido de site sob medida da loja: situação, o briefing que a pessoa escreveu, o spec atual, ajustes usados, prazo e etapa da construção. Chame antes de propor o site ou o ajuste.',
+    'O pedido de site sob medida da loja: situação, o briefing que a pessoa escreveu, o spec atual, ajustes usados, prazo e etapa da construção. Quando o próximo passo é escrever o spec (o site ou o ajuste), traz também tudo sobre a loja: identidade, cores e letras de hoje, cardápio, o que mais vende, como vende e como fala. Chame antes de propor o site ou o ajuste.',
   effect: 'read',
   input: s.object({}),
   run: async (ctx: Ctx) => {
@@ -158,6 +159,9 @@ export const readSiteRequestTool = defineTool<Record<string, never>, Sql>({
       );
     if (r.status === 'delivered' && r.delivered_at)
       lines.push(`Entregue em ${at(ctx, 'site.entregue', r.delivered_at, w.tz, true)}.`);
+    // the store itself, only when a spec is next: a status question stays a cheap read
+    if (r.status === 'requested' || (r.status === 'delivered' && r.revisions_used < 1))
+      lines.push('', await siteDossier(ctx, w));
     return { content: lines.join('\n') };
   },
 });
