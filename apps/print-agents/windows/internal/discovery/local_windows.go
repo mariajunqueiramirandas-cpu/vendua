@@ -9,11 +9,13 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/btserial"
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/winspool"
 )
 
-// Local lists spooler queues, COM ports and printer-class USB devices.
+// Local lists spooler queues, COM ports (Bluetooth printers among them) and
+// printer-class USB devices.
 func Local(_ context.Context, known func(key string) bool) ([]api.Discovered, error) {
 	var out []api.Discovered
 	queues, qerr := winspool.Queues()
@@ -21,9 +23,8 @@ func Local(_ context.Context, known func(key string) bool) ([]api.Discovered, er
 		out = append(out, SpoolerPrinter(q))
 	}
 	ports, perr := comPorts()
-	for _, p := range ports {
-		out = append(out, SerialPrinter(p))
-	}
+	bt, berr := btserial.Ports()
+	out = append(out, SerialPrinters(ports, bt, known)...)
 	devs, uerr := usbprint.List()
 	var lerr error
 	if len(devs) > 0 {
@@ -37,7 +38,7 @@ func Local(_ context.Context, known func(key string) bool) ([]api.Discovered, er
 		}
 		out = append(out, USBPrinters(devs, queued, known)...)
 	}
-	return out, errors.Join(qerr, perr, uerr, lerr)
+	return out, errors.Join(qerr, perr, berr, uerr, lerr)
 }
 
 func comPorts() ([]string, error) {

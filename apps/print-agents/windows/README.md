@@ -3,8 +3,8 @@
 The store PC's print agent. It pairs with a store (device-code flow, approved in the admin),
 keeps an SSE stream open to Core, and writes the already-encoded ESC/POS bytes of each job to
 the right local printer: a Windows print queue (winspool, RAW), a USB printer directly (no
-driver), a network printer (raw TCP 9100) or a COM port (Bluetooth printers paired in Windows
-show up as one). It never builds ticket content. The contract with Core is the shared
+driver), a Bluetooth printer paired in Windows, a network printer (raw TCP 9100) or a COM
+port. It never builds ticket content. The contract with Core is the shared
 print-agent spec (`/admin/v1/agent/*`). The same code builds on Linux for development (CUPS
 `lp -o raw` instead of winspool, `/dev/usb/lp*` for USB).
 
@@ -75,12 +75,28 @@ The spooler path refuses a paused queue or one set to "Usar impressora offline",
 otherwise hold the job and be reported as printed. Queues on v4 (XPS) drivers, which reject RAW,
 get the job as `XPS_PASS`.
 
+## Bluetooth
+
+Pairing a Bluetooth (SPP) printer in Windows' settings makes an outgoing virtual COM port for it,
+and usually an incoming one that nothing prints through. `internal/btserial` reads both from
+`HKLM\SYSTEM\CurrentControlSet\Enum\BTHENUM` (each instance ID ends in the remote address, all
+zeros for incoming ports) and the paired name from `Services\BTHPORT\Parameters\Devices`.
+Discovery reports the printer as `bt:AA:BB:CC:DD:EE:FF`, kind `bluetooth`, like the Android
+agent, and leaves out its incoming port. A job looks up the printer's current COM port by MAC, so
+re-pairing (which can renumber the port) doesn't break it. Opening the port is what connects: a
+printer that is off, out of range or connected to another device fails there. After the write
+the agent waits 400 ms before closing, since cheap printers drop the end of a ticket when the
+link closes right away. A Bluetooth port set up as a plain serial printer before this keeps
+being reported as one, so it doesn't turn up absent.
+
+Bluetooth Low Energy printers (no SPP) are not supported.
+
 ## Layout
 
 `main.go` wires things up. `internal/agent` is the state machine (pairing → stream → jobs,
 discovery reports, update checks); `internal/api` the HTTP + SSE client; `internal/jobs` the
 per-printer FIFO workers and finished store; `internal/printer` the transports;
-`internal/usbprint` the driverless USB transport; `internal/discovery` queues, COM ports, USB
+`internal/usbprint` the driverless USB transport; `internal/btserial` the Bluetooth COM ports; `internal/discovery` queues, COM ports, USB
 devices and the /24 port-9100 probe; `internal/tray` the tray menu and generated icons. OS-specific code sits in `_windows.go` / `_linux.go` files.
 
 ## SmartScreen and Smart App Control

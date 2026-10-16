@@ -35,7 +35,9 @@ by default (CP860 or folded ASCII per printer).
   it installs itself per user under `%LOCALAPPDATA%`, drops the downloaded-file mark and starts
   with Windows. It prints RAW through the Windows spooler (any USB printer with its driver
   installed), straight to USB printer-class devices with no driver installed (Windows' own
-  `usbprint.sys`, added 2026-10-16), to network printers on TCP 9100 and to COM ports.
+  `usbprint.sys`, added 2026-10-16), to Bluetooth printers paired in Windows (through their
+  outgoing COM port, found by MAC, added 2026-10-16), to network printers on TCP 9100 and to COM
+  ports.
 - Android: Kotlin (`apps/print-agents/android`), a foreground service of type `connectedDevice`
   that prints over USB host, Bluetooth Classic (SPP) and TCP 9100, restarted at boot and by a
   WorkManager watchdog.

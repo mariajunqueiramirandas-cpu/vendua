@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/btserial"
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 )
 
@@ -21,7 +22,7 @@ const (
 	MaxField    = 200
 )
 
-// Discoverer combines the quick local inventory (queues, serial ports, USB), done
+// Discoverer combines the quick local inventory (queues, serial and Bluetooth ports, USB), done
 // on every report, with the network scan, which runs at start, periodically and when asked.
 type Discoverer struct {
 	Local func(ctx context.Context, known func(key string) bool) ([]api.Discovered, error)
@@ -148,6 +149,33 @@ func IsVirtualQueue(name string) bool {
 
 func SpoolerPrinter(queue string) api.Discovered {
 	return api.Discovered{Key: "spooler:" + queue, Kind: "spooler", Name: queue, Address: queue}
+}
+
+// SerialPrinters lists the present COM ports. A paired Bluetooth printer's port
+// is reported as that printer, keyed by MAC like the Android agent's, since
+// Windows may give it another COM number after re-pairing. Its plain serial
+// entry, and an incoming port (nothing prints through one), are listed only
+// when Core already has them.
+func SerialPrinters(present []string, bt []btserial.Port, known func(key string) bool) []api.Discovered {
+	byCOM := map[string]btserial.Port{}
+	for _, b := range bt {
+		byCOM[strings.ToUpper(b.COM)] = b
+	}
+	var out []api.Discovered
+	for _, port := range present {
+		b, isBT := byCOM[strings.ToUpper(port)]
+		if isBT && !b.Incoming {
+			out = append(out, BluetoothPrinter(b))
+		}
+		if !isBT || known("serial:"+port) {
+			out = append(out, SerialPrinter(port))
+		}
+	}
+	return out
+}
+
+func BluetoothPrinter(b btserial.Port) api.Discovered {
+	return api.Discovered{Key: "bt:" + b.MAC, Kind: "bluetooth", Name: b.DisplayName(), Address: b.MAC}
 }
 
 func SerialPrinter(port string) api.Discovered {

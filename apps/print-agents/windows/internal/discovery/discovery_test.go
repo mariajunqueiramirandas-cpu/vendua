@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/btserial"
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 )
 
@@ -264,5 +265,25 @@ func TestCollectPassesKnownKeys(t *testing.T) {
 	d.Collect(context.Background(), nil)
 	if !slices.Equal(asked, []string{"usb:b"}) {
 		t.Fatalf("asked = %v", asked)
+	}
+}
+
+func TestSerialPrintersReportsBluetoothByMAC(t *testing.T) {
+	bt := []btserial.Port{
+		{COM: "COM5", MAC: "00:1B:35:A0:F2:C1", Name: "MPT-II"},
+		{COM: "COM6", MAC: "00:00:00:00:00:00", Incoming: true},
+		{COM: "COM8", MAC: "66:22:B1:00:00:01"},
+	}
+	known := func(key string) bool { return key == "serial:COM8" }
+	got := SerialPrinters([]string{"COM1", "com5", "COM6", "COM8"}, bt, known)
+	want := []api.Discovered{
+		{Key: "serial:COM1", Kind: "serial", Name: "Porta serial COM1", Address: "COM1"},
+		{Key: "bt:00:1B:35:A0:F2:C1", Kind: "bluetooth", Name: "MPT-II", Address: "00:1B:35:A0:F2:C1"},
+		{Key: "bt:66:22:B1:00:00:01", Kind: "bluetooth", Name: "Impressora Bluetooth 66:22:B1:00:00:01", Address: "66:22:B1:00:00:01"},
+		// set up as a serial port before this version: kept so it doesn't turn up absent
+		{Key: "serial:COM8", Kind: "serial", Name: "Porta serial COM8", Address: "COM8"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %+v", got)
 	}
 }

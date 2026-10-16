@@ -80,6 +80,8 @@ func (s *Sender) Send(ctx context.Context, p api.Printer, data []byte) error {
 		return sendSerial(ctx, port, baud, s.WriteTimeout, data)
 	case "usb":
 		return s.sendUSB(ctx, addr, data)
+	case "bluetooth":
+		return sendBluetooth(ctx, addr, s.WriteTimeout, data)
 	default:
 		return &Error{Msg: "Tipo de impressora não suportado neste computador", Permanent: true}
 	}
