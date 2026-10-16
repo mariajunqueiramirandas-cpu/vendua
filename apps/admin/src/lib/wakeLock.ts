@@ -1,17 +1,12 @@
 import { useEffect, useState } from 'react';
+import { platform } from '../platform/index.ts';
 
-// Screen Wake Lock: a phone or tablet on the counter keeps the board lit during
-// service. The OS drops the lock when the app is hidden; it comes back on return.
+// Keep the screen lit: a phone or tablet on the counter keeps the board on during service.
+// The OS drops it when the app is hidden; it comes back on return.
 
 const KEY = 'vendua-admin-awake';
-type Sentinel = {
-  release: () => Promise<void>;
-  addEventListener: (t: 'release', f: () => void) => void;
-};
-type WakeLock = { request: (t: 'screen') => Promise<Sentinel> };
-const wl = () => (navigator as Navigator & { wakeLock?: WakeLock }).wakeLock;
 
-export const wakeLockSupported = () => typeof navigator !== 'undefined' && !!wl();
+export const wakeLockSupported = () => platform.keepAwake.supported();
 
 /** `key`/`initial`: a screen with its own preference (the kitchen's starts on). */
 export function useWakeLock(key = KEY, initial = false) {
@@ -30,20 +25,20 @@ export function useWakeLock(key = KEY, initial = false) {
     } catch {
       /* private mode */
     }
-    const api = wl();
-    if (!on || !api) return;
-    let s: Sentinel | null = null;
+    if (!on || !platform.keepAwake.supported()) return;
+    let release: (() => void) | null = null;
     let live = true;
     const take = async () => {
-      if (document.visibilityState !== 'visible' || s) return;
+      if (document.visibilityState !== 'visible' || release) return;
       try {
-        s = await api.request('screen');
-        if (!live) return void s.release();
-        setHeld(true);
-        s.addEventListener('release', () => {
-          s = null;
+        const r = await platform.keepAwake.hold(() => {
+          release = null;
           setHeld(false);
         });
+        if (!r) return;
+        if (!live) return r();
+        release = r;
+        setHeld(true);
       } catch {
         /* battery saver or no gesture yet: retried on the next return */
       }
@@ -54,7 +49,7 @@ export function useWakeLock(key = KEY, initial = false) {
     return () => {
       live = false;
       document.removeEventListener('visibilitychange', vis);
-      void s?.release().catch(() => undefined);
+      release?.();
       setHeld(false);
     };
   }, [on, key]);

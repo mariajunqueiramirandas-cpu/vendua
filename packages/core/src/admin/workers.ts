@@ -1,6 +1,7 @@
 import { eveReminderPass } from '../modules/party.ts';
 import { planCyclePass, planPaymentPass } from '../modules/shopper-plan-cycles.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
+import type { PendingQuery, Row } from 'postgres';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { ownsJob } from '../platform/job-lease.ts';
 import { log } from '../platform/log.ts';
@@ -17,6 +18,7 @@ import { emitAdminTx, type AdminHub } from './live.ts';
 import { audit } from './audit.ts';
 import { DEMAND_DEFAULT_MINUTES } from './routes-store.ts';
 import { sendPushResult, vapidConfig, vapidPublicKey, type PushResult } from './webpush.ts';
+import { nativePushConfigured, sendNativeResult, type NativeMessage } from './nativepush.ts';
 
 const workLog = log.child({ mod: 'admin-workers' });
 
@@ -31,7 +33,61 @@ export interface AlertOpts {
   provider?: PaymentProvider | undefined;
 }
 
-type Sub = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
+/** Where an alert goes: a browser's web push subscription or the store app (ADR 0044 §5). */
+type Target =
+  | { kind: 'web'; id: string; user_id: string; endpoint: string; p256dh: string; auth: string }
+  | { kind: 'app'; id: string; user_id: string; platform: 'ios' | 'android'; token: string };
+
+/** The devices of the store's people that `who` (a condition on merchant_users `u`) picks. */
+export async function alertTargets(
+  tx: Sql,
+  tenantId: string,
+  who: PendingQuery<Row[]>,
+): Promise<Target[]> {
+  const web = await tx<Omit<Extract<Target, { kind: 'web' }>, 'kind'>[]>`
+    select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
+      join merchant_users u on u.id = s.user_id
+    where s.tenant_id = ${tenantId} and ${who}`;
+  const app = await tx<Omit<Extract<Target, { kind: 'app' }>, 'kind'>[]>`
+    select d.id, d.user_id, d.platform, d.token from push_devices d
+      join merchant_users u on u.id = d.user_id
+    where d.tenant_id = ${tenantId} and ${who}`;
+  return [
+    ...(vapidPublicKey() ? web.map((t) => ({ kind: 'web' as const, ...t })) : []),
+    ...app
+      .filter((d) => nativePushConfigured()[d.platform])
+      .map((t) => ({ kind: 'app' as const, ...t })),
+  ];
+}
+
+/** Some kind of alert can go out: web push (VAPID) or the app's (APNs/FCM). */
+export const anyPushConfigured = () => {
+  const n = nativePushConfigured();
+  return !!vapidPublicKey() || n.ios || n.android;
+};
+
+/** One alert to one device: a web push, or the app's native alert. */
+export function sendAlert(t: Target, message: object): Promise<PushResult> {
+  return (
+    t.kind === 'web' ? sendPushResult(t, message) : sendNativeResult(t, message as NativeMessage)
+  ).catch((): PushResult => ({ result: 'error', detail: 'delivery failed' }));
+}
+
+/** What an attempt did to its device: delivered, failed, or gone (deleted). */
+export async function recordDelivery(
+  tx: Sql,
+  tenantId: string,
+  t: { kind: 'web' | 'app'; id: string },
+  r: PushResult,
+) {
+  const table = t.kind === 'web' ? tx`push_subscriptions` : tx`push_devices`;
+  if (r.result === 'gone')
+    await tx`delete from ${table} where tenant_id = ${tenantId} and id = ${t.id}`;
+  else if (r.result === 'ok')
+    await tx`update ${table} set last_ok_at = now(), last_error = null where id = ${t.id}`;
+  else
+    await tx`update ${table} set last_error = ${r.detail ?? 'delivery failed'} where id = ${t.id}`;
+}
 
 const brl = (cents: number) =>
   (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -42,6 +98,8 @@ export async function recordPushAttempt(
   tenantId: string,
   a: {
     subscriptionId: string | null;
+    /** the app device (push_devices) it went to */
+    deviceId?: string | null;
     userId: string | null;
     event: string;
     ref: string | null;
@@ -49,8 +107,8 @@ export async function recordPushAttempt(
   } & PushResult,
 ) {
   await tx`
-    insert into push_attempts (tenant_id, subscription_id, user_id, event, ref, channel, result, detail)
-    values (${tenantId}, ${a.subscriptionId}, ${a.userId}, ${a.event.slice(0, 40)}, ${a.ref?.slice(0, 120) ?? null},
+    insert into push_attempts (tenant_id, subscription_id, device_id, user_id, event, ref, channel, result, detail)
+    values (${tenantId}, ${a.subscriptionId}, ${a.deviceId ?? null}, ${a.userId}, ${a.event.slice(0, 40)}, ${a.ref?.slice(0, 120) ?? null},
             ${a.channel}, ${a.result}, ${a.detail?.slice(0, 200) ?? null})
   `;
 }
@@ -62,7 +120,7 @@ export async function startPushNotifier(sql: Sql, hub: AdminHub): Promise<() => 
   const { problem } = vapidConfig();
   if (problem) workLog.warn({ problem }, `web push is off: ${problem}`);
   return hub.onAny((tenantId, e) => {
-    if (!e.id || !vapidPublicKey()) return;
+    if (!e.id || !anyPushConfigured()) return;
     if (e.topic === 'order.placed')
       void pushOrder(sql, tenantId, e.id).catch((err) =>
         workLog.warn({ err }, 'order push failed'),
@@ -106,12 +164,11 @@ export async function pushWhatsappLost(sql: Sql, tenantId: string) {
       on conflict do nothing returning key
     `;
     if (!won[0]) return null;
-    const subs = await tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
-        and coalesce((u.prefs ->> 'push')::boolean, true)
-    `;
+    const subs = await alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and u.role in ('owner', 'manager') and coalesce((u.prefs ->> 'push')::boolean, true)`,
+    );
     return { state: wa.state, subs };
   });
   if (!job) return;
@@ -144,12 +201,11 @@ export async function pushExhausted(sql: Sql, tenantId: string, period: string) 
       on conflict do nothing returning key
     `;
     if (!won[0]) return null;
-    return tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
-        and coalesce((u.prefs ->> 'push')::boolean, true)
-    `;
+    return alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and u.role in ('owner', 'manager') and coalesce((u.prefs ->> 'push')::boolean, true)`,
+    );
   });
   if (!job) return;
   const resets = period === 'trial' ? null : new Date(period);
@@ -184,11 +240,11 @@ export async function pushManagers(
       insert into push_deliveries (tenant_id, key) values (${tenantId}, ${key})
       on conflict do nothing returning key`;
     if (!won[0]) return null;
-    return tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active' and u.role in ('owner', 'manager')
-        and coalesce((u.prefs ->> 'push')::boolean, true)`;
+    return alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and u.role in ('owner', 'manager') and coalesce((u.prefs ->> 'push')::boolean, true)`,
+    );
   });
   if (subs) await fanOut(sql, tenantId, subs, message, event, key);
 }
@@ -196,36 +252,26 @@ export async function pushManagers(
 async function fanOut(
   sql: Sql,
   tenantId: string,
-  subs: Sub[],
-  message: object,
+  targets: Target[],
+  message: NativeMessage,
   event: string,
   ref: string,
 ) {
-  if (!subs.length) return;
-  const results = await Promise.all(
-    subs.map((s) =>
-      sendPushResult(s, message).catch((): PushResult => ({
-        result: 'error',
-        detail: 'delivery failed',
-      })),
-    ),
-  );
+  if (!targets.length) return;
+  const results = await Promise.all(targets.map((t) => sendAlert(t, message)));
   await withTenant(sql, tenantId, async (tx) => {
-    for (const [i, s] of subs.entries()) {
+    for (const [i, t] of targets.entries()) {
       const r = results[i]!;
       await recordPushAttempt(tx, tenantId, {
-        subscriptionId: r.result === 'gone' ? null : s.id,
-        userId: s.user_id,
+        subscriptionId: t.kind === 'web' && r.result !== 'gone' ? t.id : null,
+        deviceId: t.kind === 'app' && r.result !== 'gone' ? t.id : null,
+        userId: t.user_id,
         event,
         ref,
         channel: 'push',
         ...r,
       });
-      if (r.result === 'gone') await tx`delete from push_subscriptions where id = ${s.id}`;
-      else if (r.result === 'ok')
-        await tx`update push_subscriptions set last_ok_at = now(), last_error = null where id = ${s.id}`;
-      else
-        await tx`update push_subscriptions set last_error = ${r.detail ?? 'delivery failed'} where id = ${s.id}`;
+      await recordDelivery(tx, tenantId, t, r);
     }
     await emitAdminTx(tx, tenantId, 'alerts');
   });
@@ -255,12 +301,11 @@ export async function pushWaiting(sql: Sql, tenantId: string, threadId: string, 
       on conflict do nothing returning key
     `;
     if (!won[0]) return null;
-    const subs = await tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)
-        and coalesce((u.prefs ->> 'pushWaiting')::boolean, true)
-    `;
+    const subs = await alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true) and coalesce((u.prefs ->> 'pushWaiting')::boolean, true)`,
+    );
     return { t, subs };
   });
   if (!job) return;
@@ -305,7 +350,7 @@ export async function vendedorWaitingAlerts(sql: Sql, tenantId: string, opts: Al
   );
   for (const t of due) {
     const ping = [...WAITING_REPINGS].reverse().find((m) => t.mins >= m)!;
-    if (vapidPublicKey()) await pushWaiting(sql, tenantId, t.id, ping);
+    if (anyPushConfigured()) await pushWaiting(sql, tenantId, t.id, ping);
     await waitingWhatsapp(sql, tenantId, t, opts);
   }
 }
@@ -388,11 +433,11 @@ export async function pushAsk(sql: Sql, tenantId: string, threadId: string) {
       on conflict do nothing returning key
     `;
     if (!won[0]) return null;
-    const subs = await tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)
-    `;
+    const subs = await alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)`,
+    );
     return { t, subs };
   });
   if (!job) return;
@@ -428,11 +473,11 @@ export async function pushOrder(sql: Sql, tenantId: string, orderId: string) {
         from orders where tenant_id = ${tenantId} and id = ${orderId}
       `
     )[0];
-    const subs = await tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)
-    `;
+    const subs = await alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true)`,
+    );
     return order ? { order, subs } : null;
   });
   if (!job) return;
@@ -470,13 +515,11 @@ export async function pushPayment(sql: Sql, tenantId: string, orderId: string) {
         from orders o where o.tenant_id = ${tenantId} and o.id = ${orderId}
       `
     )[0];
-    const subs = await tx<Sub[]>`
-      select s.id, s.user_id, s.endpoint, s.p256dh, s.auth from push_subscriptions s
-        join merchant_users u on u.id = s.user_id
-      where s.tenant_id = ${tenantId} and u.status = 'active'
-        and coalesce((u.prefs ->> 'push')::boolean, true)
-        and coalesce((u.prefs ->> 'pushPayments')::boolean, true)
-    `;
+    const subs = await alertTargets(
+      tx,
+      tenantId,
+      tx`u.status = 'active' and coalesce((u.prefs ->> 'push')::boolean, true) and coalesce((u.prefs ->> 'pushPayments')::boolean, true)`,
+    );
     return order ? { order, subs } : null;
   });
   if (!job) return;

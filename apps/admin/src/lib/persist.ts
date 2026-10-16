@@ -1,4 +1,5 @@
 import { dehydrate, hydrate, type DehydratedState, type QueryClient } from '@tanstack/react-query';
+import { platform } from '../platform/index.ts';
 import type { Account } from './api.ts';
 import { forgetRecent } from './recent.ts';
 
@@ -122,5 +123,7 @@ export function persistCache(qc: QueryClient) {
   window.addEventListener('vendua:unauthenticated', () => {
     forgetMoves();
     void clearPersisted();
+    // the app's token is what Core just refused: a sign-in mints a new one
+    void platform.session.clear().catch(() => undefined);
   });
 }

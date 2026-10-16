@@ -71,6 +71,7 @@ export function requestLogger(): MiddlewareHandler<{ Variables: { requestId: str
     c.set('requestId', requestId);
     c.header('x-request-id', requestId);
     const start = performance.now();
+    const client = c.req.header('x-vendua-client')?.slice(0, 80);
     await next();
     const status = c.res.status;
     const fields = {
@@ -80,6 +81,8 @@ export function requestLogger(): MiddlewareHandler<{ Variables: { requestId: str
       status,
       ms: Math.round(performance.now() - start),
       host: c.req.header('host'),
+      // the admin says which build is calling: web/<commit> or the store app (ADR 0044)
+      ...(client ? { client } : {}),
     };
     if (status >= 500) httpLog.error(fields, 'request');
     else if (status >= 400) httpLog.warn(fields, 'request');

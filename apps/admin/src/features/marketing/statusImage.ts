@@ -1,4 +1,5 @@
 import { DEFAULT_TOKENS, type StorefrontTokens } from '@vendua/templates';
+import { mediaUrl } from '../../lib/media.ts';
 
 // Status do dia (0124): one 1080×1920 image per product, in the store's own look — its colours,
 // fonts and corner radius from the storefront tokens. It prints the strings Core gives (name,
@@ -20,7 +21,7 @@ function loadImg(src: string) {
     i.crossOrigin = 'anonymous';
     i.onload = () => res(i);
     i.onerror = rej;
-    i.src = src;
+    i.src = mediaUrl(src);
   });
 }
 

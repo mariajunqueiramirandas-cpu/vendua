@@ -27,6 +27,7 @@ import { toast } from '../../ui/Toast.tsx';
 import { logoColors, PRESETS, readable } from '../appearance/Colors.tsx';
 import { DishPrint } from './dishes.tsx';
 import { Choice, deliveryReady, Frame, type StepProps } from './steps.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 const ZoneMap = lazy(() => import('../../ui/ZoneMap.tsx').then((m) => ({ default: m.ZoneMap })));
 
@@ -124,7 +125,11 @@ export function ColorsStep({
                 className="relative -mt-4 ml-3 grid size-9 place-items-center overflow-hidden rounded-[11px] bg-spark font-display text-[1.0625rem] font-semibold leading-none tracking-[-0.04em] text-on-spark shadow-[0_0_0_2px_var(--surface)]"
               >
                 {draft.logoUrl ? (
-                  <img src={draft.logoUrl} alt="" className="size-full bg-white object-cover" />
+                  <img
+                    src={mediaUrl(draft.logoUrl)}
+                    alt=""
+                    className="size-full bg-white object-cover"
+                  />
                 ) : (
                   (draft.name.trim().slice(0, 1) || '?').toUpperCase()
                 )}

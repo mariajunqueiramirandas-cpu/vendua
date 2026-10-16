@@ -15,6 +15,7 @@ import { Select } from '../../ui/fields.tsx';
 import { ActionBar, PageBody, PageHeader } from '../../ui/Page.tsx';
 import { Qr } from '../../ui/Qr.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
+import { platform } from '../../platform/index.ts';
 
 // Marketing › Cartão da sacola: a card for the bag of every order that came through a delivery
 // app, so next time the shopper orders on the store's own site. Four per A4, a dashed edge to
@@ -71,7 +72,7 @@ export default function BagCardPage() {
         back="/marketing/divulgar"
         subtitle="Para a sacola dos pedidos que chegam pelos apps de delivery: da próxima vez, o cliente pede direto pelo seu site."
         actions={
-          <Button icon={<Printer />} onClick={() => window.print()}>
+          <Button icon={<Printer />} onClick={() => void platform.print()}>
             imprimir
           </Button>
         }
@@ -136,7 +137,7 @@ export default function BagCardPage() {
         </div>
       )}
       <ActionBar>
-        <Button size="lg" block icon={<Printer />} onClick={() => window.print()}>
+        <Button size="lg" block icon={<Printer />} onClick={() => void platform.print()}>
           imprimir 4 por folha
         </Button>
       </ActionBar>

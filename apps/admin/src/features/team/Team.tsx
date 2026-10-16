@@ -42,6 +42,7 @@ import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { platform } from '../../platform/index.ts';
 
 const ROLE_HELP: Record<Role, string> = {
   owner: 'Tudo, incluindo pagamentos, equipe e plano.',
@@ -399,7 +400,8 @@ function AddSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boo
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-const absolute = (u: string) => (u.startsWith('/') ? `${location.origin}${u}` : u);
+// sent to someone else: the public admin address, also from the app
+const absolute = (u: string) => (u.startsWith('/') ? platform.publicUrl(u) : u);
 
 /** After an invite: where it went, and the merchant's own WhatsApp as the fallback. */
 /** The result of an invite, as the parts of a sheet (the add sheet turns into it; "reenviar" opens it). */

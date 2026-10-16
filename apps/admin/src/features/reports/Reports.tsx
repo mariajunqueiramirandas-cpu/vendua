@@ -17,6 +17,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionNav } from '../../ui/SectionNav.tsx';
 import { ReportsSkeleton } from '../../ui/skeletons.tsx';
 import { DEFAULT_PERIOD, isPeriod, PERIODS, reportsQuery } from './range.ts';
+import { platform } from '../../platform/index.ts';
 
 const METHOD: Record<string, string> = {
   pix: 'Pix',
@@ -94,6 +95,14 @@ export default function Reports() {
         actions={
           <a
             href={`/admin/v1/reports/orders.csv?${new URLSearchParams(rq.params)}`}
+            download
+            onClick={(e) => {
+              e.preventDefault();
+              void platform.share.download(
+                `/admin/v1/reports/orders.csv?${new URLSearchParams(rq.params)}`,
+                'pedidos.csv',
+              );
+            }}
             className="t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 ring-1 ring-line-strong hover:bg-hover"
           >
             <DownloadSimple className="size-5" /> baixar planilha

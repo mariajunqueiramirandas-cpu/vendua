@@ -18,6 +18,8 @@ apps/control/dist/
 .claude/worktrees/
 packages/core/sim-results/
 apps/admin/dist/
+apps/admin/dist-native/
+apps/admin/bundles/
 apps/admin/shots/
 site/shots/
 videos/*/renders/

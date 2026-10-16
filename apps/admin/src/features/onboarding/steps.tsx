@@ -30,6 +30,7 @@ import { Say } from './Guide.tsx';
 import type { Draft } from './MiniStore.tsx';
 import { SegmentPicker } from './SegmentPicker.tsx';
 import type { HoursPreset, Segment, SegmentId } from './segments.ts';
+import { mediaUrl } from '../../lib/media.ts';
 
 export interface StepProps {
   s: StoreView;
@@ -848,7 +849,11 @@ function ProductRow({ p, onPhoto }: { p: Listed; onPhoto: () => void }) {
   return (
     <li className="animate-fade-up flex min-h-16 items-center gap-3 rounded-md bg-surface px-3 py-2 depth-1">
       {p.imageUrl ? (
-        <img src={p.imageUrl} alt="" className="size-12 shrink-0 rounded-md object-cover" />
+        <img
+          src={mediaUrl(p.imageUrl)}
+          alt=""
+          className="size-12 shrink-0 rounded-md object-cover"
+        />
       ) : (
         <div className={cn('w-12 shrink-0', busy && 'opacity-60')}>
           <PhotoField

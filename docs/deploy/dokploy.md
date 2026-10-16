@@ -47,6 +47,12 @@ Copy `.env.example` into the service's environment and fill it in:
 | `VENDUA_ADMIN_HOST`                        | the merchant admin's own domain, e.g. `painel.example.com`        |
 | `VENDUA_STORE_DOMAIN`                      | stores live at `<slug>.<domain>` — the admin's store links        |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`   | web push (`npx web-push generate-vapid-keys`); boot logs if bad   |
+| `APNS_KEY_P8` / `_KEY_ID` / `_TEAM_ID`     | the app's iOS alerts (APNs auth key); `APNS_TOPIC` = bundle id    |
+| `FCM_SERVICE_ACCOUNT_JSON`                 | the app's Android alerts (Firebase service account JSON)          |
+| `VENDUA_ADMIN_MIN_NATIVE`                  | oldest app shell served; older ones get the store-update screen   |
+| `VENDUA_IOS_APP_IDS`                       | Universal Links: `<TEAMID>.br.com.vendua.painel`                  |
+| `VENDUA_ANDROID_CERT_SHA256`               | App Links: the Play app signing key's SHA-256                     |
+| `VENDUA_REVIEW_LOGIN`                      | App Review's sign-in, `<phone>:<code>` (demo stores only)         |
 | `VENDUA_SUPPORT_WHATSAPP`                  | Ajuda's "chamar no WhatsApp" number (digits; optional)            |
 | `RESEND_API_KEY`                           | email driver — sending + fetching received bodies                 |
 | `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)            |

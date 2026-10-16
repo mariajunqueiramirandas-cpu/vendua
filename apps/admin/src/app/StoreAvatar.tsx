@@ -1,4 +1,5 @@
 import { useSession } from '../lib/session.ts';
+import { mediaUrl } from '../lib/media.ts';
 
 /** The store's logo (or initials) with its own accent as the ring (§4.2 — the store's own color). */
 export function StoreAvatar({ size = 40 }: { size?: number }) {
@@ -21,7 +22,7 @@ export function StoreAvatar({ size = 40 }: { size?: number }) {
       aria-hidden
     >
       {store.logoUrl ? (
-        <img src={store.logoUrl} alt="" className="size-full object-cover" />
+        <img src={mediaUrl(store.logoUrl)} alt="" className="size-full object-cover" />
       ) : (
         initials || 'V'
       )}

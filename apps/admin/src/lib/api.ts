@@ -1,8 +1,10 @@
 import type { PageTemplate, SectionInstance, StorefrontTokens } from '@vendua/templates';
+import { platform, type PushConfig } from '../platform/index.ts';
 import { mpDeviceId, mpDeviceReady } from './mercadopago.ts';
 
-// Typed client for /admin/v1 — cookie session, x-vendua-admin CSRF marker, and an
-// Idempotency-Key minted per call (a retried mutation reuses its own key).
+// Typed client for /admin/v1 — the session (a cookie on the web, a bearer token in the app:
+// src/platform), the x-vendua-admin CSRF marker, and an Idempotency-Key minted per call (a
+// retried mutation reuses its own key).
 
 export class ApiError extends Error {
   constructor(
@@ -77,15 +79,17 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
       ? new ApiError(0, 'TIMEOUT', 'a conexão está lenta')
       : new ApiError(0, 'NETWORK_ERROR', 'sem conexão');
   };
+  const auth = platform.http.headers();
   try {
     let res: Response;
     try {
-      res = await fetch(`/admin/v1${path}`, {
-        credentials: 'same-origin',
+      res = await fetch(platform.http.url(`/admin/v1${path}`), {
+        credentials: platform.http.credentials,
         ...rest,
         signal: ctl.signal,
         headers: {
           ...(raw ? {} : { 'content-type': 'application/json' }),
+          ...auth,
           'x-vendua-admin': '1',
           ...(key ? { 'idempotency-key': key } : {}),
           ...(device ? { 'x-vendua-device': device } : {}),
@@ -105,22 +109,42 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
         data.error?.message ?? res.statusText,
         data.error?.details,
       );
-      // not for /session itself: App re-checks the session on this event, so a 401 there would loop
-      if (res.status === 401 && path !== '/session')
+      // not for /session itself: App re-checks the session on this event, so a 401 there would loop;
+      // nor for a session already replaced (a sign-in while this request was out)
+      if (
+        res.status === 401 &&
+        path !== '/session' &&
+        auth.authorization === platform.http.headers().authorization
+      )
         window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
+      // the app's shell is below Core's floor (ADR 0044 §2): only the store has the fix
+      if (res.status === 426)
+        window.dispatchEvent(new CustomEvent('vendua:store-update', { detail: { hard: true } }));
       throw err;
     }
     const ct = res.headers.get('content-type') ?? '';
+    let out: unknown;
     try {
-      return (await (ct.includes('json') ? res.json() : res.text())) as T;
+      out = await (ct.includes('json') ? res.json() : res.text());
     } catch {
       // the connection died mid-body: Core answered, but we can't know what
       throw lost();
     }
+    // the app's sessions come back as a token (ADR 0044 §3): kept by the platform, never cached
+    const token = (out as { token?: unknown } | null)?.token;
+    if (SIGN_IN.test(path) && typeof token === 'string') {
+      await platform.session.set(token);
+      delete (out as { token?: unknown }).token;
+    }
+    return out as T;
   } finally {
     clearTimeout(timer);
+    if (path === '/auth/logout') await platform.session.clear().catch(() => undefined);
   }
 }
+
+/** where a sign-in answers with a session (a cookie on the web, `token` in the app) */
+const SIGN_IN = /^\/(auth\/(otp\/verify|email\/verify|select)|session\/switch|signup)$/;
 
 const get = <T>(p: string) => req<T>(p);
 const send = <T>(method: string, p: string, body?: unknown) =>
@@ -223,7 +247,8 @@ export interface Session {
   };
   store: { id: string; slug: string; name: string; logoUrl: string | null; url: string };
   stores: StoreRef[];
-  push: { publicKey: string | null };
+  /** what this Core can send: web push (VAPID) and the app's native alerts */
+  push: PushConfig;
   support: { whatsapp: string | null };
   /** `features` is what's open right now: in the plan AND paid for (or in its trial) */
   plan: { id: string; name: string; features: PlanFeatures };
@@ -2727,6 +2752,11 @@ export const api = {
   pushUnsubscribe: (endpoint: string) => send('POST', '/push/unsubscribe', { endpoint }),
   pushRebind: (endpoint: string) =>
     send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
+  /** the store app's alerts (APNs/FCM token), tied to this session (ADR 0044 §5) */
+  pushDevice: (d: { platform: 'ios' | 'android'; token: string; appVersion: string }) =>
+    send<{ registered: true }>('POST', '/push/devices', d),
+  pushDeviceRemove: (token: string) =>
+    send<{ registered: false }>('POST', '/push/devices/remove', { token }),
 
   home: () => get<Home>('/home'),
   party: () => get<PartyView>('/party'),

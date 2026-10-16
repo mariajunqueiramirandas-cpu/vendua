@@ -116,6 +116,49 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
 Test the worker against the production build (`BASE=http://localhost:8787/admin/`): in
 dev it isn't registered.
 
+## The iOS and Android app
+
+The same React app is also the store app "Venduá" (`br.com.vendua.painel`,
+[ADR 0044](../../docs/adr/0044-admin-native-app.md)), built with Capacitor into `ios/` and
+`android/`. The rule it adds: **what differs between the website and the app lives in
+`src/platform/`** (`web.ts`, `native.ts` and their folders), reached only through
+`src/platform/index.ts`. `tools/check-admin-platform.mjs` fails a relative `fetch`,
+`EventSource`, `location.origin`, `window.print`, `navigator.vibrate`/`share`/`wakeLock`,
+`speechSynthesis` or a Capacitor import anywhere else. Paying stays on the website:
+`platform.canPay` is `false` in the app, and screens hide the plan's buy and pay actions with it.
+
+```sh
+bun run build:native        # dist-native/ (the app's bundle, same budgets) + bundles/ (Core's OTA zip)
+bunx cap sync               # copies dist-native into ios/ and android/
+bunx cap open android       # or ios (macOS); the projects build as they are
+# live reload on a phone on the same network (Core with VENDUA_ADMIN_APP_ORIGINS=http://<ip>:5197):
+VITE_API_ORIGIN=http://<ip>:8787 bunx vite --mode native --host --port 5197
+CAP_SERVER_URL=http://<ip>:5197 bunx cap run android
+# the app's bundle in a desktop browser against a local Core (CI's admin-native job):
+#   Core with VENDUA_ADMIN_APP_ORIGINS=http://localhost:5197 VENDUA_ADMIN_DEV_OTP=1
+VITE_API_ORIGIN=http://localhost:8787 bun run build:native
+CHROMIUM=/opt/pw-browsers/chromium bun scripts/native-smoke.ts
+```
+
+- **Versions.** `app-version.json` is the store build: `version` for the stores, `native` for the
+  shell level. Raise `native` whenever the shell changes (a Capacitor dependency, `ios/`,
+  `android/`): Core offers a bundle only to shells at its level, and
+  `tools/check-admin-native.mjs` fails the PR otherwise. Then run `bun scripts/native-version.ts`
+  (iOS keeps both in the Xcode project and `Info.plist`; Gradle reads the file).
+- **Updates.** Screens ship over the air: Core's image carries the bundle of its commit, and the
+  app downloads it, checks its sha256 and applies it on the next cold start or "atualizar". Only
+  shell changes go through store review.
+- **The native code** is small and ours: `VenduaShell` (session token in the Keychain / Keystore,
+  push registration, the order alerts with "Aceitar" from the lock screen, print, badge). Swift in
+  `ios/App/App/`, Java in `android/app/src/main/java/br/com/vendua/painel/`. The contract is
+  `src/platform/native/shell.ts`.
+- **Generated, committed:** `scripts/app-assets.ts` draws the icons and splash (into `assets/`,
+  then `@capacitor/assets` fills both projects); `scripts/render-chime.ts` renders the "pedido
+  novo" chime from `lib/sound.ts` into `pedido-novo.caf` and `pedido_novo.ogg`. Rerun them after
+  the brand or the chime changes. Prettier leaves `ios/` and `android/` alone.
+- **Store builds** run in `.github/workflows/admin-app.yml` (Fastlane, `fastlane/README.md` lists
+  the secrets).
+
 ## The kitchen (Cozinha)
 
 `/cozinha` is the kitchen display and `/cozinha/painel` the screen that faces the customers

@@ -41,6 +41,7 @@ import { Sheet } from '../../ui/Sheet.tsx';
 import { ChipsSkeleton, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { PricingSheet } from './PricingSheet.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 // Every product's and adicional's count on one screen: − and + for the day-to-day, a tap on the
 // number to type a count, a delivery or a loss. Taps go to Core as relative changes, batched once
@@ -889,7 +890,12 @@ function StockRow({
           style={p.dominant ? { background: p.dominant } : undefined}
         >
           {p.imageUrl ? (
-            <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" />
+            <img
+              src={mediaUrl(p.imageUrl)}
+              alt=""
+              className="size-full object-cover"
+              loading="lazy"
+            />
           ) : null}
         </span>
         <span className="min-w-0 flex-1 py-1">

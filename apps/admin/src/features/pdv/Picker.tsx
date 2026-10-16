@@ -13,6 +13,7 @@ import { availability } from '../../ui/ProductTile.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
 import type { PickedLine } from './data.ts';
 import { OptionsSheet } from './OptionsSheet.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 // The counter's product grid: the store's own menu, by category or by search, one tap per item.
 // A product with options (or a kit) asks for them first. Enter in the search takes the first hit.
@@ -211,7 +212,7 @@ export function PickTile({ p, count, onPick }: { p: Product; count: number; onPi
       >
         {p.imageUrl ? (
           <img
-            src={p.imageUrl}
+            src={mediaUrl(p.imageUrl)}
             alt=""
             loading="lazy"
             draggable={false}

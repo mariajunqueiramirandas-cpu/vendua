@@ -561,6 +561,90 @@ jobs:
           echo "admin-shots: $RESULT"
           [ "$RESULT" = success ]
 
+  # the iOS/Android app's side of the admin (ADR 0044 §8): the platform seam, the shell level, the
+  # app's bundle under the same budgets, and that bundle signing in and streaming against Core from
+  # another origin with a bearer token, as on a phone. The native projects build in admin-app.yml.
+  admin-native:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # Scope and the shell-level check diff origin/<base>...HEAD
+          filter: blob:none
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - name: Scope
+        id: scope
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
+        run: |
+          base="$BASE_REF"
+          if [ -z "$base" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            affected="$(bun tools/affected.mjs --base "origin/$base")"
+            echo "run=$(echo "$affected" | jq -r '.adminGate')" >> "$GITHUB_OUTPUT"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      - name: Platform seam (src/platform is the only place web and app differ)
+        if: steps.scope.outputs.run == 'true'
+        run: bun tools/check-admin-platform.mjs
+      - name: A changed native shell raises app-version.json "native"
+        if: steps.scope.outputs.run == 'true' && steps.scope.outputs.base != ''
+        run: bun tools/check-admin-native.mjs --base "origin/${{ steps.scope.outputs.base }}"
+      - name: The Xcode project follows app-version.json
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && bun scripts/native-version.ts --check
+      - name: Postgres
+        if: steps.scope.outputs.run == 'true'
+        uses: ./.github/actions/postgres
+      - name: Migrate + seed
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && bun run migrate && bun run seed:fixtures
+      - name: Core API (the app's origin allowed, as capacitor://localhost is in production)
+        if: steps.scope.outputs.run == 'true'
+        run: (cd packages/core && SESSION_SECRET=ci-secret VENDUA_ADMIN_DEV_OTP=1 VENDUA_ADMIN_APP_ORIGINS=http://localhost:5197 bun src/index.ts > /tmp/core.log 2>&1 &)
+      - name: The app's bundle (budgets + the over-the-air zip)
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && VITE_API_ORIGIN=http://localhost:8787 bun run build:native
+      - name: Playwright browser
+        if: steps.scope.outputs.run == 'true'
+        uses: ./.github/actions/playwright-chromium
+      - name: Core ready
+        if: steps.scope.outputs.run == 'true'
+        run: bash .github/scripts/core-ready.sh
+      - name: Cross-origin smoke (bearer sign-in, CORS, live stream)
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && bun scripts/native-smoke.ts
+      - name: The bundle Core offers the app
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          m="$(curl -sf 'http://localhost:8787/admin/v1/app/bundle?native=1')"
+          echo "$m"
+          url="$(echo "$m" | jq -r '.url')"
+          sha="$(echo "$m" | jq -r '.sha256')"
+          [ "$url" != null ] || { echo "Core offers no bundle"; exit 1; }
+          curl -sf "http://localhost:8787$url" -o /tmp/bundle.zip
+          echo "$sha  /tmp/bundle.zip" | sha256sum -c -
+      - name: Smoke screenshot on failure
+        if: failure() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: admin-native-smoke
+          path: apps/admin/shots
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Core log on failure
+        if: failure() && steps.scope.outputs.run == 'true'
+        run: tail -200 /tmp/core.log
+
   # the staleness guarantee (11): a storefront built on the oldest supported Kernel
   # line, never rebuilt, keeps passing the S-series against Core main
   stale-reference:

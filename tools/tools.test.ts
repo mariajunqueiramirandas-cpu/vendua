@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mapFiles } from './affected.mjs';
+import { nativeDeps, verdict } from './check-admin-native.mjs';
 
 describe('mapFiles', () => {
   test('shared packages flip allStorefronts and keep their own dir', () => {
@@ -470,5 +471,86 @@ describe('bun.lock on a store PR', () => {
     const r = paths(dir);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("other stores' entries: rival");
+  });
+});
+
+describe('check-admin-platform', () => {
+  const checker = join(import.meta.dir, 'check-admin-platform.mjs');
+  const dirs: string[] = [];
+  function run(files: Record<string, string>) {
+    const root = mkdtempSync(join(tmpdir(), 'admin-platform-'));
+    dirs.push(root);
+    for (const [name, body] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, name)), { recursive: true });
+      writeFileSync(join(root, name), body);
+    }
+    return spawnSync('bun', [checker, '--root', root], { encoding: 'utf8' });
+  }
+  afterAll(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  test('the seam used as intended passes', () => {
+    const r = run({
+      'platform/index.ts': `export { platform } from '@platform-impl';\n`,
+      'platform/native.ts': `import { App } from '@capacitor/app';\nimport { x } from './native/push.ts';\n`,
+      'platform/web.ts': `navigator.serviceWorker.register('/sw.js');\nfetch('/x');\n`,
+      'lib/api.ts': `fetch('/admin/v1/session');\n`,
+      'features/a.tsx': `import { platform } from '../platform/index.ts';\n// window.print()\n`,
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('OK');
+  });
+
+  test('Capacitor, the other side and web-only calls outside the seam fail with file:line', () => {
+    const r = run({
+      'platform/web.ts': `import { y } from './native.ts';\n`,
+      'platform/native.ts': `export const y = 1;\n`,
+      'features/a.tsx': `import { App } from '@capacitor/app';\nimport { p } from '../platform/web.ts';\n`,
+      'features/b.ts': `const u = location.origin;\nwindow.print();\nnew EventSource('/e');\n`,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('platform/web.ts:1 ./native.ts');
+    expect(r.stderr).toContain('features/a.tsx:1 @capacitor/app');
+    expect(r.stderr).toContain('features/a.tsx:2 ../platform/web.ts');
+    expect(r.stderr).toContain('features/b.ts:1 location.origin');
+    expect(r.stderr).toContain('features/b.ts:2 window.print');
+    expect(r.stderr).toContain('features/b.ts:3 EventSource');
+  });
+});
+
+describe('check-admin-native', () => {
+  const pkg = (deps: Record<string, string>) => JSON.stringify({ dependencies: deps });
+  const app = (native: number) => JSON.stringify({ version: '1.0.0', native });
+  const base = {
+    basePkg: pkg({ '@capacitor/core': '8.5.3', react: '18.3.1' }),
+    headPkg: pkg({ '@capacitor/core': '8.5.3', react: '18.3.2' }),
+    baseApp: app(1),
+    headApp: app(1),
+  };
+
+  test('web-only changes pass without a bump', () => {
+    expect(
+      verdict({ ...base, files: ['apps/admin/src/App.tsx', 'apps/admin/package.json'] }),
+    ).toEqual([]);
+  });
+
+  test('a shell file or a Capacitor dependency needs native to go up', () => {
+    const files = ['apps/admin/android/app/build.gradle'];
+    expect(verdict({ ...base, files })[0]).toContain('apps/admin/android/app/build.gradle');
+    expect(verdict({ ...base, files, headApp: app(2) })).toEqual([]);
+    const headPkg = pkg({ '@capacitor/core': '8.5.3', '@capacitor/camera': '8.0.0' });
+    expect(verdict({ ...base, files: [], headPkg })[0]).toContain('Capacitor dependencies');
+    expect(verdict({ ...base, files: [], headPkg, headApp: app(2) })).toEqual([]);
+    // the PR that introduces the app: no app-version.json on the base
+    expect(verdict({ ...base, files, baseApp: null, basePkg: null })).toEqual([]);
+  });
+
+  test('only Capacitor packages count as native dependencies', () => {
+    expect(
+      nativeDeps(
+        pkg({ react: '1', '@capgo/capacitor-updater': '8', '@capacitor-community/x': '1' }),
+      ),
+    ).toBe('@capacitor-community/x@1\n@capgo/capacitor-updater@8');
   });
 });

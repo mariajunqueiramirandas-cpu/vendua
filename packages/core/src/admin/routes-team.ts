@@ -408,6 +408,7 @@ export function mountTeam(d: AdminDeps) {
         // access ends now, on every device
         await tx`update merchant_sessions set revoked_at = now() where tenant_id = ${t.id} and user_id = ${id} and revoked_at is null`;
         await tx`delete from push_subscriptions where tenant_id = ${t.id} and user_id = ${id}`;
+        await tx`delete from push_devices where tenant_id = ${t.id} and user_id = ${id}`;
         await audit(tx, t.id, m, {
           action: 'team.remove',
           entity: 'member',

@@ -3,7 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useQueryClient } from '@tanstack/react-query';
 import { awaitingCardReturn } from '../features/signup/progress.ts';
 import { trackPageview } from '../lib/analytics.ts';
-import { rebindPush } from '../lib/push.ts';
+import { platform } from '../platform/index.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
@@ -15,6 +15,7 @@ import { ErrorState, Splash } from '../ui/feedback.tsx';
 import { toast } from '../ui/Toast.tsx';
 import { chunks, screen } from './routes.ts';
 import { Shell } from './Shell.tsx';
+import { StoreUpdate, useStoreUpdate } from './StoreUpdate.tsx';
 
 const Login = screen(chunks.login, (m) => m.Login);
 const Home = screen(chunks.home, (m) => m.default);
@@ -86,6 +87,7 @@ export default function App() {
   const nav = useNavigate();
   // once signed out, a background re-check keeps the sign-in on screen (its step lives there)
   const signedOut = useRef(false);
+  const tooOld = useStoreUpdate();
   useEffect(() => {
     const on = () => void qc.invalidateQueries({ queryKey: qk.session });
     window.addEventListener('vendua:unauthenticated', on);
@@ -102,7 +104,7 @@ export default function App() {
   const toSignup = retorno && loc.pathname !== '/comecar' && awaitingCardReturn();
   const hasSession = !!q.data;
   useEffect(() => {
-    if (hasSession) void rebindPush();
+    if (hasSession) void platform.push.rebind();
   }, [hasSession]);
   useEffect(() => {
     if (!retorno || toSignup || loc.pathname === '/comecar' || !hasSession) return;
@@ -144,8 +146,12 @@ export default function App() {
         <UiReference />
       </Suspense>
     );
+  if (tooOld || (q.error instanceof ApiError && q.error.code === 'CLIENT_TOO_OLD'))
+    return <StoreUpdate />;
   // the card hand-off of a signup: its confirmation screen lives in the signup flow
   if (toSignup) return <Navigate to="/comecar?assinatura=retorno" replace />;
+  // signup ends in the plan's first payment, which the app never takes (ADR 0044, decision 1)
+  if (loc.pathname === '/comecar' && !platform.canPay) return <Navigate to="/entrar" replace />;
   // self-serve signup: before the session check, since it's mostly used signed out
   if (loc.pathname === '/comecar')
     return (

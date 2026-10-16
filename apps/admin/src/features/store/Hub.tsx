@@ -46,6 +46,7 @@ import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { BillingHoldNotice } from './BillingHold.tsx';
 import { StatusPill, useStoreQuery } from './StatusPill.tsx';
+import { mediaUrl } from '../../lib/media.ts';
 
 // Loja is where every setting of the store lives, so "where do I change X?" has one answer. Each
 // part is its own screen (back to here), and each row says what's set there now, so the merchant
@@ -389,7 +390,7 @@ function Identity({ s }: { s: StoreView }) {
     <Card className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4">
       <span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md bg-sunken">
         {s.profile.logoUrl ? (
-          <img src={s.profile.logoUrl} alt="" className="size-full object-cover" />
+          <img src={mediaUrl(s.profile.logoUrl)} alt="" className="size-full object-cover" />
         ) : (
           <span className="t-title-2" aria-hidden>
             {s.profile.name.charAt(0).toUpperCase()}

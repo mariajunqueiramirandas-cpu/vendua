@@ -93,6 +93,17 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:suporte@vendua.com.br}
+      # The admin's iOS/Android app (ADR 0044; apps/admin/fastlane/README.md): native push to APNs
+      # and FCM, the shells' floor, Universal/App Links and App Review's sign-in. Unset = off.
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-br.com.vendua.painel}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      VENDUA_ADMIN_MIN_NATIVE: ${VENDUA_ADMIN_MIN_NATIVE:-}
+      VENDUA_IOS_APP_IDS: ${VENDUA_IOS_APP_IDS:-}
+      VENDUA_ANDROID_CERT_SHA256: ${VENDUA_ANDROID_CERT_SHA256:-}
+      VENDUA_REVIEW_LOGIN: ${VENDUA_REVIEW_LOGIN:-}
       # Ajuda's "chamar no WhatsApp" number (digits); unset = in-app message only.
       VENDUA_SUPPORT_WHATSAPP: ${VENDUA_SUPPORT_WHATSAPP:-}
       # Mercado Pago (docs/deploy/dokploy.md): stores connect by OAuth to this application;

@@ -15,7 +15,6 @@ import { money, phone as fmtPhone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { parseDocument } from '../../lib/parse.ts';
 import { resetClient } from '../../lib/persist.ts';
-import { disablePush } from '../../lib/push.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
@@ -34,6 +33,8 @@ import { GENERIC, segmentOf } from '../onboarding/segments.ts';
 import { CouponField, couponError, discountLine, useSignupCoupon } from './coupon.tsx';
 import { ReferralNote, useSignupReferral } from './referral.tsx';
 import { saveToken, type Draft, type StepId, type Verified } from './progress.ts';
+import { appPath } from '../../app/paths.ts';
+import { platform } from '../../platform/index.ts';
 
 export type PlansData = Awaited<ReturnType<typeof api.signup.plans>>;
 
@@ -584,16 +585,16 @@ export function ExistingStep({ d, go, verified }: FlowProps & { verified: Verifi
       const sess = qc.getQueryData<Session>(qk.session);
       // already signed in with this phone: switching is enough
       if (sess?.stores.some((x) => x.id === s.id)) {
-        await disablePush().catch(() => undefined);
+        await platform.push.disable().catch(() => undefined);
         await api.switchStore(s.id);
         await resetClient(qc);
-        window.location.assign('/admin/');
+        window.location.assign(appPath('/'));
         return;
       }
       // the signup code was spent confirming the phone: signing in takes a fresh one
       const r = await api.auth.start(verified.phone);
       savePending({ phone: verified.phone, sentAt: Date.now(), expiresAt: expiry(r.expiresAt) });
-      window.location.assign('/admin/entrar');
+      window.location.assign(appPath('/entrar'));
     },
     onError: (e) => setErr(messageOf(e)),
   });

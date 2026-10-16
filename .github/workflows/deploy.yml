@@ -93,6 +93,7 @@ jobs:
             STT_MODEL=${{ vars.STT_MODEL || 'parakeet-tdt-0.6b-v3' }}
             STT_REDUCE_RANGE=${{ vars.STT_REDUCE_RANGE || '1' }}
             GIT_COMMIT=${{ needs.gate.outputs.sha }}
+            VITE_APP_STORE_URL=${{ vars.VITE_APP_STORE_URL }}
           # links the GHCR package to this repo (its access follows the repo's)
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.name }}

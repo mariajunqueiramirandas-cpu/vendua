@@ -25,6 +25,7 @@ import { ArtChart } from '../../ui/illustrations.tsx';
 import { attemptMeta, MetaChip } from '../../ui/PaymentChip.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { Bone, RowsSkeleton, SkeletonGroup } from '../../ui/skeletons.tsx';
+import { platform } from '../../platform/index.ts';
 
 /** "setembro" · "setembro de 2025" (the year only when it isn't this one) */
 export function monthName(ym: string, withYear?: boolean) {
@@ -160,6 +161,13 @@ function StatementSheet({
                 <a
                   href={`/admin/v1/payments/statement.csv?month=${data.month}`}
                   download
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void platform.share.download(
+                      `/admin/v1/payments/statement.csv?month=${data.month}`,
+                      `extrato-${data.month}.csv`,
+                    );
+                  }}
                   className="press t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 ring-1 ring-line-strong hover:bg-hover"
                 >
                   <DownloadSimple className="size-5" aria-hidden /> baixar planilha de{' '}

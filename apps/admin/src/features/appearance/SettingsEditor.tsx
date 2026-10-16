@@ -10,6 +10,7 @@ import { MoreOptions } from '../../ui/Disclosure.tsx';
 import { Chips, Field, Select, TextArea, TextInput, Toggle, Stepper } from '../../ui/fields.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { groupFields, keepsUrl, optionName, type FieldSpec } from './fields.ts';
+import { mediaUrl } from '../../lib/media.ts';
 
 type Values = Record<string, unknown>;
 
@@ -38,7 +39,11 @@ export function SettingsEditor({
   grouped?: boolean;
 }) {
   const show = (u: string) =>
-    u.startsWith('/') && !u.startsWith('/v1/media/') && !u.startsWith('//') ? origin + u : u;
+    u.startsWith('/v1/media/')
+      ? mediaUrl(u)
+      : u.startsWith('/') && !u.startsWith('//')
+        ? origin + u
+        : u;
   const set = (k: string, v: unknown) => {
     const next = { ...value };
     if (v === '' || v === undefined) delete next[k];

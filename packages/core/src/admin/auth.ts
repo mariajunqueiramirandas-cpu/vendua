@@ -124,6 +124,52 @@ export function whatsappOtpSender(sql: Sql): OtpSender {
 
 const ipHash = (ip: string) => sha256(`admin-otp-ip|${ip}`);
 
+/**
+ * App Review can't receive a WhatsApp code (ADR 0044, decision 3): VENDUA_REVIEW_LOGIN=
+ * `<phone>:<6 digits>` makes that one phone sign in with that fixed code, only while every store
+ * behind the phone is a demo store (tenants.is_demo), so it can never open a real one. The same
+ * attempt limits as any sign-in apply; each session it opens is a staff event. Unset = off.
+ */
+export function reviewLogin(): { phone: string; code: string } | null {
+  const raw = process.env.VENDUA_REVIEW_LOGIN?.trim();
+  if (!raw) return null;
+  const [p, code, extra] = raw.split(':');
+  const phone = validAdminPhone(p);
+  return phone && code && /^\d{6}$/.test(code) && extra === undefined ? { phone, code } : null;
+}
+
+const isReviewPhone = (phone: string) => reviewLogin()?.phone === phone;
+
+/** Every store behind the phone is a demo store (and there is one). */
+async function onlyDemoStores(sql: Sql, phone: string): Promise<boolean> {
+  const ids = (await membershipsFor(sql, phone)).map((m) => m.tenant_id);
+  if (!ids.length) return false;
+  const [r] = await sql<{ real: number }[]>`
+    select count(*)::int as real from tenants where id = any(${ids}::uuid[]) and not is_demo`;
+  return r!.real === 0;
+}
+
+async function verifyReviewCode(sql: Sql, phone: string, code: string, ip: string) {
+  const review = reviewLogin();
+  if (!review || !(await onlyDemoStores(sql, phone))) return false;
+  const from = ipHash(ip);
+  return authTx(sql, async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`admin-otp:${phone}`}, 0))`;
+    const failed = (
+      await tx<{ mine: number; total: number }[]>`
+        select (count(*) filter (where ip_hash = ${from}))::int as mine, count(*)::int as total
+        from merchant_login_failures
+        where phone = ${phone} and created_at > now() - interval '1 day'
+      `
+    )[0]!;
+    if (failed.mine >= FAILED_CODES_PER_IP_DAY || failed.total >= FAILED_CODES_PER_DAY)
+      return false;
+    if (safeEq(sha256(`${phone}|${code}`), sha256(`${phone}|${review.code}`))) return true;
+    await tx`insert into merchant_login_failures (phone, ip_hash) values (${phone}, ${from})`;
+    return false;
+  });
+}
+
 export async function startOtp(
   sql: Sql,
   phone: string,
@@ -131,8 +177,9 @@ export async function startOtp(
   ip = 'local',
 ): Promise<{ sent: boolean; devCode?: string; expiresAt: string }> {
   const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000);
-  // unknown phones get the same answer (no enumeration) but no code
-  const known = (await membershipsFor(sql, phone)).length > 0;
+  // unknown phones get the same answer (no enumeration) but no code; the review phone's code is
+  // fixed, so nothing is stored or sent for it
+  const known = !isReviewPhone(phone) && (await membershipsFor(sql, phone)).length > 0;
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const limited = await authTx(sql, async (tx) => {
     // login and signup codes share the cap: it protects the phone, whatever asked
@@ -178,6 +225,7 @@ export async function verifyOtp(
   ip = 'local',
 ): Promise<boolean> {
   if (!/^\d{6}$/.test(code)) return false;
+  if (isReviewPhone(phone)) return verifyReviewCode(sql, phone, code, ip);
   const from = ipHash(ip);
   return authTx(sql, async (tx) => {
     // serializes verifies per phone, so parallel guesses can't all read the count under the cap
@@ -384,6 +432,14 @@ export async function createSession(
         { step: 'first_login' },
         { tenantId: m.tenant_id, dedupeKey: `onboarding:${m.tenant_id}:first_login` },
       );
+    // the App Review sign-in (decision 3): the team sees every use, the phone stays out of it
+    if (proof?.kind === 'phone' && isReviewPhone(proof.subject))
+      await recordStaffEventTx(
+        tx,
+        'auth.review_login',
+        { storeName: m.name },
+        { tenantId: m.tenant_id },
+      );
     return row.id;
   });
   return `${m.tenant_id}.${id}.${secret}`;
@@ -429,6 +485,59 @@ export async function sessionStores(
   return { proof, stores };
 }
 
+/** Who is calling (ADR 0044): `web/<build>`, or the app's `ios|android/<version>/<native>/<bundle>`. */
+export type Client =
+  | { kind: 'web'; build: string | null }
+  | {
+      kind: 'ios' | 'android';
+      version: string;
+      /** the shell's native level (app-version.json `native`) */
+      native: number;
+      bundle: string;
+    };
+
+const PART = /^[0-9A-Za-z._-]{1,40}$/;
+
+export function clientOf(c: Context): Client {
+  const raw = c.req.header('x-vendua-client');
+  if (!raw || raw.length > 200) return { kind: 'web', build: null };
+  const [kind, a, b, d, extra] = raw.split('/');
+  if ((kind === 'ios' || kind === 'android') && a && b && d && extra === undefined) {
+    const native = Number(b);
+    if (PART.test(a) && /^\d{1,6}$/.test(b) && PART.test(d))
+      return { kind, version: a, native, bundle: d };
+  }
+  return { kind: 'web', build: kind === 'web' && a && PART.test(a) ? a : null };
+}
+
+/** The app keeps its session as a bearer token; the website as the cookie. */
+export const wantsToken = (c: Context) => clientOf(c).kind !== 'web';
+
+/** What a sign-in answers about the session it opened: the cookie is set for the website, the
+ *  app gets the same value as `token` in the body (ADR 0044 §3). Never both. */
+export function issueSession(c: Context, value: string, secure: boolean): { token?: string } {
+  if (wantsToken(c)) return { token: value };
+  setAdminCookie(c, value, secure);
+  return {};
+}
+
+/** The session this request carries: `Authorization: Bearer` when present, else the cookie. */
+export function sessionValue(c: Context): { value: string | undefined; bearer: boolean } {
+  const auth = c.req.header('authorization');
+  if (auth !== undefined) {
+    const m = /^Bearer ([^\s]{1,200})$/.exec(auth);
+    return { value: m?.[1], bearer: true };
+  }
+  return { value: getCookie(c, ADMIN_COOKIE), bearer: false };
+}
+
+/** "Aparelhos conectados" names the app instead of showing a user agent. */
+export function sessionDevice(c: Context): string {
+  const who = clientOf(c);
+  const ua = c.req.header('user-agent') ?? '';
+  return who.kind === 'web' ? ua : `VenduaApp/${who.kind} ${who.version} (${ua})`;
+}
+
 export function setAdminCookie(c: Context, value: string, secure: boolean) {
   setCookie(c, ADMIN_COOKIE, value, {
     httpOnly: true,
@@ -451,7 +560,7 @@ function parseCookie(v: string | undefined) {
   return { tenantId, sessionId, secret };
 }
 
-/** Resolves the cookie to (tenant, merchant) or 401. Also the CSRF line for mutations. */
+/** Resolves the session (cookie or bearer) to (tenant, merchant) or 401. Also the CSRF line. */
 type GateRow = {
   secret_hash: string;
   expires_at: string;
@@ -482,15 +591,18 @@ export function adminGate(
   opts: { trustProxy: boolean },
 ): MiddlewareHandler<{ Variables: AdminVars }> {
   return async (c, next) => {
-    const parsed = parseCookie(getCookie(c, ADMIN_COOKIE));
+    const carried = sessionValue(c);
+    const parsed = parseCookie(carried.value);
     if (!parsed) throw new HttpError(401, 'UNAUTHENTICATED', 'sign in to continue');
     if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
-      // cookie-authed mutations: custom header (no simple cross-site form can set it) + same-host Origin
+      // mutations: a custom header (no simple cross-site form can set it), and for the cookie a
+      // same-host Origin too. A bearer token isn't ambient: no other page can make the browser
+      // attach it, so the app's other origin is no CSRF (ADR 0044 §3)
       if (c.req.header('x-vendua-admin') !== '1')
         throw new HttpError(403, 'CSRF', 'missing x-vendua-admin header');
       if (!allowMutation(parsed.sessionId))
         throw new HttpError(429, 'RATE_LIMITED', 'too many changes at once — wait a moment');
-      const origin = c.req.header('origin');
+      const origin = carried.bearer ? undefined : c.req.header('origin');
       const reqHost =
         (opts.trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host');
       if (origin) {
@@ -583,6 +695,7 @@ export async function revokeSession(sql: Sql, tenantId: string, sessionId: strin
     await Promise.all([
       tx`update merchant_sessions set revoked_at = now() where id = ${sessionId}`.execute(),
       tx`delete from push_subscriptions where tenant_id = ${tenantId} and session_id = ${sessionId}`.execute(),
+      tx`delete from push_devices where tenant_id = ${tenantId} and session_id = ${sessionId}`.execute(),
     ]);
   });
 }

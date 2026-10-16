@@ -43,6 +43,7 @@ import {
   YouStep,
   type FlowProps,
 } from './steps.tsx';
+import { appPath } from '../../app/paths.ts';
 
 // Self-serve signup (/comecar): the same one-question-per-screen conversation as the
 // onboarding, ending in a paid plan. Plan → store → you → WhatsApp → payment → create; then a
@@ -164,7 +165,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   // the return from Mercado Pago lands with ?assinatura=retorno: drop it once read
   useEffect(() => {
     if (window.location.search.includes('assinatura='))
-      window.history.replaceState(null, '', '/admin/comecar');
+      window.history.replaceState(null, '', appPath('/comecar'));
   }, []);
 
   // the plan chosen on the site (?plano=) wins; otherwise the one with the trial (said above the
@@ -197,7 +198,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     if (site && !cur.current.created && open.some((p) => p.id === site)) {
       patch({ planId: site });
       if (/[?&](plano|cupom|indica|parceiro)=/.test(window.location.search))
-        window.history.replaceState(null, '', '/admin/comecar');
+        window.history.replaceState(null, '', appPath('/comecar'));
     } else if (
       !list.some((p) => p.id === cur.current.planId) ||
       // a closed plan is swapped only before the owner moves on: further along (a signup that
@@ -353,7 +354,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           if (signedIn) {
             // signed in to another store until now: none of its data may carry into this one
             await resetClient(qc);
-            window.location.replace('/admin/comecar');
+            window.location.replace(appPath('/comecar'));
             return;
           }
           void qc.invalidateQueries({ queryKey: qk.session });

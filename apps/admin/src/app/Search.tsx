@@ -42,6 +42,7 @@ import { haptic } from '../lib/haptics.ts';
 import { qk, useMutation } from '../lib/query.ts';
 import { pushRecent, readRecent, type Recent } from '../lib/recent.ts';
 import { can, featureOpen, useSession } from '../lib/session.ts';
+import { mediaUrl } from '../lib/media.ts';
 import { Sheet } from '../ui/Sheet.tsx';
 import { StateChip } from '../ui/StateChip.tsx';
 import { TextInput } from '../ui/fields.tsx';
@@ -513,7 +514,9 @@ function ProductHit({
       }
       icon={
         <span className="block size-10 overflow-hidden rounded-sm bg-sunken">
-          {p.imageUrl ? <img src={p.imageUrl} alt="" className="size-full object-cover" /> : null}
+          {p.imageUrl ? (
+            <img src={mediaUrl(p.imageUrl)} alt="" className="size-full object-cover" />
+          ) : null}
         </span>
       }
       trail={

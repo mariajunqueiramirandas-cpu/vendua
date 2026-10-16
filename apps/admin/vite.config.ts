@@ -92,34 +92,62 @@ function phosphorWeights(drop = ['thin', 'light']): Plugin {
   };
 }
 
+// The app's copy of the page (ADR 0044): served from the bundle at `/`, so the PWA's links
+// (manifest, icons, iOS splash) have nothing to point at, and the theme script stays.
+function nativeHtml(): Plugin {
+  return {
+    name: 'vendua-native-html',
+    transformIndexHtml: (html) =>
+      html
+        .replace(/\s*<link rel="(manifest|icon|apple-touch-icon)"[^>]*>/g, '')
+        .replace(/\s*<meta name="(apple-mobile-web-app|mobile-web-app)[^>]*>/g, ''),
+  };
+}
+
+// `vite build` is the website; `vite build --mode native` is the iOS/Android app's bundle
+// (dist-native/), from the same source: src/platform/ is the only file that differs.
 // Object-form proxy keeps the Host header intact (string shorthand sets changeOrigin).
-export default defineConfig({
-  plugins: [react(), tailwindcss(), phosphorWeights(), serviceWorker()],
-  base: '/admin/',
-  resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-  },
-  server: {
-    port: 5196,
-    strictPort: true,
-    proxy: {
-      '/admin/v1': { target: 'http://localhost:8787' },
-      '/analytics/v1': { target: 'http://localhost:8787' },
-      // uploaded photos are served by Core at /v1/media
-      '/v1': { target: 'http://localhost:8787' },
+export default defineConfig(({ mode }) => {
+  const native = mode === 'native';
+  return {
+    plugins: [react(), tailwindcss(), phosphorWeights(), native ? nativeHtml() : serviceWorker()],
+    base: native ? '/' : '/admin/',
+    // the PWA's manifest, icons and splash art: the app has its own (ios/, android/)
+    publicDir: native ? false : 'public',
+    define: {
+      // who is calling, in every request's x-vendua-client (the deploy passes the commit)
+      __ADMIN_BUILD__: JSON.stringify((process.env.GIT_COMMIT ?? '').slice(0, 12) || 'dev'),
     },
-  },
-  build: {
-    outDir: 'dist',
-    assetsDir: 'assets',
-    target: 'es2022',
-    rollupOptions: {
-      output: {
-        // the shell stays small: react + router + query in one vendor chunk, routes lazy
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+        '@platform-impl': fileURLToPath(
+          new URL(native ? './src/platform/native.ts' : './src/platform/web.ts', import.meta.url),
+        ),
+      },
+    },
+    server: {
+      port: 5196,
+      strictPort: true,
+      proxy: {
+        '/admin/v1': { target: 'http://localhost:8787' },
+        '/analytics/v1': { target: 'http://localhost:8787' },
+        // uploaded photos are served by Core at /v1/media
+        '/v1': { target: 'http://localhost:8787' },
+      },
+    },
+    build: {
+      outDir: native ? 'dist-native' : 'dist',
+      assetsDir: 'assets',
+      target: 'es2022',
+      rollupOptions: {
+        output: {
+          // the shell stays small: react + router + query in one vendor chunk, routes lazy
+          manualChunks: {
+            vendor: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+          },
         },
       },
     },
-  },
+  };
 });

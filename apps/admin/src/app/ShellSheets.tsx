@@ -8,7 +8,8 @@ import type { NavSection } from './nav.ts';
 import { intent } from './routes.ts';
 import { NavLock, UserMenu } from './Shell.tsx';
 import { resetClient } from '../lib/persist.ts';
-import { disablePush } from '../lib/push.ts';
+import { appPath } from './paths.ts';
+import { platform } from '../platform/index.ts';
 
 export /** "Mais": large tiles with a live hint each (§3.1), under the sidebar's headings. */
 function MoreSheet({
@@ -117,10 +118,10 @@ export function SwitchStoreSheet({
               disabled={st.id === s.store.id}
               onClick={async () => {
                 // the device's subscription belongs to the store being left
-                await disablePush().catch(() => undefined);
+                await platform.push.disable().catch(() => undefined);
                 await api.switchStore(st.id);
                 await resetClient(qc);
-                window.location.assign('/admin/');
+                window.location.assign(appPath('/'));
               }}
               className="press-row flex min-h-16 w-full items-center gap-3 rounded-md px-4 text-left ring-1 ring-line hover:bg-hover disabled:bg-spark-soft disabled:ring-spark"
             >
