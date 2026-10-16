@@ -130,22 +130,26 @@ class StreamingTest(unittest.TestCase):
         return np.concatenate(out)
 
     def test_batched_sequences_sound_as_alone(self):
-        e = Engine(Model.q8, max_batch=4, chunk=4)
-        jobs = [(TOKENS, "ana", 7), (TOKENS[:4], "bia", 8), (TOKENS[::-1], "ana", 9)]
-        alone = [self.read_all(e, e.submit(t, e.voice_id(v), 0.3, 2, s)) for t, v, s in jobs]
-        ids = [e.submit(t, e.voice_id(v), 0.3, 2, s) for t, v, s in jobs]
-        together = [None] * len(ids)
+        # 3 decoder threads: sequences decoded side by side, each on a single-threaded decoder
+        for mimi_threads in (1, 3):
+            with self.subTest(mimi_threads=mimi_threads):
+                e = Engine(Model.q8, mimi_threads=mimi_threads, max_batch=4, chunk=4)
+                jobs = [(TOKENS, "ana", 7), (TOKENS[:4], "bia", 8), (TOKENS[::-1], "ana", 9)]
+                alone = [self.read_all(e, e.submit(t, e.voice_id(v), 0.3, 2, s)) for t, v, s in jobs]
+                ids = [e.submit(t, e.voice_id(v), 0.3, 2, s) for t, v, s in jobs]
+                together = [None] * len(ids)
 
-        def read(i):
-            together[i] = self.read_all(e, ids[i])
+                def read(i):
+                    together[i] = self.read_all(e, ids[i])
 
-        threads = [threading.Thread(target=read, args=(i,)) for i in range(len(ids))]
-        [t.start() for t in threads]
-        [t.join() for t in threads]
-        for a, b in zip(alone, together):
-            self.assertEqual(len(a), len(b))
-            self.assertLessEqual(np.abs(a.astype(np.int32) - b).max(), 2)
-        self.assertEqual(e.stats(), (0, 0, 0))
+                threads = [threading.Thread(target=read, args=(i,)) for i in range(len(ids))]
+                [t.start() for t in threads]
+                [t.join() for t in threads]
+                for a, b in zip(alone, together):
+                    self.assertEqual(len(a), len(b))
+                    self.assertLessEqual(np.abs(a.astype(np.int32) - b).max(), 2)
+                self.assertEqual(e.stats(), (0, 0, 0))
+                e.close()
 
     def test_end_of_speech_keeps_frames_after_it(self):
         # eos fires at every step: speech stops at the earliest allowed step (6) plus the frames kept

@@ -11,23 +11,55 @@
 namespace pk {
 
 Mimi::Mimi(const Config& c, const MimiWeights& w, const Kernels& k, Pool& pool, int max_chunk, int max_frames)
-    : c_(c), w_(w), k_(k), pool_(pool), amx_(k.bf16_gemm != nullptr), max_chunk_(max_chunk), W_(c.m_context) {
-  const int M = c.m_dim, Dh = c.m_head_dim(), H = c.m_heads;
-  const int P = max_chunk * c.upsample;
+    : c_(c), w_(w), k_(k), pool_(pool), amx_(k.bf16_gemm != nullptr), max_chunk_(max_chunk), W_(c.m_context),
+      d_(std::make_shared<Derived>()) {
+  const int Dh = c.m_head_dim();
   max_pos_ = (max_frames + max_chunk) * c.upsample;
-  cos_.resize(size_t(max_pos_) * Dh / 2);
-  sin_.resize(size_t(max_pos_) * Dh / 2);
+  d_->cos.resize(size_t(max_pos_) * Dh / 2);
+  d_->sin.resize(size_t(max_pos_) * Dh / 2);
   for (int i = 0; i < Dh / 2; i++) {
     const float freq = std::exp(float(i) * float(-std::log(double(c.m_max_period)) * 2.0 / Dh));
     for (int p = 0; p < max_pos_; p++) {
       const float a = float(p) * freq;
-      cos_[size_t(p) * Dh / 2 + i] = std::cos(a);
-      sin_[size_t(p) * Dh / 2 + i] = std::sin(a);
+      d_->cos[size_t(p) * Dh / 2 + i] = std::cos(a);
+      d_->sin[size_t(p) * Dh / 2 + i] = std::sin(a);
     }
   }
+  init_scratch();
+  if (amx_) {
+    Bf16& bf = d_->bf;
+    for (const MimiLayer& l : w.layers)
+      bf.layers.push_back({to_bf16(l.qkv.f), to_bf16(l.o.f), to_bf16(l.ff1.f), to_bf16(l.ff2.f)});
+    bf.c0 = to_bf16(w.c0.w.f);
+    for (int j = 0; j < c.n_ratios; j++) {
+      bf.ups.push_back(to_bf16(w.ups[j].w));
+      bf.res.emplace_back();
+      for (const ConvW& r : w.res[j]) bf.res.back().push_back(to_bf16(r.w.f));
+    }
+  } else {
+    const bool f32 = w.c0.w.f.p != nullptr, q8 = w.c0.w.q8;
+    if (q8 && (k.fast_wbits == 8 || f32)) {
+      auto fast = [&](const Linear& l) { return k.fast_wbits == 8 ? l.q : to_q7(l.f); };
+      for (const MimiLayer& l : w.layers)
+        d_->fast.layers.push_back({fast(l.qkv), fast(l.o), fast(l.ff1), fast(l.ff2)});
+      d_->fast.c0 = fast(w.c0.w);
+    }
+    choose_mode(f32, q8, !d_->fast.layers.empty());
+  }
+}
+
+Mimi::Mimi(const Mimi& lead, Pool& pool)
+    : c_(lead.c_), w_(lead.w_), k_(lead.k_), pool_(pool), amx_(lead.amx_), max_chunk_(lead.max_chunk_),
+      max_pos_(lead.max_pos_), W_(lead.W_), d_(lead.d_) {
+  init_scratch();
+}
+
+void Mimi::init_scratch() {
+  const Config& c = c_;
+  const int M = c.m_dim, H = c.m_heads, P = max_chunk_ * c.upsample;
   cap_ = (W_ - 1 + 31 + P + 31) & ~31;  // kept history (< hist + 32) plus a chunk
   smax_ = (kQB + W_ - 1 + 31 + 31) & ~31;
-  lat_.resize(size_t(max_chunk) * M);
+  lat_.resize(size_t(max_chunk_) * M);
   x_.resize(size_t(P) * M);
   h_.resize(size_t(P) * M);
   qkv_.resize(size_t(P) * 3 * M);
@@ -44,46 +76,30 @@ Mimi::Mimi(const Config& c, const MimiWeights& w, const Kernels& k, Pool& pool, 
     stages_.push_back(std::move(st));
   };
   add(c.kernel - 1, M, P, amx_);
-  int rows = P, ch = w.c0.cout;
+  int rows = P, ch = w_.c0.cout;
   y_.emplace_back(size_t(P) * ch);
   size_t rh = 0;
   for (int j = 0; j < c.n_ratios; j++) {
-    const ConvTrW& u = w.ups[j];
+    const ConvTrW& u = w_.ups[j];
     add(1, u.cin, rows, amx_);
     rows *= u.s;
     ch = u.cout;
     y_.emplace_back(size_t(rows) * ch);
     for (int r = 0; r < c.n_residual; r++) {
       add(c.res_kernel - 1, ch, rows, amx_);
-      rh = std::max(rh, size_t(rows) * w.res[j][2 * r].cout);
+      rh = std::max(rh, size_t(rows) * w_.res[j][2 * r].cout);
     }
   }
   add(c.last_kernel - 1, ch, rows, false);
   rh_.resize(rh);
-
   if (amx_) {
     rhb_.resize(rh);
     xb_.resize(size_t(P) * std::max(M, c.m_ff));
-    for (const MimiLayer& l : w.layers)
-      bf_.layers.push_back({to_bf16(l.qkv.f), to_bf16(l.o.f), to_bf16(l.ff1.f), to_bf16(l.ff2.f)});
-    bf_.c0 = to_bf16(w.c0.w.f);
-    for (int j = 0; j < c.n_ratios; j++) {
-      bf_.ups.push_back(to_bf16(w.ups[j].w));
-      bf_.res.emplace_back();
-      for (const ConvW& r : w.res[j]) bf_.res.back().push_back(to_bf16(r.w.f));
-    }
   } else {
-    const int T = pool.size(), kmax = std::max({M, c.m_ff, c.kernel * M});
+    const int T = pool_.size(), kmax = std::max({M, c.m_ff, c.kernel * M});
     qa_rows_ = std::max(8, ((P + T - 1) / T + 7) / 8 * 8);
-    qa_slot_ = (std::max(k.q8.qact_bytes(qa_rows_, kmax), k.q8_fast.qact_bytes(qa_rows_, kmax)) + 63) & ~size_t(63);
+    qa_slot_ = (std::max(k_.q8.qact_bytes(qa_rows_, kmax), k_.q8_fast.qact_bytes(qa_rows_, kmax)) + 63) & ~size_t(63);
     qa_.resize(qa_slot_ * ((P + qa_rows_ - 1) / qa_rows_));
-    const bool f32 = w.c0.w.f.p != nullptr, q8 = w.c0.w.q8;
-    if (q8 && (k.fast_wbits == 8 || f32)) {
-      auto fast = [&](const Linear& l) { return k.fast_wbits == 8 ? l.q : to_q7(l.f); };
-      for (const MimiLayer& l : w.layers) fast_.layers.push_back({fast(l.qkv), fast(l.o), fast(l.ff1), fast(l.ff2)});
-      fast_.c0 = fast(w.c0.w);
-    }
-    choose_mode(f32, q8, !fast_.layers.empty());
   }
 }
 
@@ -94,7 +110,7 @@ void Mimi::choose_mode(bool f32, bool q12, bool q8) {
   const bool ok[] = {f32, q12, q8};
   if (const char* env = std::getenv("PK_MIMI_MODE")) {
     for (int i = 0; i < 3; i++)
-      if (std::string(env) == names[i] && ok[i]) return void(mode_ = Mode(i));
+      if (std::string(env) == names[i] && ok[i]) return void(d_->mode = Mode(i));
     throw std::runtime_error(std::string("PK_MIMI_MODE=") + env + " is unknown or unavailable");
   }
   const int P = max_chunk_ * c_.upsample, M = c_.m_dim;
@@ -102,7 +118,7 @@ void Mimi::choose_mode(bool f32, bool q12, bool q8) {
   double t[3] = {1e30, 1e30, 1e30};
   for (int i = 0; i < 3; i++) {
     if (!ok[i]) continue;
-    mode_ = Mode(i);
+    d_->mode = Mode(i);
     for (int r = 0; r < 4; r++) {
       const auto t0 = std::chrono::steady_clock::now();
       linear(0, 2, h_.p, P, ff_.p, c_.m_ff, false);
@@ -112,7 +128,7 @@ void Mimi::choose_mode(bool f32, bool q12, bool q8) {
   }
   const double best = std::min({t[0], t[1], t[2]});
   for (int i = 0; i < 3; i++)
-    if (t[i] <= best * 1.1) return void(mode_ = Mode(i));
+    if (t[i] <= best * 1.1) return void(d_->mode = Mode(i));
 }
 
 BW Mimi::to_bf16(const PW& w) {
@@ -241,7 +257,7 @@ void Mimi::qgemm(const Q8& q, const QW& w, const float* A, int lda, int M, float
 }
 
 void Mimi::dense(const Linear& w, const QW& fast, const float* A, int lda, int M, float* C, int ldc, bool accumulate) {
-  switch (mode_) {
+  switch (d_->mode) {
     case Mode::kF32: return gemm(w.f, A, lda, M, C, ldc, accumulate);
     case Mode::kQ12: return qgemm(k_.q8, w.q, A, lda, M, C, ldc, accumulate);
     case Mode::kQ8: return qgemm(k_.q8_fast, fast, A, lda, M, C, ldc, accumulate);
@@ -270,11 +286,11 @@ void Mimi::linear(int l, int i, const float* x, int P, float* C, int ldc, bool a
   const MimiLayer& w = w_.layers[l];
   const Linear& m = i == 0 ? w.qkv : i == 1 ? w.o : i == 2 ? w.ff1 : w.ff2;
   if (amx_) {
-    const BW& b = bf_.layers[l][i];
+    const BW& b = d_->bf.layers[l][i];
     convert(x, size_t(P) * b.K, reinterpret_cast<uint8_t*>(xb_.p), 2, false);
     gemm(b, xb_.p, b.K, P, C, ldc, accumulate);
   } else {
-    dense(m, fast_.layers[l][i], x, m.K(), P, C, ldc, accumulate);
+    dense(m, d_->fast.layers[l][i], x, m.K(), P, C, ldc, accumulate);
   }
 }
 
@@ -295,8 +311,8 @@ void Mimi::transformer(MimiState& s, float* x, int P) {
     {
       PROF("mt.rope");
       for (int i = 0; i < P; i++) {
-        const float* cs = cos_.p + size_t(pos0 + i) * half;
-        const float* sn = sin_.p + size_t(pos0 + i) * half;
+        const float* cs = d_->cos.p + size_t(pos0 + i) * half;
+        const float* sn = d_->sin.p + size_t(pos0 + i) * half;
         for (int part = 0; part < 2; part++) {
           float* v = qkv_.p + size_t(i) * M3 + part * M;
           for (int h = 0; h < H; h++)
@@ -389,9 +405,9 @@ void Mimi::decode(MimiState& s, const float* lat, int n, float* audio) {
   {
     PROF("m.c0");
     if (amx_)
-      gemm(bf_.c0, s0.h(), M, P, y_[0].p, w_.c0.cout, false);
+      gemm(d_->bf.c0, s0.h(), M, P, y_[0].p, w_.c0.cout, false);
     else
-      dense(w_.c0.w, fast_.c0, s0.f(), M, P, y_[0].p, w_.c0.cout, false);
+      dense(w_.c0.w, d_->fast.c0, s0.f(), M, P, y_[0].p, w_.c0.cout, false);
   }
   stage_save(s, s0, P);
   int rows = P, si = 1;
@@ -404,7 +420,7 @@ void Mimi::decode(MimiState& s, const float* lat, int n, float* audio) {
     {
       PROF(j == 0 ? "m.up0" : j == 1 ? "m.up1" : "m.up2+");
       if (amx_)
-        gemm(bf_.ups[j], su.h(), u.cin, rows, y, u.s * u.cout, false);
+        gemm(d_->bf.ups[j], su.h(), u.cin, rows, y, u.s * u.cout, false);
       else
         gemm(u.w, su.f(), u.cin, rows, y, u.s * u.cout, false);
     }
@@ -418,9 +434,9 @@ void Mimi::decode(MimiState& s, const float* lat, int n, float* audio) {
       PROF(j == 0 ? "m.res0" : j == 1 ? "m.res1" : "m.res2+");
       const size_t nh = size_t(rows) * a.cout;
       if (amx_) {
-        gemm(bf_.res[j][2 * r], sr.h(), a.cin, rows, rh_.p, a.cout, false);
+        gemm(d_->bf.res[j][2 * r], sr.h(), a.cin, rows, rh_.p, a.cout, false);
         convert(rh_.p, nh, reinterpret_cast<uint8_t*>(rhb_.p), 2, true);
-        gemm(bf_.res[j][2 * r + 1], rhb_.p, b.cin, rows, y, b.cout, true);
+        gemm(d_->bf.res[j][2 * r + 1], rhb_.p, b.cin, rows, y, b.cout, true);
       } else {
         gemm(a.w.f, sr.f(), a.cin, rows, rh_.p, a.cout, kElu);
         gemm(b.w.f, rh_.p, b.cin, rows, y, b.cout, kAccumulate);

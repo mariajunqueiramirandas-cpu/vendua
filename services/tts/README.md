@@ -116,11 +116,15 @@ and picks one at startup from cpuid: AVX2 (any x86-64 server since 2013), AVX-51
 
 **Threads.** The speech model and the decoder get `TTS_THREADS` between them (`split_threads`):
 1+1 up to 2 cores, then half each, the decoder taking the odd one. It's the decoder that limits
-AVX2 past 2 cores: 1+2 beats 2+1 by 45%. Pools spin about 1 ms between jobs, then sleep.
+AVX2 past 2 cores: 1+2 beats 2+1 by 45%. With one reply the decoder splits each matrix across its
+threads; with several ready at once, each thread decodes its own reply on a single-threaded copy
+that shares the weights, with no syncs between them. Pools spin about 1 ms between jobs, then
+sleep.
 
 Tried and not kept: int8 SEANet (noise in pauses); AVX-512 `vdpbf16ps` (slower than float32 FMA
-on Sapphire Rapids); Winograd for the 3-tap convs (its transforms cost what it saves); int4
-weights (a quality risk where the speech model isn't the bottleneck).
+on Sapphire Rapids); Winograd for the 3-tap convs (its transforms cost what it saves); Winograd
+F(4,2) for the 2-tap upsampling convs (each conv 25–35% faster alone, nothing end to end: the
+2.5× larger transformed weights fall out of cache between chunks).
 
 ## Numbers
 
@@ -167,6 +171,22 @@ The spread is ±2 words, and the misses are the same words on every path, the re
 included: "Pix" heard as "PIS", "site" as "CIT", "kit" lost. Those come from the model or the ASR,
 not the engine's precision.
 
+`bench.py` runs the larger check: the 98 replies in `bench_replies.txt` (prices, dates, times,
+units, phones, loanwords, short and long replies), three takes each in Rafael's voice, through a
+32 kbps Ogg/Opus round trip like a WhatsApp voice note, then `services/stt`:
+
+| Path                 | WER   | CER   | Prices heard right | Sign test vs float32 |
+| -------------------- | ----- | ----- | ------------------ | -------------------- |
+| this engine, float32 | 7.17% | 3.91% | 69/78              |                      |
+| AVX2, 8-bit decoder  | 7.45% | 4.41% | 67/78              | p = 0.09             |
+| AVX2, 12-bit decoder | 7.60% | 4.45% | 68/78              | p = 0.35             |
+| AVX-512              | 7.41% | 4.37% | 66/78              | p = 0.44             |
+| AMX                  | 7.53% | 4.40% | 66/78              | p = 0.41             |
+
+No path is told apart from float32. What's lost is lost on all of them: a sentence skipped or
+speech ending early in a few long replies, single letters ("P, M ou G"), English words (Pix,
+site, kit, delivery, cashback, smartwatch), and a CEP read digit by digit.
+
 Memory: 290 MB resident after replies in one voice. 170 MB of it is the mapped model file (the
 packed file is 230 MB with 25 voices; an unused voice costs disk only). The rest is Python, the
 engine's buffers, and the bfloat16 or 7-bit decoder copies.
@@ -187,4 +207,5 @@ curl -sS -H 'authorization: Bearer dev' -d '{"text": "Seu pedido saiu para entre
 
 `tests/test_engine.py` checks the engine against `tests/reference.py`, a plain numpy Pocket TTS,
 on every kernel set the CPU has. `tts.pack --f32 qkv,o,ff,flow,mimi` packs a float32 model to
-compare against.
+compare against. `bench.py` (its docstring has the commands) synthesizes `bench_replies.txt` and
+scores it with `services/stt`.

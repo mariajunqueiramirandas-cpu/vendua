@@ -2,3 +2,5 @@ tests/
 engine/build/
 **/__pycache__
 .venv/
+bench.py
+bench_replies.txt
