@@ -3,9 +3,9 @@
 `.github/workflows/admin-app.yml` runs these lanes on `main` when the app changed, once the
 secrets exist (ADR 0044 §8, Phase 0 opens the accounts). Without them the workflow only builds.
 
-| Lane | Goes to | Secrets (GitHub Actions) |
-| --- | --- | --- |
-| `ios beta` | TestFlight | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (App Store Connect API key), `APPLE_TEAM_ID`, `MATCH_GIT_URL`, `MATCH_PASSWORD`, `MATCH_GIT_BASIC_AUTHORIZATION` (the signing certificates repo `fastlane match` reads) |
+| Lane               | Goes to               | Secrets (GitHub Actions)                                                                                                                                                                                                                             |
+| ------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ios beta`         | TestFlight            | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (App Store Connect API key), `APPLE_TEAM_ID`, `MATCH_GIT_URL`, `MATCH_PASSWORD`, `MATCH_GIT_BASIC_AUTHORIZATION` (the signing certificates repo `fastlane match` reads)                                  |
 | `android internal` | Play internal testing | `PLAY_SERVICE_ACCOUNT_JSON`, `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_KEYSTORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, `ANDROID_UPLOAD_KEY_PASSWORD`, `GOOGLE_SERVICES_JSON_BASE64` (the Firebase project's `google-services.json`, for FCM) |
 
 The build number is the workflow's run number, so it always goes up. The store version is
