@@ -2,6 +2,7 @@ import { CaretDown, ChatCircleText, Keyboard } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { searchKeys } from '../../app/dock.ts';
 import { matchRoute } from '../../app/routes.ts';
 import { api } from '../../lib/api.ts';
 import { qk } from '../../lib/query.ts';
@@ -105,7 +106,8 @@ export function TopicAnswers({ topic, first = 0 }: { topic: Topic; first?: numbe
 }
 
 const KEYS: [string, string][] = [
-  ['/', 'buscar pedidos, produtos e clientes'],
+  ['/', 'buscar pedidos, produtos e clientes, ou dizer o que fazer (“pausar”, “acabou pudim”)'],
+  [searchKeys(), 'buscar de qualquer lugar, até digitando'],
   ['?', 'abrir esta ajuda'],
   ['A', 'aceitar o pedido selecionado'],
   ['→', 'levar o pedido selecionado adiante'],

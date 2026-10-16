@@ -189,10 +189,16 @@ to show.
   store's live state (Aberta · Pausada · Fechada · Abre às 18h). Tapping it
   opens the status sheet: pause now (15 min, 1 h, rest of day, custom), with
   the shopper-facing message and its preview; change today's hours.
-- **Search**: pull down on any list or tap the search field. It searches orders
-  (number, name, phone), products and customers together, grouped, and the
-  screens themselves ("frete", "pix", "horário" lead to the screen that sets
-  it; `app/screens.ts`).
+- **Search**: pull down on any list or tap the search field (`/` or ⌘K / Ctrl+K on
+  desktop). It searches orders (number, name, phone), products and customers
+  together, grouped, and the screens themselves ("frete", "pix", "horário" lead
+  to the screen that sets it; `app/screens.ts`). It also does the day's moves
+  (`app/actions.ts`): "pausar", "muitos pedidos", "novo produto", "novo cupom",
+  "copiar link", offered only when they apply (no "pausar" on a closed store).
+  A product answer carries "esgotar"/"voltar", a customer one their WhatsApp,
+  and "acabou pudim de coco" + Enter marks the one match sold out today, with
+  "desfazer". Empty, it shows what needs the merchant, the likely next move and
+  what they opened lately on this device.
 - **Create (+)**: on Cardápio (product, category, kit) and Marketing (cupom).
   Never a global "+" menu of everything.
 
@@ -793,7 +799,8 @@ Not a checklist at the end; it's part of "user friendly" for this audience.
 - Text size up to 200% without loss of content or function (4.3).
 - Every state has color + icon + word. Charts have text summaries.
 - Full keyboard support on desktop with visible focus; shortcuts for the order
-  board (A accept, → advance, / search) listed under "?".
+  board (A accept, → advance, / or ⌘K search, ↑ ↓ and Enter in its answers)
+  listed under "?".
 - Screen readers: landmarks per page; live regions announce new orders
   ("Pedido 128 chegou, R$ 42,00") and saves; sheets trap and restore focus.
 - Reduced motion (5.1), reduced transparency (no glass, no grain), and

@@ -1,5 +1,6 @@
 import { dehydrate, hydrate, type DehydratedState, type QueryClient } from '@tanstack/react-query';
 import type { Account } from './api.ts';
+import { forgetRecent } from './recent.ts';
 
 // The last-known data survives a restart (IndexedDB): the app opens straight to the
 // board, even offline, then refreshes. Signing out or switching stores wipes it.
@@ -60,6 +61,7 @@ export function clearPersisted() {
 export async function resetClient(qc: QueryClient) {
   qc.clear();
   forgetMoves();
+  forgetRecent();
   await clearPersisted();
 }
 

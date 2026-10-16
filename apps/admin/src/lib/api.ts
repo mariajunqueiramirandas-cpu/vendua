@@ -1778,6 +1778,8 @@ export interface SearchResult {
     name: string;
     status: string;
     priceCents: number;
+    /** null = not tracked; 0 reads sold out whatever the status says (absent in an older cache) */
+    stockQuantity?: number | null;
     imageUrl: string | null;
   }[];
   customers: { phone: string; name: string; orders: number }[];

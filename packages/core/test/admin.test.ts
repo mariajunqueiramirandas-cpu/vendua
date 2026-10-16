@@ -513,6 +513,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     });
     expect(floor.body.stock).toEqual({ [p2id]: 0 });
     expect((await owner('GET', `/products/${p2id}`)).body.product.liveStatus).toBe('sold_out');
+    // Buscar tells an empty stock from a product on sale: it offers no "esgotar" there
+    const found = await owner('GET', '/search?q=pudim');
+    expect(found.body.products.find((x: any) => x.id === p2id).stockQuantity).toBe(0);
+    expect(found.body.products.find((x: any) => x.id === productId).stockQuantity).toBeNull();
     for (const bad of [
       {},
       { changes: [] },
@@ -597,6 +601,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(paid.body.order.payment.status).toBe('paid');
     for (const to of ['preparing', 'ready', 'delivered'])
       expect((await owner('POST', `/orders/${orderId}/transition`, { to })).status).toBe(200);
+    // Início's feed shows the order once, at its latest step, not once per step
+    const feed = (await owner('GET', '/home')).body.feed.filter((f: any) => f.orderId === orderId);
+    expect(feed.map((f: any) => f.to)).toEqual(['delivered']);
 
     const hist = await owner('GET', '/orders?q=joana');
     expect(hist.body.orders[0].id).toBe(orderId);
