@@ -1,6 +1,7 @@
 // Onboarding memory, per store and per device: where the merchant stopped, and whether
 // they chose to leave. Only a convenience — the answers themselves are saved in Core.
-const key = (storeId: string, what: 'step' | 'left' | 'reset') => `vendua-onboarding-${what}:${storeId}`;
+const key = (storeId: string, what: 'step' | 'left' | 'reset') =>
+  `vendua-onboarding-${what}:${storeId}`;
 
 export function readStep(storeId: string): string | null {
   try {
