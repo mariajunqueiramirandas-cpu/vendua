@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/btserial"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 )
 
 // Core accepts at most this many entries of at most MaxField chars each.
@@ -20,10 +22,10 @@ const (
 	MaxField    = 200
 )
 
-// Discoverer combines the quick local inventory (queues, serial ports), done
+// Discoverer combines the quick local inventory (queues, serial and Bluetooth ports, USB), done
 // on every report, with the network scan, which runs at start, periodically and when asked.
 type Discoverer struct {
-	Local func(ctx context.Context) ([]api.Discovered, error)
+	Local func(ctx context.Context, known func(key string) bool) ([]api.Discovered, error)
 	Addrs func() ([]netip.Addr, error)
 	Probe Probe
 	Log   *slog.Logger
@@ -91,8 +93,12 @@ func keys(ps []api.Discovered) []string {
 }
 
 // Collect is the set to PUT: local printers plus the last network scan.
-func (d *Discoverer) Collect(ctx context.Context) []api.Discovered {
-	local, err := d.Local(ctx)
+// known says which keys Core already has for this device.
+func (d *Discoverer) Collect(ctx context.Context, known func(key string) bool) []api.Discovered {
+	if known == nil {
+		known = func(string) bool { return false }
+	}
+	local, err := d.Local(ctx, known)
 	d.mu.Lock()
 	if err == nil {
 		d.local, d.haveLocal = local, true
@@ -145,8 +151,51 @@ func SpoolerPrinter(queue string) api.Discovered {
 	return api.Discovered{Key: "spooler:" + queue, Kind: "spooler", Name: queue, Address: queue}
 }
 
+// SerialPrinters lists the present COM ports. A paired Bluetooth printer's port
+// is reported as that printer, keyed by MAC like the Android agent's, since
+// Windows may give it another COM number after re-pairing. Its plain serial
+// entry, and an incoming port (nothing prints through one), are listed only
+// when Core already has them.
+func SerialPrinters(present []string, bt []btserial.Port, known func(key string) bool) []api.Discovered {
+	byCOM := map[string]btserial.Port{}
+	for _, b := range bt {
+		byCOM[strings.ToUpper(b.COM)] = b
+	}
+	var out []api.Discovered
+	for _, port := range present {
+		b, isBT := byCOM[strings.ToUpper(port)]
+		if isBT && !b.Incoming {
+			out = append(out, BluetoothPrinter(b))
+		}
+		if !isBT || known("serial:"+port) {
+			out = append(out, SerialPrinter(port))
+		}
+	}
+	return out
+}
+
+func BluetoothPrinter(b btserial.Port) api.Discovered {
+	return api.Discovered{Key: "bt:" + b.MAC, Kind: "bluetooth", Name: b.DisplayName(), Address: b.MAC}
+}
+
 func SerialPrinter(port string) api.Discovered {
 	return api.Discovered{Key: "serial:" + port, Kind: "serial", Name: "Porta serial " + port, Address: port}
+}
+
+// USBPrinters lists raw USB devices. One that a print queue already prints to
+// (it sits on the queue's port) is left out, or the merchant would see the
+// printer twice, unless Core already has it: a printer set up before its driver
+// was installed keeps working, and doesn't turn up as absent.
+func USBPrinters(devs []usbprint.Device, queuedPorts map[string]bool, known func(key string) bool) []api.Discovered {
+	var out []api.Discovered
+	for i, addr := range usbprint.Addresses(devs) {
+		key := "usb:" + addr
+		if p := devs[i].Port; p != "" && queuedPorts[strings.ToUpper(p)] && !known(key) {
+			continue
+		}
+		out = append(out, api.Discovered{Key: key, Kind: "usb", Name: devs[i].DisplayName(), Address: addr})
+	}
+	return out
 }
 
 func clip(s string) string {

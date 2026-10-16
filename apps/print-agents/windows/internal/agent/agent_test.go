@@ -265,7 +265,7 @@ func startAgent(t *testing.T, core *fakeCore, dataDir string, tweak func(*Option
 		Sender:   printer.NewSender(),
 		Discoverer: &discovery.Discoverer{
 			Log: slog.New(slog.DiscardHandler),
-			Local: func(context.Context) ([]api.Discovered, error) {
+			Local: func(context.Context, func(string) bool) ([]api.Discovered, error) {
 				return []api.Discovered{discovery.SpoolerPrinter("EPSON TM-T20X"), discovery.SpoolerPrinter("Microsoft Print to PDF")}, nil
 			},
 			Addrs: func() ([]netip.Addr, error) { return nil, nil },

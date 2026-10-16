@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/btserial"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 )
 
 func TestCandidates(t *testing.T) {
@@ -119,7 +121,7 @@ func TestScanStopsOnCancel(t *testing.T) {
 func TestCollectMergesFiltersAndCaps(t *testing.T) {
 	d := &Discoverer{
 		Log: slog.New(slog.DiscardHandler),
-		Local: func(context.Context) ([]api.Discovered, error) {
+		Local: func(context.Context, func(string) bool) ([]api.Discovered, error) {
 			out := []api.Discovered{
 				SpoolerPrinter("Microsoft Print to PDF"),
 				SpoolerPrinter("Microsoft XPS Document Writer"),
@@ -146,7 +148,7 @@ func TestCollectMergesFiltersAndCaps(t *testing.T) {
 	if _, err := d.ScanNetwork(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	got := d.Collect(context.Background())
+	got := d.Collect(context.Background(), nil)
 	if len(got) != MaxReported {
 		t.Fatalf("len = %d", len(got))
 	}
@@ -167,18 +169,18 @@ func TestCollectKeepsLastLocalListingWhenEnumerationFails(t *testing.T) {
 	fail := false
 	d := &Discoverer{
 		Log: slog.New(slog.DiscardHandler),
-		Local: func(context.Context) ([]api.Discovered, error) {
+		Local: func(context.Context, func(string) bool) ([]api.Discovered, error) {
 			if fail {
 				return nil, errors.New("spooler unavailable")
 			}
 			return []api.Discovered{SpoolerPrinter("EPSON TM-T20X"), SerialPrinter("COM3")}, nil
 		},
 	}
-	if got := d.Collect(context.Background()); len(got) != 2 {
+	if got := d.Collect(context.Background(), nil); len(got) != 2 {
 		t.Fatalf("first listing = %+v", got)
 	}
 	fail = true
-	got := d.Collect(context.Background())
+	got := d.Collect(context.Background(), nil)
 	if len(got) != 2 || got[0].Key != "spooler:EPSON TM-T20X" {
 		t.Fatalf("a failed listing must not shrink the report: %+v", got)
 	}
@@ -188,7 +190,7 @@ func TestScanNetworkKeepsAPrinterMissedOnce(t *testing.T) {
 	up := map[string]bool{"192.168.0.50:9100": true, "192.168.0.51:9100": true}
 	d := &Discoverer{
 		Log:   slog.New(slog.DiscardHandler),
-		Local: func(context.Context) ([]api.Discovered, error) { return nil, nil },
+		Local: func(context.Context, func(string) bool) ([]api.Discovered, error) { return nil, nil },
 		Addrs: func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("192.168.0.10")}, nil },
 		Probe: Probe{Dial: func(_ context.Context, _, addr string) (net.Conn, error) {
 			if up[addr] {
@@ -206,7 +208,7 @@ func TestScanNetworkKeepsAPrinterMissedOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return changed, keys(d.Collect(context.Background()))
+		return changed, keys(d.Collect(context.Background(), nil))
 	}
 	if changed, got := scan(); !changed || len(got) != 2 || !d.NetworkScanned() {
 		t.Fatalf("first scan: changed=%v %v", changed, got)
@@ -221,5 +223,67 @@ func TestScanNetworkKeepsAPrinterMissedOnce(t *testing.T) {
 	up["192.168.0.51:9100"] = true
 	if changed, got := scan(); !changed || len(got) != 2 {
 		t.Fatalf("back again: changed=%v %v", changed, got)
+	}
+}
+
+func TestUSBPrintersHidesQueuedTwinsCoreDoesNotKnow(t *testing.T) {
+	devs := []usbprint.Device{
+		{VID: 0x04b8, PID: 0x0202, Serial: "A1", Name: "EPSON TM-T20II", Port: "USB001"},
+		{VID: 0x0416, PID: 0x5011, Port: "USB002"},
+		{VID: 0x0fe6, PID: 0x811e, Port: "USB003"},
+	}
+	queued := map[string]bool{"USB001": true, "USB003": true}
+	known := func(key string) bool { return key == "usb:0fe6:811e" }
+	got := USBPrinters(devs, queued, known)
+	want := []api.Discovered{
+		{Key: "usb:0416:5011", Kind: "usb", Name: "Impressora USB 0416:5011", Address: "0416:5011"},
+		{Key: "usb:0fe6:811e", Kind: "usb", Name: "Impressora USB 0fe6:811e", Address: "0fe6:811e"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+	if got := USBPrinters(devs[:1], nil, known); len(got) != 1 || got[0].Name != "EPSON TM-T20II" {
+		t.Fatalf("no queues: %+v", got)
+	}
+}
+
+func TestCollectPassesKnownKeys(t *testing.T) {
+	var asked []string
+	d := &Discoverer{
+		Log: slog.New(slog.DiscardHandler),
+		Local: func(_ context.Context, known func(string) bool) ([]api.Discovered, error) {
+			if known("usb:a") {
+				asked = append(asked, "usb:a")
+			}
+			if known("usb:b") {
+				asked = append(asked, "usb:b")
+			}
+			return nil, nil
+		},
+	}
+	d.Collect(context.Background(), func(k string) bool { return k == "usb:b" })
+	d.Collect(context.Background(), nil)
+	if !slices.Equal(asked, []string{"usb:b"}) {
+		t.Fatalf("asked = %v", asked)
+	}
+}
+
+func TestSerialPrintersReportsBluetoothByMAC(t *testing.T) {
+	bt := []btserial.Port{
+		{COM: "COM5", MAC: "00:1B:35:A0:F2:C1", Name: "MPT-II"},
+		{COM: "COM6", MAC: "00:00:00:00:00:00", Incoming: true},
+		{COM: "COM8", MAC: "66:22:B1:00:00:01"},
+	}
+	known := func(key string) bool { return key == "serial:COM8" }
+	got := SerialPrinters([]string{"COM1", "com5", "COM6", "COM8"}, bt, known)
+	want := []api.Discovered{
+		{Key: "serial:COM1", Kind: "serial", Name: "Porta serial COM1", Address: "COM1"},
+		{Key: "bt:00:1B:35:A0:F2:C1", Kind: "bluetooth", Name: "MPT-II", Address: "00:1B:35:A0:F2:C1"},
+		{Key: "bt:66:22:B1:00:00:01", Kind: "bluetooth", Name: "Impressora Bluetooth 66:22:B1:00:00:01", Address: "66:22:B1:00:00:01"},
+		// set up as a serial port before this version: kept so it doesn't turn up absent
+		{Key: "serial:COM8", Kind: "serial", Name: "Porta serial COM8", Address: "COM8"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %+v", got)
 	}
 }

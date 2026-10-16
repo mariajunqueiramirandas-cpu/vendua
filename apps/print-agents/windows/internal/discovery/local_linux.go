@@ -4,16 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 )
 
-// Local lists CUPS queues and USB serial adapters.
-func Local(ctx context.Context) ([]api.Discovered, error) {
+// Local lists CUPS queues, USB serial adapters and usblp printers.
+func Local(ctx context.Context, known func(key string) bool) ([]api.Discovered, error) {
 	var out []api.Discovered
 	cmd := exec.CommandContext(ctx, "lpstat", "-e")
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
@@ -30,9 +32,12 @@ func Local(ctx context.Context) ([]api.Discovered, error) {
 			out = append(out, SerialPrinter(p))
 		}
 	}
+	// CUPS doesn't say which usblp node a queue uses, so none is hidden as its twin
+	devs, uerr := usbprint.List()
+	out = append(out, USBPrinters(devs, nil, known)...)
 	// No CUPS is normal on a dev box; report what else was found.
 	if err != nil && len(out) > 0 {
 		err = nil
 	}
-	return out, err
+	return out, errors.Join(err, uerr)
 }

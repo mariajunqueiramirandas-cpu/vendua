@@ -14,3 +14,7 @@ func sendSpooler(context.Context, string, []byte) error {
 func sendSerial(context.Context, string, int, time.Duration, []byte) error {
 	return &Error{Msg: "Porta serial não suportada neste sistema", Permanent: true}
 }
+
+func sendBluetooth(context.Context, string, time.Duration, []byte) error {
+	return &Error{Msg: "Tipo de impressora não suportado neste computador", Permanent: true}
+}

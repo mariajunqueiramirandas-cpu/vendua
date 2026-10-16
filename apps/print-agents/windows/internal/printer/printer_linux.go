@@ -91,3 +91,7 @@ func setRaw(f *os.File, speed uint32) error {
 	}
 	return terr
 }
+
+func sendBluetooth(context.Context, string, time.Duration, []byte) error {
+	return &Error{Msg: "Tipo de impressora não suportado neste computador", Permanent: true}
+}
