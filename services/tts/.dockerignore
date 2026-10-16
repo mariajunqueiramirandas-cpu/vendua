@@ -1,0 +1,4 @@
+tests/
+engine/build/
+**/__pycache__
+.venv/
