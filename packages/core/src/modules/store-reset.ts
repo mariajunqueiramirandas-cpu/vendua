@@ -370,9 +370,10 @@ export function mountStoreReset(o: {
     const id = uuidParam(c, 'id');
     const typed = await confirmed(c);
     const res = await claimControl(sql, o.requireIdemKey(c), async (tx) => {
+      // locked first: a reset queued behind a delete then finds the store gone (404)
+      await lockStore(tx, id);
       const store = await storeOr404(tx, id);
       confirmOr422(store, typed);
-      await lockStore(tx, id);
       const out = await resetStoreTx(tx, store);
       rlog.warn({ tenantId: id, slug: store.slug, rows: out.rows }, 'store reset by staff');
       return { status: 200, body: out };
@@ -386,9 +387,9 @@ export function mountStoreReset(o: {
     const id = uuidParam(c, 'id');
     const typed = await confirmed(c);
     const res = await claimControl(sql, o.requireIdemKey(c), async (tx) => {
+      await lockStore(tx, id);
       const store = await storeOr404(tx, id);
       confirmOr422(store, typed);
-      await lockStore(tx, id);
       await scopeTo(tx, id);
       // the subscription row goes with the store: stop Mercado Pago charging first, so a failed
       // call leaves the store (and the claim) in place for a retry
@@ -408,6 +409,9 @@ export function mountStoreReset(o: {
       const zones = await tx<{ host: string; zone_id: string }[]>`
         select host, zone_id from custom_domains where tenant_id = ${id} and zone_id is not null`;
       const dns = o.domains.dnsHost;
+      // zones Venduá holds but can't reach now would outlive the rows that name them
+      if (zones.length && !dns)
+        throw new HttpError(502, 'DNS_PROVIDER_ERROR', 'Cloudflare is not configured — try again');
       if (zones.length && dns) {
         try {
           for (const z of zones) {
