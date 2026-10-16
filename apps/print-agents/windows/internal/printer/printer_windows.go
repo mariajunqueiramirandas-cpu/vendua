@@ -19,6 +19,10 @@ func sendSpooler(_ context.Context, queue string, data []byte) error {
 		return nil
 	case errors.Is(err, winspool.ErrNotFound):
 		return &Error{Msg: "Impressora não encontrada (" + queue + ")", Err: err}
+	case errors.Is(err, winspool.ErrPaused):
+		return &Error{Msg: "Fila de impressão pausada no Windows (" + queue + ")", Err: err}
+	case errors.Is(err, winspool.ErrOffline):
+		return &Error{Msg: "Impressora marcada como \"Usar impressora offline\" no Windows (" + queue + ")", Err: err}
 	default:
 		return &Error{Msg: "Falha ao enviar para a impressora (" + queue + ")", Err: err}
 	}

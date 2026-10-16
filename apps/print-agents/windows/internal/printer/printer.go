@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 )
 
 // Error carries the short pt-BR text the merchant sees in the admin.
@@ -55,6 +56,9 @@ const (
 type Sender struct {
 	DialTimeout  time.Duration
 	WriteTimeout time.Duration
+	// stand-ins for the OS in tests
+	usbList  func() ([]usbprint.Device, error)
+	usbWrite func(context.Context, usbprint.Device, time.Duration, []byte) error
 }
 
 func NewSender() *Sender {
@@ -74,6 +78,8 @@ func (s *Sender) Send(ctx context.Context, p api.Printer, data []byte) error {
 			return err
 		}
 		return sendSerial(ctx, port, baud, s.WriteTimeout, data)
+	case "usb":
+		return s.sendUSB(ctx, addr, data)
 	default:
 		return &Error{Msg: "Tipo de impressora não suportado neste computador", Permanent: true}
 	}
@@ -118,6 +124,41 @@ func (s *Sender) sendTCP(ctx context.Context, addr string, data []byte) error {
 		}
 	}
 	return nil
+}
+
+const usbNotFound = "Impressora USB não encontrada (desligada ou desconectada?)"
+
+// sendUSB writes straight to the printer-class device, with no driver or queue
+// in between, so a printer that is off or out of paper fails here instead of
+// leaving a job parked in a spooler.
+func (s *Sender) sendUSB(ctx context.Context, addr string, data []byte) error {
+	list, write := usbprint.List, usbprint.Write
+	if s.usbList != nil {
+		list, write = s.usbList, s.usbWrite
+	}
+	devs, err := list()
+	if err != nil {
+		return &Error{Msg: "Falha ao listar as impressoras USB", Err: err}
+	}
+	d, ok := usbprint.Find(devs, addr)
+	if !ok {
+		return &Error{Msg: usbNotFound, Err: usbprint.ErrNotFound}
+	}
+	err = write(ctx, d, s.WriteTimeout, data)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, usbprint.ErrPaperOut):
+		return &Error{Msg: "Impressora sem papel ou com a tampa aberta", Err: err}
+	case errors.Is(err, usbprint.ErrNotFound):
+		return &Error{Msg: usbNotFound, Err: err}
+	case errors.Is(err, usbprint.ErrBusy):
+		return &Error{Msg: "Impressora USB ocupada por outro programa", Err: err}
+	case errors.Is(err, usbprint.ErrTimeout):
+		return &Error{Msg: "A impressora USB não recebeu o pedido (sem papel, tampa aberta ou desligada?)", Err: err}
+	default:
+		return &Error{Msg: "Falha ao enviar para a impressora USB", Err: err}
+	}
 }
 
 // ParseSerialAddress splits "COM3" or "COM3@115200".

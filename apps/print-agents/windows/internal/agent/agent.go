@@ -517,6 +517,12 @@ func (a *Agent) printer(id string) (api.Printer, bool) {
 	return a.cfg.Printers[i], true
 }
 
+func (a *Agent) knownKey(key string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.ContainsFunc(a.cfg.Printers, func(p api.Printer) bool { return p.Key == key })
+}
+
 func (a *Agent) setPrinters(ps []api.Printer) {
 	a.mu.Lock()
 	a.cfg.Printers = ps
@@ -569,7 +575,7 @@ func (a *Agent) reportPrintersLoop(ctx context.Context) {
 		if a.o.ScanOnStart && !a.o.Discoverer.NetworkScanned() {
 			continue
 		}
-		found := a.o.Discoverer.Collect(ctx)
+		found := a.o.Discoverer.Collect(ctx, a.knownKey)
 		key := api.NewUUID()
 		for attempt := 1; ; attempt++ {
 			printers, err := a.o.Client.PutPrinters(ctx, tok, key, found)

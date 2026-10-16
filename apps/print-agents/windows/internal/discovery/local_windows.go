@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/api"
+	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/usbprint"
 	"github.com/mariajunqueiramirandas-cpu/vendua/apps/print-agents/windows/internal/winspool"
 )
 
-// Local lists spooler queues and COM ports.
-func Local(context.Context) ([]api.Discovered, error) {
+// Local lists spooler queues, COM ports and printer-class USB devices.
+func Local(_ context.Context, known func(key string) bool) ([]api.Discovered, error) {
 	var out []api.Discovered
 	queues, qerr := winspool.Queues()
 	for _, q := range queues {
@@ -22,7 +24,20 @@ func Local(context.Context) ([]api.Discovered, error) {
 	for _, p := range ports {
 		out = append(out, SerialPrinter(p))
 	}
-	return out, errors.Join(qerr, perr)
+	devs, uerr := usbprint.List()
+	var lerr error
+	if len(devs) > 0 {
+		var local []winspool.Queue
+		local, lerr = winspool.LocalQueues()
+		queued := map[string]bool{}
+		for _, q := range local {
+			for _, p := range q.Ports {
+				queued[strings.ToUpper(p)] = true
+			}
+		}
+		out = append(out, USBPrinters(devs, queued, known)...)
+	}
+	return out, errors.Join(qerr, perr, uerr, lerr)
 }
 
 func comPorts() ([]string, error) {
