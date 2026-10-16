@@ -402,8 +402,10 @@ differs from it:
   cross-origin smoke (`scripts/native-smoke.ts`: sign-in on screen, bearer and no cookie, CORS,
   a new order over the stream), and the bundle Core offers against its checksum.
   `admin-app.yml` builds Android (`assembleDebug lintDebug`) and iOS (simulator, unsigned) on PRs
-  that touch the shell, iOS only when the iOS side changed. On `main` it runs Fastlane to Play's
-  internal track and TestFlight once the secrets in `apps/admin/fastlane/README.md` exist.
+  that touch the shell, iOS only when the iOS side changed. On `main`, once the credentials in
+  `apps/admin/fastlane/README.md` exist, it puts the signed Android APK on a GitHub Release
+  (`admin-app-v<version>`, never marked latest, for the team) and runs Fastlane to Play's
+  internal track and TestFlight.
 - **The edge.** `painel.vendua.com.br` is the admin's own nginx (`apps/admin/nginx.conf`), which
   proxies `/.well-known/` to Core; the storefront edge needs nothing.
 - **Configuration**, all off when unset:

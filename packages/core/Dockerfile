@@ -37,9 +37,12 @@ RUN cd apps/control && bun run build
 # the mascot art the admin imports from /brand (an empty glob would ship broken images)
 COPY brand brand
 COPY apps/admin apps/admin
-# the website's x-vendua-client names its commit
+# the website's x-vendua-client names its commit; the app's store-update button needs the App
+# Store link once the listing exists (Play's is fixed)
 ARG GIT_COMMIT=
-RUN cd apps/admin && GIT_COMMIT=$GIT_COMMIT bun run build && bun run build:native
+ARG VITE_APP_STORE_URL=
+RUN cd apps/admin && GIT_COMMIT=$GIT_COMMIT bun run build \
+    && VITE_APP_STORE_URL=$VITE_APP_STORE_URL bun run build:native
 
 COPY packages/core packages/core
 

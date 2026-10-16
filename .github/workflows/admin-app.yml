@@ -1,10 +1,11 @@
 name: admin-app
 
 # The merchant admin as an iOS and Android app (ADR 0044 §8): the native projects build on every PR
-# that touches them, and on main they go to TestFlight and Play's internal track once the store
-# secrets exist (apps/admin/fastlane/README.md). The JS side (the seam, the bundle's budgets, the
-# cross-origin smoke) is ci.yml's admin-native job; the bundle phones run day to day comes from
-# Core's image (packages/core/Dockerfile), not from here.
+# that touches them. On main, once the secrets exist (apps/admin/fastlane/README.md), the signed
+# Android APK goes to a GitHub Release and the stores' builds to Play's internal track and
+# TestFlight. The JS side (the seam, the bundle's budgets, the cross-origin smoke) is ci.yml's
+# admin-native job; the bundle phones run day to day comes from Core's image
+# (packages/core/Dockerfile), not from here.
 on:
   push:
     branches: [main]
@@ -75,42 +76,105 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' > /dev/null
       - name: The app's bundle, into the project
+        env:
+          VITE_APP_STORE_URL: ${{ vars.VITE_APP_STORE_URL }}
         run: bun run build:native && bunx cap sync android
       - name: Build and lint
         working-directory: apps/admin/android
         run: ./gradlew --no-daemon assembleDebug lintDebug
-      - name: Store secrets (main only, when they exist)
-        id: store
+      - name: Signing (main only, when the secrets exist)
+        id: sign
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
-          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
           GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
-          if [ -z "$PLAY_JSON" ] || [ -z "$KEYSTORE_B64" ] || [ -z "$GOOGLE_SERVICES_B64" ]; then
-            echo "::warning::the Play secrets are not set: built, not uploaded (apps/admin/fastlane/README.md)"
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$GOOGLE_SERVICES_B64" ]; then
+            echo "::warning::the Android signing secrets are not set: built, not signed or published (apps/admin/fastlane/README.md)"
             exit 0
           fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          # FCM: without it the app builds, but its order alerts can't register
           echo "$GOOGLE_SERVICES_B64" | base64 -d > android/app/google-services.json
           {
             echo "VENDUA_UPLOAD_KEYSTORE=$RUNNER_TEMP/upload.jks"
             echo "VENDUA_UPLOAD_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
             echo "VENDUA_UPLOAD_KEY_ALIAS=$KEY_ALIAS"
             echo "VENDUA_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD"
+            echo "VENDUA_BUILD_NUMBER=${{ github.run_number }}"
           } >> "$GITHUB_ENV"
-          echo "upload=true" >> "$GITHUB_OUTPUT"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$PLAY_JSON" ]; then echo "play=true" >> "$GITHUB_OUTPUT"; else
+            echo "::warning::PLAY_SERVICE_ACCOUNT_JSON is not set: the APK goes to GitHub Releases, nothing to Play"
+          fi
+      - name: Signed APK (for GitHub Releases)
+        if: steps.sign.outputs.signed == 'true'
+        working-directory: apps/admin/android
+        run: |
+          ./gradlew --no-daemon assembleRelease
+          mkdir -p ../out
+          cp app/build/outputs/apk/release/app-release.apk ../out/vendua-painel.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.sign.outputs.signed == 'true'
+        with:
+          name: android
+          path: apps/admin/out/
+          retention-days: 7
       - name: Play internal testing
-        if: steps.store.outputs.upload == 'true'
+        if: steps.sign.outputs.play == 'true'
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          VENDUA_BUILD_NUMBER: ${{ github.run_number }}
         run: |
           gem install fastlane -v 2.228.0 --no-document
           fastlane android internal
+
+  # The signed Android APK on a GitHub Release, one per app-version.json `version`
+  # (admin-app-v<version>), for the team to install without the store. Never marked latest: the
+  # admin links the print agents' releases/latest/download/… (print-agents.yml).
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: android
+          path: dist
+        continue-on-error: true
+      - name: Publish what this version doesn't have yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f dist/vendua-painel.apk ]; then
+            echo "::warning::no signed APK (set the Android signing secrets, then run this workflow on main): nothing published"
+            exit 0
+          fi
+          version="$(jq -r .version apps/admin/app-version.json)"
+          native="$(jq -r .native apps/admin/app-version.json)"
+          tag="admin-app-v$version"
+          mkdir -p assets
+          cp dist/vendua-painel.apk assets/
+          printf '{"version":"%s","native":%s,"build":%s,"commit":"%s"}\n' \
+            "$version" "$native" "${{ github.run_number }}" "$GITHUB_SHA" > assets/version.json
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --latest=false \
+              --title "Venduá (app do painel) $version" \
+              --notes "App Android do painel para testes da equipe. Lojistas instalam pela Play Store: este APK não atualiza uma instalação da loja (outra assinatura)." \
+              assets/*
+            exit 0
+          fi
+          # a version already out keeps its files: a re-run only fills in what's missing
+          have="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          for f in assets/*; do
+            grep -qx "$(basename "$f")" <<< "$have" || gh release upload "$tag" "$f"
+          done
 
   ios:
     needs: scope
@@ -126,6 +190,8 @@ jobs:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
       - name: The app's bundle, into the project
+        env:
+          VITE_APP_STORE_URL: ${{ vars.VITE_APP_STORE_URL }}
         run: bun run build:native && bunx cap sync ios
       - name: Build for the simulator (unsigned)
         run: |
