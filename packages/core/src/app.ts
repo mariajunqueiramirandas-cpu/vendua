@@ -246,6 +246,8 @@ import {
   mountStorefrontEvents,
 } from './modules/storefront-live.ts';
 import { mountAdmin } from './admin/routes.ts';
+import { clientFloor, mountBundleZip } from './admin/app-bundle.ts';
+import { mountWellKnown } from './admin/well-known.ts';
 import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
 import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
@@ -642,26 +644,58 @@ export function createApp({
   app.use('*', requestLogger());
   // Only trust X-Forwarded-* behind the Venduá edge (tenant spoofing otherwise).
   const trustProxy = process.env.VENDUA_TRUST_PROXY === '1';
+  // The merchant admin app (ADR 0044 §3): its WebView's own origin calls the admin API and the
+  // analytics collector with a bearer token and never a cookie, so no credentials. Every other
+  // origin keeps the same-host rule below. (Public media answers `*` itself.)
+  const appOrigins = new Set([
+    'capacitor://localhost',
+    'https://localhost',
+    // dev and the CI's cross-origin smoke serve the app's bundle from another port
+    ...(process.env.NODE_ENV === 'production'
+      ? []
+      : (process.env.VENDUA_ADMIN_APP_ORIGINS ?? '').split(',')
+    )
+      .map((o) => o.trim())
+      .filter(Boolean),
+  ]);
+  const appCorsPath = (p: string) => p.startsWith('/admin/v1/') || p === '/analytics/v1/collect';
   // Same-origin only — other tenant origins would enable credentialed cross-tenant reads.
-  app.use(
-    '*',
-    cors({
-      origin: (o, c) => {
-        if (!o) return undefined;
-        let originHost: string;
-        try {
-          originHost = new URL(o).host;
-        } catch {
-          return null;
-        }
-        const reqHost =
-          (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host') ?? '';
-        return originHost === reqHost ? o : null;
-      },
-      allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Vendua-Customer'],
-      credentials: true,
-    }),
-  );
+  const sameHostCors = cors({
+    origin: (o, c) => {
+      if (!o) return undefined;
+      let originHost: string;
+      try {
+        originHost = new URL(o).host;
+      } catch {
+        return null;
+      }
+      const reqHost =
+        (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host') ?? '';
+      return originHost === reqHost ? o : null;
+    },
+    allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Vendua-Customer'],
+    credentials: true,
+  });
+  app.use('*', async (c, next) => {
+    const origin = c.req.header('origin');
+    if (!origin || !appOrigins.has(origin) || !appCorsPath(c.req.path))
+      return sameHostCors(c, next);
+    if (c.req.method === 'OPTIONS') {
+      c.header('access-control-allow-origin', origin);
+      c.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE');
+      c.header(
+        'access-control-allow-headers',
+        'Authorization, Content-Type, Idempotency-Key, X-Vendua-Admin, X-Vendua-Client, X-Vendua-Device',
+      );
+      c.header('access-control-max-age', '600');
+      c.header('vary', 'Origin');
+      return c.body(null, 204);
+    }
+    await next();
+    c.res.headers.set('access-control-allow-origin', origin);
+    c.res.headers.set('access-control-expose-headers', 'X-Idempotent-Replay, X-Request-Id');
+    c.res.headers.append('vary', 'Origin');
+  });
 
   app.get('/healthz', (c) => c.json({ ok: true }));
 
@@ -3194,6 +3228,8 @@ export function createApp({
     app.use('/admin/*', onAdminHost);
   }
   const admin: AdminApp = new Hono();
+  // an app shell older than Core's floor gets one answer: update in the store (ADR 0044 §2)
+  admin.use('*', clientFloor());
   mountAdmin({
     app,
     admin,
@@ -3218,6 +3254,9 @@ export function createApp({
     copilotMedia: ears,
   });
   app.route('/admin/v1', admin);
+  // the app's over-the-air bundle and its links (ADR 0044): before the SPA's catch-all
+  mountBundleZip(app);
+  mountWellKnown(app);
   app.get('/admin', (c) => c.redirect('/admin/'));
   app.get(
     '/admin/*',

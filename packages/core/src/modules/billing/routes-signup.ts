@@ -3,7 +3,8 @@ import { audit } from '../../admin/audit.ts';
 import {
   createSession,
   membershipsFor,
-  setAdminCookie,
+  issueSession,
+  sessionDevice,
   validAdminPhone,
   type Membership,
 } from '../../admin/auth.ts';
@@ -488,15 +489,12 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         signupLog.warn({ err, tenantId: store.tenant_id }, 'welcome email failed');
       }
     }
-    setAdminCookie(
+    const sess = issueSession(
       c,
-      await createSession(sql, owned, c.req.header('user-agent'), {
-        kind: 'phone',
-        subject: phone,
-      }),
+      await createSession(sql, owned, sessionDevice(c), { kind: 'phone', subject: phone }),
       secure(c),
     );
-    return c.json({ signedIn: true, store: storeRef(owned), next }, 201);
+    return c.json({ signedIn: true, store: storeRef(owned), next, ...sess }, 201);
   });
 
   if (d.provider instanceof FakeProvider && process.env.NODE_ENV !== 'production')

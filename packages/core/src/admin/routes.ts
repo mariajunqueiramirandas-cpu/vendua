@@ -1,9 +1,9 @@
 import { mountFreio } from './routes-freio.ts';
+import { mountBundleManifest } from './app-bundle.ts';
 import { mountParty } from './routes-party.ts';
 import { mountShopperPlansAdmin } from './routes-plans.ts';
 import type { Context, Hono } from 'hono';
 import { planAccess } from '../modules/billing/plans.ts';
-import { getCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { withTenant, type Sql } from '../platform/db.ts';
 import {
@@ -19,19 +19,20 @@ import type { Tenant } from '../platform/tenancy.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { audit } from './audit.ts';
 import {
-  ADMIN_COOKIE,
   adminGate,
   clearAdminCookie,
   createSession,
   forgetGate,
+  issueSession,
   membershipsFor,
   membershipsOf,
   pickerToken,
   readPickerToken,
   revokeSession,
   sessionAlive,
+  sessionDevice,
   sessionStores,
-  setAdminCookie,
+  sessionValue,
   startEmailChange,
   startEmailLink,
   startOtp,
@@ -91,8 +92,9 @@ import {
   processImage,
   sniffImage,
 } from './media.ts';
-import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
-import { recordPushAttempt } from './workers.ts';
+import { isPushEndpoint, pushServiceLabel, vapidPublicKey } from './webpush.ts';
+import { alertTargets, recordDelivery, recordPushAttempt, sendAlert } from './workers.ts';
+import { nativePushConfigured } from './nativepush.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { waIdentity } from '../crm/channels/whatsapp.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -152,12 +154,12 @@ export function mountAdmin(o: MountAdminOpts) {
   // one or several stores behind the verified phone/address: a session, or the picker
   const signInAs = async (c: Context, who: Verified, stores: Membership[]) => {
     if (stores.length === 1) {
-      setAdminCookie(
+      const sess = issueSession(
         c,
-        await createSession(sql, stores[0]!, c.req.header('user-agent'), who),
+        await createSession(sql, stores[0]!, sessionDevice(c), who),
         secure(c),
       );
-      return c.json({ signedIn: true, store: publicStore(stores[0]!) });
+      return c.json({ signedIn: true, store: publicStore(stores[0]!), ...sess });
     }
     return c.json({
       signedIn: false,
@@ -258,16 +260,16 @@ export function mountAdmin(o: MountAdminOpts) {
     if (!who) throw new HttpError(401, 'UNAUTHENTICATED', 'sign in again');
     const m = (await membershipsOf(sql, who)).find((s) => s.tenant_id === body.storeId);
     if (!m) throw new HttpError(404, 'STORE_NOT_FOUND', 'store not found');
-    setAdminCookie(c, await createSession(sql, m, c.req.header('user-agent'), who), secure(c));
-    return c.json({ signedIn: true, store: publicStore(m) });
+    const sess = issueSession(c, await createSession(sql, m, sessionDevice(c), who), secure(c));
+    return c.json({ signedIn: true, store: publicStore(m), ...sess });
   });
 
   admin.post('/auth/logout', async (c) => {
-    const raw = getCookie(c, ADMIN_COOKIE);
-    const [tenantId, sessionId] = (raw ?? '').split('.');
+    const { value, bearer } = sessionValue(c);
+    const [tenantId, sessionId] = (value ?? '').split('.');
     if (tenantId && sessionId && UUID_RE.test(tenantId) && UUID_RE.test(sessionId))
       await revokeSession(sql, tenantId, sessionId).catch(() => undefined);
-    clearAdminCookie(c);
+    if (!bearer) clearAdminCookie(c);
     return c.json({ ok: true });
   });
 
@@ -300,6 +302,9 @@ export function mountAdmin(o: MountAdminOpts) {
     trustProxy: o.trustProxy,
     proxyHops: o.proxyHops,
   });
+
+  // the app's over-the-air bundle: asked before sign-in too, so a signed-out app updates
+  mountBundleManifest(admin);
 
   // status.vendua.com.br's checker (apps/status) reads this from outside, every few minutes
   const statusLimit = rateLimitByIp(60, {
@@ -374,7 +379,8 @@ export function mountAdmin(o: MountAdminOpts) {
       },
       plan,
       stores: stores.map(publicStore),
-      push: { publicKey: vapidPublicKey() },
+      // web push (VAPID) and the app's native alerts, each on when its keys are set
+      push: { publicKey: vapidPublicKey(), ...nativePushConfigured() },
       // "falar com a Venduá" (Ajuda); unset = the page offers the in-app message only
       support: { whatsapp: process.env.VENDUA_SUPPORT_WHATSAPP?.replace(/\D/g, '') || null },
       vendedor: {
@@ -406,12 +412,12 @@ export function mountAdmin(o: MountAdminOpts) {
     );
     const target = stores.find((s) => s.tenant_id === body.storeId);
     if (!target) throw new HttpError(404, 'STORE_NOT_FOUND', 'store not found');
-    setAdminCookie(
+    const sess = issueSession(
       c,
-      await createSession(sql, target, c.req.header('user-agent'), proof),
+      await createSession(sql, target, sessionDevice(c), proof),
       secure(c),
     );
-    return c.json({ signedIn: true, store: publicStore(target) });
+    return c.json({ signedIn: true, store: publicStore(target), ...sess });
   });
 
   admin.patch('/me', async (c) => {
@@ -532,6 +538,10 @@ export function mountAdmin(o: MountAdminOpts) {
         where tenant_id = ${tenant.id} and user_id = ${m.userId}
           and (session_id = ${id} or session_id is null)
       `;
+      await tx`
+        delete from push_devices
+        where tenant_id = ${tenant.id} and user_id = ${m.userId} and session_id = ${id}
+      `;
       forgetGate();
       return { status: 200, body: { ok: true } };
     })(c);
@@ -595,6 +605,51 @@ export function mountAdmin(o: MountAdminOpts) {
         returning id
       `;
       return { status: 200, body: { rebound: rows.length > 0 } };
+    })(c);
+  });
+
+  // ── the app's native alerts (ADR 0044 §5) ─────────────────────────────────
+  // one row per installed app, tied to the session that turned it on: signing out, "encerrar
+  // sessão" or leaving the team deletes it with the session
+  admin.post('/push/devices', async (c) => {
+    const m = c.get('merchant');
+    const tenant = c.get('tenant');
+    return o.idempotency(sql, async (c, tx) => {
+      const body = await bodyJson(c);
+      const platform = body.platform;
+      if (platform !== 'ios' && platform !== 'android')
+        throw new HttpError(422, 'BAD_REQUEST', 'platform must be ios or android', {
+          field: 'platform',
+        });
+      const token = text(body.token, 'token', 4096, 8);
+      const appVersion = optText(body.appVersion, 'appVersion', 80) ?? null;
+      await tx`
+        insert into push_devices (tenant_id, user_id, session_id, platform, token, app_version)
+        values (${tenant.id}, ${m.userId}, ${m.sessionId}, ${platform}, ${token}, ${appVersion})
+        on conflict (tenant_id, token) do update set user_id = excluded.user_id,
+          session_id = excluded.session_id, platform = excluded.platform,
+          app_version = excluded.app_version, last_error = null
+      `;
+      await tx`
+        delete from push_devices where id in (
+          select id from push_devices
+          where tenant_id = ${tenant.id} and user_id = ${m.userId}
+          order by created_at desc, id offset ${PUSH_SUBS_PER_USER}
+        )
+      `;
+      await emitAdminTx(tx, tenant.id, 'alerts');
+      return { status: 201, body: { registered: true } };
+    })(c);
+  });
+
+  admin.post('/push/devices/remove', async (c) => {
+    const tenant = c.get('tenant');
+    return o.idempotency(sql, async (c, tx) => {
+      const body = await bodyJson(c);
+      const token = text(body.token, 'token', 4096);
+      await tx`delete from push_devices where tenant_id = ${tenant.id} and token = ${token}`;
+      await emitAdminTx(tx, tenant.id, 'alerts');
+      return { status: 200, body: { registered: false } };
     })(c);
   });
 
@@ -778,8 +833,8 @@ export function mountAdmin(o: MountAdminOpts) {
     const tenant = c.get('tenant');
     const out = await withTenant(sql, tenant.id, async (tx) => ({
       devices: await tx`
-        select s.id, s.user_id as "userId", u.name as "userName", s.endpoint, s.created_at as "createdAt",
-               s.last_ok_at as "lastOkAt", s.last_error as "lastError",
+        select s.id, s.user_id as "userId", u.name as "userName", s.endpoint, null as platform,
+               s.created_at as "createdAt", s.last_ok_at as "lastOkAt", s.last_error as "lastError",
                a.result as "lastResult", a.at as "lastAt"
         from push_subscriptions s join merchant_users u on u.id = s.user_id
           left join lateral (
@@ -787,7 +842,16 @@ export function mountAdmin(o: MountAdminOpts) {
             where tenant_id = ${tenant.id} and subscription_id = s.id order by at desc limit 1
           ) a on true
         where s.tenant_id = ${tenant.id} and u.status = 'active'
-        order by u.name, s.created_at
+        union all
+        select d.id, d.user_id, u.name, null, d.platform, d.created_at, d.last_ok_at, d.last_error,
+               a.result, a.at
+        from push_devices d join merchant_users u on u.id = d.user_id
+          left join lateral (
+            select result, at from push_attempts
+            where tenant_id = ${tenant.id} and device_id = d.id order by at desc limit 1
+          ) a on true
+        where d.tenant_id = ${tenant.id} and u.status = 'active'
+        order by "userName", "createdAt"
       `,
       recent: await tx`
         select a.event, a.ref, a.channel, a.result, a.detail, a.at, u.name as "userName"
@@ -798,9 +862,10 @@ export function mountAdmin(o: MountAdminOpts) {
     const wa = await getIntegration(sql, 'whatsapp').catch(() => null);
     c.header('cache-control', 'no-store');
     return c.json({
-      devices: out.devices.map(({ endpoint, ...d }) => ({
+      devices: out.devices.map(({ endpoint, platform, ...d }) => ({
         ...d,
-        device: pushServiceLabel(String(endpoint)),
+        // the store app reads as "App iPhone" / "App Android" (the admin's deviceName)
+        device: platform ? `VenduaApp/${String(platform)}` : pushServiceLabel(String(endpoint)),
       })),
       recent: out.recent,
       whatsappFallback: !!wa,
@@ -814,16 +879,21 @@ export function mountAdmin(o: MountAdminOpts) {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
     const res = await o.idempotency(sql, async (_c, tx) => {
-      const subs = await tx<{ id: string }[]>`
-        select id from push_subscriptions where tenant_id = ${tenant.id} and user_id = ${m.userId}
-      `;
+      const devices = await alertTargets(tx, tenant.id, tx`u.id = ${m.userId}`);
       return {
         status: 200,
-        body: { job: { ref: `test:${crypto.randomUUID()}`, subs: subs.map((s) => s.id) } },
+        body: {
+          job: {
+            ref: `test:${crypto.randomUUID()}`,
+            devices: devices.map((d) => ({ kind: d.kind, id: d.id })),
+          },
+        },
       };
     })(c);
     if (res.status !== 200) return res;
-    const { job } = (await res.json()) as { job: { ref: string; subs: string[] } };
+    const { job } = (await res.json()) as {
+      job: { ref: string; devices: { kind: 'web' | 'app'; id: string }[] };
+    };
     if (res.headers.get('x-idempotent-replay') === 'true') {
       const ok = (
         await withTenant(
@@ -836,21 +906,20 @@ export function mountAdmin(o: MountAdminOpts) {
         )
       )[0]!.n;
       c.header('x-idempotent-replay', 'true');
-      return c.json({ devices: job.subs.length, ok, failed: job.subs.length - ok });
+      return c.json({ devices: job.devices.length, ok, failed: job.devices.length - ok });
     }
-    const subs = job.subs.length
-      ? await withTenant(
-          sql,
-          tenant.id,
-          (tx) => tx<{ id: string; endpoint: string; p256dh: string; auth: string }[]>`
-            select id, endpoint, p256dh, auth from push_subscriptions
-            where tenant_id = ${tenant.id} and id = any(${job.subs}::uuid[])
-          `,
-        )
+    // a device removed between the claim and now isn't there to send to: it counts as not reached
+    const picked = new Set(job.devices.map((d) => `${d.kind}:${d.id}`));
+    const targets = job.devices.length
+      ? (
+          await withTenant(sql, tenant.id, (tx) =>
+            alertTargets(tx, tenant.id, tx`u.id = ${m.userId}`),
+          )
+        ).filter((t) => picked.has(`${t.kind}:${t.id}`))
       : [];
     const results = await Promise.all(
-      subs.map((s) =>
-        sendPushResult(s, {
+      targets.map((t) =>
+        sendAlert(t, {
           title: 'Notificações ligadas',
           body: 'É assim que um pedido novo vai aparecer.',
           tag: 'vendua-test',
@@ -858,32 +927,25 @@ export function mountAdmin(o: MountAdminOpts) {
         }),
       ),
     );
-    if (subs.length)
+    if (targets.length)
       await withTenant(sql, tenant.id, async (tx) => {
-        for (const [i, s] of subs.entries()) {
+        for (const [i, t] of targets.entries()) {
           const r = results[i]!;
           await recordPushAttempt(tx, tenant.id, {
-            subscriptionId: r.result === 'gone' ? null : s.id,
+            subscriptionId: t.kind === 'web' && r.result !== 'gone' ? t.id : null,
+            deviceId: t.kind === 'app' && r.result !== 'gone' ? t.id : null,
             userId: m.userId,
             event: 'test',
             ref: job.ref,
             channel: 'push',
             ...r,
           });
-          if (r.result === 'gone') await tx`delete from push_subscriptions where id = ${s.id}`;
-          else
-            await tx`
-              update push_subscriptions set
-                last_ok_at = ${r.result === 'ok' ? tx`now()` : tx`last_ok_at`},
-                last_error = ${r.result === 'ok' ? null : (r.detail ?? 'delivery failed')}
-              where id = ${s.id}
-            `;
+          await recordDelivery(tx, tenant.id, t, r);
         }
         await emitAdminTx(tx, tenant.id, 'alerts');
       });
     const ok = results.filter((r) => r.result === 'ok').length;
-    // a device removed between the claim and now counts as not reached
-    return c.json({ devices: job.subs.length, ok, failed: job.subs.length - ok });
+    return c.json({ devices: job.devices.length, ok, failed: job.devices.length - ok });
   });
 
   // Ajuda: "a Venduá está com instabilidade" — open incidents and the last week's
@@ -981,6 +1043,9 @@ export function mountAdmin(o: MountAdminOpts) {
     c.header('content-type', row.mime);
     c.header('cache-control', 'public, max-age=31536000, immutable');
     c.header('x-content-type-options', 'nosniff');
+    // public bytes: the admin app draws them on a canvas (share cards) from its own origin, and a
+    // CDN copy made for a browser tab must work there too, so no per-origin answer (ADR 0044)
+    c.header('access-control-allow-origin', '*');
     return c.body(row.bytes as unknown as ArrayBuffer);
   });
 

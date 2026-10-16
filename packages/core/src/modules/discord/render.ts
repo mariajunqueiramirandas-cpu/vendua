@@ -1063,6 +1063,16 @@ function test(ev: Ev<'discord.test'>, ctx: RenderCtx): Rendered {
   };
 }
 
+function reviewLogin(ev: Ev<'auth.review_login'>): Rendered {
+  return {
+    card: card(ev, {
+      title: `🔑 a revisão das lojas de apps entrou na ${esc(ev.data.storeName)}`,
+      description:
+        'pelo código fixo de VENDUA_REVIEW_LOGIN: troque o código quando a revisão acabar',
+    }),
+  };
+}
+
 /** an ISO instant → '16/10' in Brasília */
 function dayMonthOf(iso: string): string {
   const d = new Date(iso);
@@ -1229,6 +1239,7 @@ const STANDALONE: Standalone = {
   'system.boot': boot,
   'system.error': systemError,
   'discord.test': test,
+  'auth.review_login': reviewLogin,
   'digest.daily': (ev, ctx) => ({ card: digestCard(ev, ev.data, ctx) }),
 };
 

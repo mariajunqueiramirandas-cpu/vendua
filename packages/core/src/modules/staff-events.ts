@@ -379,6 +379,8 @@ export interface StaffEventMap {
   'status.opened': { incidentId: Id; title: string; severity: string; body: Opt<string> };
   'status.updated': { incidentId: Id; title: string; severity: string; resolved: boolean };
   'discord.test': { by: Opt<Name> };
+  /** the App Review sign-in (VENDUA_REVIEW_LOGIN, ADR 0044) opened a session in a demo store */
+  'auth.review_login': { storeName: Name };
   // resumo
   'digest.daily': DailyDigest;
 }
@@ -851,6 +853,14 @@ export const STAFF_EVENT_KINDS: Catalog = {
     label: 'mensagem de teste',
     fixed: true,
   },
+  'auth.review_login': {
+    category: 'sistema',
+    level: 'normal',
+    severity: 'warning',
+    label: 'entrada da revisão das lojas de apps',
+    hint: 'o código fixo de VENDUA_REVIEW_LOGIN abriu uma loja demo: troque o código depois da revisão',
+  },
+
   'digest.daily': {
     category: 'resumo',
     level: 'normal',
