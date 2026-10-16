@@ -118,6 +118,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0040](adr/0040-design-per-bundle.md)                  | A store's saved design belongs to its bundle: switch between site sob medida and template |
 | [0041](adr/0041-zero-downtime-deploys.md)              | Deploys without downtime: storefronts from CI, the platform as a start-first stack        |
 | [0042](adr/0042-signup-coupons.md)                     | Signup coupons: free days and/or a discount on the first paid months                      |
+| [0044](adr/0044-admin-native-app.md)                   | The merchant admin as an iOS and Android app, from the same code                          |
 
 ## Conventions
 
