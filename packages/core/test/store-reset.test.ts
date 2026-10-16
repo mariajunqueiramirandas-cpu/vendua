@@ -268,7 +268,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store reset and delete (db)', (
     expect([failed.status, failed.body.error.code]).toEqual([502, 'BILLING_PROVIDER_ERROR']);
     expect(await rowsOf(a.id, ['products'])).toEqual({ products: 1 });
 
+    // Cloudflare down after Mercado Pago cancelled: the retry finds the preapproval cancelled
+    dns.failNext('cloudflare down', 'deleteZone');
+    const half = await call(`/control/v1/stores/${a.id}/delete`, { confirm: a.slug }, key);
+    expect([half.status, half.body.error.code]).toEqual([502, 'DNS_PROVIDER_ERROR']);
+    expect(provider.subscriptions.get(sub.id)!.status).toBe('cancelled');
+    provider.updateSubscription = async () => {
+      throw new Error('already cancelled');
+    };
     const res = await call(`/control/v1/stores/${a.id}/delete`, { confirm: a.slug }, key);
+    provider.updateSubscription = realUpdate;
     expect(res.status).toBe(200);
     expect(provider.subscriptions.get(sub.id)!.status).toBe('cancelled');
     expect(dns.zones.has(host)).toBe(false);

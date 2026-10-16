@@ -321,10 +321,12 @@ export async function resetStoreTx(
   return { resetAt, rows };
 }
 
-/** a preapproval Mercado Pago no longer has is already not charging */
+/** A preapproval Mercado Pago no longer has, or already cancelled, is not charging. Read first:
+ *  a retry after a later step failed finds it cancelled, and MP may refuse to cancel it twice. */
 async function stopPreapproval(provider: PaymentProvider, id: string | null) {
   if (!id) return;
   try {
+    if ((await provider.getSubscription(id)).status === 'cancelled') return;
     await provider.updateSubscription(id, { status: 'cancelled' });
   } catch (err) {
     if (!(err instanceof ProviderError && err.code === 'not_found')) throw err;
