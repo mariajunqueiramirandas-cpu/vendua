@@ -1,12 +1,15 @@
 // Bundle budget (design spec §11), run after `vite build`: the shell (entry +
 // vendor) under 420 KB gzip, every lazy route chunk under 60 KB, the fonts a
 // phone actually downloads (latin + latin-ext) under 90 KB. Fails the build.
+// `--native` checks the app's bundle (dist-native/, ADR 0044): same budgets, it's an OTA download.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
-const dist = fileURLToPath(new URL('../dist', import.meta.url));
+const dist = fileURLToPath(
+  new URL(process.argv.includes('--native') ? '../dist-native' : '../dist', import.meta.url),
+);
 const dir = join(dist, 'assets');
 const html = readFileSync(join(dist, 'index.html'), 'utf8');
 const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;

@@ -1,0 +1,83 @@
+apply plugin: 'com.android.application'
+
+// app-version.json is the store build's identity (ADR 0044 §2): `version` is what the stores
+// show, `native` the shell level Core's bundles and floor are checked against. The build number
+// comes from CI (VENDUA_BUILD_NUMBER), always increasing for Play.
+def appVersion = new groovy.json.JsonSlurper().parse(file('../../app-version.json'))
+
+android {
+    namespace = "br.com.vendua.painel"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "br.com.vendua.painel"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode Integer.parseInt(System.getenv('VENDUA_BUILD_NUMBER') ?: '1')
+        versionName appVersion.version
+        buildConfigField 'int', 'VENDUA_NATIVE', String.valueOf(appVersion.native)
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+    // Fastlane signs a release with the upload key from the environment (ADR 0044 §8)
+    signingConfigs {
+        release {
+            if (System.getenv('VENDUA_UPLOAD_KEYSTORE')) {
+                storeFile file(System.getenv('VENDUA_UPLOAD_KEYSTORE'))
+                storePassword System.getenv('VENDUA_UPLOAD_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('VENDUA_UPLOAD_KEY_ALIAS')
+                keyPassword System.getenv('VENDUA_UPLOAD_KEY_PASSWORD')
+            }
+        }
+    }
+    lint {
+        abortOnError = true
+        warningsAsErrors = false
+        // the web bundle is copied in by `cap sync`; lint is for our own Java and resources
+        checkGeneratedSources = false
+    }
+    buildTypes {
+        release {
+            if (System.getenv('VENDUA_UPLOAD_KEYSTORE')) signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation platform("com.google.firebase:firebase-bom:$firebaseBomVersion")
+    implementation 'com.google.firebase:firebase-messaging'
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

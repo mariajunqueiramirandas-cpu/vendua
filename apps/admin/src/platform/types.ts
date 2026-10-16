@@ -85,6 +85,8 @@ export interface Platform {
 
   /** whether the plan can be bought or paid here: never inside the app (ADR 0044, decision 1) */
   canPay: boolean;
+  /** where this app is updated when Core needs a newer shell (null on the web, or unknown) */
+  storeUrl: string | null;
   /** a trip out (Mercado Pago, help pages): this tab on the web, an in-app browser in the app */
   openExternal(url: string): void;
   /** a link for someone else (an invite, a referral): always the public admin address */

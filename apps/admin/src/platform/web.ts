@@ -161,6 +161,7 @@ export const platform: Platform = {
   },
 
   canPay: true,
+  storeUrl: null,
   openExternal: (url) => window.location.assign(url),
   publicUrl: (path) => `${window.location.origin}${path}`,
 

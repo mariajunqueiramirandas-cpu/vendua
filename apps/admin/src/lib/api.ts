@@ -117,6 +117,9 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
         auth.authorization === platform.http.headers().authorization
       )
         window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
+      // the app's shell is below Core's floor (ADR 0044 §2): only the store has the fix
+      if (res.status === 426)
+        window.dispatchEvent(new CustomEvent('vendua:store-update', { detail: { hard: true } }));
       throw err;
     }
     const ct = res.headers.get('content-type') ?? '';
@@ -2747,6 +2750,11 @@ export const api = {
   pushUnsubscribe: (endpoint: string) => send('POST', '/push/unsubscribe', { endpoint }),
   pushRebind: (endpoint: string) =>
     send<{ rebound: boolean }>('POST', '/push/rebind', { endpoint }),
+  /** the store app's alerts (APNs/FCM token), tied to this session (ADR 0044 §5) */
+  pushDevice: (d: { platform: 'ios' | 'android'; token: string; appVersion: string }) =>
+    send<{ registered: true }>('POST', '/push/devices', d),
+  pushDeviceRemove: (token: string) =>
+    send<{ registered: false }>('POST', '/push/devices/remove', { token }),
 
   home: () => get<Home>('/home'),
   party: () => get<PartyView>('/party'),

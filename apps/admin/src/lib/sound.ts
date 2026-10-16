@@ -20,18 +20,28 @@ function audio(): AudioContext | null {
   return ctx;
 }
 
+/** [multiple of the fundamental, gain]: the marimba's partials */
+export const PARTIALS: readonly (readonly [number, number])[] = [
+  [1, 1],
+  [4, 0.28],
+  [10, 0.06],
+];
+
+/** "pedido novo" as [Hz, start s, gain, length s]: also rendered into the app's notification
+ *  sound (scripts/render-chime.ts), so the lock screen rings like the open app */
+export const NEW_ORDER: readonly (readonly [number, number, number, number])[] = [
+  [659.25, 0, 0.55, 1.1],
+  [880, 0.16, 0.6, 1.4],
+  [1760, 0.32, 0.12, 0.9],
+];
+
 function note(ac: AudioContext, freq: number, at: number, gain: number, length = 1.1) {
   const out = ac.createGain();
   out.gain.setValueAtTime(0.0001, at);
   out.gain.exponentialRampToValueAtTime(gain, at + 0.008);
   out.gain.exponentialRampToValueAtTime(0.0001, at + length);
   out.connect(ac.destination);
-  const partials: [number, number][] = [
-    [1, 1],
-    [4, 0.28],
-    [10, 0.06],
-  ];
-  for (const [mult, g] of partials) {
+  for (const [mult, g] of PARTIALS) {
     const osc = ac.createOscillator();
     const pg = ac.createGain();
     osc.type = 'sine';
@@ -50,9 +60,7 @@ export function chimeNewOrder() {
   const ac = audio();
   if (!ac || volume === 0) return;
   const t = ac.currentTime + 0.02;
-  note(ac, 659.25, t, 0.55 * volume);
-  note(ac, 880, t + 0.16, 0.6 * volume, 1.4);
-  note(ac, 1760, t + 0.32, 0.12 * volume, 0.9);
+  for (const [freq, at, gain, length] of NEW_ORDER) note(ac, freq, t + at, gain * volume, length);
 }
 
 export function chimePaid() {

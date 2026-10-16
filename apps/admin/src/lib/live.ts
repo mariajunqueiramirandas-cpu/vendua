@@ -372,10 +372,14 @@ export function useLiveStream(enabled: boolean) {
     window.addEventListener('offline', down);
     // a closed laptop lid or a backgrounded phone misses events: catch up on return. The app's
     // WebView is suspended in the background, so its stream may be long dead: open a new one
+    let resumed = 0;
     const vis = () => {
       if (document.visibilityState !== 'visible') return;
       void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      // the app hears both visibilitychange and the shell's resume: one reconnect for the two
       if (platform.shell && !closed) {
+        if (Date.now() - resumed < 2000) return;
+        resumed = Date.now();
         set({ streaming: false, presence: null });
         failures = 0;
         open();
@@ -383,6 +387,7 @@ export function useLiveStream(enabled: boolean) {
       } else check();
     };
     document.addEventListener('visibilitychange', vis);
+    window.addEventListener('vendua:resume', vis);
     return () => {
       closed = true;
       clearTimeout(retry);
@@ -391,6 +396,7 @@ export function useLiveStream(enabled: boolean) {
       window.removeEventListener('online', up);
       window.removeEventListener('offline', down);
       document.removeEventListener('visibilitychange', vis);
+      window.removeEventListener('vendua:resume', vis);
     };
   }, [enabled]);
 }
