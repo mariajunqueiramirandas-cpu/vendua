@@ -109,12 +109,15 @@ export function mountHome(d: AdminDeps) {
             `
           : [],
         setupChecklist(tx, t.id, s),
+        // each order once, at its latest step: four steps of one order pushed the others out
         tx`
-          select e.at, e.to_state as "to", e.from_state as "from", e.actor, o.id as "orderId", o.number,
-                 o.customer ->> 'name' as name, o.total_cents as "totalCents"
-          from order_events e join orders o on o.id = e.order_id
-          where e.tenant_id = ${t.id} and e.at > now() - interval '24 hours'
-          order by e.at desc limit 12
+          select * from (
+            select distinct on (e.order_id) e.at, e.to_state as "to", e.from_state as "from", e.actor,
+                   o.id as "orderId", o.number, o.customer ->> 'name' as name, o.total_cents as "totalCents"
+            from order_events e join orders o on o.id = e.order_id
+            where e.tenant_id = ${t.id} and e.at > now() - interval '24 hours'
+            order by e.order_id, e.at desc, e.id desc
+          ) last order by at desc limit 8
         `,
         tx<{ visitors: number; carts: number }[]>`
           select count(distinct session_id) filter (where name in ('page_view', 'product_view'))::int as visitors,

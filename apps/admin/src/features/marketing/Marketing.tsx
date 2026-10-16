@@ -17,6 +17,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { whatsappUrl } from '@vendua/kernel/rules';
+import { useSearchParams } from 'react-router-dom';
 import {
   api,
   ApiError,
@@ -303,6 +304,20 @@ function Share() {
 function Coupons({ coupons }: { coupons: Coupon[] }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  // Buscar's "novo cupom" lands here
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    if (params.get('novo') !== 'cupom') return;
+    setOpen(true);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('novo');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [params, setParams]);
   const [editing, setEditing] = useState<string | null>(null);
   const setList = (list: Coupon[]) =>
     qc.setQueryData(qk.marketing, (m: M | undefined) => (m ? { ...m, coupons: list } : m));
