@@ -9,8 +9,11 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ADMIN = 'apps/admin';
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const NATIVE_PKG = /^@(?:capacitor|capacitor-community|capgo)\//;
 
 /** The Capacitor side of a package.json: name → version, sorted. */
@@ -44,7 +47,11 @@ export function verdict({ files, basePkg, headPkg, baseApp, headApp }) {
 }
 
 function git(args) {
-  return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 const at = (ref, path) => {
   try {
@@ -80,9 +87,9 @@ if (import.meta.main) {
   const why = verdict({
     files,
     basePkg: at(base, `${ADMIN}/package.json`),
-    headPkg: readFileSync(`${ADMIN}/package.json`, 'utf8'),
+    headPkg: readFileSync(join(ROOT, ADMIN, 'package.json'), 'utf8'),
     baseApp: at(base, `${ADMIN}/app-version.json`),
-    headApp: readFileSync(`${ADMIN}/app-version.json`, 'utf8'),
+    headApp: readFileSync(join(ROOT, ADMIN, 'app-version.json'), 'utf8'),
   });
   if (why.length) {
     console.error(

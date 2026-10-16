@@ -4,7 +4,7 @@
 //   CHROMIUM=/opt/pw-browsers/chromium bun scripts/app-assets.ts
 import { chromium } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -57,6 +57,10 @@ execFileSync(
   ],
   { cwd: root, stdio: 'inherit' },
 );
+
+// the Capacitor template's splash art, which @capacitor/assets leaves beside its own
+for (const f of ['splash-2732x2732.png', 'splash-2732x2732-1.png', 'splash-2732x2732-2.png'])
+  rmSync(`${root}ios/App/App/Assets.xcassets/Splash.imageset/${f}`, { force: true });
 
 // Android 13's themed icon: the status-bar bag (res/drawable/ic_launcher_monochrome.xml)
 for (const f of ['ic_launcher.xml', 'ic_launcher_round.xml']) {
