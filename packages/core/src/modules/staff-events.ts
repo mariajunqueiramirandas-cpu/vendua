@@ -258,6 +258,10 @@ export interface StaffEventMap {
     referral?: Opt<string>;
   };
   'store.onboarding': { step: OnboardingStep };
+  /** staff zeroed the store from the CRM: it is back at the start of onboarding */
+  'store.reset': { storeName: Name; slug: string };
+  /** staff deleted the store from the CRM (recorded without a tenant: its own events went too) */
+  'store.deleted': { storeName: Name; slug: string; owner: Opt<Name> };
   'billing.paid': {
     storeName: Name;
     invoiceId: Id;
@@ -622,6 +626,20 @@ export const STAFF_EVENT_KINDS: Catalog = {
     label: 'passo do onboarding',
     hint: 'edita o cartão da loja; ligado, também avisa no canal',
     anchor: { role: 'follows', key: (_d, t) => `onboarding:${t}` },
+  },
+  'store.reset': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'loja zerada',
+    hint: 'a equipe zerou a loja no CRM — ela volta ao começo do onboarding',
+  },
+  'store.deleted': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'loja apagada',
+    hint: 'a equipe apagou a loja no CRM, com a assinatura cancelada no Mercado Pago',
   },
   'billing.paid': {
     category: 'assinaturas',

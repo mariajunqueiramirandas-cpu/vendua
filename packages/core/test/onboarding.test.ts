@@ -117,6 +117,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
       skipped: [],
       finishedAt: null,
       dismissedAt: null,
+      resetAt: null,
       checklist: [
         { id: 'profile', label: 'Logo e WhatsApp da loja', done: false, href: '/loja/perfil' },
         { id: 'hours', label: 'Horário de funcionamento', done: false, href: '/loja/horarios' },
@@ -137,6 +138,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('onboarding (db)', () => {
       dismissed: false,
       from: 'signup',
       step: null,
+      resetAt: null,
     });
     expect(home.body.checklist).toEqual(r.body.checklist);
   });

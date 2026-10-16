@@ -816,7 +816,14 @@ export interface Home {
   }[];
   checklist: ChecklistItem[];
   /** where the store's setup stands (the onboarding at /bem-vindo) */
-  onboarding: { finished: boolean; dismissed: boolean; from: 'signup' | null; step: string | null };
+  onboarding: {
+    finished: boolean;
+    dismissed: boolean;
+    from: 'signup' | null;
+    step: string | null;
+    /** staff reset the store then: devices forget their saved place in the wizard */
+    resetAt: string | null;
+  };
   totalOrders: number;
   feed: {
     at: string;
@@ -1571,6 +1578,8 @@ export interface Onboarding {
   skipped: string[];
   finishedAt: string | null;
   dismissedAt: string | null;
+  /** staff reset the store then (CRM): devices forget their saved place in the wizard */
+  resetAt: string | null;
   checklist: ChecklistItem[];
 }
 

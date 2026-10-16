@@ -44,7 +44,7 @@ interface Row {
   live: boolean;
 }
 
-async function gatewayAlive(tx: Sql): Promise<boolean> {
+export async function gatewayAlive(tx: Sql): Promise<boolean> {
   const rows = await tx`
     select 1 from wa_gateways where seen_at > now() - ${GATEWAY_FRESH}::interval limit 1`;
   return rows.length > 0;

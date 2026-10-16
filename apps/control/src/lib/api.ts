@@ -747,6 +747,19 @@ const apiBase = {
       method: 'POST',
       body: JSON.stringify({ confirm }),
     }),
+  /** `key` stays the same across retries of one confirmation, so a lost answer replays */
+  resetStore: (id: string, confirm: string, key: string) =>
+    req<{ resetAt: string; rows: number }>(`/stores/${id}/reset`, {
+      method: 'POST',
+      headers: { 'idempotency-key': key },
+      body: JSON.stringify({ confirm }),
+    }),
+  deleteStore: (id: string, confirm: string, key: string) =>
+    req<{ deleted: true; slug: string }>(`/stores/${id}/delete`, {
+      method: 'POST',
+      headers: { 'idempotency-key': key },
+      body: JSON.stringify({ confirm }),
+    }),
   waQr: () => req<WaQr>('/wa/qr'),
   waPairCode: (phone: string) =>
     req<{ code: string | null }>('/wa/pair-code', {

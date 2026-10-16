@@ -18,6 +18,7 @@ import { isStoreId, useBillingStore, useCustomer } from './queries.ts';
 import { Spark } from './Spark.tsx';
 import { domainToDo, siteOpen } from './storeRows.tsx';
 import { AiPanel, ChannelsPanel, InvoicesPanel, UsersPanel } from './storePanels.tsx';
+import { StoreDangerPanel } from './StoreDanger.tsx';
 import { StoreTimeline } from './StoreTimeline.tsx';
 
 const gone = (e: unknown) => e instanceof ApiError && (e.status === 404 || e.status === 400);
@@ -210,7 +211,8 @@ export default function StorePage() {
         </a>
       }
     >
-      <div className="flex flex-col gap-3 md:gap-4">
+      {/* bottom room: the floating "configuração" pill would sit on "apagar" */}
+      <div className="flex flex-col gap-3 pb-12 md:gap-4">
         <Header d={d} />
         <Kpis d={d} />
         <div className="grid items-start gap-3 md:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
@@ -226,6 +228,7 @@ export default function StorePage() {
             <ChannelsPanel d={d} />
           </div>
         </div>
+        <StoreDangerPanel store={s} />
       </div>
     </Page>
   );
