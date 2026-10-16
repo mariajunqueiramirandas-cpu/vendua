@@ -1063,6 +1063,31 @@ function test(ev: Ev<'discord.test'>, ctx: RenderCtx): Rendered {
   };
 }
 
+function storeReset(ev: Ev<'store.reset'>, ctx: RenderCtx): Rendered {
+  return {
+    card: card(
+      ev,
+      {
+        title: `🧹 ${esc(ev.data.storeName)} foi zerada`,
+        description: `a equipe zerou ${esc(ev.data.slug)} no CRM: a loja volta ao começo do onboarding`,
+      },
+      row(linkButton('ver loja', ctx.storeUrl)),
+    ),
+  };
+}
+
+function storeDeleted(ev: Ev<'store.deleted'>): Rendered {
+  const d = ev.data;
+  return {
+    card: card(ev, {
+      title: `🗑️ ${esc(d.storeName)} foi apagada`,
+      description: [esc(d.slug), d.owner ? `dono ${esc(d.owner)}` : null]
+        .filter(Boolean)
+        .join(' · '),
+    }),
+  };
+}
+
 function reviewLogin(ev: Ev<'auth.review_login'>): Rendered {
   return {
     card: card(ev, {
@@ -1240,6 +1265,8 @@ const STANDALONE: Standalone = {
   'system.error': systemError,
   'discord.test': test,
   'auth.review_login': reviewLogin,
+  'store.reset': storeReset,
+  'store.deleted': storeDeleted,
   'digest.daily': (ev, ctx) => ({ card: digestCard(ev, ev.data, ctx) }),
 };
 

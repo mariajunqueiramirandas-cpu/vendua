@@ -263,6 +263,7 @@ export function mountHome(d: AdminDeps) {
           dismissed: !!ob.dismissedAt,
           from: ob.from,
           step: ob.step,
+          resetAt: ob.resetAt,
         },
         totalOrders,
         feed,

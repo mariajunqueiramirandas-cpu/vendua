@@ -90,6 +90,8 @@ export interface OnboardingState {
   skipped: string[];
   finishedAt: string | null;
   dismissedAt: string | null;
+  /** staff reset the store (modules/store-reset.ts): devices forget where the wizard stood */
+  resetAt: string | null;
 }
 
 export function onboardingOf(s: StoreSettingsRow): OnboardingState {
@@ -107,6 +109,7 @@ export function onboardingOf(s: StoreSettingsRow): OnboardingState {
       : [],
     finishedAt: at(j.finishedAt),
     dismissedAt: at(j.dismissedAt),
+    resetAt: at(j.resetAt),
   };
 }
 
