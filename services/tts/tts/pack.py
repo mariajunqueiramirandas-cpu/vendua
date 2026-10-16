@@ -332,6 +332,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-rotate", action="store_true", help="int8 transformer matrices without the Hadamard rotation")
     ap.add_argument("--int4", default="gptq", choices=("gptq", "rtn", "none"), help="the speech model's int4 copy")
     ap.add_argument("--tokenizer", help="for GPTQ's calibration (default: tokenizer.json beside the weights)")
+    ap.add_argument("--calib-takes", type=int, default=3, help="voices speaking each GPTQ calibration reply")
     a = ap.parse_args(argv)
     sd = read_safetensors(a.weights)
     cfg = ModelConfig.from_weights(sd)
@@ -340,7 +341,7 @@ def main(argv: list[str] | None = None) -> None:
     calib = None
     if a.int4 == "gptq":
         tok = Path(a.tokenizer) if a.tokenizer else Path(a.weights).with_name("tokenizer.json")
-        calib = gptq.calibrate(sd, cfg, voices["rafael"] if "rafael" in voices else next(iter(voices.values())), tok)
+        calib = gptq.calibrate(sd, cfg, list(voices.values()), tok, takes=a.calib_takes)
     p = pack(sd, voices, cfg, f32, rotated=not a.no_rotate, int4=a.int4 != "none", calib=calib)
     p.write(Path(a.out))
     print(f"{a.out}: {len(p.tensors)} tensors, {Path(a.out).stat().st_size / 1e6:.1f} MB", file=sys.stderr)
