@@ -11,7 +11,7 @@ Everything the engine would otherwise do per request is done here, once:
   a Hadamard matrix and D random signs, and the engine turns each input x into x D H as it
   quantizes it. The product is unchanged, and neither side keeps the outliers that set its scale.
 - The transformer's matrices are also stored as int4 (one scale per row), quantized by GPTQ on
-  inputs from calibration replies (tts/gptq.py). The engine runs int4 or int8 (TTS_SPEECH_BITS).
+  inputs from calibration replies (tts/gptq.py). The engine runs int8, or int4 (TTS_SPEECH_BITS).
 - The audio decoder's transformer and first conv are int8 the same way, and also float32 for
   CPUs with AMX, which run the whole decoder in bfloat16. Its later convs stay float32, packed in
   panels of 32 columns: int8 there puts audible noise into pauses.

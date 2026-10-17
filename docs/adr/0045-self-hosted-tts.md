@@ -48,11 +48,11 @@ design and every number):
   is ready in 2 s on AVX2 and under 1 s on AMX.
 - **Kernels picked at startup** from the CPU (AVX2, AVX-VNNI, AVX-512 or AMX), so one image runs on
   whatever host the VPS is.
-- **The speech model in 4 bits.** Its matrices are Hadamard-rotated (QuaRot), which also makes
-  int8 more precise than before, and quantized to int4 by GPTQ at build time, halving what each
-  step reads. Transcribed by `stt`, the int4 voice is not told apart from float32 (sign test over
-  294 clips), and its spectrum is within 0.2 dB. `TTS_SPEECH_BITS=8` goes back to int8 without a
-  rebuild.
+- **The speech model in int8, Hadamard-rotated (QuaRot)**, which leaves it 2.3% off float32
+  instead of 2.9%. An int4 copy, by GPTQ calibrated on the voices, halves what each step reads,
+  but it costs words. Over 25 voices × 98 replies, `stt` misses 14% more of them in int4 (11.2% vs
+  9.8% WER, sign test p < 1e-5). On 294 clips of one voice, that difference didn't show. So int4
+  is opt-in: `TTS_SPEECH_BITS=4`, without a rebuild.
 - **A Brazilian-Portuguese normalizer** in front: the tokenizer has no digits, so prices,
   installments, times and dates are spelled out ("R$ 49,90 em 10x" → "quarenta e nove reais e
   noventa centavos em dez vezes").

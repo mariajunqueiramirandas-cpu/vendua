@@ -46,21 +46,21 @@ Errors are `{error: code}` with a stable status:
 
 ## Env
 
-| Var                     | Default        | Notes                                                        |
-| ----------------------- | -------------- | ------------------------------------------------------------ |
-| `TTS_SECRET`            | —              | unset = every speak call gets 503 (idle)                     |
-| `TTS_ADDR`              | `0.0.0.0:8793` |                                                              |
-| `TTS_THREADS`           | CPU quota      | follows compose `cpus` (cgroup); split as in "Threads"       |
-| `TTS_MAX_BATCH`         | `8`            | text chunks per speech-model step                            |
-| `TTS_MAX_ACTIVE`        | `16`           | requests in flight; beyond it, 503 `overloaded`              |
-| `TTS_MAX_CHARS`         | `2000`         | about 2.5 minutes of speech                                  |
-| `TTS_REQUEST_TIMEOUT_S` | `120`          |                                                              |
-| `TTS_VOICE`             | `rafael`       | the default voice; `/healthz` lists them all                 |
-| `TTS_OPUS_BITRATE`      | `32000`        |                                                              |
-| `TTS_SPEECH_BITS`       | `4`            | the speech model's weights: `4` (GPTQ) or `8`; see "Numbers" |
-| `TTS_ISA`               | best available | `avx2`, `avxvnni`, `avx512` or `amx`, to compare kernels     |
-| `PK_MIMI_MODE`          | timed          | `f32`, `q12` or `q8`: the decoder's matrices (not with AMX)  |
-| `PK_PROFILE`            | —              | `1`: the engine times its sections (`Engine.profile_dump`)   |
+| Var                     | Default        | Notes                                                                              |
+| ----------------------- | -------------- | ---------------------------------------------------------------------------------- |
+| `TTS_SECRET`            | —              | unset = every speak call gets 503 (idle)                                           |
+| `TTS_ADDR`              | `0.0.0.0:8793` |                                                                                    |
+| `TTS_THREADS`           | CPU quota      | follows compose `cpus` (cgroup); split as in "Threads"                             |
+| `TTS_MAX_BATCH`         | `8`            | text chunks per speech-model step                                                  |
+| `TTS_MAX_ACTIVE`        | `16`           | requests in flight; beyond it, 503 `overloaded`                                    |
+| `TTS_MAX_CHARS`         | `2000`         | about 2.5 minutes of speech                                                        |
+| `TTS_REQUEST_TIMEOUT_S` | `120`          |                                                                                    |
+| `TTS_VOICE`             | `rafael`       | the default voice; `/healthz` lists them all                                       |
+| `TTS_OPUS_BITRATE`      | `32000`        |                                                                                    |
+| `TTS_SPEECH_BITS`       | `8`            | the speech model's weights: `8`, or `4` (faster, more words missed; see "Numbers") |
+| `TTS_ISA`               | best available | `avx2`, `avxvnni`, `avx512` or `amx`, to compare kernels                           |
+| `PK_MIMI_MODE`          | timed          | `f32`, `q12` or `q8`: the decoder's matrices (not with AMX)                        |
+| `PK_PROFILE`            | —              | `1`: the engine times its sections (`Engine.profile_dump`)                         |
 
 ## Text (`tts/text.py`)
 
@@ -106,15 +106,21 @@ neither side keeps the few large values that set its quantization scale, so int8
 the speech model's hidden states went from 2.85% to 2.39% off float32, and its latents from 1.88%
 to 1.38%, for nothing measurable in speed.
 
-**int4 (GPTQ).** The transformer's matrices are also stored as 4-bit codes with one scale per
-row, half the bytes of int8. Rounding to nearest leaves the hidden states 35% off; GPTQ
+**int4 (GPTQ), opt-in.** The transformer's matrices are also stored as 4-bit codes with one scale
+per row, half the bytes of int8. Rounding to nearest leaves the hidden states 35% off; GPTQ
 (`tts/gptq.py`) quantizes one input column at a time and pushes each column's error onto the
-ones left, weighted by the inputs' covariance on 32 calibration replies run through the numpy
-model, which brings it to 12%. Per-row scales: groups of 128 or 32 only reach 10% and 9%. The
+ones left, weighted by the inputs' covariance on 32 calibration replies, each spoken by 3 of the
+voices, run through the numpy model. That brings it to 10–12% on every voice. Calibrating on
+`rafael` alone gave him 12% and the others 15–20%, and cut short more of their clips. The
 kernels take the codes as unsigned (w + 8) against 8-bit activations: on AVX2 `vpmaddubsw`
 multiplies them 32 at a time and cannot saturate (a pair is at most 2 × 15 × 127), so four steps
-of 8 sum in int16 before one `vpmaddwd`; VNNI sets use `vpdpbusd`. `TTS_SPEECH_BITS` picks int4 or
-int8 at startup; both are in the file.
+of 8 sum in int16 before one `vpmaddwd`; VNNI sets use `vpdpbusd`.
+
+It isn't the default because it costs words: over 2,450 clips, int4 misses 14% more of them than
+int8 (below). The loss is in the weights, not the 8-bit activations (2.2% with float weights), and
+spread over all of them: groups of 128 or 32 instead of per-row scales reach only 10% and 9%, and
+int4 in any one kind of matrix alone (just the attention output, 8% of the weights) already
+doubles int8's 2.3%. `TTS_SPEECH_BITS=4` trades that for speed; both copies are in the file.
 
 **Kernels.** `libpocket.so` carries four kernel sets, each file built for its instruction set,
 and picks one at startup from cpuid: AVX2 (any x86-64 server since 2013), AVX-VNNI (AVX2 with
@@ -201,10 +207,57 @@ units, phones, loanwords, short and long replies), three takes each in Rafael's 
 | AVX2, 12-bit decoder | 7.60% | 4.45% | 68/78              | p = 0.35             |
 | AVX-512              | 7.41% | 4.37% | 66/78              | p = 0.44             |
 | AMX                  | 7.53% | 4.40% | 66/78              | p = 0.41             |
+| AVX2, rotated int8   | 6.56% | 3.43% | 69/78              | p = 0.54             |
 
-No path is told apart from float32. What's lost is lost on all of them: a sentence skipped or
-speech ending early in a few long replies, single letters ("P, M ou G"), English words (Pix,
-site, kit, delivery, cashback, smartwatch), and a CEP read digit by digit.
+The last row is the speech model as it runs now. The rows above it predate the rotation. No path
+is told apart from float32. What's lost is lost on all of them: a sentence skipped or speech
+ending early in a few long replies, single letters ("P, M ou G"), English words (Pix, site,
+kit, delivery, cashback, smartwatch), and a CEP read digit by digit.
+
+The same 98 replies, one take in each of the 25 voices (2,450 clips, 35,325 words), on AMX:
+
+| Speech model                         | WER    | CER   | Prices heard right | Clips better / worse than int8 |
+| ------------------------------------ | ------ | ----- | ------------------ | ------------------------------ |
+| int8 (default)                       | 9.80%  | 6.61% | 545/650            |                                |
+| int4, GPTQ calibrated on `rafael`    | 11.18% | 7.86% | 523/650            | 421 / 563, p = 7e-6            |
+| int4, GPTQ calibrated on every voice | 11.17% | 7.90% | 522/650            | 402 / 544, p = 4e-6            |
+
+Calibrating on every voice spread the loss evenly instead of concentrating it on the voices
+furthest from `rafael`: for azelma, int4's WER went from 26.3% back to 20.2%, and int4 clips no
+longer come out shorter (median length 1.000× int8's, from 0.986×). It didn't remove the loss.
+
+By voice (one take each, so ±1.5 points):
+
+| Voice            | int8  | int4  |
+| ---------------- | ----- | ----- |
+| `giovanni`       | 5.2%  | 6.0%  |
+| `daan`           | 5.5%  | 6.7%  |
+| `peter_yearsley` | 5.7%  | 4.8%  |
+| `caro_davy`      | 5.7%  | 6.7%  |
+| `mary`           | 6.2%  | 7.6%  |
+| `eve`            | 6.3%  | 6.7%  |
+| `stuart_bell`    | 6.4%  | 4.2%  |
+| `george`         | 6.6%  | 6.1%  |
+| `charles`        | 6.8%  | 8.5%  |
+| `javert`         | 7.9%  | 8.6%  |
+| `rafael`         | 8.1%  | 6.9%  |
+| `juergen`        | 8.1%  | 7.7%  |
+| `paul`           | 8.7%  | 11.2% |
+| `marius`         | 8.7%  | 10.0% |
+| `bill_boerst`    | 8.9%  | 11.7% |
+| `lola`           | 9.3%  | 11.3% |
+| `vera`           | 9.8%  | 10.4% |
+| `eponine`        | 10.8% | 14.3% |
+| `fantine`        | 11.3% | 13.2% |
+| `michael`        | 11.5% | 17.1% |
+| `alba`           | 11.5% | 11.3% |
+| `jane`           | 11.7% | 13.8% |
+| `azelma`         | 16.8% | 20.2% |
+| `anna`           | 17.4% | 18.8% |
+| `estelle`        | 30.0% | 35.6% |
+
+Voices are the larger lever: `rafael`, the native speaker, is mid-pack, and `estelle` loses
+almost a third of the words. A store's voice should come from the top of this table.
 
 Memory: 290 MB resident after replies in one voice. 170 MB of it is the mapped model file (the
 packed file is 230 MB with 25 voices; an unused voice costs disk only). The rest is Python, the

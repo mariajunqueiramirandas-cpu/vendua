@@ -5,7 +5,7 @@ bench_replies.txt doesn't use, and keeps every transformer matrix's input. Each 
 quantized one input column at a time, in decreasing order of the input's energy, and each
 column's rounding error is pushed onto the columns not yet quantized, weighted by the inputs'
 covariance, so the matrix's outputs on those inputs move as little as int4 allows. Round to
-nearest leaves the speech model's hidden states 35% off float32; GPTQ, 12%.
+nearest leaves the speech model's hidden states 35% off float32; GPTQ, 10-12% on every voice.
 """
 
 from __future__ import annotations

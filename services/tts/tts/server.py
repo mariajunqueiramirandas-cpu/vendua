@@ -53,7 +53,7 @@ class Config:
         self.voice = env.get("TTS_VOICE", "rafael")
         self.bitrate = int(env.get("TTS_OPUS_BITRATE", "32000"))
         self.isa = env.get("TTS_ISA") or None  # avx2 | avxvnni | avx512 | amx; default: the best the CPU has
-        self.speech_bits = int(env.get("TTS_SPEECH_BITS", "4"))  # the speech model's weights: 4 or 8
+        self.speech_bits = int(env.get("TTS_SPEECH_BITS", "8"))  # the speech model's weights: 8, or 4 (faster, more words missed)
 
 
 class App:
