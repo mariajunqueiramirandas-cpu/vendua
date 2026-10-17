@@ -141,6 +141,7 @@ jobs:
           cache-dependency-path: services/tts/requirements.txt
       - run: pip install -r requirements.txt
       - run: make -C engine -j"$(nproc)" CXXFLAGS="-O3 -Werror"
+      - run: make -C engine test CXXFLAGS="-O3 -Werror"
       - run: python -m unittest discover -s tests -t . -v
 
   # validates the merge ref (PR) / pushed commit (main) — the code that lands. Three runners at once:

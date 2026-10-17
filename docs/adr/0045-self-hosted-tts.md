@@ -43,16 +43,17 @@ design and every number):
 - **Same output as the reference.** Tests check the engine against a plain numpy Pocket TTS on
   every kernel set the CPU has. Transcribed by `stt`, its speech has the reference's WER (4.1–4.6%
   vs 4.2% on 738 words).
-- **6.6× the reference's speed on the CPUs every server has (AVX2):** 11× real time on 2 cores,
-  19× on 4. With AVX-512 it's 16× and 27–30×; with AMX, 21–28× and 34–55×. A 22-second reply
-  is ready in 2 s on AVX2 and under 1 s on AMX.
+- **6.8× the reference's speed on the CPUs every server has (AVX2):** 11.5× real time on 2 cores
+  (14× with 4 replies at once), 18–24× on 4. With AVX-512 it's 16–21× and 27–34×; with AMX,
+  20–27× and 32–54×. A 22-second reply is ready in 2 s on AVX2 and under 1 s on AMX.
 - **Kernels picked at startup** from the CPU (AVX2, AVX-VNNI, AVX-512 or AMX), so one image runs on
   whatever host the VPS is.
-- **The speech model in 4 bits.** Its matrices are Hadamard-rotated (QuaRot), which also makes
-  int8 more precise than before, and quantized to int4 by GPTQ at build time, halving what each
-  step reads. Transcribed by `stt`, the int4 voice is not told apart from float32 (sign test over
-  294 clips), and its spectrum is within 0.2 dB. `TTS_SPEECH_BITS=8` goes back to int8 without a
-  rebuild.
+- **The speech model in int8, Hadamard-rotated (QuaRot)**, which leaves it 2.3% off float32
+  instead of 2.9%. An int4 copy, by GPTQ calibrated on the voices, halves what each step reads (a
+  reply 1.6× sooner on AMX, about the same on AVX2, where the decoder sets the pace), but it
+  costs words. Over 25 voices × 98 replies, `stt` misses 14% more of them in int4 (11.2% vs
+  9.8% WER, sign test p < 1e-5). On 294 clips of one voice, that difference didn't show. So int4
+  is opt-in: `TTS_SPEECH_BITS=4`, without a rebuild.
 - **A Brazilian-Portuguese normalizer** in front: the tokenizer has no digits, so prices,
   installments, times and dates are spelled out ("R$ 49,90 em 10x" → "quarenta e nove reais e
   noventa centavos em dez vezes").
@@ -65,7 +66,7 @@ English, French, Italian, Spanish, German and Dutch speakers' voices speaking Po
 
 ## Consequences
 
-- About 300 MB of RAM and the cores compose gives it. Under load, throughput grows with cores
+- About 330 MB of RAM and the cores compose gives it. Under load, throughput grows with cores
   until the decoder saturates them.
 - The engine is ours to maintain: ~4,000 lines of C++ for one model. A new Pocket TTS release is
   a re-pack if its shapes stay the same. Tests against the numpy reference catch a packing or

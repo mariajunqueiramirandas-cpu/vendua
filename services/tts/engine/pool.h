@@ -54,9 +54,9 @@ class Pool {
   }
 
   void loop() {
-    uint64_t seen = gen_.load(std::memory_order_acquire);
+    uint32_t seen = 0;  // gen_ at construction: a thread that starts after the first run() still takes it
     for (;;) {
-      uint64_t g;
+      uint32_t g;
       int spins = 0;
       while ((g = gen_.load(std::memory_order_acquire)) == seen) {
         if (++spins < kSpins)
@@ -74,7 +74,7 @@ class Pool {
   static constexpr int kSpins = 1 << 15;  // ~1 ms of pause before sleeping
   int n_;
   std::vector<std::thread> threads_;
-  std::atomic<uint64_t> gen_{0};
+  std::atomic<uint32_t> gen_{0};  // 32 bits: atomic wait is a futex on it, and only == is ever asked
   std::atomic<int> next_{0}, checkin_{0};
   bool stop_ = false;
   int tasks_ = 0;

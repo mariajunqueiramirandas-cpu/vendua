@@ -5,7 +5,7 @@ bench_replies.txt doesn't use, and keeps every transformer matrix's input. Each 
 quantized one input column at a time, in decreasing order of the input's energy, and each
 column's rounding error is pushed onto the columns not yet quantized, weighted by the inputs'
 covariance, so the matrix's outputs on those inputs move as little as int4 allows. Round to
-nearest leaves the speech model's hidden states 35% off float32; GPTQ, 12%.
+nearest leaves the speech model's hidden states 35% off float32; GPTQ, 10-12% on every voice.
 """
 
 from __future__ import annotations
@@ -54,9 +54,12 @@ CALIBRATION = [
 ]
 
 
-def calibrate(sd: dict[str, np.ndarray], cfg: ModelConfig, voice: dict[str, np.ndarray], tokenizer_path: Path,
-              steps: int = 30) -> dict[int, np.ndarray]:
-    """Inputs of the transformer's matrices on CALIBRATION, keyed 4 * layer + (qkv, o, ff1, ff2)."""
+def calibrate(sd: dict[str, np.ndarray], cfg: ModelConfig, voices: list[dict[str, np.ndarray]],
+              tokenizer_path: Path, takes: int = 3, steps: int = 30) -> dict[int, np.ndarray]:
+    """Inputs of the transformer's matrices on CALIBRATION, keyed 4 * layer + (qkv, o, ff1, ff2).
+
+    Each reply is spoken by `takes` voices, in turn. The voice changes every matrix's inputs, and
+    calibrating on one voice only leaves the others' hidden states half again as far off."""
     from tokenizers import Tokenizer
 
     tk = Tokenizer.from_file(str(tokenizer_path))
@@ -64,15 +67,17 @@ def calibrate(sd: dict[str, np.ndarray], cfg: ModelConfig, voice: dict[str, np.n
     lm = reference.FlowLM(sd, cfg)
     lm.tr.taps = {}
     rng = np.random.default_rng(0)
-    for text in CALIBRATION:
-        for chunk in chunker.split(normalize(text)):
-            cache, off = lm.prefill(voice, chunk.tokens)
-            latent = None
-            for _ in range(steps):
-                noise = (rng.standard_normal(cfg.ldim) * np.sqrt(0.3)).astype(np.float32)
-                latent, eos, cache, off = lm.step(cache, off, latent, noise)
-                if eos > -4.0:
-                    break
+    for n, text in enumerate(CALIBRATION):
+        for j in range(min(takes, len(voices))):
+            voice = voices[(n * takes + j) % len(voices)]
+            for chunk in chunker.split(normalize(text)):
+                cache, off = lm.prefill(voice, chunk.tokens)
+                latent = None
+                for _ in range(steps):
+                    noise = (rng.standard_normal(cfg.ldim) * np.sqrt(0.3)).astype(np.float32)
+                    latent, eos, cache, off = lm.step(cache, off, latent, noise)
+                    if eos > -4.0:
+                        break
     return {k: np.concatenate(v).astype(np.float32) for k, v in lm.tr.taps.items()}
 
 

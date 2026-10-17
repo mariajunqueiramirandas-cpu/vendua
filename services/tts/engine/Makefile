@@ -33,10 +33,16 @@ $(OUT)/kern_amx.o: kern_amx.cpp $(HDR) | $(OUT)
 $(OUT)/%.o: %.cpp $(HDR) | $(OUT)
 	$(CXX) $(CXXFLAGS) $(BASE) -c $< -o $@
 
+$(OUT)/test_pool: test_pool.cpp pool.h | $(OUT)
+	$(CXX) $(CXXFLAGS) $(BASE) $< -o $@
+
+test: $(OUT)/test_pool
+	timeout 60 $(OUT)/test_pool
+
 $(OUT):
 	mkdir -p $@
 
 clean:
 	rm -rf $(OUT)
 
-.PHONY: clean
+.PHONY: clean test
