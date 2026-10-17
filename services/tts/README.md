@@ -116,9 +116,9 @@ kernels take the codes as unsigned (w + 8) against 8-bit activations: on AVX2 `v
 multiplies them 32 at a time and cannot saturate (a pair is at most 2 × 15 × 127), so four steps
 of 8 sum in int16 before one `vpmaddwd`; VNNI sets use `vpdpbusd`.
 
-It isn't the default because it costs words: over 2,450 clips, int4 misses 14% more of them than
-int8 (below). The loss is in the weights, not the 8-bit activations (2.2% with float weights), and
-spread over all of them: groups of 128 or 32 instead of per-row scales reach only 10% and 9%, and
+It isn't the default because it costs words: over 2,450 clips, `stt` misses 14% more words in
+int4 than in int8 (below). The loss is in the weights, not the 8-bit activations (2.2% with float
+weights), and spread over all the matrices: groups of 128 or 32 instead of per-row scales reach only 10% and 9%, and
 int4 in any one kind of matrix alone (just the attention output, 8% of the weights) already
 doubles int8's 2.3%. `TTS_SPEECH_BITS=4` trades that for speed; both copies are in the file.
 
@@ -149,33 +149,48 @@ sleep.
 Tried and not kept: int8 SEANet (noise in pauses); AVX-512 `vdpbf16ps` (slower than float32 FMA
 on Sapphire Rapids); Winograd for the 3-tap convs (its transforms cost what it saves); Winograd
 F(4,2) for the 2-tap upsampling convs (each conv 25–35% faster alone, nothing end to end: the
-2.5× larger transformed weights fall out of cache between chunks).
+2.5× larger transformed weights fall out of cache between chunks); the model file copied into
+transparent huge pages (no change); profile-guided optimization (within noise: a speech model step
+of 5.35 vs 5.53 ms, the decoder ±3%).
 
 ## Numbers
 
 Host: 4 vCPUs of a 2.1 GHz Xeon with AVX-512 VNNI and AMX, a shared VM, so ±15% between runs.
 Paths are forced with `TTS_ISA`; AVX2 is what any x86 server has.
 
-Speed, four store replies (35 s of audio), as RTFx (seconds of audio per second):
+Speed, four store replies (34–37 s of audio), as RTFx (seconds of audio per second):
 
-| Path                            | 2 cores | 2 cores, 4 at once | 4 cores | 4 cores, 4 at once | First audio |
-| ------------------------------- | ------- | ------------------ | ------- | ------------------ | ----------- |
-| pocket-tts (PyTorch), reference | 1.7     |                    |         |                    | 166 ms      |
-| this engine, AVX2               | 11.2    | 11.0               | 19.2    | 19.0               | 145 ms      |
-| this engine, AVX-512            | 16.2    | 16.7               | 26.8    | 29.6               | 97 ms       |
-| this engine, AMX                | 21.3    | 27.6               | 33.7    | 54.6               | 82 ms       |
+| Path                            | Speech model | 2 cores | 2 cores, 4 at once | 4 cores | 4 cores, 4 at once | First audio |
+| ------------------------------- | ------------ | ------- | ------------------ | ------- | ------------------ | ----------- |
+| pocket-tts (PyTorch), reference | float32      | 1.7     |                    |         |                    | 166 ms      |
+| this engine, AVX2               | int8         | 11.5    | 13.8               | 18.2    | 23.8               | 143 ms      |
+|                                 | int4         | 11.4    | 14.3               | 18.8    | 24.7               | 123 ms      |
+| this engine, AVX-VNNI           | int8         | 11.9    | 13.9               | 19.4    | 24.5               | 132 ms      |
+|                                 | int4         | 12.8    | 15.0               | 20.2    | 30.1               | 110 ms      |
+| this engine, AVX-512            | int8         | 16.1    | 20.9               | 26.5    | 34.1               | 103 ms      |
+|                                 | int4         | 19.6    | 24.6               | 27.9    | 44.4               | 71 ms       |
+| this engine, AMX                | int8         | 19.9    | 26.8               | 32.3    | 53.9               | 88 ms       |
+|                                 | int4         | 31.6    | 38.1               | 52.8    | 66.9               | 64 ms       |
 
-"First audio" is with 2 cores and nothing else running. In the image, under `--cpus 2`, a
-280-character reply (21.8 s of speech) comes back as Ogg/Opus in 2.0 s on AVX2 and 0.86 s on
-AMX. Encoding runs while the engine works, so it adds nothing.
+"First audio" is with 2 cores and nothing else running. AVX-VNNI is this host running that kernel
+set (Sapphire Rapids has the 256-bit VNNI instructions too); a Sierra Forest or Alder Lake core
+will differ. int4 pays where the speech model is the bottleneck: on AMX, whose decoder is fast,
+one reply comes 1.6× sooner. On AVX2 the decoder sets the pace, and int4 gains almost nothing. In
+the image, under `--cpus 2`, a 280-character reply (21.8 s of speech) comes back as Ogg/Opus in
+2.0 s on AVX2 and 0.86 s on AMX. Encoding runs while the engine works, so it adds nothing.
+
+With several replies at once, the speech model's thread also decodes ready chunks when it has
+nothing to step. With 4 replies at once that's +24% on AVX2 with 2 cores (10.7× → 13.3×), +18%
+with 4, +7% on AVX-512, and nothing on AMX, whose decoder never falls behind.
 
 One thread each, per step of the speech model and per second of audio from the decoder:
 
-| Path    | Speech model step | Decoder, per audio second                     |
-| ------- | ----------------- | --------------------------------------------- |
-| AVX2    | 4.7–5.1 ms        | 71–75 ms (8-bit; 12-bit 87 ms, float32 99 ms) |
-| AVX-512 | ~4.5 ms           | ~56 ms                                        |
-| AMX     | ~4.5 ms           | ~20 ms                                        |
+| Path     | Speech model step, int8 | int4   | Decoder, per audio second                  |
+| -------- | ----------------------- | ------ | ------------------------------------------ |
+| AVX2     | 5.5 ms                  | 3.7 ms | 75 ms (8-bit; 12-bit 87 ms, float32 99 ms) |
+| AVX-VNNI | 5.3 ms                  | 3.3 ms | 71 ms                                      |
+| AVX-512  | 4.9 ms                  | 2.8 ms | 47 ms                                      |
+| AMX      | 4.9 ms (AVX-512's)      | 2.8 ms | 18 ms                                      |
 
 The engine's first working version took 11.5 ms per step and ~190 ms per audio second on AVX2.
 The reference decoder takes 200–400 ms.
@@ -259,9 +274,10 @@ By voice (one take each, so ±1.5 points):
 Voices are the larger lever: `rafael`, the native speaker, is mid-pack, and `estelle` loses
 almost a third of the words. A store's voice should come from the top of this table.
 
-Memory: 290 MB resident after replies in one voice. 170 MB of it is the mapped model file (the
-packed file is 230 MB with 25 voices; an unused voice costs disk only). The rest is Python, the
-engine's buffers, and the bfloat16 or 7-bit decoder copies.
+Memory: 330 MB resident after replies in one voice with int8 (310 MB with int4). 186 MB of it is
+the mapped model file (158 MB with int4). The packed file is 268 MB with 25 voices and both copies
+of the speech model, and an unused voice or copy costs disk only. The rest is Python, the engine's
+buffers, and the bfloat16 or 7-bit decoder copies.
 
 ## Develop
 
