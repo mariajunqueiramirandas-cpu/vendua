@@ -5,6 +5,7 @@ import { transitionOrder, type OrderState } from '../orders.ts';
 import { MAX_ORDER_CENTS } from '../place-order.ts';
 import { enqueueOrderPrintTx } from '../printing/jobs.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
+import { drawInsumos } from '../insumos.ts';
 import { drawAddonStock, drawStock, modifierDemand, stockDemand } from '../stock.ts';
 import type { PdvMethod, PricedPdvLine } from './pricing.ts';
 
@@ -70,6 +71,21 @@ export async function insertPdvOrderTx(
     ),
     id,
   );
+  const insumos = await drawInsumos(
+    tx,
+    tenantId,
+    {
+      mode: o.mode,
+      lines: o.lines.map((l) => ({
+        productId: l.productId,
+        qty: l.qty,
+        modifierIds: l.price.modifierIds,
+        modifierQty: l.price.modifierQty,
+        combo: l.price.picks,
+      })),
+    },
+    id,
+  );
   const number = (
     await tx<{ n: number }[]>`
       select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenantId}
@@ -91,13 +107,14 @@ export async function insertPdvOrderTx(
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, tab_id, stock_drawn,
-                        addon_stock_drawn)
+                        addon_stock_drawn, ingredients_drawn, cost_cents)
     values (${id}, ${tenantId}, null, ${number},
             ${tx.json({ name: o.customer.name, phone: o.customer.phone ?? '' })}, ${o.customer.phone},
             ${tx.json(delivery as never)}, ${tx.json(o.payment as never)}, 'placed',
             ${o.subtotalCents}, ${o.delivery?.feeCents ?? 0}, ${o.discountCents}, 0, ${o.totalCents}, null, ${o.notes}, null,
             'pdv', ${o.tabId}, ${tx.json(stockDrawn)},
-            ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null})
+            ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
+            ${Object.keys(insumos.drawn).length ? tx.json(insumos.drawn) : null}, ${insumos.costCents})
   `;
   const [store] = await Promise.all([
     tx<{ name: string; printers: boolean }[]>`
@@ -108,7 +125,7 @@ export async function insertPdvOrderTx(
     ...o.lines.map(
       (l, sort) => tx`
         insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
-                                 modifiers, combo, line_total_cents, sort, note)
+                                 modifiers, combo, line_total_cents, sort, note, cost_cents)
         values (${tenantId}, ${id}, ${l.productId}, ${l.slug}, ${l.name}, ${l.qty}, ${l.unitPriceCents},
                 ${tx.json(l.price.snapshot.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents, qty: m.qty ?? 1 })))},
                 ${tx.json(
@@ -120,7 +137,7 @@ export async function insertPdvOrderTx(
                     qty: c.qty,
                   })) as never,
                 )},
-                ${l.lineTotalCents}, ${sort}, ${l.note})
+                ${l.lineTotalCents}, ${sort}, ${l.note}, ${insumos.lineCosts[sort] ?? null})
       `,
     ),
     tx`

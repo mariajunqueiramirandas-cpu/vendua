@@ -23,6 +23,7 @@ import {
   type Pricing,
   type PricingDefaults,
 } from '../modules/pricing-calc.ts';
+import { loadAllFichas, productFichaCost } from '../modules/insumos.ts';
 import {
   ADJUST_REASONS,
   adjustStock,
@@ -119,6 +120,9 @@ export interface AdminProductRow {
   waiting: number;
   /** unit cost; null = not stated */
   costCents: number | null;
+  /** the ficha técnica's cost with the dearest mode's packaging; null = no ficha. With one, the
+   *  margin counts it plus the pricing calculator's lines (its "outros custos") */
+  fichaCostCents: number | null;
   /** the pricing calculator's saved inputs */
   pricing: Pricing | null;
   /** what the current price really leaves after cost, fee and tax; null without a cost */
@@ -146,15 +150,23 @@ const productCols = (tx: Sql) => tx`
 
 /** availableNow and promoNow from the schedules, in the store's timezone; Core's stock calls */
 async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
-  const tz = rows.some((r) => r.availabilitySchedule || r.promoSchedule)
-    ? await storeTimezone(tx, tenantId)
-    : 'America/Sao_Paulo';
+  const [tz, fichas] = await Promise.all([
+    rows.some((r) => r.availabilitySchedule || r.promoSchedule)
+      ? storeTimezone(tx, tenantId)
+      : 'America/Sao_Paulo',
+    loadAllFichas(tx, tenantId),
+  ]);
   const now = new Date();
   for (const r of rows) {
     r.liveStatus = liveStatus(r.status, r.stockQuantity) as AdminProductRow['liveStatus'];
     r.lowStock = isLowStock(r.stockQuantity, r.lowStockThreshold);
-    r.marginBp = r.costCents == null ? null : marginBpAt(r.priceCents, r.costCents, r.pricing);
-    r.suggestedPriceCents = r.pricing ? suggestedPriceCents(costOf(r.pricing), r.pricing) : null;
+    r.fichaCostCents = productFichaCost(fichas, r.id)?.maxCents ?? null;
+    const cost =
+      r.fichaCostCents != null
+        ? r.fichaCostCents + (r.pricing ? costOf(r.pricing) : 0)
+        : r.costCents;
+    r.marginBp = cost == null ? null : marginBpAt(r.priceCents, cost, r.pricing);
+    r.suggestedPriceCents = r.pricing && cost != null ? suggestedPriceCents(cost, r.pricing) : null;
     r.availableNow = scheduleOpen(r.availabilitySchedule, now, tz);
     r.promoNow =
       !!r.promoSchedule &&
@@ -752,7 +764,24 @@ export function mountCatalog(d: AdminDeps) {
           select tenant_id, ${ng}, name, price_delta_cents, status, max_qty, description, image_url, sort
           from modifiers where group_id = ${g.id}
         `;
+        // each option's ficha goes to its copy (same name and place in the group)
+        await tx`
+          insert into recipe_lines (tenant_id, modifier_id, ingredient_id, qty_milli, mode, sort)
+          select r.tenant_id, nm.id, r.ingredient_id, r.qty_milli, r.mode, r.sort
+          from recipe_lines r
+            join modifiers om on om.id = r.modifier_id and om.group_id = ${g.id}
+            join lateral (
+              select id from modifiers where group_id = ${ng} and name = om.name and sort = om.sort
+              order by id limit 1
+            ) nm on true
+          where r.tenant_id = ${t.id}
+        `;
       }
+      await tx`
+        insert into recipe_lines (tenant_id, product_id, ingredient_id, qty_milli, mode, sort)
+        select tenant_id, ${copy}, ingredient_id, qty_milli, mode, sort from recipe_lines
+        where tenant_id = ${t.id} and product_id = ${id}
+      `;
       const slots = await tx<
         { id: string }[]
       >`select id from combo_slots where tenant_id = ${t.id} and product_id = ${id}`;
