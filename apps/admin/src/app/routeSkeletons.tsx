@@ -125,13 +125,13 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
     page('Cardápio', <RowsSkeleton rows={2} />, {
       wide: true,
       subtitle: false,
-      tabs: ['cardapio', 2],
+      tabs: ['cardapio', 3],
     }),
   planos: () =>
     page('Cardápio', <RowsSkeleton rows={3} />, {
       wide: true,
       subtitle: false,
-      tabs: ['cardapio', 3],
+      tabs: ['cardapio', 4],
     }),
   stock: () =>
     page(
@@ -141,6 +141,15 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
         <RowsSkeleton rows={6} />
       </div>,
       { wide: true, subtitle: false, tabs: ['cardapio', 1] },
+    ),
+  insumos: () =>
+    page(
+      'Cardápio',
+      <div className="space-y-4">
+        <ChipsSkeleton count={3} />
+        <RowsSkeleton rows={6} avatar={false} />
+      </div>,
+      { wide: true, subtitle: false, tabs: ['cardapio', 2] },
     ),
   store: () => page('Loja', <RowsSkeleton rows={6} />, { wide: true }),
   storeProfile: () => page('Perfil da loja', <SectionsSkeleton />),

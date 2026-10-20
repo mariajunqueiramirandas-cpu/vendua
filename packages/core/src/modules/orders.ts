@@ -6,6 +6,7 @@ import { mintLoyaltyRewards } from './customer.ts';
 import { enqueueOrderMessageTx, isOrderEvent } from '../store-whatsapp/messages.ts';
 import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { recordStaffEventTx, type OrderStep } from './staff-events.ts';
+import { restoreInsumos } from './insumos.ts';
 import { restoreStock } from './stock.ts';
 import { dueCharge, sinalOf } from './sinal.ts';
 
@@ -563,7 +564,10 @@ export async function transitionOrder(
     tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`.execute(),
     emitAdminTx(tx, tenantId, 'order.changed', orderId),
   ]);
-  if (to === 'cancelled') await restoreStock(tx, tenantId, orderId);
+  if (to === 'cancelled') {
+    await restoreStock(tx, tenantId, orderId);
+    await restoreInsumos(tx, tenantId, orderId);
+  }
   if (to === 'cancelled' || to === 'refunded') {
     // a counter sale's money leaves the drawer with it, while its caixa is still open (held, so
     // it can't close in between and lose the void from what it counted)

@@ -167,6 +167,43 @@ async function kpis(tx: Sql, tenantId: string, tz: string, from: string, to: str
   )[0]!;
 }
 
+/** What the period's sales cost (the CMV snapshotted at each sale), against what the items sold
+ *  for: a partial refund comes off each line in proportion, as in Relatórios. */
+async function cmvTotals(tx: Sql, tenantId: string, tz: string, from: string, to: string) {
+  return (
+    await tx<
+      {
+        salesCents: number;
+        costedSalesCents: number;
+        itemsCostCents: number;
+        packagingCents: number;
+        orders: number;
+      }[]
+    >`
+      with o as (
+        select id, total_cents, cost_cents, ${net(tx)} as net from orders
+        where tenant_id = ${tenantId} and ${kept(tx)}
+          and (placed_at at time zone ${tz})::date between ${from}::date and ${to}::date
+      ), i as (
+        select i.order_id, i.cost_cents,
+               case when o.total_cents > 0 then round(i.line_total_cents::numeric * o.net / o.total_cents)
+                    else i.line_total_cents end as sold
+        from order_items i join o on o.id = i.order_id
+        where i.tenant_id = ${tenantId}
+      )
+      select coalesce((select sum(sold) from i), 0)::int as "salesCents",
+             coalesce((select sum(sold) filter (where cost_cents is not null) from i), 0)::int as "costedSalesCents",
+             coalesce((select sum(cost_cents) from i), 0)::int as "itemsCostCents",
+             coalesce((select sum(o.cost_cents - coalesce((select sum(i.cost_cents) from i where i.order_id = o.id), 0))
+                       from o where o.cost_cents is not null), 0)::int as "packagingCents",
+             (select count(*) from o)::int as orders
+    `
+  )[0]!;
+}
+
+const bpOf = (part: number, whole: number) =>
+  whole > 0 ? Math.round((part * 10_000) / whole) : null;
+
 export function mountReports(d: AdminDeps) {
   const { admin, sql } = d;
   const { read, named } = handlers(d);
@@ -357,6 +394,80 @@ export function mountReports(d: AdminDeps) {
         payments,
         coupons,
         repeat,
+      };
+    }),
+  );
+
+  // CMV: what the sales cost, per product, with purchases and losses of insumos in the period
+  admin.get(
+    '/reports/cmv',
+    named('reports.cmv').read('manager', async (tx, t, _m, c) => {
+      const tz = await storeTz(tx, t.id);
+      const r = range(c, tz);
+      const [current, previous, products, moves] = await Promise.all([
+        cmvTotals(tx, t.id, tz, r.from, r.to),
+        cmvTotals(tx, t.id, tz, r.prevFrom, r.prevTo),
+        tx<
+          {
+            key: string;
+            name: string;
+            qty: number;
+            salesCents: number;
+            costedSalesCents: number;
+            costCents: number | null;
+          }[]
+        >`
+          with o as (
+            select id, total_cents, ${net(tx)} as net from orders
+            where tenant_id = ${t.id} and ${kept(tx)}
+              and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+          ), i as (
+            select coalesce(i.product_id::text, i.name) as key, i.name, i.qty, i.cost_cents,
+                   case when o.total_cents > 0 then round(i.line_total_cents::numeric * o.net / o.total_cents)
+                        else i.line_total_cents end as sold
+            from order_items i join o on o.id = i.order_id
+            where i.tenant_id = ${t.id}
+          )
+          -- a line sold before its product had a cost counts in sales, not in the margin
+          select key, (array_agg(name))[1] as name, sum(qty)::int as qty,
+                 sum(sold)::int as "salesCents",
+                 coalesce(sum(sold) filter (where cost_cents is not null), 0)::int as "costedSalesCents",
+                 sum(cost_cents)::int as "costCents"
+          from i
+          group by key order by "salesCents" desc limit 40
+        `,
+        tx<{ purchasesCents: number; lossesCents: number }[]>`
+          select coalesce(sum(cost_cents) filter (where reason = 'purchase'), 0)::int as "purchasesCents",
+                 coalesce(-sum(cost_cents) filter (where reason = 'loss'), 0)::int as "lossesCents"
+          from ingredient_movements
+          where tenant_id = ${t.id} and reason in ('purchase', 'loss')
+            and created_at >= ${r.from}::date::timestamp at time zone ${tz}
+            and created_at < (${r.to}::date + 1)::timestamp at time zone ${tz}
+        `,
+      ]);
+      const sum = (x: typeof current) => {
+        const cost = x.itemsCostCents + x.packagingCents;
+        // over the sales whose cost is known: an item with no ficha nor cost isn't free
+        const gross = x.costedSalesCents - cost;
+        return {
+          ...x,
+          costCents: cost,
+          grossCents: gross,
+          cmvBp: bpOf(cost, x.costedSalesCents),
+          grossBp: bpOf(gross, x.costedSalesCents),
+          coverageBp: bpOf(x.costedSalesCents, x.salesCents),
+        };
+      };
+      return {
+        range: r,
+        current: sum(current),
+        previous: sum(previous),
+        products: products.map((p) => ({
+          ...p,
+          marginBp:
+            p.costCents == null ? null : bpOf(p.costedSalesCents - p.costCents, p.costedSalesCents),
+        })),
+        ...moves[0]!,
       };
     }),
   );

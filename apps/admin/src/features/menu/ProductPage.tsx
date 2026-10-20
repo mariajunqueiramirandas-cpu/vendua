@@ -5,6 +5,7 @@ import {
   Calculator,
   CalendarBlank,
   Clock,
+  CookingPot,
   Copy,
   CopySimple,
   Eye,
@@ -66,6 +67,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { FichaSection, fichaSummary } from './insumos/FichaSection.tsx';
 import { pct, PricingSheet } from './PricingSheet.tsx';
 import { PromoEditor } from './PromoEditor.tsx';
 import { outsideNow } from './schedule.ts';
@@ -512,6 +514,16 @@ function Editor({
             ) : null}
           </Disclosure>
 
+          <Disclosure
+            id="ficha"
+            title="Ficha técnica"
+            icon={<CookingPot />}
+            summary={fichaSummary(p)}
+            defaultOpen={window.location.hash === '#ficha'}
+          >
+            <FichaSection p={p} />
+          </Disclosure>
+
           <Disclosure title="Opções" icon={<ListChecks />} summary={groupsSummary}>
             <OptionsEditor p={p} cats={cats} onSaved={put} />
           </Disclosure>
@@ -600,7 +612,11 @@ function Editor({
 
 /** Under the price: what one costs and what's left (Core's marginBp), or the way to work it out. */
 function CostLine({ p, onOpen }: { p: ProductDetail; onOpen: () => void }) {
-  const cost = p.costCents ?? null;
+  // with a ficha, Core's margin counts it plus the calculator's lines (its "outros custos")
+  const cost =
+    p.fichaCostCents != null
+      ? p.fichaCostCents + (p.pricing ? (p.costCents ?? 0) : 0)
+      : (p.costCents ?? null);
   const margin = p.marginBp ?? null;
   const target = p.pricing?.marginBp ?? null;
   return (

@@ -31,6 +31,11 @@ export const qk = {
   stockOverview: ['catalog', 'stock-overview'] as const,
   /** subject: `p:<productId>` or `a:<addonKey>` */
   stockMoves: (subject: string) => ['catalog', 'stock-moves', subject] as const,
+  // Insumos: under 'catalog' too, a sale or a cancel draws them
+  insumos: ['catalog', 'insumos'] as const,
+  insumoMoves: (id: string) => ['catalog', 'insumo-moves', id] as const,
+  insumoUses: (id: string) => ['catalog', 'insumo-uses', id] as const,
+  ficha: (productId: string) => ['catalog', 'ficha', productId] as const,
   store: ['store'] as const,
   onboarding: ['onboarding'] as const,
   payments: ['payments'] as const,
@@ -45,6 +50,7 @@ export const qk = {
   share: ['share'] as const,
   // a preset is one key whatever day it is: Core resolves its days and says which in `range`
   reports: (period: string, from = '', to = '') => ['reports', period, from, to] as const,
+  cmv: (period: string, from = '', to = '') => ['reports', 'cmv', period, from, to] as const,
   team: ['team'] as const,
   activity: ['activity'] as const,
   activityOf: (kind: string) => ['activity', kind] as const,

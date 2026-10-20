@@ -28,6 +28,7 @@ import { validateSchedule } from './preorder.ts';
 import { planHas } from './billing/plans.ts';
 import type { QrTable } from './pdv/qr.ts';
 import { recordStaffEventTx } from './staff-events.ts';
+import { drawInsumos } from './insumos.ts';
 import { drawAddonStock, drawStock, modifierDemand, stockDemand } from './stock.ts';
 import { deliveryWindow, freioConfig, kitchenNowTx, promiseZoneOf } from './freio.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
@@ -287,6 +288,21 @@ export async function placeOrderTx(
     orderId,
   );
   const addonsDrawn = await drawAddonStock(tx, tenantId, modifierDemand(cart.items), orderId);
+  const insumos = await drawInsumos(
+    tx,
+    tenantId,
+    {
+      mode: body.delivery.mode,
+      lines: cart.items.map((i) => ({
+        productId: i.productId,
+        qty: i.qty,
+        modifierIds: i.modifierIds,
+        modifierQty: i.modifierQty,
+        combo: i.comboSelections,
+      })),
+    },
+    orderId,
+  );
 
   const changeFor = body.payment.changeForCents ?? null;
   if (changeFor !== null) {
@@ -434,13 +450,15 @@ export async function placeOrderTx(
     insert into orders (id, tenant_id, cart_id, number, customer, customer_phone, delivery, payment, state,
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
-                        stock_drawn, addon_stock_drawn, ref, party, deposit_cents)
+                        stock_drawn, addon_stock_drawn, ref, party, deposit_cents, ingredients_drawn,
+                        cost_cents)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
             ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
-            ${ref}, ${party ? tx.json(party as never) : null}, ${sinal?.depositCents ?? null})
+            ${ref}, ${party ? tx.json(party as never) : null}, ${sinal?.depositCents ?? null},
+            ${Object.keys(insumos.drawn).length ? tx.json(insumos.drawn) : null}, ${insumos.costCents})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([
@@ -456,7 +474,7 @@ export async function placeOrderTx(
     ...cart.items.map(
       (i, sort) => tx`
         insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
-                                 modifiers, combo, line_total_cents, sort, note)
+                                 modifiers, combo, line_total_cents, sort, note, cost_cents)
         values (${tenantId}, ${orderId}, ${i.productId}, ${i.slug}, ${i.name}, ${i.qty}, ${i.unitPriceCents},
                 ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents, qty: m.qty })))},
                 ${tx.json(
@@ -468,7 +486,7 @@ export async function placeOrderTx(
                     qty: c.qty,
                   })) as never,
                 )},
-                ${i.lineTotalCents}, ${sort}, ${i.note ?? null})
+                ${i.lineTotalCents}, ${sort}, ${i.note ?? null}, ${insumos.lineCosts[sort] ?? null})
       `,
     ),
     coupon &&

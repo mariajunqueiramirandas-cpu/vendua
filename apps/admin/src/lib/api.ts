@@ -506,6 +506,9 @@ export interface Product {
   marginBp?: number | null;
   /** Core: the price that reaches pricing.marginBp; null without pricing */
   suggestedPriceCents?: number | null;
+  /** Core: the ficha técnica's cost with the dearest mode's packaging; null = no ficha. With one,
+   *  the margin counts it plus the calculator's lines ("outros custos") */
+  fichaCostCents?: number | null;
 }
 
 /** The precificação calculator's inputs. Percentages are basis points (1% = 100). */
@@ -942,6 +945,133 @@ export interface Kpis {
   newCustomers: number;
   cancelled: number;
   deliveryShare: number;
+}
+
+export type InsumoUnit = 'g' | 'ml' | 'un';
+
+/** An insumo (bought) or a preparo (made here). Quantities are thousandths of the unit. */
+export interface Insumo {
+  id: string;
+  kind: 'insumo' | 'preparo';
+  name: string;
+  unit: InsumoUnit;
+  /** null = not counted; may be below zero (sales never stop for an insumo) */
+  stockMilli: number | null;
+  lowMilli: number | null;
+  /** the ideal level the shopping list buys back up to */
+  parMilli: number | null;
+  /** how it's bought: a "caixa" of 24 un */
+  packMilli: number | null;
+  packName: string | null;
+  /** what 1000 units cost (a kg, a litre, a thousand un); a preparo's comes from its ficha */
+  costPerKCents: number | null;
+  /** insumos without a cost that a preparo's ficha reaches */
+  missingCost: string[];
+  yieldMilli: number | null;
+  lines: { ingredientId: string; qtyMilli: number; costCents: number }[];
+  low: boolean;
+  uses: number;
+  sold7dMilli: number;
+  valueCents: number | null;
+  buyMilli: number | null;
+  buyPacks: number | null;
+}
+
+export interface FichaLine {
+  ingredientId: string;
+  name: string;
+  unit: InsumoUnit;
+  kind: 'insumo' | 'preparo';
+  qtyMilli: number;
+  /** null = every order */
+  mode: OrderMode | null;
+  costCents: number;
+}
+
+/** What a ficha line is sent as */
+export type FichaLineIn = { ingredientId: string; qtyMilli: number; mode?: OrderMode | null };
+
+export interface ProductFicha {
+  kind: string;
+  lines: FichaLine[];
+  cost: { baseCents: number; byMode: Record<OrderMode, number>; maxCents: number } | null;
+  options: {
+    id: string;
+    groupId: string;
+    groupName: string;
+    name: string;
+    priceDeltaCents: number;
+    lines: FichaLine[];
+    costCents: number | null;
+    /** options across the store with this name, this one included */
+    sameName: number;
+  }[];
+  missingCost: string[];
+  perOrderCents: Record<OrderMode, number>;
+}
+
+export interface InsumosList {
+  insumos: Insumo[];
+  perOrder: FichaLine[];
+  perOrderCents: Record<OrderMode, number>;
+  valueCents: number;
+}
+
+export interface InsumoMovement {
+  id: string;
+  at: string;
+  reason:
+    | 'sale'
+    | 'cancel'
+    | 'purchase'
+    | 'count'
+    | 'adjust'
+    | 'loss'
+    | 'made'
+    | 'used'
+    | 'start'
+    | 'stop';
+  deltaMilli: number;
+  afterMilli: number | null;
+  /** a purchase: what was paid; otherwise its value at the average cost */
+  costCents: number | null;
+  order: { id: string; number: number } | null;
+  by: string | null;
+  note: string | null;
+}
+
+export interface CmvTotals {
+  salesCents: number;
+  costedSalesCents: number;
+  itemsCostCents: number;
+  packagingCents: number;
+  costCents: number;
+  orders: number;
+  /** sales with a known cost, less what they cost */
+  grossCents: number;
+  /** the cost over what the items with a known cost sold for */
+  cmvBp: number | null;
+  grossBp: number | null;
+  /** share of sales with a known cost */
+  coverageBp: number | null;
+}
+
+export interface CmvReport {
+  range: Reports['range'];
+  current: CmvTotals;
+  previous: CmvTotals;
+  products: {
+    key: string;
+    name: string;
+    qty: number;
+    salesCents: number;
+    /** what its lines with a known cost sold for: the margin is over these */
+    costedSalesCents: number;
+    costCents: number | null;
+    marginBp: number | null;
+  }[];
+  purchasesCents: number;
+  lossesCents: number;
 }
 
 export interface Reports {
@@ -2922,6 +3052,48 @@ export const api = {
     return get<{ movements: StockMovement[]; next: string | null }>(`/stock/movements?${q}`);
   },
   stockOverview: () => get<StockOverview>('/stock/overview'),
+
+  insumos: () => get<InsumosList>('/insumos'),
+  createInsumo: (body: Record<string, unknown>) =>
+    send<{ insumo: Insumo }>('POST', '/insumos', body),
+  /** cost: what an amount cost ({cents, milli}); stockMilli: a count, null stops counting */
+  updateInsumo: (id: string, body: Record<string, unknown>) =>
+    send<{ insumo: Insumo }>('PATCH', `/insumos/${id}`, body),
+  deleteInsumo: (id: string) => send<{ deleted: boolean }>('DELETE', `/insumos/${id}`),
+  insumoUses: (id: string) =>
+    get<{
+      products: { id: string; name: string; option: string | null }[];
+      preparos: { id: string; name: string }[];
+      perOrder: boolean;
+    }>(`/insumos/${id}/uses`),
+  setPreparoFicha: (id: string, body: { lines: FichaLineIn[]; yieldMilli?: number }) =>
+    send<{ insumo: Insumo }>('PUT', `/insumos/${id}/ficha`, body),
+  adjustInsumos: (changes: { id: string; addMilli: number; reason?: 'adjust' | 'loss' }[]) =>
+    send<{ stock: Record<string, number> }>('POST', '/insumos/adjust', { changes }),
+  purchaseInsumos: (
+    items: { id: string; qtyMilli: number; costCents: number }[],
+    note?: string | null,
+  ) => send<{ insumos: Insumo[] }>('POST', '/insumos/purchases', { items, note: note || null }),
+  madeInsumo: (id: string, qtyMilli: number) =>
+    send<{ insumo: Insumo }>('POST', `/insumos/${id}/made`, { qtyMilli }),
+  insumoMovements: (id: string, before?: string) =>
+    get<{ movements: InsumoMovement[]; next: string | null }>(
+      `/insumos/${id}/movements${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    ),
+  setPerOrder: (lines: FichaLineIn[]) =>
+    send<{ perOrder: FichaLine[]; perOrderCents: Record<OrderMode, number> }>(
+      'PUT',
+      '/insumos/por-pedido',
+      { lines },
+    ),
+  productFicha: (id: string) => get<{ ficha: ProductFicha }>(`/products/${id}/ficha`),
+  setProductFicha: (
+    id: string,
+    body: {
+      lines?: FichaLineIn[];
+      options?: { id: string; lines: FichaLineIn[]; sameName?: boolean }[];
+    },
+  ) => send<{ ficha: ProductFicha }>('PUT', `/products/${id}/ficha`, body),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
     send<{ updated: number; before?: BulkBefore[]; waitlistWoken?: number }>(
       'POST',
@@ -3157,6 +3329,8 @@ export const api = {
   /** a preset (`period`) or a custom range; Core answers with the days it used */
   reports: (p: { period: string } | { from: string; to: string }) =>
     get<Reports>(`/reports?${new URLSearchParams(p)}`),
+  cmv: (p: { period: string } | { from: string; to: string }) =>
+    get<CmvReport>(`/reports/cmv?${new URLSearchParams(p)}`),
 
   team: () => get<{ members: Member[]; duaWhatsappManagers?: boolean }>('/team'),
   teamSettings: (p: { duaWhatsappManagers: boolean }) =>

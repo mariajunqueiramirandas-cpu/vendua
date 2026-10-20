@@ -1,6 +1,7 @@
 import { Plus, Trash, WarningCircle } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   api,
   ApiError,
@@ -70,6 +71,8 @@ const line = (label: string, cents: number | null = null): Line => ({
 
 function startLines(p: Product): Line[] {
   if (p.pricing?.lines.length) return p.pricing.lines.map((l) => line(l.label, l.cents));
+  // the ficha técnica counts the ingredients and packaging: only other costs go here
+  if (p.fichaCostCents != null) return [];
   // a plain cost typed in Estoque: it's the whole cost so far
   if (p.costCents != null) return [line('Custo', p.costCents), line('Embalagem')];
   return [line('Ingredientes'), line('Embalagem')];
@@ -166,7 +169,8 @@ export function PricingSheet({
     cents: l.amount.trim() ? parseMoney(l.amount) : null,
     bad: !!l.amount.trim() && parseMoney(l.amount) === null,
   }));
-  const cost = parsed.reduce((n, l) => n + (l.cents ?? 0), 0);
+  const ficha = p.fichaCostCents ?? null;
+  const cost = (ficha ?? 0) + parsed.reduce((n, l) => n + (l.cents ?? 0), 0);
   const bp = {
     feeBp: parsePct(pcts.feeBp),
     taxBp: parsePct(pcts.taxBp),
@@ -308,13 +312,28 @@ export function PricingSheet({
             </h3>
             <span className="tnum t-caption text-muted">{money(cost)}</span>
           </div>
+          {ficha !== null ? (
+            <Link
+              to={`/cardapio/produto/${p.id}#ficha`}
+              onClick={onClose}
+              className="press mb-2 flex min-h-13 items-center gap-3 rounded-sm bg-sunken px-4 py-2 hover:bg-press"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold leading-snug">Ficha técnica</span>
+                <span className="t-caption block text-muted">
+                  Insumos e embalagem, pelo custo de hoje
+                </span>
+              </span>
+              <span className="tnum shrink-0 font-semibold">{money(ficha)}</span>
+            </Link>
+          ) : null}
           <ul className="space-y-2" ref={fresh}>
             {parsed.map((l, i) => (
               <li key={l.id} className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
                   <TextInput
                     aria-label={`nome do custo ${i + 1}`}
-                    placeholder="ex.: Caixinha"
+                    placeholder={ficha !== null ? 'ex.: Gás' : 'ex.: Caixinha'}
                     maxLength={40}
                     value={l.label}
                     onChange={(e) => edit(l.id, { label: e.target.value })}
@@ -366,7 +385,7 @@ export function PricingSheet({
                 );
               }}
             >
-              adicionar custo
+              {ficha !== null ? 'adicionar outro custo' : 'adicionar custo'}
             </Button>
           ) : null}
         </section>

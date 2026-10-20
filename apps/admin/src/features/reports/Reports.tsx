@@ -16,6 +16,7 @@ import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionNav } from '../../ui/SectionNav.tsx';
 import { ReportsSkeleton } from '../../ui/skeletons.tsx';
+import { CmvSection } from './Cmv.tsx';
 import { DEFAULT_PERIOD, isPeriod, PERIODS, reportsQuery } from './range.ts';
 import { platform } from '../../platform/index.ts';
 
@@ -162,6 +163,7 @@ export default function Reports() {
               { id: 'r-horarios', label: 'Horários de pico' },
               { id: 'r-entrega', label: 'Entrega' },
               { id: 'r-pagamentos', label: 'Pagamentos' },
+              { id: 'r-cmv', label: 'Custo e margem' },
               ...(data.coupons.length ? [{ id: 'r-cupons', label: 'Cupons' }] : []),
             ]}
           />
@@ -284,6 +286,7 @@ export default function Reports() {
               />
             </Card>
           </div>
+          <CmvSection params={rq.params} />
           {data.coupons.length ? (
             <Section title="Cupons usados" id="r-cupons">
               <Card className="divide-y divide-line">
