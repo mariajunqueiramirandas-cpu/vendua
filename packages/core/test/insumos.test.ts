@@ -518,6 +518,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('insumos (db)', () => {
       coverageBp: 10_000,
     });
     expect(r.body.current.packagingCents).toBe(60);
+    const c = r.body.current;
+    expect(c.costCents).toBe(c.itemsCostCents + 60);
+    expect(c.grossCents).toBe(c.costedSalesCents - c.costCents);
     expect(r.body.purchasesCents).toBe(25_000);
     const [loss] = await sql<{ c: number }[]>`
       select -cost_cents as c from ingredient_movements where tenant_id = ${tenantId} and reason = 'loss'

@@ -413,6 +413,7 @@ export function mountReports(d: AdminDeps) {
             name: string;
             qty: number;
             salesCents: number;
+            costedSalesCents: number;
             costCents: number | null;
           }[]
         >`
@@ -420,16 +421,20 @@ export function mountReports(d: AdminDeps) {
             select id, total_cents, ${net(tx)} as net from orders
             where tenant_id = ${t.id} and ${kept(tx)}
               and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+          ), i as (
+            select coalesce(i.product_id::text, i.name) as key, i.name, i.qty, i.cost_cents,
+                   case when o.total_cents > 0 then round(i.line_total_cents::numeric * o.net / o.total_cents)
+                        else i.line_total_cents end as sold
+            from order_items i join o on o.id = i.order_id
+            where i.tenant_id = ${t.id}
           )
-          select coalesce(i.product_id::text, i.name) as key, (array_agg(i.name))[1] as name,
-                 sum(i.qty)::int as qty,
-                 sum(case when o.total_cents > 0 then round(i.line_total_cents::numeric * o.net / o.total_cents)
-                          else i.line_total_cents end)::int as "salesCents",
-                 -- one line sold without a known cost leaves the product's cost unknown
-                 case when bool_and(i.cost_cents is not null) then sum(i.cost_cents)::int end as "costCents"
-          from order_items i join o on o.id = i.order_id
-          where i.tenant_id = ${t.id}
-          group by 1 order by "salesCents" desc limit 40
+          -- a line sold before its product had a cost counts in sales, not in the margin
+          select key, (array_agg(name))[1] as name, sum(qty)::int as qty,
+                 sum(sold)::int as "salesCents",
+                 coalesce(sum(sold) filter (where cost_cents is not null), 0)::int as "costedSalesCents",
+                 sum(cost_cents)::int as "costCents"
+          from i
+          group by key order by "salesCents" desc limit 40
         `,
         tx<{ purchasesCents: number; lossesCents: number }[]>`
           select coalesce(sum(cost_cents) filter (where reason = 'purchase'), 0)::int as "purchasesCents",
@@ -442,10 +447,14 @@ export function mountReports(d: AdminDeps) {
       ]);
       const sum = (x: typeof current) => {
         const cost = x.itemsCostCents + x.packagingCents;
+        // over the sales whose cost is known: an item with no ficha nor cost isn't free
+        const gross = x.costedSalesCents - cost;
         return {
           ...x,
           costCents: cost,
-          cmvBp: bpOf(x.itemsCostCents, x.costedSalesCents),
+          grossCents: gross,
+          cmvBp: bpOf(cost, x.costedSalesCents),
+          grossBp: bpOf(gross, x.costedSalesCents),
           coverageBp: bpOf(x.costedSalesCents, x.salesCents),
         };
       };
@@ -455,7 +464,8 @@ export function mountReports(d: AdminDeps) {
         previous: sum(previous),
         products: products.map((p) => ({
           ...p,
-          marginBp: p.costCents == null ? null : bpOf(p.salesCents - p.costCents, p.salesCents),
+          marginBp:
+            p.costCents == null ? null : bpOf(p.costedSalesCents - p.costCents, p.costedSalesCents),
         })),
         ...moves[0]!,
       };

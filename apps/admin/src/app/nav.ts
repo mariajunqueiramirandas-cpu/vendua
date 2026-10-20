@@ -144,6 +144,7 @@ const SIBLINGS: { match: RegExp; root: string; title: string; parent?: string }[
   { match: /^\/pedidos\/agendados$/, root: '/pedidos', title: 'Encomendas' },
   { match: /^\/pedidos\/historico$/, root: '/pedidos', title: 'Histórico' },
   { match: /^\/cardapio\/estoque$/, root: '/cardapio', title: 'Estoque' },
+  { match: /^\/cardapio\/insumos$/, root: '/cardapio', title: 'Insumos' },
   { match: /^\/cardapio\/festa$/, root: '/cardapio', title: 'Festa' },
   { match: /^\/cardapio\/planos$/, root: '/cardapio', title: 'Planos' },
   { match: /^\/marketing\/divulgar$/, root: '/marketing', title: 'Divulgar' },

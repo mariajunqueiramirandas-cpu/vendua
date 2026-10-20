@@ -120,6 +120,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0042](adr/0042-signup-coupons.md)                     | Signup coupons: free days and/or a discount on the first paid months                      |
 | [0044](adr/0044-admin-native-app.md)                   | The merchant admin as an iOS and Android app, from the same code                          |
 | [0045](adr/0045-self-hosted-tts.md)                    | Replies can be spoken: Pocket TTS on our own C++ engine (built, not yet called)           |
+| [0046](adr/0046-insumos.md)                            | Insumos: fichas técnicas, stock drawn by each sale (never refused), the CMV               |
 
 ## Conventions
 

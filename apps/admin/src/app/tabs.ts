@@ -12,6 +12,7 @@ export const TABS = {
   cardapio: [
     { to: '/cardapio', label: 'Produtos' },
     { to: '/cardapio/estoque', label: 'Estoque' },
+    { to: '/cardapio/insumos', label: 'Insumos' },
     { to: '/cardapio/festa', label: 'Festa' },
     { to: '/cardapio/planos', label: 'Planos' },
   ],

@@ -74,6 +74,14 @@ export const SCREENS: ScreenEntry[] = [
     min: 'manager',
   },
   {
+    to: '/cardapio/insumos',
+    label: 'Insumos e fichas técnicas',
+    where: 'Cardápio',
+    words:
+      'insumos ingredientes ficha tecnica receita cmv custo compra fornecedor preparo embalagem',
+    min: 'manager',
+  },
+  {
     to: '/cardapio/festa',
     label: 'Calculadora de festa',
     where: 'Cardápio',

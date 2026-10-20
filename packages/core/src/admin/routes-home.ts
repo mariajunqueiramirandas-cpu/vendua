@@ -31,6 +31,7 @@ export function mountHome(d: AdminDeps) {
         platform,
         pix,
         low,
+        lowInsumos,
         wl,
         { checklist, orders: totalOrders },
         feed,
@@ -98,6 +99,15 @@ export function mountHome(d: AdminDeps) {
               where tenant_id = ${t.id} and status = 'active' and stock_quantity is not null
                 and (stock_quantity = 0 or (low_stock_threshold is not null and stock_quantity <= low_stock_threshold))
               order by stock_quantity limit 5
+            `
+          : [],
+        // insumos at zero, below it or in their aviso: one line, the list is on their screen
+        manager
+          ? tx<{ n: number; name: string | null }[]>`
+              select count(*)::int as n, min(name) filter (where stock_milli <= 0) as name
+              from ingredients
+              where tenant_id = ${t.id} and stock_milli is not null
+                and (stock_milli <= 0 or (low_milli is not null and stock_milli <= low_milli))
             `
           : [],
         manager
@@ -209,6 +219,20 @@ export function mountHome(d: AdminDeps) {
             title: p.stock === 0 ? `${p.name} acabou` : `${p.name}: só ${p.stock} no estoque`,
             href: `/cardapio/estoque?p=${p.id}`,
             productId: p.id,
+          });
+        const li = lowInsumos[0];
+        if (li?.n)
+          attention.push({
+            kind: 'low_stock',
+            count: li.n,
+            title:
+              li.n === 1
+                ? li.name
+                  ? `${li.name} acabou`
+                  : '1 insumo para repor'
+                : `${li.n} insumos para repor`,
+            detail: 'Veja a lista de compras',
+            href: '/cardapio/insumos',
           });
         for (const w of wl)
           attention.push({

@@ -533,7 +533,11 @@ export function Segmented<T extends string>({
               <span
                 className={cn(
                   'tnum min-w-6 rounded-full px-1.5 text-[0.75rem] leading-6',
-                  on && o.count > 0 ? 'bg-spark text-on-spark' : 'bg-line text-muted',
+                  on && o.count > 0
+                    ? 'bg-spark text-on-spark'
+                    : on
+                      ? 'bg-sunken text-muted'
+                      : 'bg-surface text-muted',
                 )}
               >
                 {o.count}
