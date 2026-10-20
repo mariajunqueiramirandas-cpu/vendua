@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import type { ModelGateway } from '@vendua/agent-runtime';
 import { restockOf } from '../src/admin/routes-insumos.ts';
 import { createApp } from '../src/app.ts';
 import { addItem } from '../src/modules/cart.ts';
 import { createCartTx } from '../src/modules/cart-ops.ts';
 import { getProductById } from '../src/modules/catalog.ts';
+import { amountOf, decimalOf, rowOf } from '../src/modules/insumos-photo.ts';
 import { averageCost, costPerK, explode, type Fichas } from '../src/modules/insumos.ts';
 import { transitionOrder } from '../src/modules/orders.ts';
 import { placeOrderTx } from '../src/modules/place-order.ts';
@@ -111,13 +113,110 @@ describe('insumos math', () => {
   });
 });
 
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+describe('insumos from a photo', () => {
+  const line = (l: Partial<Parameters<typeof rowOf>[1]>) => ({
+    printed: null,
+    name: 'x',
+    qty: null,
+    unit: null,
+    pack: null,
+    total: null,
+    price: null,
+    ...l,
+  });
+
+  test('numbers are read the pt-BR way, Core side', () => {
+    expect(decimalOf('1.234,56')).toBe(1234.56);
+    expect(decimalOf('1,250')).toBe(1.25);
+    expect(decimalOf('1.250')).toBe(1250);
+    expect(decimalOf('12.5')).toBe(12.5);
+    expect(decimalOf('R$ 9')).toBe(9);
+    expect(decimalOf('consulte')).toBeNull();
+    expect(amountOf('ARROZ TIO JOAO 5KG')).toEqual({ unit: 'g', amount: 5000 });
+    expect(amountOf('1,5 L')).toEqual({ unit: 'ml', amount: 1500 });
+    expect(amountOf('2 cx')).toBeNull();
+  });
+
+  test("a nota line becomes what was bought, in the insumo's own unit", () => {
+    // sold by weight
+    expect(
+      rowOf('compra', line({ name: 'Muçarela', qty: '1,250', unit: 'KG', total: '41,13' })),
+    ).toMatchObject({ unit: 'g', qtyMilli: 1_250_000, costCents: 4113, costPerKCents: 3290 });
+    // units of a pack the line names: 2 × 5 kg
+    expect(
+      rowOf(
+        'compra',
+        line({
+          printed: 'ARROZ TIO JOAO 5KG 2 UN',
+          name: 'Arroz',
+          qty: '2',
+          unit: 'UN',
+          total: '51,80',
+        }),
+      ),
+    ).toMatchObject({ unit: 'g', qtyMilli: 10_000_000, costCents: 5180, packMilli: 5_000_000 });
+    // boxes of 30, priced per box
+    expect(
+      rowOf('compra', line({ name: 'Ovo', qty: '2', unit: 'CX', pack: '30 un', price: '18,00' })),
+    ).toMatchObject({
+      unit: 'un',
+      qtyMilli: 60_000,
+      costCents: 3600,
+      packMilli: 30_000,
+      packName: 'caixa',
+    });
+    // the line's quantity is not mistaken for the pack
+    expect(
+      rowOf(
+        'compra',
+        line({
+          printed: 'GUARANA 6 UN X 2L',
+          name: 'Guaraná 2L',
+          qty: '6',
+          unit: 'UN',
+          price: '8,99',
+        }),
+      ),
+    ).toMatchObject({ unit: 'ml', qtyMilli: 12_000_000, costCents: 5394 });
+  });
+
+  test('a price list sets a cost, nothing bought', () => {
+    expect(rowOf('lista', line({ name: 'Muçarela', unit: 'kg', price: 'R$ 32,90' }))).toMatchObject(
+      {
+        unit: 'g',
+        qtyMilli: null,
+        costCents: null,
+        price: { cents: 3290, milli: 1_000_000 },
+        costPerKCents: 3290,
+      },
+    );
+    expect(rowOf('lista', line({ name: 'Sal', price: 'consulte' }))).toMatchObject({
+      price: null,
+      costPerKCents: null,
+    });
+  });
+});
+
 describe.skipIf(!process.env.TEST_DATABASE_URL)('insumos (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
   const appSql = process.env.TEST_APP_DATABASE_URL
     ? postgres(process.env.TEST_APP_DATABASE_URL, { onnotice: () => {} })
     : sql;
   const codes = new Map<string, string>();
+  let seen: string | null = null;
+  const gateway = {
+    generate: async () => {
+      if (seen === null) throw new Error('no route');
+      return { text: seen };
+    },
+  } as unknown as ModelGateway;
   const app = createApp({
+    duaMedia: { media: null, gateway },
     sql: appSql,
     sessionSecret: 's',
     controlSecret: 'ctl',
@@ -546,6 +645,84 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('insumos (db)', () => {
     } finally {
       await sql`update ingredients set cost_per_k_cents = ${was!.cpk} where id = ${ing.carne!}`;
     }
+  });
+
+  test('a photo is read for review, then saved as one purchase with what it creates', async () => {
+    seen = JSON.stringify({
+      kind: 'compra',
+      items: [
+        { printed: 'QJO MUSS KG', name: 'Queijo', qty: '2', unit: 'kg', total: 'R$ 96,00' },
+        { printed: 'TOMATE KG', name: 'Tomate', qty: '1,5', unit: 'kg', total: '9,00' },
+        { name: 'Molho da casa', qty: '1', unit: 'l', total: '5' },
+      ],
+    });
+    const r = await owner('POST', '/insumos/photo', {
+      mime: 'image/png',
+      data: PNG.toString('base64'),
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.kind).toBe('compra');
+    expect(r.body.rows[0]).toMatchObject({
+      name: 'Queijo',
+      unit: 'g',
+      qtyMilli: 2_000_000,
+      costCents: 9600,
+      matchId: ing.queijo,
+    });
+    // a preparo is never matched as something bought
+    expect(r.body.rows.map((x: any) => x.matchId)).toEqual([ing.queijo, null, null]);
+    seen = null;
+    expect(
+      (await owner('POST', '/insumos/photo', { mime: 'image/png', data: PNG.toString('base64') }))
+        .status,
+    ).toBe(422);
+
+    const save = await owner('POST', '/insumos/import', {
+      note: 'nota do atacado',
+      items: [
+        { id: ing.queijo, unit: 'g', qtyMilli: 2_000_000, costCents: 9600 },
+        { name: 'Tomate', unit: 'g', qtyMilli: 1_500_000, costCents: 900 },
+        { name: 'tomate', unit: 'g', qtyMilli: 500_000, costCents: 300 },
+        { name: 'Orégano', unit: 'g', cost: { cents: 4000, milli: 1_000_000 } },
+        { name: 'SACOLA', unit: 'un', cost: { cents: 40, milli: 1000 }, packMilli: 50_000 },
+      ],
+    });
+    expect(save.status).toBe(200);
+    expect(save.body).toEqual({ created: 2, bought: 2, priced: 2, totalCents: 10_800 });
+    const rows = await sql<
+      { name: string; cpk: number | null; stock: string | null; pack: string | null }[]
+    >`
+      select name, cost_per_k_cents::int as cpk, stock_milli::text as stock, pack_milli::text as pack
+      from ingredients where tenant_id = ${tenantId}
+        and name in ('Queijo', 'Tomate', 'Orégano', 'Sacola')
+      order by name`;
+    expect([...rows]).toEqual([
+      { name: 'Orégano', cpk: 4000, stock: null, pack: null },
+      { name: 'Queijo', cpk: 4800, stock: null, pack: null },
+      { name: 'Sacola', cpk: 40_000, stock: expect.any(String), pack: '50000' },
+      { name: 'Tomate', cpk: 600, stock: null, pack: null },
+    ]);
+    const [moves] = await sql<{ n: number }[]>`
+      select count(*)::int as n from ingredient_movements m join ingredients i on i.id = m.ingredient_id
+      where i.tenant_id = ${tenantId} and i.name = 'Tomate' and m.reason = 'purchase'
+        and m.delta_milli = 2000000 and m.note = 'nota do atacado'`;
+    expect(moves!.n).toBe(1);
+
+    const bad = async (item: Record<string, unknown>) =>
+      (await owner('POST', '/insumos/import', { items: [item] })).body.error?.code;
+    expect(await bad({ id: ing.pao, unit: 'g', qtyMilli: 1000, costCents: 10 })).toBe(
+      'INGREDIENT_UNIT_MISMATCH',
+    );
+    expect(await bad({ name: 'Molho da casa', unit: 'ml', qtyMilli: 1000, costCents: 10 })).toBe(
+      'PREPARO_NOT_BOUGHT',
+    );
+    expect(await bad({ name: 'Cebola', unit: 'g', qtyMilli: 1000 })).toBe('BAD_REQUEST');
+    expect(await bad({ id: 'nope', unit: 'g' })).toBe('BAD_REQUEST');
+    expect(await bad({ id: crypto.randomUUID(), unit: 'g' })).toBe('INGREDIENT_NOT_FOUND');
+    // nothing of a refused import stays
+    const [cebola] = await sql<{ n: number }[]>`
+      select count(*)::int as n from ingredients where tenant_id = ${tenantId} and name = 'Cebola'`;
+    expect(cebola!.n).toBe(0);
   });
 
   test('deleting an insumo takes its ficha lines with it', async () => {

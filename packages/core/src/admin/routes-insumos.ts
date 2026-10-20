@@ -1,5 +1,8 @@
-import type { Sql } from '../platform/db.ts';
-import { HttpError, UUID_RE, uuidParam } from '../platform/http.ts';
+import { MEDIA_PER_DAY, takeMediaCallTx } from '../copilot/media.ts';
+import { MAX_PHOTO_ROWS, readInsumosPhoto } from '../modules/insumos-photo.ts';
+import { mediaUpload } from '../modules/media-upload.ts';
+import { withTenant, type Sql } from '../platform/db.ts';
+import { bodyJson, HttpError, UUID_RE, uuidParam } from '../platform/http.ts';
 import {
   ADJUST_REASONS,
   adjustIngredients,
@@ -27,7 +30,7 @@ import {
   type Unit,
 } from '../modules/insumos.ts';
 import { audit } from './audit.ts';
-import { int, isObj, oneOf, optText, text, type AdminDeps } from './context.ts';
+import { int, isObj, need, oneOf, optText, text, type AdminDeps } from './context.ts';
 import { bodyOf, handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 
@@ -35,6 +38,8 @@ import { emitAdminTx } from './live.ts';
 // fichas técnicas — per product, per option, per preparo and per order (packaging).
 
 const MOVES_PAGE = 30;
+const PHOTO_MAX = 2 * 1024 * 1024;
+const PHOTO_JSON_MAX = 3 * 1024 * 1024;
 const MAX_OPTIONS = 80;
 
 export interface AdminIngredient {
@@ -691,6 +696,223 @@ export function mountInsumos(d: AdminDeps) {
       await emitAdminTx(tx, t.id, 'catalog');
       const { list } = await listIngredients(tx, t.id);
       return { status: 200, body: { insumos: list.filter((x) => seen.has(x.id)) } };
+    }),
+  );
+
+  // "Foto ou print" (modules/insumos-photo.ts): one photo per call, read and matched to the
+  // store's insumos for review; nothing is written but the day's media ledger
+  admin.post('/insumos/photo', async (c) => {
+    const m = need(c, 'manager');
+    const t = c.get('tenant');
+    const gateway = d.copilotMedia.gateway;
+    if (!gateway) throw new HttpError(503, 'MEDIA_UNAVAILABLE', 'photo reading is off here');
+    const body = await bodyJson(c, PHOTO_JSON_MAX);
+    const up = mediaUpload({ ...body, kind: 'image' }, { maxBytes: PHOTO_MAX, maxCaption: 0 });
+    const names = await withTenant(d.sql, t.id, async (tx) => {
+      if (!(await takeMediaCallTx(tx, t.id, m.userId, 'image')))
+        throw new HttpError(429, 'RATE_LIMITED', `at most ${MEDIA_PER_DAY} photos a day`);
+      return (
+        await tx<{ name: string }[]>`
+          select name from ingredients where tenant_id = ${t.id} and kind = 'insumo'
+          order by updated_at desc limit 300`
+      ).map((r) => r.name);
+    });
+    const read = await readInsumosPhoto(gateway, t.id, up.bytes, names);
+    if (!read) throw new HttpError(422, 'IMAGE_UNREAD', 'não consegui ler a foto');
+    const matches = read.rows.length
+      ? await withTenant(
+          d.sql,
+          t.id,
+          (tx) => tx<{ ord: number; id: string }[]>`
+            select r.ord::int as ord, i.id
+            from unnest(${read.rows.map((r) => r.name)}::text[]) with ordinality as r(name, ord)
+            join ingredients i on i.tenant_id = ${t.id} and i.kind = 'insumo'
+              and vendua_stock_key(i.name) = vendua_stock_key(r.name)
+          `,
+        )
+      : [];
+    const byOrd = new Map(matches.map((x) => [x.ord, x.id]));
+    return c.json({
+      kind: read.kind,
+      rows: read.rows.map((r, i) => ({ ...r, matchId: byOrd.get(i + 1) ?? null })),
+    });
+  });
+
+  // the reviewed photo: missing insumos created, what was bought registered as one purchase,
+  // and a price list's prices set as the cost, all or nothing
+  admin.post(
+    '/insumos/import',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyOf(c, 128 * 1024);
+      if (
+        !Array.isArray(body.items) ||
+        body.items.length === 0 ||
+        body.items.length > MAX_PHOTO_ROWS
+      )
+        throw new HttpError(422, 'BAD_REQUEST', `items must list 1–${MAX_PHOTO_ROWS} insumos`, {
+          field: 'items',
+        });
+      const items = body.items.map((x: unknown, i: number) => {
+        const f = `items[${i}]`;
+        if (!isObj(x))
+          throw new HttpError(422, 'BAD_REQUEST', `${f} must be an object`, { field: f });
+        if (x.id != null && (typeof x.id !== 'string' || !UUID_RE.test(x.id)))
+          throw new HttpError(422, 'BAD_REQUEST', `${f}.id must be a uuid`, { field: `${f}.id` });
+        const qty = optMilli(x.qtyMilli, `${f}.qtyMilli`, 1, MAX_LINE_MILLI) ?? null;
+        const paid =
+          x.costCents == null ? null : int(x.costCents, `${f}.costCents`, 0, 100_000_000);
+        if ((qty == null) !== (paid == null))
+          throw new HttpError(422, 'BAD_REQUEST', `${f} needs both qtyMilli and costCents`, {
+            field: f,
+          });
+        return {
+          f,
+          id: typeof x.id === 'string' ? (x.id.toLowerCase() as string | null) : null,
+          name: x.id == null ? text(x.name, `${f}.name`, 80, 1) : null,
+          key: null as string | null,
+          unit: oneOf(x.unit, `${f}.unit`, UNITS),
+          qty,
+          paid,
+          cpk: qty == null && x.cost != null ? costInput(x.cost, `${f}.cost`) : null,
+          pack: optMilli(x.packMilli, `${f}.packMilli`, 1, MAX_LINE_MILLI) ?? null,
+          packName: optText(x.packName, `${f}.packName`, 24) ?? null,
+        };
+      });
+      const note = optText(body.note, 'note', 120) ?? null;
+
+      // a new name the store already has (or one this photo lists twice) is that one insumo
+      const unnamed = items.filter((x) => !x.id);
+      if (unnamed.length) {
+        const keys = await tx<{ k: string; id: string | null }[]>`
+          select vendua_stock_key(r.name) as k, i.id
+          from unnest(${unnamed.map((x) => x.name!)}::text[]) with ordinality as r(name, ord)
+          left join ingredients i on i.tenant_id = ${t.id}
+            and vendua_stock_key(i.name) = vendua_stock_key(r.name)
+          order by r.ord
+        `;
+        for (const [i, x] of unnamed.entries()) {
+          x.key = keys[i]!.k;
+          x.id = keys[i]!.id;
+        }
+      }
+      // the insumos already there, locked in id order like a sale's draw
+      const named = [...new Set(items.filter((x) => x.id).map((x) => x.id!))].sort();
+      const have = new Map(
+        (
+          await tx<{ id: string; kind: string; name: string; unit: Unit; pack: number | null }[]>`
+            select id, kind, name, unit, pack_milli::float8 as pack from ingredients
+            where tenant_id = ${t.id} and id = any(${named}::uuid[])
+            order by id for update
+          `
+        ).map((r) => [r.id, r]),
+      );
+      const fresh = new Set(items.filter((x) => !x.id).map((x) => x.key)).size;
+      if (fresh) {
+        const [n] = await tx<{ n: number }[]>`
+          select count(*)::int as n from ingredients where tenant_id = ${t.id}`;
+        if ((n?.n ?? 0) + fresh > MAX_INGREDIENTS)
+          throw new HttpError(409, 'LIMIT_REACHED', `up to ${MAX_INGREDIENTS} insumos`);
+      }
+      const made = new Map<string, { id: string; name: string; unit: Unit }>();
+      const buys = new Map<string, { qty: number; costCents: number }>();
+      const prices = new Map<string, number>();
+      for (const x of items) {
+        const mine = x.id ? have.get(x.id) : made.get(x.key!);
+        if (x.id && !mine)
+          throw new HttpError(404, 'INGREDIENT_NOT_FOUND', 'insumo not found', {
+            field: `${x.f}.id`,
+          });
+        if (mine && 'kind' in mine && mine.kind !== 'insumo')
+          throw new HttpError(
+            422,
+            'PREPARO_NOT_BOUGHT',
+            `"${mine.name}" is made here, not bought`,
+            {
+              field: x.name ? `${x.f}.name` : `${x.f}.id`,
+            },
+          );
+        if (mine && mine.unit !== x.unit)
+          throw new HttpError(
+            422,
+            'INGREDIENT_UNIT_MISMATCH',
+            `"${mine.name}" is counted in ${mine.unit}`,
+            { field: `${x.f}.unit` },
+          );
+        let id: string;
+        if (mine) {
+          id = mine.id;
+          if ('pack' in mine && mine.pack == null && x.pack != null) {
+            await tx`
+              update ingredients set pack_milli = ${x.pack},
+                pack_name = coalesce(pack_name, ${x.packName}), updated_at = now()
+              where tenant_id = ${t.id} and id = ${id}`;
+            mine.pack = x.pack;
+          }
+        } else {
+          const [row] = await tx<{ id: string }[]>`
+            insert into ingredients (tenant_id, kind, name, unit, pack_milli, pack_name)
+            values (${t.id}, 'insumo', ${x.name}, ${x.unit}, ${x.pack}, ${x.pack ? x.packName : null})
+            on conflict (tenant_id, vendua_stock_key(name)) do nothing
+            returning id
+          `;
+          if (!row)
+            throw new HttpError(409, 'INGREDIENT_EXISTS', `"${x.name}" is already an insumo`, {
+              field: `${x.f}.name`,
+            });
+          id = row.id;
+          made.set(x.key!, { id, name: x.name!, unit: x.unit });
+        }
+        if (x.qty != null) {
+          const b = buys.get(id) ?? { qty: 0, costCents: 0 };
+          buys.set(id, { qty: b.qty + x.qty, costCents: b.costCents + x.paid! });
+        } else if (x.cpk != null) prices.set(id, x.cpk);
+      }
+      const priced = [...prices]
+        .filter(([id]) => !buys.has(id))
+        .sort(([a], [b]) => (a < b ? -1 : 1));
+      for (const [id, cpk] of priced)
+        await tx`
+          update ingredients set cost_per_k_cents = ${cpk}, updated_at = now()
+          where tenant_id = ${t.id} and id = ${id}`;
+      const bought = [...buys].map(([id, b]) => {
+        if (b.qty > MAX_LINE_MILLI || b.costCents > 100_000_000)
+          throw new HttpError(422, 'BAD_REQUEST', 'one insumo was bought too much', {
+            field: 'items',
+          });
+        return { id, ...b };
+      });
+      if (bought.length) await purchaseIngredients(tx, t.id, bought, note, m.name);
+      const total = bought.reduce((s, b) => s + b.costCents, 0);
+      await audit(tx, t.id, m, {
+        action: 'insumo.import',
+        entity: 'insumo',
+        entityId: null,
+        summary: `lançou uma foto: ${[
+          bought.length
+            ? `compra de ${bought.length} ${bought.length === 1 ? 'insumo' : 'insumos'}`
+            : null,
+          priced.length ? `${priced.length} ${priced.length === 1 ? 'custo' : 'custos'}` : null,
+          made.size ? `${made.size} ${made.size === 1 ? 'insumo novo' : 'insumos novos'}` : null,
+        ]
+          .filter(Boolean)
+          .join(', ')}${note ? ` (${note})` : ''}`,
+        after: {
+          created: [...made.values()].map((x) => x.name),
+          bought: bought.map((b) => ({ id: b.id, qtyMilli: b.qty, costCents: b.costCents })),
+          priced: priced.map(([id, cpk]) => ({ id, costPerKCents: cpk })),
+          totalCents: total,
+        },
+      });
+      await emitAdminTx(tx, t.id, 'catalog');
+      return {
+        status: 200,
+        body: {
+          created: made.size,
+          bought: bought.length,
+          priced: priced.length,
+          totalCents: total,
+        },
+      };
     }),
   );
 

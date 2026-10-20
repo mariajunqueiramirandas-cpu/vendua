@@ -1,7 +1,8 @@
 # ADR 0046: Insumos: fichas técnicas, stock drawn by each sale, and the CMV
 
 - Status: Accepted (built 2026-10-20: migration `0137_insumos.sql`, `modules/insumos.ts`,
-  `admin/routes-insumos.ts`, `/reports/cmv`, the admin's `/cardapio/insumos`)
+  `admin/routes-insumos.ts`, `/reports/cmv`, the admin's `/cardapio/insumos`; "foto ou print"
+  added the same day)
 - Date: 2026-10-20
 
 ## Context
@@ -45,6 +46,18 @@ what was there and what arrived (`averageCost`). If nothing was counted, or the 
 below zero, it starts over from the price paid. Counts, losses, purchases, "fiz" (making a counted
 preparo) and each sale write `ingredient_movements`, the insumo's history and the report's
 purchases and losses.
+
+**A photo or print fills it in.** "Foto ou print" (`modules/insumos-photo.ts`) reads a nota, a
+receipt, a supplier's order or a price list the way "Foto do cardápio" reads a menu: one photo per
+call, through the same model gateway and daily media ledger, nothing written. The model only
+transcribes each line as written (name, quantity, unit, pack, total, price) and normalizes the name
+to one of the store's insumos. Core reads the numbers the pt-BR way, turns "2 UN" of a "5KG" pack
+into 10 kg in the insumo's own unit, and matches names by `vendua_stock_key`. The owner reviews every
+line (which insumo, how much, what it cost), and one `POST /insumos/import` does the rest, all or
+nothing: it creates the missing insumos, registers what was bought as one purchase (so the average
+cost moves as it does for a purchase typed by hand), and sets a price list's prices as the cost. A
+name the store already has is that insumo, whatever the review sent. An insumo that counts in
+another unit is refused (`INGREDIENT_UNIT_MISMATCH`) rather than converted.
 
 **Every plan has it.** No plan gate.
 

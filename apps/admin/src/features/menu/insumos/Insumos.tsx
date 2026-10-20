@@ -1,4 +1,11 @@
-import { ListChecks, MagnifyingGlass, Package, Plus, ShoppingCart } from '@phosphor-icons/react';
+import {
+  Camera,
+  ListChecks,
+  MagnifyingGlass,
+  Package,
+  Plus,
+  ShoppingCart,
+} from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -16,6 +23,7 @@ import { PageBody, PageHeader } from '../../../ui/Page.tsx';
 import { ChipsSkeleton, RowsSkeleton } from '../../../ui/skeletons.tsx';
 import { MenuTabs } from '../MenuTabs.tsx';
 import { PerOrderSheet, PurchaseSheet, ShoppingSheet, type Prefill } from './Compras.tsx';
+import { PhotoSheet } from './Foto.tsx';
 import { InsumoSheet, NewInsumoSheet } from './InsumoSheet.tsx';
 import { stockStatus } from './status.tsx';
 import { costLabel, MODE_LABEL, qty } from './units.ts';
@@ -37,6 +45,7 @@ export default function Insumos() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState<'insumo' | 'preparo' | null>(null);
   const [buying, setBuying] = useState<Prefill | null>(null);
+  const [photoOpen, setPhotoOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
 
@@ -102,6 +111,9 @@ export default function Insumos() {
                 <Button icon={<Plus />} onClick={() => setCreating('insumo')}>
                   cadastrar insumo
                 </Button>
+                <Button variant="secondary" icon={<Camera />} onClick={() => setPhotoOpen(true)}>
+                  foto da nota ou lista
+                </Button>
                 <Button variant="secondary" onClick={() => setCreating('preparo')}>
                   criar um preparo
                 </Button>
@@ -115,6 +127,7 @@ export default function Insumos() {
               low={counts.repor}
               onBuy={() => setBuying({ items: [] })}
               onList={() => setListOpen(true)}
+              onPhoto={() => setPhotoOpen(true)}
             />
             <Hint id="insumos-screen" className="mb-5">
               Cada venda desconta da ficha técnica sozinha, e um cancelamento devolve. Faltar insumo
@@ -195,6 +208,7 @@ export default function Insumos() {
         }}
       />
       <PurchaseSheet prefill={buying} all={all} onClose={() => setBuying(null)} />
+      <PhotoSheet open={photoOpen} all={all} onClose={() => setPhotoOpen(false)} />
       <ShoppingSheet
         open={listOpen}
         items={all.filter((i) => i.low)}
@@ -215,11 +229,13 @@ function Overview({
   low,
   onBuy,
   onList,
+  onPhoto,
 }: {
   data: InsumosList;
   low: number;
   onBuy: () => void;
   onList: () => void;
+  onPhoto: () => void;
 }) {
   const uncosted = data.insumos.filter(
     (i) => i.kind === 'insumo' && i.costPerKCents == null,
@@ -244,7 +260,10 @@ function Overview({
           </p>
         ) : null}
       </div>
-      <div className="flex shrink-0 flex-wrap gap-2">
+      <div className="flex min-w-0 flex-wrap gap-2">
+        <Button size="sm" variant="secondary" icon={<Camera />} className="h-11" onClick={onPhoto}>
+          foto ou print
+        </Button>
         <Button
           size="sm"
           variant="secondary"
