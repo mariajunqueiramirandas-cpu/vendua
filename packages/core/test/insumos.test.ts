@@ -532,6 +532,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('insumos (db)', () => {
     expect(r.body.products[0].marginBp).toBeGreaterThan(0);
   });
 
+  test('an absurd ficha cost still sells: the snapshot clamps to the int columns', async () => {
+    const [was] = await sql<{ cpk: number }[]>`
+      select cost_per_k_cents as cpk from ingredients where id = ${ing.carne!}`;
+    await sql`update ingredients set cost_per_k_cents = 1000000000 where id = ${ing.carne!}`;
+    await sql`update recipe_lines set qty_milli = 1000000000
+              where product_id = ${ids.burger!} and ingredient_id = ${ing.carne!}`;
+    try {
+      const orderId = await order(3, false);
+      const [row] = await sql<{ cost: number }[]>`
+        select cost_cents as cost from orders where id = ${orderId}`;
+      expect(row!.cost).toBe(2_000_000_000);
+    } finally {
+      await sql`update ingredients set cost_per_k_cents = ${was!.cpk} where id = ${ing.carne!}`;
+    }
+  });
+
   test('deleting an insumo takes its ficha lines with it', async () => {
     const uses = await owner('GET', `/insumos/${ing.guardanapo}/uses`);
     expect(uses.body.products).toEqual([{ id: ids.burger, name: 'X-Burger', option: null }]);

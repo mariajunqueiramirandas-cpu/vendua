@@ -11,6 +11,7 @@ import {
   makesCycle,
   MAX_CPK_CENTS,
   MAX_DEPTH,
+  MAX_INGREDIENTS,
   MAX_LINE_MILLI,
   MAX_LINES,
   MAX_STOCK_MILLI,
@@ -382,6 +383,10 @@ export function mountInsumos(d: AdminDeps) {
       const par = optMilli(body.parMilli, 'parMilli', 1, MAX_STOCK_MILLI) ?? null;
       const pack = optMilli(body.packMilli, 'packMilli', 1, MAX_LINE_MILLI) ?? null;
       const packName = optText(body.packName, 'packName', 24) ?? null;
+      const [n] = await tx<{ n: number }[]>`
+        select count(*)::int as n from ingredients where tenant_id = ${t.id}`;
+      if ((n?.n ?? 0) >= MAX_INGREDIENTS)
+        throw new HttpError(409, 'LIMIT_REACHED', `up to ${MAX_INGREDIENTS} insumos`);
       const [row] = await tx<{ id: string }[]>`
         insert into ingredients (tenant_id, kind, name, unit, cost_per_k_cents, yield_milli, low_milli,
                                  par_milli, pack_milli, pack_name)
@@ -569,9 +574,13 @@ export function mountInsumos(d: AdminDeps) {
     write('manager', async (tx, t, m, c) => {
       const id = ingredientId(c);
       const body = await bodyOf(c, 64 * 1024);
-      const [p] = await tx<{ kind: string; name: string }[]>`
-        select kind, name from ingredients where tenant_id = ${t.id} and id = ${id} for update
+      // every preparo, in id order: two edits at once can't each pass the cycle check
+      const locked = await tx<{ id: string; kind: string; name: string }[]>`
+        select id, kind, name from ingredients
+        where tenant_id = ${t.id} and (id = ${id} or kind = 'preparo')
+        order by id for update
       `;
+      const p = locked.find((r) => r.id === id.toLowerCase());
       if (!p) throw new HttpError(404, 'INGREDIENT_NOT_FOUND', 'insumo not found');
       if (p.kind !== 'preparo')
         throw new HttpError(422, 'NOT_A_PREPARO', 'only a preparo has a ficha of its own');

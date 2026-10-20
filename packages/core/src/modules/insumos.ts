@@ -22,6 +22,7 @@ export const MAX_STOCK_MILLI = 1_000_000_000_000;
 export const MAX_LINE_MILLI = 1_000_000_000;
 export const MAX_CPK_CENTS = 1_000_000_000;
 export const MAX_LINES = 40;
+export const MAX_INGREDIENTS = 2000;
 /** preparos inside preparos, at most this deep */
 export const MAX_DEPTH = 4;
 
@@ -303,14 +304,15 @@ export async function drawInsumos(
       explode(f, forMode(f.product.get(c.productId), mode), c.qty * l.qty, demand);
     // an option's ficha alone isn't the line's cost: unknown stays unknown
     if (unit == null) return null;
-    return Math.round((unit + options) * l.qty);
+    // the columns are int: an absurd ficha must not fail every checkout that has it
+    return clampCents(Math.round((unit + options) * l.qty));
   });
   const packaging = forMode(f.perOrder, mode);
   explode(f, packaging, 1, demand);
   const known = lineCosts.filter((c): c is number => c != null);
   const costCents =
     known.length || packaging.length
-      ? known.reduce((a, b) => a + b, 0) + Math.round(linesCost(f, packaging))
+      ? clampCents(known.reduce((a, b) => a + b, 0) + Math.round(linesCost(f, packaging)))
       : null;
 
   const draws = [...demand]
