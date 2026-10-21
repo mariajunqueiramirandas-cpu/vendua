@@ -1017,6 +1017,35 @@ export interface InsumosList {
   valueCents: number;
 }
 
+/** one line of a nota, receipt or price list, as Core read it from a photo or print */
+export interface InsumoPhotoRow {
+  printed: string | null;
+  name: string;
+  unit: InsumoUnit;
+  /** bought, in thousandths of `unit`; null on a price list */
+  qtyMilli: number | null;
+  costCents: number | null;
+  /** a price list's price and the amount it is for */
+  price: { cents: number; milli: number } | null;
+  costPerKCents: number | null;
+  packMilli: number | null;
+  packName: string | null;
+  /** the store's insumo with this name */
+  matchId: string | null;
+}
+
+/** a reviewed line: an insumo (id) or a new one (name), bought or priced */
+export interface InsumoImportItem {
+  id?: string;
+  name?: string;
+  unit: InsumoUnit;
+  qtyMilli?: number;
+  costCents?: number;
+  cost?: { cents: number; milli: number };
+  packMilli?: number | null;
+  packName?: string | null;
+}
+
 export interface InsumoMovement {
   id: string;
   at: string;
@@ -3074,6 +3103,20 @@ export const api = {
     items: { id: string; qtyMilli: number; costCents: number }[],
     note?: string | null,
   ) => send<{ insumos: Insumo[] }>('POST', '/insumos/purchases', { items, note: note || null }),
+  /** one photo or print of a nota or price list, read for review: nothing is written */
+  insumosPhoto: (photo: { mime: 'image/jpeg' | 'image/png' | 'image/webp'; data: string }) =>
+    req<{ kind: 'compra' | 'lista'; rows: InsumoPhotoRow[] }>('/insumos/photo', {
+      method: 'POST',
+      body: JSON.stringify(photo),
+      timeoutMs: 90_000,
+    }),
+  /** the reviewed photo, all or nothing: new insumos, one purchase, list prices */
+  importInsumos: (items: InsumoImportItem[], note?: string | null) =>
+    send<{ created: number; bought: number; priced: number; totalCents: number }>(
+      'POST',
+      '/insumos/import',
+      { items, note: note || null },
+    ),
   madeInsumo: (id: string, qtyMilli: number) =>
     send<{ insumo: Insumo }>('POST', `/insumos/${id}/made`, { qtyMilli }),
   insumoMovements: (id: string, before?: string) =>
