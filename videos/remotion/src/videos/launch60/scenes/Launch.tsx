@@ -1,11 +1,9 @@
 import { AbsoluteFill } from 'remotion';
 import { C, FONT, H, W } from '../../../lib/brand';
-import { Shader } from '../../../lib/gl';
 import { ease, kick, prog, tw } from '../../../lib/motion';
 import { ParticleText } from '../../../lib/particles';
-import { MARK3D } from '../../../lib/shaders';
 import { Rise, split } from '../../../lib/text';
-import { display, slam } from '../kit';
+import { display, Mark, slam } from '../kit';
 import { SCENES, T } from '../timeline';
 
 const L = T.launch;
@@ -71,30 +69,20 @@ export const Launch: React.FC<{ t: number }> = ({ t }) => {
       {hit && (
         <>
           <div style={{ opacity: 1 - e, transform: `scale(${1 + e * e * 3})`, filter: e ? `blur(${e * 14}px)` : 'none', transformOrigin: '540px 700px' }}>
+            {/* the app icon, flat as the brand draws it: a sticker's hard shadow, the check drawing on */}
             <div
               style={{
                 position: 'absolute',
-                left: 540 - 210,
-                top: 650 - 210,
-                width: 420,
-                height: 420,
-                borderRadius: 120,
-                background: C.forest,
-                boxShadow: '0 40px 100px rgba(18,60,50,0.45)',
-                transform: `scale(${tw(t, L.brand, L.brand + 0.4, 0.2, 1, ease.outBack)}) rotate(${(1 - land) * -30}deg)`,
+                left: 540 - 200,
+                top: 650 - 200,
+                width: 400,
+                height: 400,
+                transform: `scale(${tw(t, L.brand, L.brand + 0.4, 0.3, 1, ease.outBack) * (1 + kick(t, L.brand + 0.42, 0.3) * 0.05)}) rotate(${(1 - land) * -12}deg)`,
               }}
-            />
-            <Shader
-              frag={MARK3D}
-              width={460}
-              height={460}
-              style={{ left: 310, top: 420 }}
-              uniforms={{
-                uRot: [0.12 * Math.sin(t * 1.3), (1 - land) * Math.PI * 4 + 0.25 * Math.sin(t * 0.9), -0.05],
-                uSize: tw(t, L.brand, L.brand + 0.45, 0, 1, ease.outBack),
-                uLight: kick(t, L.brand + 0.4, 0.5),
-              }}
-            />
+            >
+              <div style={{ position: 'absolute', left: 0, top: 22, width: 400, height: 400, borderRadius: 88, background: 'rgba(13,42,35,0.28)' }} />
+              <Mark size={400} p={prog(t, L.brand + 0.1, 0.32, ease.outCubic)} color={C.lime} bg={C.forest} style={{ left: 0, top: 0 }} />
+            </div>
           </div>
           <div
             style={{

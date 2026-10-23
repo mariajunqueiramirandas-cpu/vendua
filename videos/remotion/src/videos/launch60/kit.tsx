@@ -234,3 +234,24 @@ export const Check: React.FC<{ size: number; color: string; p?: number }> = ({ s
     />
   </svg>
 );
+
+/** The brand's mark (public/brand/mark-*.svg) flat, its check drawing itself on as p goes 0 → 1;
+ *  on the app icon's rounded square when `bg` is set. */
+export const Mark: React.FC<{ size: number; p: number; color: string; bg?: string; style?: CSSProperties }> = ({ size, p, color, bg, style }) => (
+  <svg viewBox="0 0 128 128" width={size} height={size} style={{ position: 'absolute', overflow: 'visible', ...style }}>
+    {bg && <rect width={128} height={128} rx={28} fill={bg} />}
+    {p > 0 && (
+      <path
+        d="M32 48 L61 88 L98 34"
+        fill="none"
+        stroke={color}
+        strokeWidth={17}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        pathLength={1}
+        strokeDasharray={1}
+        strokeDashoffset={1 - p}
+      />
+    )}
+  </svg>
+);

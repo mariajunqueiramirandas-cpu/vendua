@@ -1,10 +1,8 @@
 import { AbsoluteFill } from 'remotion';
 import { C, FONT } from '../../../lib/brand';
-import { Shader } from '../../../lib/gl';
 import { ease, kick, prog, tw } from '../../../lib/motion';
-import { MARK3D } from '../../../lib/shaders';
 import { Rise } from '../../../lib/text';
-import { display, slam } from '../kit';
+import { display, Mark, slam } from '../kit';
 import { T, VO } from '../timeline';
 
 const K = T.cta;
@@ -16,7 +14,6 @@ const IRIS = K.end - 0.35;
 export const Cta: React.FC<{ t: number }> = ({ t }) => {
   const marker = prog(t, GRATIS + 0.05, 0.22, ease.outCubic);
   const iris = tw(t, IRIS, K.end, 0, 1, ease.inCubic);
-  const land = prog(t, IRIS, 0.9, ease.outExpo);
   const ring = prog(t, K.end, 0.7, ease.outCubic);
   const bob = Math.sin((t - K.link) * 9) * 14;
   const line = (at: number) => prog(t, at, 0.35, ease.outExpo);
@@ -106,16 +103,11 @@ export const Cta: React.FC<{ t: number }> = ({ t }) => {
             }}
           />
           <div style={{ position: 'absolute', inset: 0, transform: `scale(${1 + 0.01 * Math.sin((t - K.end) * 2.2)})`, transformOrigin: '540px 900px' }}>
-            <Shader
-              frag={MARK3D}
-              width={440}
-              height={440}
-              style={{ left: 320, top: 340 }}
-              uniforms={{
-                uRot: [0.1 * Math.sin(t * 1.2), (1 - land) * -Math.PI * 3 + 0.2 * Math.sin(t * 0.9), -0.04],
-                uSize: tw(t, IRIS, IRIS + 0.45, 0.3, 1, ease.outBack) * (1 + kick(t, K.end, 0.35) * 0.06),
-                uLight: kick(t, K.end, 0.6),
-              }}
+            <Mark
+              size={340}
+              p={prog(t, IRIS + 0.15, 0.4, ease.outCubic)}
+              color={C.lime}
+              style={{ left: 370, top: 390, transform: `scale(${tw(t, IRIS, IRIS + 0.45, 0.6, 1, ease.outBack) * (1 + kick(t, K.end, 0.35) * 0.08)})` }}
             />
             <div style={{ position: 'absolute', top: 770, width: '100%', textAlign: 'center', ...display(200, C.cream), letterSpacing: '-0.06em', lineHeight: 1 }}>
               venduá<span style={{ color: C.lime }}>.</span>
