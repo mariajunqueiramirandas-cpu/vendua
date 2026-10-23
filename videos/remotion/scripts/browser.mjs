@@ -8,8 +8,9 @@ export const browserPath = () => {
   const root = '/opt/pw-browsers';
   if (!existsSync(root)) return null;
   const dir = readdirSync(root).find((d) => d.startsWith('chromium_headless_shell-'));
-  const bin = dir && `${root}/${dir}/chrome-linux/headless_shell`;
-  return bin && existsSync(bin) ? bin : null;
+  // the shell's folder and name changed across Playwright releases
+  const bins = dir ? [`${root}/${dir}/chrome-linux/headless_shell`, `${root}/${dir}/chrome-headless-shell-linux64/chrome-headless-shell`] : [];
+  return bins.find((b) => existsSync(b)) ?? null;
 };
 
 // WebGL scenes: ANGLE on a GPU machine, SwiftShader (software) where there is none.
