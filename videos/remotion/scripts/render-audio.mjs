@@ -1,8 +1,10 @@
 // Renders a video's Tone.js score offline in headless Chromium and masters it for Remotion.
 //   node scripts/render-audio.mjs <video> [--stems]   e.g. hype30 → public/hype30/score.wav
-// --stems also writes out/<video>-music.wav and out/<video>-sfx.wav (unmastered) to balance the mix.
-// The score module (src/videos/<video>/score.ts) exports `score()` and `duration`. Math.random is
-// seeded before Tone loads, so the noise in reverbs and effects is the same on every run.
+// --stems also writes out/<video>-music.wav and out/<video>-sfx.wav (unmastered) to balance the mix,
+// and out/<video>-voice.wav when there is narration.
+// The score module (src/videos/<video>/score.ts) exports `score()` and `duration`, and `voice` when
+// the video is narrated: [{ src (under public/), at (seconds) }], laid over the score here. Math.random
+// is seeded before Tone loads, so the noise in reverbs and effects is the same on every run.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -20,12 +22,17 @@ if (!id || !existsSync(join(root, 'src/videos', id, 'score.ts'))) {
 }
 const RATE = 48000;
 const LUFS = -14;
+// narration sits at −16 LUFS and the score this far under it (the score also ducks under each word)
+const VOICE_LUFS = -16;
+const SCORE_UNDER = 6;
 
 const bundle = await build({
   stdin: {
     contents: `
       import * as Tone from 'tone';
-      import { score, duration } from './src/videos/${id}/score.ts';
+      import * as S from './src/videos/${id}/score.ts';
+      const { score, duration } = S;
+      window.scoreVoice = S.voice ?? null;
       window.renderScore = async (only) => {
         const buf = await Tone.Offline(() => score({ only }), duration, 2, ${RATE});
         return buf.toArray().map((ch) => {
@@ -44,6 +51,7 @@ const bundle = await build({
   logLevel: 'warning',
 });
 
+let voice;
 const executablePath = browserPath();
 const browser = await chromium.launch(executablePath ? { executablePath } : { channel: 'chrome' });
 const renderPass = async (only) => {
@@ -62,6 +70,7 @@ const renderPass = async (only) => {
   await page.setContent('<!doctype html><meta charset="utf-8">');
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   const b64 = await page.evaluate((o) => window.renderScore(o), only);
+  voice ??= await page.evaluate(() => window.scoreVoice);
   return b64.map((s) => {
     const buf = Buffer.from(s, 'base64');
     return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
@@ -109,7 +118,33 @@ const stats = (file) => {
   const sum = log.slice(log.lastIndexOf('Summary'));
   return { I: Number(/I:\s+(-?[\d.]+) LUFS/.exec(sum)[1]), peak: Number(/Peak:\s+(-?[\d.]+) dBFS/.exec(sum)[1]) };
 };
-const before = stats(raw);
+let mixed = raw;
+if (voice?.length) {
+  // the takes at their times, one stem: rumble cut, a gentle compressor, then to its loudness
+  const vStem = join(root, 'out', `${id}-voice.wav`);
+  const dur = (chans[0].length / RATE).toFixed(3);
+  const lay = voice.map((v, i) => `[${i}:a]aresample=${RATE},adelay=${Math.round(v.at * 1000)}:all=1[v${i}]`).join(';');
+  ffmpeg([
+    '-y', '-loglevel', 'error', ...voice.flatMap((v) => ['-i', join(root, 'public', v.src)]),
+    '-filter_complex',
+    `${lay};${voice.map((_, i) => `[v${i}]`).join('')}amix=inputs=${voice.length}:normalize=0:dropout_transition=0,` +
+      `apad=whole_dur=${dur},atrim=0:${dur},highpass=f=75,deesser=i=0.5:m=0.5:f=0.5,equalizer=f=3800:t=q:w=2:g=-2,` +
+      `acompressor=threshold=0.125:ratio=2.5:attack=4:release=90,aformat=channel_layouts=stereo[v]`,
+    '-map', '[v]', '-c:a', 'pcm_f32le', vStem,
+  ]);
+  const v = stats(vStem).I;
+  const m = stats(raw).I;
+  mixed = join(root, 'out', `${id}-mix-raw.wav`);
+  ffmpeg([
+    '-y', '-loglevel', 'error', '-i', raw, '-i', vStem,
+    '-filter_complex',
+    `[0:a]volume=${(VOICE_LUFS - SCORE_UNDER - m).toFixed(2)}dB[m];[1:a]volume=${(VOICE_LUFS - v).toFixed(2)}dB[v];[m][v]amix=inputs=2:normalize=0[o]`,
+    '-map', '[o]', '-c:a', 'pcm_f32le', mixed,
+  ]);
+  console.log(`voice: ${voice.length} takes, ${v} LUFS → ${VOICE_LUFS}; score ${m} LUFS → ${VOICE_LUFS - SCORE_UNDER}`);
+}
+
+const before = stats(mixed);
 const outDir = join(root, 'public', id);
 mkdirSync(outDir, { recursive: true });
 const dest = join(outDir, 'score.wav');
@@ -117,7 +152,7 @@ let gain = LUFS - before.I;
 let after;
 for (let pass = 0; pass < 3; pass++) {
   const af = `volume=${gain.toFixed(2)}dB,alimiter=limit=0.8:level=false:attack=3:release=60`;
-  ffmpeg(['-y', '-loglevel', 'error', '-i', raw, '-af', af, '-ar', String(RATE), '-c:a', 'pcm_s16le', dest]);
+  ffmpeg(['-y', '-loglevel', 'error', '-i', mixed, '-af', af, '-ar', String(RATE), '-c:a', 'pcm_s16le', dest]);
   after = stats(dest);
   if (Math.abs(after.I - LUFS) < 0.3) break;
   gain += LUFS - after.I;

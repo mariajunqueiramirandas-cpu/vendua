@@ -1,0 +1,22 @@
+{
+  "frames": 154,
+  "fps": 30,
+  "viewport": {
+    "width": 375,
+    "height": 812
+  },
+  "marks": {
+    "chegou": 17,
+    "pago": 53,
+    "pagoVisto": 55,
+    "aceitar": 82
+  },
+  "taps": [
+    {
+      "f": 82,
+      "x": 187.5,
+      "y": 595,
+      "label": "aceitar"
+    }
+  ]
+}

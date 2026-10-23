@@ -1,0 +1,70 @@
+{
+  "frames": 207,
+  "fps": 30,
+  "viewport": {
+    "width": 375,
+    "height": 812
+  },
+  "marks": {
+    "produto": 9,
+    "mais": 30,
+    "adicionar": 45,
+    "pagar": 72,
+    "dados": 84,
+    "continuar": 117,
+    "retirada": 129,
+    "continuar2": 141,
+    "confirmar": 159,
+    "pix": 159
+  },
+  "taps": [
+    {
+      "f": 9,
+      "x": 264,
+      "y": 304.28125,
+      "label": "produto"
+    },
+    {
+      "f": 30,
+      "x": 102.40625,
+      "y": 772,
+      "label": "mais"
+    },
+    {
+      "f": 45,
+      "x": 247.203125,
+      "y": 772,
+      "label": "adicionar"
+    },
+    {
+      "f": 72,
+      "x": 187.5,
+      "y": 755.515625,
+      "label": "pagar"
+    },
+    {
+      "f": 117,
+      "x": 187.5,
+      "y": 490.609375,
+      "label": "continuar"
+    },
+    {
+      "f": 129,
+      "x": 195.5,
+      "y": 339.828125,
+      "label": "retirada"
+    },
+    {
+      "f": 141,
+      "x": 218.5,
+      "y": 442.109375,
+      "label": "continuar2"
+    },
+    {
+      "f": 159,
+      "x": 218.5,
+      "y": 774.359375,
+      "label": "confirmar"
+    }
+  ]
+}

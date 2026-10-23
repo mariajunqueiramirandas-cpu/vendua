@@ -3,7 +3,8 @@
 The house toolchain for marketing videos since 2026-10-10 (the author's call, replacing
 HyperFrames): **Remotion** for the picture (React, frame-driven animation, WebGL shaders),
 **Tone.js** for the music and every sound effect, scored in code against the same timeline as the
-picture. No voice, no third-party audio, no AI images.
+picture. A narrated video adds ElevenLabs voice takes through OpenRouter (`scripts/voice.mjs`). No
+stock audio, no AI images.
 
 ## Layout
 
@@ -11,8 +12,10 @@ picture. No voice, no third-party audio, no AI images.
 remotion.config.ts        browser, GL and encode settings
 scripts/
   browser.mjs             which Chromium renders (cloud: Playwright's headless shell)
-  render-audio.mjs        Tone.js score → offline render in Chromium → −14 LUFS WAV
+  render-audio.mjs        Tone.js score (+ narration) → offline render in Chromium → −14 LUFS WAV
   stills.mjs              stills at given seconds + one contact sheet
+  voice.mjs               narration: ElevenLabs takes through OpenRouter, Scribe word times
+  capture-ui.mjs          films the real storefront and admin, frame by frame in virtual time
 src/
   Root.tsx                one <Composition> per video
   lib/                    shared: brand tokens, fonts, grid, motion, WebGL, particles, phone, grain
@@ -21,7 +24,10 @@ src/
     score.ts              Tone.js: music + SFX, placed from timeline.ts
     <Video>.tsx           the composition: world + scenes + audio
     scenes/*.tsx          one file per scene, each gets the global time `t`
+    lines.ts, words.ts    narrated videos: the script, and each take's word times (generated)
+    capture.mjs           videos that film the product: the flows capture-ui.mjs runs
 public/                   fonts, brand marks, Duá poses, real admin captures (noite theme)
+  <id>/vo, <id>/ui        a video's picked voice takes and its filmed clips (+ marks and taps)
 ```
 
 ## Commands
@@ -34,6 +40,8 @@ node scripts/stills.mjs Hype30 0 3.8 15 28.5   # contact sheet in out/stills/
 npm run draft -- Hype30 out/draft.mp4           # half size, ~2 min: for checking motion and sync
 npm run render -- Hype30 out/hype30.mp4         # full 1080×1920, ~7 min for 30 s on 4 CPUs, software GL
 npm run check                      # tsc
+OPENROUTER_API_KEY=… node scripts/voice.mjs launch60 takes hook --n 3   # then pick, then words
+node scripts/capture-ui.mjs launch60 compra   # needs the local stack (see below)
 ```
 
 Render the audio before the studio or a render: the WAV is generated, not committed. Renders go in
@@ -90,8 +98,31 @@ To go faster:
   or the author. "Grátis" appears only as "14 dias grátis" (Bandeira, no card).
 - **No strobes.** A full-frame colour flip happens once and holds, never repeated at sixteenths
   (photosensitivity, in an ad).
-- **Real captures only.** Use the admin screens in `public/screens/` (from `site/` captures) and
+- **Real captures only.** Use clips filmed by `capture-ui.mjs`, the admin screens in `public/screens/` (from `site/` captures) and
   draw any UI in code with the brand tokens.
+
+## Narration (launch60 on)
+
+`src/videos/<id>/lines.ts` holds the script: `say` goes to the TTS model (audio tags, pronunciation
+spellings like `Ven-du-á`), `text` is the caption. `voice.mjs` makes takes of each line with the
+neighbouring lines as context (`takes`), copies the chosen ones to `public/<id>/vo/` (`pick`), and
+runs Scribe v2 on them to write `words.ts`: the script's words with the times they were said.
+`timeline.ts` sizes every scene to its take, so the voice sets the pace and the captions, cuts and
+effects follow the words. `score.ts` exports `voice` (each take and its time); `render-audio.mjs`
+lays the takes over the score (de-essed, compressed, the score 6 LU under the voice and ducked
+under every word) and masters the sum. The key comes from `OPENROUTER_API_KEY`, never a file.
+To check a mix, have Scribe transcribe the master: every word should come back.
+
+## The real product on screen
+
+`capture-ui.mjs` runs a video's `capture.mjs` against the local stack (the `local-stack` skill,
+started with a clean environment and `VENDUA_PAYMENTS_DRIVER=fake`, as its header says). Each page
+runs on a virtual clock that moves 1/30 s per screenshot, with every CSS and Web Animation pinned
+to it, so the apps' own motion (a card landing, a total rolling up, a check drawing) is filmed
+frame-exact even on a slow container. A clip is an MP4 in `public/<id>/ui/` plus a JSON of frame
+marks and taps. In the film, `timeline.ts` maps each clip's frames onto time with `[t, frame]`
+keys (speed ramps that land a tap on its word), and `<Freeze>` + `<OffthreadVideo>` shows the
+frame; the taps become finger marks and sound effects.
 
 ## Licence
 

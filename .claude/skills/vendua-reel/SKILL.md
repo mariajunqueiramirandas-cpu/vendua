@@ -33,14 +33,21 @@ the findings from the HyperFrames videos, which still apply to pace, copy and so
   bells, pitched sine pops, filtered-noise swishes, a sub bloom on the hits).
 - Read every line as a stranger would before generating it: a verb like "chega" can sound like
   Venduá delivers. Say where the order lands (the shop's phone), not how it travels.
-- Real captures only; prices, plans and dates on screen are the author's decision.
+- Real captures only; prices, plans and dates on screen are the author's decision. To show the
+  product working, film it: `scripts/capture-ui.mjs` (README, "The real product on screen") and
+  `launch60/capture.mjs` as the example (a purchase, the board, onboarding, each a clip with taps).
 
 ## Audio source
 
 - Music and SFX: **Tone.js, scored in code** (`score.ts`, `npm run audio -- <id>`), the default
   since 2026-10-10. Ask the author only to change it.
-- Voices (narrator, customer): still **not chosen**. Ask the author before generating any, and
-  record the answer in the video's folder. Never reuse a provider key or voice ID from an older commit.
+- Voices (narrator, customer): **ask the author** before generating any, and record the answer in
+  the video's folder. Never reuse a provider key or voice ID from an older commit. Launch60
+  (2026-10-23): the author asked for ElevenLabs Eleven v4 through OpenRouter with their key
+  (`scripts/voice.mjs`, key from `OPENROUTER_API_KEY` only); the premade "eric" with a
+  `[Brazilian Portuguese accent]` tag ranked first for a native pt-BR read (`launch60/lines.ts`).
+- Scribe hears a correct "ven-du-Á" as "Vendo A"/"VenduA" and a wrong one as "Vanduá": transcribe
+  each take and the final master to catch it.
 
 ## Order of work
 
