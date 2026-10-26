@@ -144,32 +144,6 @@ export function idempotencyFingerprint(c: Context): string {
   return createHash('sha256').update(parts.join('\n')).digest('hex');
 }
 
-/** a JSON body up to this is part of a claim's fingerprint; past it (a photo's base64) the
- *  caller and route alone are */
-const FINGERPRINT_BODY_MAX = 1024 * 1024;
-
-export interface RequestFingerprint {
-  /** the caller and route, and the JSON body: one key resent with other content is refused */
-  fp: string;
-  /** idempotencyFingerprint alone, as a Core from before body hashing stored it (ADR 0041) */
-  legacy: string;
-}
-
-/** idempotencyFingerprint plus the request's JSON body, read once (Hono caches it for the route) */
-export async function requestFingerprint(c: Context): Promise<RequestFingerprint> {
-  const legacy = idempotencyFingerprint(c);
-  const declared = Number(c.req.header('content-length'));
-  const json = (c.req.header('content-type') ?? '').split(';')[0]!.trim() === 'application/json';
-  // a body declared past the bound isn't read here (the route refuses or streams it); one sent
-  // without a length is read, as the route's own bodyJson reads it whole anyway
-  if (!json || (Number.isFinite(declared) && declared > FINGERPRINT_BODY_MAX))
-    return { fp: legacy, legacy };
-  const raw = await c.req.text();
-  if (Buffer.byteLength(raw, 'utf8') > FINGERPRINT_BODY_MAX) return { fp: legacy, legacy };
-  const body = createHash('sha256').update(raw).digest('hex');
-  return { fp: createHash('sha256').update(`${legacy}\n${body}`).digest('hex'), legacy };
-}
-
 /** The origin links and payment callbacks should point at: the configured admin domain, else the
  *  request's own host only when it's one we serve (dev loopback, the platform domain, a store
  *  host already resolved) — never an arbitrary Host header. */
@@ -251,7 +225,7 @@ export async function claim<T>(
   sql: Sql,
   tenantId: string,
   key: string,
-  fingerprint: string | RequestFingerprint,
+  fingerprint: string,
   // structured result only — a raw Response could commit writes without a recorded result for the claim to replay
   run: (tx: Sql) => Promise<{ status: number; body: T }>,
 ): Promise<Claimed<T>> {
@@ -270,13 +244,12 @@ export async function claimTx<T>(
   tx: Sql,
   tenantId: string,
   key: string,
-  print: string | RequestFingerprint,
+  fingerprint: string,
   run: () => Promise<{ status: number; body: T }>,
   opts: { sweep?: boolean } = {},
 ): Promise<Claimed<T>> {
   checkKey(key, true);
-  const fingerprint = fingerprintOf(typeof print === 'string' ? print : print.fp);
-  const legacy = typeof print === 'string' ? fingerprint : print.legacy;
+  fingerprint = fingerprintOf(fingerprint);
   const owner = crypto.randomUUID();
   // The key row is only ever committed with its result, so the unique index serializes owners: a
   // concurrent same-key insert waits for this tx, then replays what it committed (or claims a key
@@ -310,13 +283,7 @@ export async function claimTx<T>(
       `
     )[0];
     // null = a row from before fingerprints existed: replayable to anyone, as it was
-    if (
-      hit &&
-      hit.fingerprint != null &&
-      hit.fingerprint !== fingerprint &&
-      hit.fingerprint !== legacy
-    )
-      throw keyReused();
+    if (hit && hit.fingerprint != null && hit.fingerprint !== fingerprint) throw keyReused();
     if (hit?.response != null && hit.status_code != null) {
       return { status: hit.status_code, body: hit.response as T, replayed: true };
     }
@@ -340,7 +307,7 @@ export function idempotency(
     const key = c.req.header('idempotency-key');
     checkKey(key);
     const tenant = c.get('tenant') as Tenant;
-    const r = await claim(sql, tenant.id, key, await requestFingerprint(c), (tx) => run(c, tx));
+    const r = await claim(sql, tenant.id, key, idempotencyFingerprint(c), (tx) => run(c, tx));
     if (r.replayed) {
       return c.json(r.body as object, r.status as 200, { 'x-idempotent-replay': 'true' });
     }

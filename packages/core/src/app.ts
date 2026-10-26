@@ -204,7 +204,7 @@ import {
   patchMemoryItem,
   putLeadFact,
 } from './modules/agent-memory.ts';
-import { claimControl, controlIdemKey, controlTx } from './modules/control.ts';
+import { claimControl, controlIdemKey, controlTx, inControlRoute } from './modules/control.ts';
 import { controlSse } from './modules/control-sse.ts';
 import { emitControlEvent } from './modules/control-events.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
@@ -1433,7 +1433,7 @@ export function createApp({
     const sessionToken =
       cookie && cookie.length <= 100 && (await touchControlSession(sql, cookie)) ? cookie : null;
     staffAuth.set(c.req.raw, { viaHeader, viaPublishKey, sessionToken });
-    await next();
+    await inControlRoute(c, next);
   });
   const controlAuth = (c: Context) =>
     staffAuth.get(c.req.raw) ?? { viaHeader: false, viaPublishKey: false, sessionToken: null };

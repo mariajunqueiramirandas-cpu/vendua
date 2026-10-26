@@ -22,9 +22,10 @@ function dtf(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
-/** YYYY-MM-DD naming a real day: 2026-02-30 passes the shape but makes Postgres' ::date raise */
+/** YYYY-MM-DD naming a real day: 2026-02-30 passes the shape but makes Postgres' ::date raise
+ *  (year 0000 too: Postgres has no year 0) */
 export function isCalendarDate(s: unknown): s is string {
-  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s) || s < '1900-01-01') return false;
   const d = new Date(`${s}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }

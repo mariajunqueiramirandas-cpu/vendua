@@ -13,7 +13,13 @@ import { copilotView, resetConversationTx } from '../copilot/view.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
 import { mediaUpload } from '../modules/media-upload.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, bodyJson, checkKey, requestFingerprint, uuidParam } from '../platform/http.ts';
+import {
+  HttpError,
+  bodyJson,
+  checkKey,
+  idempotencyFingerprint,
+  uuidParam,
+} from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { isObj, need, oneOf, optText, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
@@ -94,14 +100,13 @@ export function mountCopilot(d: AdminDeps) {
     checkKey(key);
     // a retry replays the stored answer before anything is heard or read again (POST /media's
     // rule): only to the caller and route that stored it
-    const print = await requestFingerprint(c);
     const [done] = await withTenant(
       d.sql,
       t.id,
       (tx) => tx<{ response: unknown; status_code: number }[]>`
         select response, status_code from idempotency_keys
         where tenant_id = ${t.id} and key = ${key} and response is not null
-          and (fingerprint is null or fingerprint in (${print.fp}, ${print.legacy}))`,
+          and (fingerprint is null or fingerprint = ${idempotencyFingerprint(c)})`,
     );
     if (done)
       return c.json(done.response as object, done.status_code as 201, {

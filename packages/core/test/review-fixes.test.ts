@@ -4,9 +4,10 @@ import { Hono } from 'hono';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { validateCombo, type ComboSlot } from '../src/modules/combos.ts';
-import { controlIdemKey } from '../src/modules/control.ts';
+import { claimControl, inControlRoute } from '../src/modules/control.ts';
 import { couponUsage } from '../src/modules/coupons.ts';
 import { migrate, type Sql } from '../src/platform/db.ts';
+import { errorJson } from '../src/platform/http.ts';
 import { isCalendarDate } from '../src/platform/tz.ts';
 
 // The October 2026 review: each test pins one fix (the rest sit with their feature's tests:
@@ -16,7 +17,15 @@ describe('review fixes (units)', () => {
   test('a date that names no day is not a calendar date', () => {
     expect(isCalendarDate('2026-02-28')).toBe(true);
     expect(isCalendarDate('2028-02-29')).toBe(true);
-    for (const d of ['2026-02-29', '2026-02-30', '2026-04-31', '2026-13-01', '2026-2-1', 20260201])
+    for (const d of [
+      '2026-02-29',
+      '2026-02-30',
+      '2026-04-31',
+      '2026-13-01',
+      '0000-01-01',
+      '2026-2-1',
+      20260201,
+    ])
       expect(isCalendarDate(d)).toBe(false);
   });
 
@@ -33,18 +42,6 @@ describe('review fixes (units)', () => {
     expect(error?.code).toBe('INVALID_COMBO');
     expect(error?.message).toContain('Sabores');
     expect(error?.details).toMatchObject({ slotId: 's1', slotName: 'Sabores' });
-  });
-
-  test('a staff Idempotency-Key is bound to its route and target', async () => {
-    const h = new Hono();
-    h.all('*', (c) => c.text(controlIdemKey(c)));
-    const key = async (path: string, method = 'POST') =>
-      (await h.request(path, { method, headers: { 'idempotency-key': 'K1' } })).text();
-    const a = await key('/control/v1/storefronts/a/reset');
-    expect(a.endsWith(':K1')).toBe(true);
-    expect(await key('/control/v1/storefronts/a/reset')).toBe(a);
-    expect(await key('/control/v1/storefronts/b/reset')).not.toBe(a);
-    expect(await key('/control/v1/storefronts/a/reset', 'PATCH')).not.toBe(a);
   });
 });
 
@@ -187,26 +184,51 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('review fixes (db)', () => {
     expect(await used()).toBe(0);
   });
 
-  test('a key resent with another body is refused; the same body replays', async () => {
+  test("a client key can't take an /events batch's key, which replays to anyone", async () => {
     const auth = await session();
-    const key = { ...auth, 'idempotency-key': `${nonce}-same` };
-    const first = await call('POST', '/checkout/v1/cart/items', { productId, qty: 1 }, key);
-    expect(first.status).toBe(200);
-    const again = await call('POST', '/checkout/v1/cart/items', { productId, qty: 1 }, key);
-    expect([again.status, again.replayed]).toEqual([200, true]);
-    const other = await call('POST', '/checkout/v1/cart/items', { productId, qty: 3 }, key);
-    expect([other.status, other.body.error.code]).toEqual([422, 'IDEMPOTENCY_KEY_REUSED']);
-    // a client can't take an /events batch's key, which replays to anyone
     const squat = await call(
       'POST',
       '/checkout/v1/cart/items',
       { productId, qty: 1 },
-      {
-        ...auth,
-        'idempotency-key': 'events:abcdefgh',
-      },
+      { ...auth, 'idempotency-key': 'events:abcdefgh' },
     );
     expect(squat.status).toBe(400);
+  });
+
+  test('a staff key claimed on one route is 422 on another; a scopeless claim replays', async () => {
+    const h = new Hono();
+    let runs = 0;
+    h.onError((err, c) => errorJson(err, c));
+    h.use('*', (c, next) => inControlRoute(c, next));
+    h.post('*', async (c) => {
+      const r = await claimControl(appSql, `${nonce}-staff`, async () => ({
+        status: 200,
+        body: { run: ++runs },
+      }));
+      return c.json(r.body, r.status as 200);
+    });
+    const post = async (path: string) => {
+      const res = await h.request(path, { method: 'POST' });
+      return { status: res.status, body: (await res.json()) as any };
+    };
+    expect(await post('/control/v1/storefronts/a/reset')).toEqual({
+      status: 200,
+      body: { run: 1 },
+    });
+    expect(await post('/control/v1/storefronts/a/reset')).toEqual({
+      status: 200,
+      body: { run: 1 },
+    });
+    const other = await post('/control/v1/storefronts/b/reset');
+    expect([other.status, other.body.error.code]).toEqual([422, 'IDEMPOTENCY_KEY_REUSED']);
+    // a job (no route) or a previous Core (no scope column) replays, as it always did
+    const job = await claimControl(appSql, `${nonce}-staff`, async () => ({
+      status: 200,
+      body: {},
+    }));
+    expect(job).toMatchObject({ replayed: true, body: { run: 1 } });
+    expect(runs).toBe(1);
+    await sql`delete from control_idempotency_keys where key = ${`${nonce}-staff`}`;
   });
 
   test("agent_events' partitions are closed to the app role", async () => {
