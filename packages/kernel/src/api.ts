@@ -1945,6 +1945,10 @@ export const ERROR_CODES = [
   'DATE_FULL',
   'PLAN_NOT_FOUND',
   'PLAN_NOT_ALLOWED',
+  // Kernel 1.30 — this number's plan is paused: checkout's yes would place an order with no plan
+  'PLAN_PAUSED',
+  // Kernel 1.30 — a cash sale's money can't be handed back with no caixa open (staff-side)
+  'PAYMENT_LOCKED',
   'PICKUP_UNAVAILABLE',
   'OUT_OF_ZONE',
   'INVALID_DELIVERY',

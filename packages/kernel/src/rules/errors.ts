@@ -36,6 +36,10 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
     title: 'O plano é para entrega ou retirada',
     body: 'Escolha entrega ou retirada para assinar.',
   },
+  PLAN_PAUSED: {
+    title: 'Seu plano está pausado',
+    body: 'Fale com a loja para retomar, ou faça este pedido sem assinar.',
+  },
   PICKUP_UNAVAILABLE: { title: 'Retirada indisponível agora', body: 'Escolha entrega.' },
   EMPTY_CART: { title: 'Sua sacola está vazia' },
   CART_NOT_OPEN: { title: 'Essa sacola já virou pedido', body: 'Recarregue para começar outra.' },

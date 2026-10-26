@@ -234,6 +234,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plano semanal (db)', () => {
     expect(ack!.body).toContain('confirmado');
   });
 
+  test('a number whose plan is paused is told so at checkout, and nothing is placed', async () => {
+    const s = await store();
+    await subscribe(s);
+    await sql`update plan_subscriptions set state = 'paused' where tenant_id = ${s.id}`;
+    const before = await sql`select 1 from orders where tenant_id = ${s.id}`;
+    const auth = await session(s.host);
+    const b = await call(s.host, 'POST', '/checkout/v1/cart/plan', { planId: s.planId }, auth);
+    const r = await call(
+      s.host,
+      'POST',
+      '/checkout/v1/checkout',
+      {
+        customer: { name: 'Bia Souza', phone: PHONE },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'pix' },
+        scheduledFor: b.body.cart.schedule.dates[1],
+        subscribe: true,
+      },
+      auth,
+    );
+    expect([r.status, r.body.error.code]).toEqual([409, 'PLAN_PAUSED']);
+    expect(await sql`select 1 from orders where tenant_id = ${s.id}`).toHaveLength(before.length);
+  });
+
+  test('a bag whose quantities change is no longer the plan’s basket; a note keeps it', async () => {
+    const s = await store();
+    const auth = await session(s.host);
+    const b = await call(s.host, 'POST', '/checkout/v1/cart/plan', { planId: s.planId }, auth);
+    const line = b.body.cart.items[0].id as string;
+    const noted = await call(
+      s.host,
+      'PATCH',
+      `/checkout/v1/cart/items/${line}`,
+      { note: 'bem verdinha' },
+      auth,
+    );
+    expect(noted.body.cart.plan).toMatchObject({ id: s.planId });
+    const more = await call(s.host, 'PATCH', `/checkout/v1/cart/items/${line}`, { qty: 5 }, auth);
+    expect(more.status).toBe(200);
+    expect(more.body.cart.plan).toBeNull();
+    const again = await call(s.host, 'GET', '/checkout/v1/cart', undefined, auth);
+    expect(again.body.cart.plan).toBeNull();
+  });
+
   test('without the yes, the order is just an order', async () => {
     const s = await store();
     const auth = await session(s.host);

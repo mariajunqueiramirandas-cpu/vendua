@@ -901,10 +901,7 @@ export async function loadCartView(
     if (plan.weekday !== null)
       schedule.dates = schedule.dates.filter((d) => dayOfWeek(d) === plan.weekday);
   }
-  if (
-    (settings?.encomenda_capacity || cart.party) &&
-    (schedule.required || schedule.dates.length)
-  )
+  if ((settings?.encomenda_capacity || cart.party) && (schedule.required || schedule.dates.length))
     schedule.dates = await datesWithRoomTx(
       tx,
       tenantId,

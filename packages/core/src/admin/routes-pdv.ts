@@ -900,7 +900,12 @@ export function mountPdv(d: AdminDeps) {
             r.orderId,
             r.state === 'delivered' ? 'refunded' : 'cancelled',
             'merchant',
-            { by: m.name, reason, via: 'pdv', ...(r.state === 'delivered' ? { unpaid: true } : {}) },
+            {
+              by: m.name,
+              reason,
+              via: 'pdv',
+              ...(r.state === 'delivered' ? { unpaid: true } : {}),
+            },
           );
       await Promise.all([
         audit(tx, t.id, m, {

@@ -304,6 +304,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('festa calculada (db)', () => {
     const day = first.dates[4]!;
     expect((await place(day)).r.status).toBe(201);
     const over = await place(day);
+    // the cart already left that day out: the ceiling is said before checkout, not by it
+    expect(over.dates).not.toContain(day);
     expect([over.r.status, over.r.body.error.details.groupId]).toEqual([409, s.salgados]);
   });
 

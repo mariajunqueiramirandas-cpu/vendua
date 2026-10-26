@@ -160,12 +160,13 @@ export async function requestFingerprint(c: Context): Promise<RequestFingerprint
   const legacy = idempotencyFingerprint(c);
   const declared = Number(c.req.header('content-length'));
   const json = (c.req.header('content-type') ?? '').split(';')[0]!.trim() === 'application/json';
-  // only a declared, bounded length is read here: a chunked or huge body is the route's to refuse
-  if (!json || !Number.isFinite(declared) || declared <= 0 || declared > FINGERPRINT_BODY_MAX)
+  // a body declared past the bound isn't read here (the route refuses or streams it); one sent
+  // without a length is read, as the route's own bodyJson reads it whole anyway
+  if (!json || (Number.isFinite(declared) && declared > FINGERPRINT_BODY_MAX))
     return { fp: legacy, legacy };
-  const body = createHash('sha256')
-    .update(await c.req.text())
-    .digest('hex');
+  const raw = await c.req.text();
+  if (Buffer.byteLength(raw, 'utf8') > FINGERPRINT_BODY_MAX) return { fp: legacy, legacy };
+  const body = createHash('sha256').update(raw).digest('hex');
   return { fp: createHash('sha256').update(`${legacy}\n${body}`).digest('hex'), legacy };
 }
 

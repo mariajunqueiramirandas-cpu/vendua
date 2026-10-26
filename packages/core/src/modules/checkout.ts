@@ -349,11 +349,7 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       field: 'payment.changeForCents',
     });
   optional(i.notes, 500, 'notes', 'INVALID_NOTES');
-  if (
-    i.scheduledFor !== undefined &&
-    i.scheduledFor !== null &&
-    !isCalendarDate(i.scheduledFor)
-  )
+  if (i.scheduledFor !== undefined && i.scheduledFor !== null && !isCalendarDate(i.scheduledFor))
     throw new HttpError(422, 'INVALID_SCHEDULE', 'scheduledFor must be YYYY-MM-DD', {
       field: 'scheduledFor',
     });

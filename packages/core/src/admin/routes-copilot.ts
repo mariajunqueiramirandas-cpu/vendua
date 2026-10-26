@@ -13,13 +13,7 @@ import { copilotView, resetConversationTx } from '../copilot/view.ts';
 import { requireFeature } from '../modules/billing/plans.ts';
 import { mediaUpload } from '../modules/media-upload.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
-import {
-  HttpError,
-  bodyJson,
-  checkKey,
-  requestFingerprint,
-  uuidParam,
-} from '../platform/http.ts';
+import { HttpError, bodyJson, checkKey, requestFingerprint, uuidParam } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { isObj, need, oneOf, optText, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
