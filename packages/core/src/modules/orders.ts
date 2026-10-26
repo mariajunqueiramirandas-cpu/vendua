@@ -574,49 +574,53 @@ export async function transitionOrder(
     const [caixa] = await tx<{ id: string }[]>`
       select id from cash_sessions where tenant_id = ${tenantId} and closed_at is null for share
     `;
-    if (caixa) {
-      const by = String(meta.by ?? actor).slice(0, 80);
+    const by = String(meta.by ?? actor).slice(0, 80);
+    if (caixa)
       await tx`
         update pdv_payments set voided_at = now(), voided_by = ${by},
           void_reason = ${to === 'cancelled' ? 'pedido cancelado' : 'pedido estornado'}
         where tenant_id = ${tenantId} and order_id = ${orderId} and voided_at is null
           and session_id = ${caixa.id}
       `;
-      // cash taken in a caixa already closed is handed back from this one's drawer
-      const [earlier] = await tx<{ cents: number }[]>`
-        select coalesce(sum(p.amount_cents), 0)::int as cents
-        from pdv_payments p join cash_sessions s on s.tenant_id = p.tenant_id and s.id = p.session_id
-        where p.tenant_id = ${tenantId} and p.order_id = ${orderId} and p.voided_at is null
-          and p.method = 'cash' and s.closed_at is not null
+    const back: { cents: number; reason: string }[] = [];
+    // cash taken in a caixa already closed is handed back from this one's drawer
+    const [earlier] = await tx<{ cents: number }[]>`
+      select coalesce(sum(p.amount_cents), 0)::int as cents
+      from pdv_payments p join cash_sessions s on s.tenant_id = p.tenant_id and s.id = p.session_id
+      where p.tenant_id = ${tenantId} and p.order_id = ${orderId} and p.voided_at is null
+        and p.method = 'cash' and s.closed_at is not null
+    `;
+    if (earlier && earlier.cents > 0)
+      back.push({
+        cents: earlier.cents,
+        reason: `${to === 'cancelled' ? 'cancelamento' : 'estorno'} do pedido #${order.number}`,
+      });
+    // a round of a closed comanda: the comanda's payments carry no order id, so the round's
+    // share of the cash it was paid with leaves this drawer (split as Relatórios splits it)
+    if (to === 'refunded') {
+      const [round] = await tx<{ cents: number }[]>`
+        select (o.total_cents::bigint
+                * coalesce(sum(p.amount_cents) filter (where p.method = 'cash'), 0)
+                / nullif(sum(p.amount_cents), 0))::int as cents
+        from orders o
+        join pdv_tabs t on t.tenant_id = o.tenant_id and t.id = o.tab_id and t.status = 'closed'
+        join pdv_payments p on p.tenant_id = o.tenant_id and p.tab_id = o.tab_id
+          and p.voided_at is null
+        where o.tenant_id = ${tenantId} and o.id = ${orderId} and o.payment ->> 'provider' = 'pdv'
+        group by o.total_cents
       `;
-      if (earlier && earlier.cents > 0)
-        await tx`
-          insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
-          values (${tenantId}, ${caixa.id}, 'sangria', ${earlier.cents},
-            ${`${to === 'cancelled' ? 'cancelamento' : 'estorno'} do pedido #${order.number}`}, ${by})
-        `;
-      // a round of a closed comanda: the comanda's payments carry no order id, so the round's
-      // share of the cash it was paid with leaves this drawer (split as Relatórios splits it)
-      if (to === 'refunded') {
-        const [round] = await tx<{ cents: number }[]>`
-          select (o.total_cents::bigint
-                  * coalesce(sum(p.amount_cents) filter (where p.method = 'cash'), 0)
-                  / nullif(sum(p.amount_cents), 0))::int as cents
-          from orders o
-          join pdv_tabs t on t.tenant_id = o.tenant_id and t.id = o.tab_id and t.status = 'closed'
-          join pdv_payments p on p.tenant_id = o.tenant_id and p.tab_id = o.tab_id
-            and p.voided_at is null
-          where o.tenant_id = ${tenantId} and o.id = ${orderId} and o.payment ->> 'provider' = 'pdv'
-          group by o.total_cents
-        `;
-        if (round && round.cents > 0)
-          await tx`
-            insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
-            values (${tenantId}, ${caixa.id}, 'sangria', ${round.cents},
-              ${`estorno do pedido #${order.number} (comanda)`}, ${by})
-          `;
-      }
+      if (round && round.cents > 0)
+        back.push({ cents: round.cents, reason: `estorno do pedido #${order.number} (comanda)` });
     }
+    // with no drawer open the hand-back has nowhere to be booked, and the next caixa would close
+    // short with nothing explaining it (the PDV's void refuses the same way)
+    if (back.length && !caixa)
+      throw new HttpError(409, 'PAYMENT_LOCKED', 'open the caixa to give the money back');
+    for (const b of back)
+      await tx`
+        insert into cash_movements (tenant_id, session_id, kind, amount_cents, reason, by_name)
+        values (${tenantId}, ${caixa!.id}, 'sangria', ${b.cents}, ${b.reason}, ${by})
+      `;
   }
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
   if (STAFF_STEPS.has(to))
@@ -631,7 +635,8 @@ export async function transitionOrder(
   // Money refunded online is told when it lands (syncOrderPayment); a refund the store made
   // itself is the whole order, told here.
   if (to === 'refunded') {
-    if (order.whatsapp && !order.online)
+    // `unpaid`: a served round of a cancelled comanda leaves the books, but no money went back
+    if (order.whatsapp && !order.online && meta.unpaid !== true)
       await enqueueOrderMessageTx(tx, tenantId, orderId, 'refunded', {
         occurrence: String(order.total_cents),
         refund: { cents: order.total_cents, full: true, online: false },

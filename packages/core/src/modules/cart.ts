@@ -32,7 +32,7 @@ import {
   type ZoneMatch,
 } from './geo.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
-import { datesWithRoomTx, type CartParty } from './encomenda-capacity.ts';
+import { datesWithRoomTx, orderPartyTx, type CartParty } from './encomenda-capacity.ts';
 import { cartPlanTx, dayOfWeek, type CartPlan } from './shopper-plan-base.ts';
 import { scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
@@ -471,6 +471,9 @@ export function validateLine(
   return validateCombo(product.comboSlots, selections).error;
 }
 
+/** place-order's MAX_ORDER_CENTS (that module imports this one) */
+const MAX_UNIT_CENTS = 1_000_000_000;
+
 /** A validated line's unit price: base + option groups + kit picks, never below zero. */
 function pricedUnit(
   product: Pick<ProductDetail, 'basePriceCents' | 'modifierGroups'>,
@@ -482,6 +485,11 @@ function pricedUnit(
   const unit = unitPriceCents(product.basePriceCents, chosen.groups) + comboDelta(picks);
   if (unit < 0)
     throw new HttpError(422, 'INVALID_MODIFIER', 'the selected options price this item below zero');
+  // cart_items.unit_price_cents is an int4: past it the insert is a 500, so the order cap holds here
+  if (unit > MAX_UNIT_CENTS)
+    throw new HttpError(422, 'ORDER_TOO_LARGE', 'the selected options price this item too high', {
+      maxCents: MAX_UNIT_CENTS,
+    });
   return { unitPriceCents: unit, snapshot: chosen.snapshot };
 }
 
@@ -893,12 +901,13 @@ export async function loadCartView(
     if (plan.weekday !== null)
       schedule.dates = schedule.dates.filter((d) => dayOfWeek(d) === plan.weekday);
   }
-  if (settings?.encomenda_capacity && (schedule.required || schedule.dates.length))
+  if ((settings?.encomenda_capacity || cart.party) && (schedule.required || schedule.dates.length))
     schedule.dates = await datesWithRoomTx(
       tx,
       tenantId,
-      settings.encomenda_capacity,
+      settings?.encomenda_capacity,
       schedule.dates,
+      cart.party ? await orderPartyTx(tx, tenantId, cart.party, items) : null,
     );
 
   const totals = computeTotals(
@@ -965,6 +974,7 @@ export async function addItem(
   have: { cart?: CartRow; settings?: StoreSettingsRow | null } = {},
 ): Promise<{ cart: CartView; added: AddedLine }> {
   const added = await insertLine(tx, tenantId, cartId, input, getProductById);
+  if (have.cart) have = { ...have, cart: { ...have.cart, plan_id: null } };
   return { cart: await loadCartView(tx, tenantId, cartId, new Date(), { have }), added };
 }
 
@@ -1026,9 +1036,10 @@ export async function insertLine(
   // `added` reads the row written: a merge keeps the line's frozen price (checkout reprices)
   let written: { id: string; unit_price_cents: number };
   try {
-    // the cart's touch rides in the insert's statement (a failed insert fails it too)
+    // the cart's touch rides in the insert's statement (a failed insert fails it too); a bag that
+    // changes is no longer the plan's basket (buildPlanCartTx sets the plan after its lines)
     const rows = await tx<{ id: string; unit_price_cents: number }[]>`
-      with touched as (update carts set updated_at = now() where id = ${cartId})
+      with touched as (update carts set updated_at = now(), plan_id = null where id = ${cartId})
       insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, modifier_qty, unit_price_cents,
                               modifier_snapshot, combo_selections, combo_snapshot, note)
       values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${tx.json(modifierQty)},

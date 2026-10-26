@@ -937,6 +937,53 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('admin: pdv (db)', () => {
     });
   });
 
+  test('with no caixa open, cash from a counted caixa is not handed back: 409 until one opens', async () => {
+    const r = await attendant('POST', '/pdv/sales', {
+      lines: [{ productId: burger, qty: 1 }],
+      mode: 'here',
+      quotedTotalCents: 1000,
+      payments: [{ method: 'cash', amountCents: 1000 }],
+      serveNow: true,
+    });
+    expect([r.status, r.body.error]).toEqual([201, undefined]);
+    const id = r.body.order.id as string;
+    const zero = { cash: 0, pix: 0, credit: 0, debit: 0 };
+    expect((await owner('POST', '/pdv/caixa/close', { counted: zero })).status).toBe(200);
+    const refund = await owner('POST', `/orders/${id}/refund`, { reason: 'devolveu' });
+    expect(refund.status).toBe(409);
+    expect(refund.body.error.code).toBe('PAYMENT_LOCKED');
+    const [still] = await sql<{ state: string }[]>`select state from orders where id = ${id}`;
+    expect(still!.state).toBe('delivered');
+    const open = await owner('POST', '/pdv/caixa/open', { openingCents: 1000 });
+    expect((await owner('POST', `/orders/${id}/refund`, { reason: 'devolveu' })).status).toBe(200);
+    const [m] = await sql<{ amount_cents: number; session_id: string }[]>`
+      select amount_cents, session_id from cash_movements
+      where tenant_id = ${tenantId} and kind = 'sangria' order by at desc limit 1`;
+    expect(m).toMatchObject({ amount_cents: 1000, session_id: open.body.caixa.id });
+  });
+
+  test("a cancelled comanda's served round leaves the revenue as refunded, its others cancelled", async () => {
+    const opened = await attendant('POST', '/pdv/tabs', { label: 'Balcão 11' });
+    expect([opened.status, opened.body.error]).toEqual([201, undefined]);
+    const t = opened.body.tab.id;
+    const served = (
+      await attendant('POST', `/pdv/tabs/${t}/rounds`, { lines: [{ productId: burger, qty: 1 }] })
+    ).body.orderId as string;
+    for (const to of ['preparing', 'ready', 'delivered'])
+      expect((await owner('POST', `/orders/${served}/transition`, { to })).status).toBe(200);
+    const waiting = (
+      await attendant('POST', `/pdv/tabs/${t}/rounds`, { lines: [{ productId: burger, qty: 1 }] })
+    ).body.orderId as string;
+    const c = await owner('POST', `/pdv/tabs/${t}/cancel`, { reason: 'cliente saiu' });
+    expect(c.status).toBe(200);
+    const states = await sql<{ id: string; state: string }[]>`
+      select id, state from orders where id in (${served}, ${waiting})`;
+    expect(Object.fromEntries(states.map((o) => [o.id, o.state]))).toEqual({
+      [served]: 'refunded',
+      [waiting]: 'cancelled',
+    });
+  });
+
   test('bad and foreign ids answer 4xx', async () => {
     expect((await attendant('GET', `/pdv/tabs/${crypto.randomUUID()}`)).status).toBe(404);
     expect((await attendant('GET', '/pdv/tabs/nope')).status).toBeLessThan(500);

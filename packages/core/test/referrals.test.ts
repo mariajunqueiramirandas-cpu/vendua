@@ -87,6 +87,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     return v.body as { signupToken: string; trialEligible: boolean };
   };
 
+  /** a valid CPF of each store's own: one payer on both sides of a referral earns nothing (0138) */
+  const cpf = (n: number) => {
+    const d = String(100_000_000 + (n % 899_999_999))
+      .split('')
+      .map(Number);
+    for (const len of [9, 10])
+      d.push(((d.slice(0, len).reduce((t, x, i) => t + x * (len + 1 - i), 0) * 10) % 11) % 10);
+    return d.join('');
+  };
+
   const signup = async (token: string, slug: string, extra: Record<string, unknown> = {}) => {
     const r = await call('POST', '/admin/v1/signup', {
       signupToken: token,
@@ -95,8 +105,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
       storeName: 'Doces da Lia',
       slug,
       ownerName: 'Lia Souza',
-      email: 'lia@example.com',
-      document: '529.982.247-25',
+      email: `${slug}@example.com`,
+      document: cpf(Date.now() + ++seq * 7919),
       ...extra,
     });
     if (r.body?.store?.id && !created.includes(r.body.store.id)) created.push(r.body.store.id);
@@ -251,6 +261,42 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('referrals and partners (db)', (
     expect(await sql`select 1 from billing_credits where tenant_id = ${referrer.id}`).toHaveLength(
       1,
     );
+  });
+
+  test("a referee paying with the referrer's CPF earns the referrer nothing", async () => {
+    const referrer = await trialStore('r3');
+    const slug = (await sql`select slug from tenants where id = ${referrer.id}`)[0]!.slug;
+    const { payer_document } = await sub(referrer.id);
+    // another WhatsApp, the same payer
+    const { signupToken } = await verified(mkPhone());
+    const r = await signup(signupToken, `ref-${nonce}-n3`, {
+      referral: slug,
+      document: payer_document,
+    });
+    expect(r.status).toBe(201);
+    const newId = r.body.store.id as string;
+    await payFirstMonth(newId);
+    expect(await sql`select 1 from billing_credits where tenant_id = ${referrer.id}`).toHaveLength(
+      0,
+    );
+    expect(
+      (await sql`select rewarded_at from store_referrals where tenant_id = ${newId}`)[0]!
+        .rewarded_at,
+    ).toBeNull();
+  });
+
+  test("a partner's own WhatsApp opening a store records no referral", async () => {
+    const code = `T${nonce.toUpperCase()}-SELF`;
+    const phone = mkPhone();
+    await sql`
+      insert into partners (code, name, kind, phone, status)
+      values (${code}, 'Parceiro Próprio', 'consultor', ${phone}, 'active')`;
+    const { signupToken } = await verified(phone);
+    const r = await signup(signupToken, `ref-${nonce}-pself`, { referral: code });
+    expect(r.status).toBe(201);
+    expect(
+      await sql`select 1 from store_referrals where tenant_id = ${r.body.store.id}`,
+    ).toHaveLength(0);
   });
 
   test('a card plan takes its free month as a refund of the next charge', async () => {

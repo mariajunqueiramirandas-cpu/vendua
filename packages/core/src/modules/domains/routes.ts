@@ -4,7 +4,7 @@ import type { Sql } from '../../platform/db.ts';
 import { HttpError, uuidParam } from '../../platform/http.ts';
 import type { Tenant } from '../../platform/tenancy.ts';
 import { emitAdminTx } from '../../admin/live.ts';
-import { claimControl, controlTx } from '../control.ts';
+import { claimControl, controlIdemKey, controlTx } from '../control.ts';
 
 // The domains-sync sidecar's one read (ADR 0038): every host Traefik should route and get a
 // certificate for. It answers 404 without its secret, like /edge/v1/resolve. And the CRM's
@@ -55,11 +55,7 @@ export function mountDomainRoutes(o: {
   app.post('/control/v1/domain-orders/:id/retry', async (c) => {
     controlGate(c);
     const id = uuidParam(c, 'id');
-    const key = c.req.header('idempotency-key');
-    if (!key)
-      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
-    const res = await claimControl(sql, key, async (tx) => {
+    const res = await claimControl(sql, controlIdemKey(c), async (tx) => {
       const o = (
         await tx<{ tenant_id: string; status: string; claimed_until: Date | null }[]>`
           select tenant_id, status, claimed_until from domain_orders where id = ${id} for update

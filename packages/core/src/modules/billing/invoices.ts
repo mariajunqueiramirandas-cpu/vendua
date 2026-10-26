@@ -67,6 +67,10 @@ export async function viaProvider<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+/** the period's end: a plan month after its start, on the day the plan was paid (0139) */
+const monthAfter = (tx: Sql, o: { tenantId: string; start: Date }) =>
+  tx`billing_month_after(${o.start}, (select billing_day from subscriptions where tenant_id = ${o.tenantId}))`;
+
 export const hookUrl = (origin: string | null) =>
   origin ? `${origin}/admin/v1/hooks/mercadopago?t=platform` : null;
 
@@ -114,7 +118,7 @@ export async function upsertInvoice(
           plan_id = ${o.planId}, amount_cents = ${o.amountCents},
           discount_cents = ${o.discountCents ?? 0}, method = ${o.method},
           provider = ${o.provider}, status = 'open',
-          period_start = ${o.start}, period_end = ${o.start}::timestamptz + interval '1 month',
+          period_start = ${o.start}, period_end = ${monthAfter(tx, o)},
           due_at = ${o.dueAt},
           ${same ? tx`pix_superseded = pix_superseded` : supersedePix(tx)},
           provider_payment_id = ${same ? tx`provider_payment_id` : null},
@@ -132,7 +136,7 @@ export async function upsertInvoice(
       values (${o.tenantId},
               (select coalesce(max(number), 0) + 1 from invoices where tenant_id = ${o.tenantId}),
               ${o.planId}, ${o.amountCents}, ${o.discountCents ?? 0}, ${o.start},
-              ${o.start}::timestamptz + interval '1 month', ${o.method}, 'open', ${o.provider},
+              ${monthAfter(tx, o)}, ${o.method}, 'open', ${o.provider},
               ${o.dueAt})
       returning *
     `

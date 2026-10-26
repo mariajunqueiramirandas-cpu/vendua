@@ -1,5 +1,6 @@
 import { deliveryPaused } from './freio.ts';
 import { HttpError } from '../platform/http.ts';
+import { isCalendarDate } from '../platform/tz.ts';
 import { validPhone } from './customer.ts';
 import { deliveryPricing, validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
@@ -163,7 +164,8 @@ export function validateCheckout<Z extends ZoneLike>(
         item.modifierQty ?? {},
       );
       if (invalid) {
-        invalid.details = { ...invalid.details, productId: item.productId };
+        // itemId: the bag line to fix
+        invalid.details = { ...invalid.details, productId: item.productId, itemId: item.id };
         throw invalid;
       }
       continue;
@@ -347,11 +349,7 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       field: 'payment.changeForCents',
     });
   optional(i.notes, 500, 'notes', 'INVALID_NOTES');
-  if (
-    i.scheduledFor !== undefined &&
-    i.scheduledFor !== null &&
-    !(typeof i.scheduledFor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(i.scheduledFor))
-  )
+  if (i.scheduledFor !== undefined && i.scheduledFor !== null && !isCalendarDate(i.scheduledFor))
     throw new HttpError(422, 'INVALID_SCHEDULE', 'scheduledFor must be YYYY-MM-DD', {
       field: 'scheduledFor',
     });

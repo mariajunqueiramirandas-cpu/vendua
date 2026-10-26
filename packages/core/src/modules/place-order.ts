@@ -5,6 +5,7 @@ import { phoneVariants } from '../store-whatsapp/text.ts';
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { isCalendarDate } from '../platform/tz.ts';
 import { loadCartRow, loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
 import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
@@ -178,11 +179,7 @@ export async function placeOrderTx(
   // Festa calculada (0126): the party's units, frozen now; a full day says so (the cart already
   // leaves it out of its dates, so this answers a stale page)
   const party = cart.party ? await orderPartyTx(tx, tenantId, cart.party, cart.items) : null;
-  if (
-    typeof body.scheduledFor === 'string' &&
-    /^\d{4}-\d{2}-\d{2}$/.test(body.scheduledFor) &&
-    (settings?.encomenda_capacity || party?.groups.length)
-  )
+  if (isCalendarDate(body.scheduledFor) && (settings?.encomenda_capacity || party?.groups.length))
     await assertDateRoomTx(tx, tenantId, settings?.encomenda_capacity, body.scheduledFor, party);
   const scheduledFor = validateSchedule(
     cart.schedule,

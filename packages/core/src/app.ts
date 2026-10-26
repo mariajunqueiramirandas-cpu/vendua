@@ -204,7 +204,7 @@ import {
   patchMemoryItem,
   putLeadFact,
 } from './modules/agent-memory.ts';
-import { claimControl, controlTx } from './modules/control.ts';
+import { claimControl, controlIdemKey, controlTx, inControlRoute } from './modules/control.ts';
 import { controlSse } from './modules/control-sse.ts';
 import { emitControlEvent } from './modules/control-events.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
@@ -392,6 +392,15 @@ async function loadSettings(
 }
 
 const loadZones = loadZoneRows;
+
+/** a cart line's qty as sent: a number, never null/""/true coerced (Number(null) is 0, a delete) */
+function lineQty(v: unknown): number {
+  if (typeof v !== 'number')
+    throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99', {
+      field: 'qty',
+    });
+  return v;
+}
 
 /** The store's Pix for the storefront page — key, beneficiary and an amount-less copia e cola. */
 /** optional `paymentMethod` of the cart/quote previews */
@@ -1169,7 +1178,7 @@ export function createApp({
       if (!UUID_RE.test(productId)) {
         throw new HttpError(422, 'BAD_REQUEST', 'productId must be a uuid');
       }
-      const qty = Number(body.qty ?? 1);
+      const qty = lineQty(body.qty ?? 1);
       if (Array.isArray(body.modifierIds) && body.modifierIds.length > 32) {
         throw new HttpError(422, 'BAD_REQUEST', 'modifierIds accepts at most 32 entries');
       }
@@ -1209,7 +1218,7 @@ export function createApp({
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       const cart = await editLineTx(tx, tenant.id, cartId, c.req.param('itemId') ?? '', {
-        ...(body.qty !== undefined ? { qty: Number(body.qty) } : {}),
+        ...(body.qty !== undefined ? { qty: lineQty(body.qty) } : {}),
         ...(body.note !== undefined ? { note: body.note } : {}),
       });
       return { status: 200, body: { cart } };
@@ -1424,7 +1433,7 @@ export function createApp({
     const sessionToken =
       cookie && cookie.length <= 100 && (await touchControlSession(sql, cookie)) ? cookie : null;
     staffAuth.set(c.req.raw, { viaHeader, viaPublishKey, sessionToken });
-    await next();
+    await inControlRoute(c, next);
   });
   const controlAuth = (c: Context) =>
     staffAuth.get(c.req.raw) ?? { viaHeader: false, viaPublishKey: false, sessionToken: null };
@@ -1466,14 +1475,7 @@ export function createApp({
       maxAge: 60 * 60 * 24 * CONTROL_SESSION_DAYS,
       path: '/control',
     });
-  const requireIdemKey = (c: Context) => {
-    const key = c.req.header('idempotency-key');
-    if (!key) {
-      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-    }
-    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
-    return key;
-  };
+  const requireIdemKey = controlIdemKey;
 
   app.get('/control/v1/state', async (c) => {
     controlGate(c);
@@ -3087,13 +3089,7 @@ export function createApp({
     app,
     sql,
     controlGate,
-    idemKey: (c) => {
-      const key = c.req.header('idempotency-key');
-      if (!key)
-        throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-      if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
-      return key;
-    },
+    idemKey: controlIdemKey,
     trustProxy,
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
   });

@@ -1,5 +1,5 @@
 import type { Context, Hono } from 'hono';
-import { claimControl, controlTx } from '../modules/control.ts';
+import { claimControl, controlIdemKey, controlTx } from '../modules/control.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Sql } from '../platform/db.ts';
 import { setStage, STAGES, type Stage } from './versions.ts';
@@ -13,12 +13,7 @@ function uuid(v: string | undefined, what: string): string {
   return v.toLowerCase();
 }
 
-function idemKey(c: Context): string {
-  const key = c.req.header('idempotency-key');
-  if (!key || key.length > 200)
-    throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-  return key;
-}
+const idemKey = controlIdemKey;
 
 async function body(c: Context): Promise<Record<string, unknown>> {
   const raw = await c.req.text();

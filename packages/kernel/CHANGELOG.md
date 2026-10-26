@@ -3,6 +3,15 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.30.0
+
+Two more Core error codes in `ERROR_CODES` — additive, no storefront edit, no new export.
+
+- `PLAN_PAUSED` (409): checkout's `subscribe: true` from a number whose plan with the store is
+  paused. Nothing is placed; the default copy says to ask the store or order without the plan.
+- `PAYMENT_LOCKED` (409): a cash sale cancelled or refunded while no caixa is open (admin and PDV,
+  never a shopper's screen).
+
 ## 1.29.0
 
 The editor preview's `vendua:preview-ready` also carries `templates`: what each page renders when

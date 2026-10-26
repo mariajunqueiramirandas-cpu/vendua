@@ -18,7 +18,7 @@ import {
 import type { AiPackRow } from './billing/subscriptions.ts';
 import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/subscriptions.ts';
 import type { SignupReadiness } from './billing/signup-gate.ts';
-import { claimControl, controlTx } from './control.ts';
+import { claimControl, controlIdemKey, controlTx } from './control.ts';
 import { mountControlCoupons } from './control-coupons.ts';
 import { ProviderError, type PaymentProvider } from './payments/provider.ts';
 
@@ -95,13 +95,7 @@ export function mountControlBilling(o: {
     syncPlanPrices(sql, billingBase, new Date()).catch((err) =>
       billingLog.warn({ err }, 'plan price sync failed'),
     );
-  const idemKey = (c: Context) => {
-    const key = c.req.header('idempotency-key');
-    if (!key)
-      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
-    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
-    return key;
-  };
+  const idemKey = controlIdemKey;
   mountControlCoupons({ app, sql, controlGate, idemKey });
 
   app.get('/control/v1/billing/stores', async (c) => {

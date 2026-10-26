@@ -91,7 +91,9 @@ async function bestOwnCoupon(ctx: Ctx, t: Thread, cartId: string): Promise<void>
     select c.code from coupons c
     where c.tenant_id = ${ctx.tenantId} and c.phone = ${t.phone} and c.active
       and (c.ends_at is null or c.ends_at > now())
-      and not exists (select 1 from coupon_redemptions r where r.coupon_id = c.id)
+      and not exists (
+        select 1 from coupon_redemptions r join orders o on o.id = r.order_id
+        where r.coupon_id = c.id and o.state not in ('cancelled', 'refunded'))
     order by c.created_at desc limit 5`;
   if (!codes.length) return;
   const sp = ctx.tx as unknown as Savepointable;

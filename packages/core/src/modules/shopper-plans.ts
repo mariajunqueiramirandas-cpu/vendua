@@ -192,6 +192,15 @@ export async function planToSubscribeTx(
     });
   if (!(await plansOfferedTx(tx, tenantId)))
     throw new HttpError(404, 'PLAN_NOT_FOUND', 'this plan is not offered');
+  // subscribeTx keeps a number's paused plan as it is: the order would go through with no plan
+  // behind it, so it's said before anything is written (the store resumes it, or SAIR undone)
+  const [paused] = await tx`
+    select 1 from plan_subscriptions
+    where tenant_id = ${tenantId} and plan_id = ${plan.id} and phone = ${phone} and state = 'paused'`;
+  if (paused)
+    throw new HttpError(409, 'PLAN_PAUSED', 'this number has this plan paused: ask the store', {
+      field: 'subscribe',
+    });
   return { plan, phone, scheduledFor };
 }
 

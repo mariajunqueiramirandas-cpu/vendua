@@ -288,6 +288,14 @@ async function recordRefund(
   r: Reservation,
   refund: { id: string; amountCents: number; status: 'pending' | 'approved' | 'rejected' },
 ): Promise<'ok' | 'duplicate' | 'amount' | 'stale'> {
+  // the order before its payment, as applyProviderPayment locks them: the other way round a
+  // webhook for this payment deadlocks with it
+  await tx`
+    select 1 from orders
+    where tenant_id = ${tenantId}
+      and id = (select order_id from payments where tenant_id = ${tenantId} and id = ${r.payment_id})
+    for update
+  `;
   const pay = (
     await tx<PaymentRow[]>`select * from payments where id = ${r.payment_id} for update`
   )[0]!;

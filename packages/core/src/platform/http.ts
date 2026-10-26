@@ -196,8 +196,9 @@ const inProgress = () =>
     'a request with this Idempotency-Key is still in flight — retry',
   );
 
-// claimTx's own keys (the Vendedor's place_order); a client key can't occupy one
-const INTERNAL_KEY = /^vendedor:/;
+// claimTx's own keys (the Vendedor's place_order) and /events' batches (stored with no
+// fingerprint, so replayable to anyone); a client key can't occupy one
+const INTERNAL_KEY = /^(vendedor|events):/;
 
 export function checkKey(key: string | undefined | null, internal = false): asserts key is string {
   if (!key) {
