@@ -22,6 +22,13 @@ function dtf(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
+/** YYYY-MM-DD naming a real day: 2026-02-30 passes the shape but makes Postgres' ::date raise */
+export function isCalendarDate(s: unknown): s is string {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 export interface LocalDate {
   year: number;
   month: number; // 1-12

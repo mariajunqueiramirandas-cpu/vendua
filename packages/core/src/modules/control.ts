@@ -1,4 +1,19 @@
+import { createHash } from 'node:crypto';
+import type { Context } from 'hono';
 import { beginTracked, inheritCommitHooks, type Sql } from '../platform/db.ts';
+import { HttpError } from '../platform/http.ts';
+
+/** A staff request's Idempotency-Key for claimControl, bound to its method and path (the store,
+ *  order or lead it acts on): one key sent to another route or target claims afresh, where the
+ *  bare key replayed the other one's result and never ran. */
+export function controlIdemKey(c: Context): string {
+  const key = c.req.header('idempotency-key');
+  if (!key)
+    throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+  if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+  const scope = createHash('sha256').update(`${c.req.method} ${c.req.path}`).digest('hex');
+  return `${scope.slice(0, 16)}:${key}`;
+}
 
 // sets the vendua.control GUC — RLS policies on CRM tables require it. Inside a transaction (an
 // Agent Runtime step's fenced tx: the CRM agent runs under the platform tenant) it is a savepoint

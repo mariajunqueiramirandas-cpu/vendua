@@ -1176,9 +1176,11 @@ async function recordPaid(tx: Sql, tenantId: string, inv: InvoiceRow, method: st
 
 async function activate(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, paidAt: Date) {
   const tenantId = sub.tenant_id;
-  // the paid month counts from the payment, not from when the invoice was issued
+  // the paid month counts from the payment, not from when the invoice was issued, and every
+  // month after it ends on that day (0139)
+  const day = tx`extract(day from ${paidAt}::timestamptz at time zone 'America/Sao_Paulo')::int`;
   await tx`
-    update invoices set period_start = ${paidAt}, period_end = ${paidAt}::timestamptz + interval '1 month'
+    update invoices set period_start = ${paidAt}, period_end = billing_month_after(${paidAt}, ${day})
     where id = ${inv.id} and not exists (
       select 1 from invoices o where o.tenant_id = ${tenantId} and o.period_start = ${paidAt} and o.id <> ${inv.id}
     )
@@ -1186,7 +1188,7 @@ async function activate(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, 
   await tx`
     update subscriptions set status = 'active', pending_plan_id = null, checkout_url = null,
       cancel_at_period_end = false, current_period_start = ${paidAt},
-      current_period_end = ${paidAt}::timestamptz + interval '1 month',
+      current_period_end = billing_month_after(${paidAt}, ${day}), billing_day = ${day},
       updated_at = now(), status_changed_at = now()
     where tenant_id = ${tenantId}
   `;

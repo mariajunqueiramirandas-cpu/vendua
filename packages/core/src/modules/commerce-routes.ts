@@ -838,7 +838,7 @@ export function mountCommerce(d: Deps) {
       t.id,
       (tx) => tx`
         select c.*, (select count(*)::int from coupon_redemptions r join orders o on o.id = r.order_id
-                      where r.coupon_id = c.id and o.state <> 'cancelled') as redemptions
+                      where r.coupon_id = c.id and o.state not in ('cancelled', 'refunded')) as redemptions
         from coupons c where c.tenant_id = ${t.id} order by c.created_at desc limit 200
       `,
     );
@@ -1180,6 +1180,7 @@ export function mountCommerce(d: Deps) {
       pre?.deposit_cents && to === 'cancelled'
         ? new Set(pre.held.filter((p) => p.charge !== 'balance').map((p) => p.id))
         : null;
+    let refunded = 0;
     if (pre?.online && canTransition(pre.state, to, pre.mode)) {
       const pay = { sql, provider: d.provider, sessionSecret };
       const backNow = keep ? pre.held.filter((p) => !keep.has(p.id)).map((p) => p.id) : null;
@@ -1188,20 +1189,41 @@ export function mountCommerce(d: Deps) {
         pre.status === 'partially_refunded' ||
         (!!pre.deposit_cents && pre.held.length > 0);
       if (backNow?.length || (!keep && (to === 'cancelled' || to === 'refunded') && captured))
-        await refundOrderPayments(pay, t.id, orderId, {
-          amountCents: null,
-          reason: note ?? `pedido ${to === 'cancelled' ? 'cancelado' : 'estornado'}`,
-          requestedBy: null,
-          key: `control:${requireIdemKey(c)}`,
-          requireApproved: true,
-          ...(backNow?.length ? { paymentIds: backNow } : {}),
-        });
+        refunded = (
+          await refundOrderPayments(pay, t.id, orderId, {
+            amountCents: null,
+            reason: note ?? `pedido ${to === 'cancelled' ? 'cancelado' : 'estornado'}`,
+            requestedBy: null,
+            key: `control:${requireIdemKey(c)}`,
+            requireApproved: true,
+            ...(backNow?.length ? { paymentIds: backNow } : {}),
+          })
+        ).refundedCents;
       if (to === 'cancelled' && (keep || !captured)) await cancelOpenAttempts(pay, t.id, orderId);
     }
-    const res = await claimTenant(c, t.id, async (tx) => {
-      await transitionOrder(tx, t.id, orderId, to, 'staff', note ? { note } : {});
-      return { status: 200, body: { order: await loadOrderView(tx, t.id, orderId) } };
-    });
+    let res: Awaited<ReturnType<typeof claimTenant<{ order: OrderView }>>>;
+    try {
+      res = await claimTenant(c, t.id, async (tx) => {
+        await transitionOrder(tx, t.id, orderId, to, 'staff', note ? { note } : {});
+        return { status: 200, body: { order: await loadOrderView(tx, t.id, orderId) } };
+      });
+    } catch (err) {
+      // as the admin's: the money already went back but the order moved on meanwhile (delivered,
+      // say), so it ends refunded rather than an active order with nothing paid
+      if (refunded && to === 'cancelled' && err instanceof HttpError && err.status === 409)
+        await withTenant(sql, t.id, (tx) =>
+          transitionOrder(tx, t.id, orderId, 'refunded', 'staff', {
+            refundedCents: refunded,
+            ...(note ? { note } : {}),
+          }),
+        ).catch((e) =>
+          commerceLog.warn(
+            { err: e, tenantId: t.id, orderId },
+            'refunded cancel left the order as it was',
+          ),
+        );
+      throw err;
+    }
     if (res.status === 200 && (to === 'cancelled' || to === 'refunded'))
       await refundLeftovers({ sql, provider: d.provider, sessionSecret }, t.id, orderId);
     return reply(c, res);

@@ -73,7 +73,16 @@ export function validateCombo(
     const slot = slots.find((s) => s.id === sel.slotId);
     const item = slot?.items.find((i) => i.productId === sel.productId);
     if (!slot || !item)
-      return fail(new HttpError(422, 'INVALID_COMBO', 'unknown combo slot or item', { ...sel }));
+      // a pick the store took out of the kit (archived, say) since it went in the bag: the slot
+      // says which choice to make again
+      return fail(
+        new HttpError(
+          422,
+          'INVALID_COMBO',
+          slot ? `"${slot.name}" no longer offers this pick` : 'unknown combo slot or item',
+          { ...sel, ...(slot ? { slotName: slot.name } : {}) },
+        ),
+      );
     if (item.status !== 'active')
       return fail(
         new HttpError(409, 'COMBO_ITEM_SOLD_OUT', `"${item.name}" is sold out`, {

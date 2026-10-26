@@ -58,7 +58,8 @@ export async function setLineQtyTx(
   if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
     throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
   }
-  const cart = await assertCartOpen(tx, tenantId, cartId);
+  // a bag whose lines change is no longer the plan's basket: the weeks would order the plan's
+  const cart = { ...(await assertCartOpen(tx, tenantId, cartId)), plan_id: null };
   const id = itemIdOf(itemId);
   if (qty > 0) await assertLineQty(tx, tenantId, cartId, id, qty);
   // one batch: the write (the cart's touch rides in its statement) is executed first, so the
@@ -66,10 +67,10 @@ export async function setLineQtyTx(
   const write = (
     qty === 0
       ? tx`
-          with touched as (update carts set updated_at = now() where id = ${cartId})
+          with touched as (update carts set updated_at = now(), plan_id = null where id = ${cartId})
           delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
       : tx`
-          with touched as (update carts set updated_at = now() where id = ${cartId})
+          with touched as (update carts set updated_at = now(), plan_id = null where id = ${cartId})
           update cart_items set qty = ${qty} where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`
   ).execute();
   const [, view] = await Promise.all([
@@ -113,24 +114,34 @@ export async function editLineTx(
       where l.tenant_id = ${tenantId} and l.cart_id = ${cartId} and l.id = ${id}
       for update of l`
   )[0];
+  let view = cart;
   if (line) {
     const units = qty ?? line.qty;
+    // a note alone leaves the plan's basket as it is (its weeks carry no notes)
+    const dropPlan = units !== line.qty;
+    if (dropPlan) view = { ...cart, plan_id: null };
     if (line.twin) {
       if (units + line.twin_qty! > 99)
         throw new HttpError(422, 'INVALID_QTY', 'line quantity cannot exceed 99');
       await tx`
-        with touched as (update carts set updated_at = now() where id = ${cartId})
+        with touched as (
+          update carts set updated_at = now(),
+            plan_id = case when ${dropPlan} then null else plan_id end
+          where id = ${cartId})
         update cart_items set qty = qty + ${units}
         where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${line.twin}`;
       await tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
     } else {
       await tx`
-        with touched as (update carts set updated_at = now() where id = ${cartId})
+        with touched as (
+          update carts set updated_at = now(),
+            plan_id = case when ${dropPlan} then null else plan_id end
+          where id = ${cartId})
         update cart_items set note = ${note}, qty = ${units}
         where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${id}`;
     }
   }
-  return loadCartView(tx, tenantId, cartId, new Date(), { have: { cart } });
+  return loadCartView(tx, tenantId, cartId, new Date(), { have: { cart: view } });
 }
 
 export async function removeLineTx(
@@ -139,10 +150,11 @@ export async function removeLineTx(
   cartId: string,
   itemId: string,
 ): Promise<CartView> {
-  const cart = await assertCartOpen(tx, tenantId, cartId);
+  const cart = { ...(await assertCartOpen(tx, tenantId, cartId)), plan_id: null };
   // executed before loadCartView sends its reads, so they see the delete
-  const removed =
-    tx`delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${itemIdOf(itemId)}`.execute();
+  const removed = tx`
+    with touched as (update carts set updated_at = now(), plan_id = null where id = ${cartId})
+    delete from cart_items where tenant_id = ${tenantId} and cart_id = ${cartId} and id = ${itemIdOf(itemId)}`.execute();
   const [, view] = await Promise.all([
     removed,
     loadCartView(tx, tenantId, cartId, new Date(), { have: { cart } }),

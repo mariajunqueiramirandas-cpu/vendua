@@ -217,7 +217,8 @@ export async function applyPixCredits(sql: Sql, base: Omit<BillingCtx, 'later'>,
           const from = sub.current_period_end;
           const until = (
             await tx<{ until: Date }[]>`
-              select ${from}::timestamptz + make_interval(months => ${months}) as until
+              select billing_month_after(${from}, s.billing_day, ${months}) as until
+              from subscriptions s where s.tenant_id = ${tenant_id}
             `
           )[0]!.until;
           await tx`

@@ -320,7 +320,7 @@ export async function loyaltyCard(
       and (c.ends_at is null or c.ends_at > ${now})
       and not exists (
         select 1 from coupon_redemptions r join orders o on o.id = r.order_id
-        where r.coupon_id = c.id and o.state <> 'cancelled'
+        where r.coupon_id = c.id and o.state not in ('cancelled', 'refunded')
       )
     order by c.created_at
   `;

@@ -146,9 +146,12 @@ export async function couponUsage(
   phone?: string | null,
 ): Promise<CouponUsage> {
   const count = (q: Promise<{ n: number }[]>) => q.then((rows) => rows[0]!.n);
+  // a use on an order that was cancelled or refunded is given back, as Marketing's report counts
+  // it; a refunded order still makes a returning customer (priorOrders)
   const total = count(tx<{ n: number }[]>`
     select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
-    where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and o.state not in ('cancelled')
+    where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId}
+      and o.state not in ('cancelled', 'refunded')
   `);
   if (!phone) return { total: await total };
   // under either 9th-digit spelling: typing the other one mustn't make a used coupon (or a
@@ -160,7 +163,7 @@ export async function couponUsage(
     count(tx<{ n: number }[]>`
       select count(*)::int as n from coupon_redemptions r join orders o on o.id = r.order_id
       where r.tenant_id = ${tenantId} and r.coupon_id = ${couponId} and r.phone = any(${phones})
-        and o.state not in ('cancelled')
+        and o.state not in ('cancelled', 'refunded')
     `),
     count(tx<{ n: number }[]>`
       select count(*)::int as n from orders

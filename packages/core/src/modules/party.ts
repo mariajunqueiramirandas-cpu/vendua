@@ -309,28 +309,7 @@ export async function buildPartyCartTx(
   return { quote, report };
 }
 
-/** At placement: the units each group of the cart's profile holds in the final lines. */
-export async function orderPartyTx(
-  tx: Sql,
-  tenantId: string,
-  party: CartParty,
-  lines: readonly { productId: string; qty: number }[],
-): Promise<OrderParty> {
-  const map = await tx<{ product_id: string; group_id: string; units_per_sale: number }[]>`
-    select product_id, group_id, units_per_sale from party_group_products
-    where tenant_id = ${tenantId} and profile_id = ${party.profileId}`;
-  const units = new Map<string, number>();
-  for (const l of lines) {
-    const m = map.find((x) => x.product_id === l.productId);
-    if (m) units.set(m.group_id, (units.get(m.group_id) ?? 0) + l.qty * m.units_per_sale);
-  }
-  return {
-    profileId: party.profileId,
-    adults: party.adults,
-    children: party.children,
-    groups: [...units].map(([groupId, u]) => ({ groupId, units: u })),
-  };
-}
+export { orderPartyTx } from './encomenda-capacity.ts';
 
 // ── the day before (F0) ───────────────────────────────────────────────────────
 

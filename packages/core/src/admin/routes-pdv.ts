@@ -890,13 +890,18 @@ export function mountPdv(d: AdminDeps) {
         update pdv_tabs set status = 'cancelled', closed_at = now(), close_reason = ${reason}
         where tenant_id = ${t.id} and id = ${id}
       `;
+      // a served round can't be cancelled (its stock was eaten); it leaves the revenue as refunded
+      // instead, else Relatórios counts an unpaid comanda as money taken
       for (const r of detail.roundsList)
-        if (r.state !== 'cancelled' && r.state !== 'refunded' && r.state !== 'delivered')
-          await transitionOrder(tx, t.id, r.orderId, 'cancelled', 'merchant', {
-            by: m.name,
-            reason,
-            via: 'pdv',
-          });
+        if (r.state !== 'cancelled' && r.state !== 'refunded')
+          await transitionOrder(
+            tx,
+            t.id,
+            r.orderId,
+            r.state === 'delivered' ? 'refunded' : 'cancelled',
+            'merchant',
+            { by: m.name, reason, via: 'pdv', ...(r.state === 'delivered' ? { unpaid: true } : {}) },
+          );
       await Promise.all([
         audit(tx, t.id, m, {
           action: 'pdv.tab_cancelled',

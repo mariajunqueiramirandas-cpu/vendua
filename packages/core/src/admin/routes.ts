@@ -12,7 +12,7 @@ import {
   bodyJson,
   checkKey,
   clientIp,
-  idempotencyFingerprint,
+  requestFingerprint,
   windowCounter,
 } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
@@ -775,13 +775,14 @@ export function mountAdmin(o: MountAdminOpts) {
     checkKey(key);
     // a retry replays the stored answer before the body is read or decoded again — only to the
     // caller and route that stored it (claim's own rule); anyone else falls through to its 422
+    const print = await requestFingerprint(c);
     const done = await withTenant(
       sql,
       tenant.id,
       (tx) => tx<{ response: unknown; status_code: number }[]>`
         select response, status_code from idempotency_keys
         where tenant_id = ${tenant.id} and key = ${key} and response is not null
-          and (fingerprint is null or fingerprint = ${idempotencyFingerprint(c)})
+          and (fingerprint is null or fingerprint in (${print.fp}, ${print.legacy}))
       `,
     );
     if (done[0])
