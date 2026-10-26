@@ -14,7 +14,8 @@ runs:
         set -euo pipefail
         bin=/usr/lib/postgresql/16/bin
         if [ ! -x "$bin/initdb" ]; then
-          # the runner image ships it; a future image without it installs from the Ubuntu archive
+          # ubuntu-24.04 ships it, and its archive has it if an image doesn't (ubuntu-latest moved
+          # past Ubuntu 24.04 and has neither: the jobs that use this pin ubuntu-24.04)
           echo "PostgreSQL 16 not on the runner image, installing"
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-16

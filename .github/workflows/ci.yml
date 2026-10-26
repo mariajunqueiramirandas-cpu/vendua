@@ -239,7 +239,7 @@ jobs:
   # `core-tests` below reports them under the old name.
   core-tests-shards:
     name: core-tests (${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -305,7 +305,7 @@ jobs:
   # Core, so the per-tenant rate limits stay per runner; `conformance` below reports them.
   conformance-shards:
     name: conformance (${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     timeout-minutes: 45
     if: >-
       github.event_name == 'push' ||
@@ -428,7 +428,7 @@ jobs:
   # published as a release, a real edge serves it with vendua-state, Core's probes verify it
   # through the edge, a new release rolls out and a rollback brings the old one back.
   edge-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -493,7 +493,7 @@ jobs:
   # run did. The `admin-gate` job below only reports their verdict under the old check name.
   admin-shots:
     name: admin-gate shots (${{ matrix.theme }}, ${{ matrix.size }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -586,7 +586,7 @@ jobs:
   # app's bundle under the same budgets, and that bundle signing in and streaming against Core from
   # another origin with a bearer token, as on a phone. The native projects build in admin-app.yml.
   admin-native:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -669,7 +669,7 @@ jobs:
   # the staleness guarantee (11): a storefront built on the oldest supported Kernel
   # line, never rebuilt, keeps passing the S-series against Core main
   stale-reference:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -723,7 +723,7 @@ jobs:
   # reports both.
   fleet-parts:
     name: fleet (${{ matrix.part }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Postgres 16 (.github/actions/postgres)
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
