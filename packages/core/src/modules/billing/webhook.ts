@@ -1,3 +1,4 @@
+import { reportPayment } from './measurement.ts';
 import type { AdminDeps } from '../../admin/context.ts';
 import { withTenant } from '../../platform/db.ts';
 import { UUID_RE } from '../../platform/http.ts';
@@ -64,6 +65,10 @@ export async function handleBillingWebhook(
         ),
       ),
     );
+    if (sp.status === 'approved' && sp.paymentId) {
+      const payment = await d.provider.platformGetPayment(sp.paymentId);
+      await reportPayment(payment);
+    }
     return;
   }
   if (event.kind === 'payment') {
@@ -93,7 +98,10 @@ export async function handleBillingWebhook(
         { payment: p.id, invoice: invoiceId },
         'payment for an invoice we never recorded it on',
       );
-    if (p.status !== 'approved') return;
+    if (p.status !== 'approved') {
+      await reportPayment(p);
+      return;
+    }
     await withEffects(base, (ctx) =>
       withTenant(d.sql, row.tenant_id, (tx) =>
         settlePixPayment(
@@ -106,6 +114,7 @@ export async function handleBillingWebhook(
         ),
       ),
     );
+    await reportPayment(p);
   }
 }
 

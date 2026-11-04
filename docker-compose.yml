@@ -101,6 +101,7 @@ services:
       MP_CLIENT_ID: ${MP_CLIENT_ID:-}
       MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+      REVNU_EVENT_KEY: ${REVNU_EVENT_KEY:-}
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
       # signup with this code skips Mercado Pago; the team marks its invoices paid in the CRM
       VENDUA_SIGNUP_ACCESS_CODE: ${VENDUA_SIGNUP_ACCESS_CODE:-}

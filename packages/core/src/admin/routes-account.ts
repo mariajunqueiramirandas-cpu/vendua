@@ -1,3 +1,4 @@
+import { measurementContext } from '../modules/billing/measurement.ts';
 import type { Context } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
@@ -63,6 +64,7 @@ export function mountAccount(d: AdminDeps) {
         throw new Error('billing effects need billingWrite');
       }),
     deviceId: deviceIdOr(c.req.header('x-vendua-device')),
+    measurement: measurementContext(c.req.header('x-vendua-measurement')),
   });
   const billingOn = () => {
     if (!d.provider.platformConfigured)

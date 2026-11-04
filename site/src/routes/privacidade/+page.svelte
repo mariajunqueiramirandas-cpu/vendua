@@ -11,18 +11,16 @@
   const receipt = [
     { item: 'Dados pessoais', value: 'só se você mandar' },
     { item: 'Formulários', value: 'dois, opcionais' },
-    { item: 'Cookies', value: googleTag ? 'do Google Analytics' : 'nenhum' },
-    { item: 'Rastreadores', value: googleTag ? 'Google Analytics' : 'nenhum' },
+    { item: 'Cookies', value: googleTag ? 'Revnu e Google Analytics' : 'Revnu' },
+    { item: 'Medição de anúncios', value: googleTag ? 'Revnu e Google Analytics' : 'Revnu' },
     { item: 'Contagem de visitas', value: 'anônima' },
-    { item: 'Serviços de terceiros', value: googleTag ? 'Google' : 'nenhum' },
+    { item: 'Serviços de terceiros', value: googleTag ? 'Revnu e Google' : 'Revnu' },
   ];
 </script>
 
 <Seo
   title="Privacidade · Venduá"
-  description={googleTag
-    ? 'O site da Venduá só guarda o que você manda num formulário e usa o Google Analytics para medir visitas e anúncios. Tudo o que acontece quando você passa por aqui, em palavras simples.'
-    : 'O site da Venduá só guarda o que você manda num formulário, não usa cookies e não tem rastreadores. Tudo o que acontece quando você passa por aqui, em palavras simples.'}
+  description="Como a Venduá usa os dados dos formulários e mede visitas, anúncios e pagamentos."
   path="/privacidade/"
   noindex
 />
@@ -33,20 +31,11 @@
     <div class="wrap band-row">
       <div class="intro">
         <p class="t-label kicker">Privacidade</p>
-        {#if googleTag}
-          <h1 class="t-display">Sua visita, explicada.</h1>
-          <p class="t-lede">
-            Este site não sabe quem você é, a não ser que você mande o seu contato num formulário.
-            Ele usa o Google Analytics para medir as visitas e os nossos anúncios. Aqui está, em
-            palavras simples, tudo o que acontece quando você passa por aqui.
-          </p>
-        {:else}
-          <h1 class="t-display">Sua visita fica só com você.</h1>
-          <p class="t-lede">
-            Este site só guarda o que você mandar num formulário, não usa cookies e não segue
-            ninguém. Aqui está, em palavras simples, tudo o que acontece quando você passa por aqui.
-          </p>
-        {/if}
+        <h1 class="t-display">Sua visita, explicada.</h1>
+        <p class="t-lede">
+          Este site mede visitas e anúncios com a Revnu. Os formulários são opcionais. Aqui está o
+          que é enviado quando você visita o site ou paga um plano.
+        </p>
       </div>
       <div class="guard" aria-hidden="true">
         <span class="halo"></span>
@@ -66,13 +55,11 @@
           </div>
         {/each}
         <div class="line total">
-          <dt>Total</dt>
-          <dd><span class="chip">só o que você mandar</span></dd>
+          <dt>Finalidade</dt>
+          <dd><span class="chip">atendimento e medição</span></dd>
         </div>
       </dl>
-      <p class="receipt-note">
-        Só quando uma página dá erro fica um registro técnico. Veja abaixo.
-      </p>
+      <p class="receipt-note">Erros de página também geram registros técnicos. Veja abaixo.</p>
     </aside>
 
     <article class="prose">
@@ -117,15 +104,22 @@
             >.
           </p>
         </section>
-      {:else}
-        <section aria-labelledby="cookies">
-          <h2 id="cookies" class="t-title-2">Sem cookies, sem rastreadores</h2>
-          <p>
-            Não usamos cookies. Também não há pixel de anúncio, mapa de cliques ou qualquer outro
-            rastreador. O site não grava nada no seu navegador.
-          </p>
-        </section>
       {/if}
+
+      <section aria-labelledby="revnu">
+        <h2 id="revnu" class="t-title-2">Medição com a Revnu</h2>
+        <p>
+          A Revnu usa um identificador anônimo, cookies e armazenamento no navegador para relacionar
+          visitas à origem do acesso e aos anúncios. São enviados a página visitada, a origem do
+          acesso e os dados de campanha presentes no link.
+        </p>
+        <p>
+          Quando o Mercado Pago confirma o pagamento de um plano, nosso servidor pode enviar à Revnu
+          o identificador do pagamento, a data, o valor, a moeda e o e-mail do pagador. A escolha de
+          consentimento disponível acompanha o pagamento. Uma recusa é enviada sem identificador
+          anônimo, e a Revnu não encaminha esse pagamento às plataformas de anúncios.
+        </p>
+      </section>
 
       <section aria-labelledby="contagem">
         <h2 id="contagem" class="t-title-2">Contamos visitas, não pessoas</h2>

@@ -1,3 +1,4 @@
+import type { MeasurementContext } from './measurement.ts';
 import { createHash } from 'node:crypto';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
@@ -182,6 +183,7 @@ export async function issuePix(
     now: Date;
     drop?: DropPix;
     deviceId?: string | null;
+    measurement?: MeasurementContext | undefined;
   },
 ): Promise<InvoiceRow> {
   if (!o.payer.document) throw documentRequired();
@@ -212,10 +214,12 @@ export async function requestPix(
     origin: string | null;
     now: Date;
     deviceId?: string | null;
+    measurement?: MeasurementContext | undefined;
   },
 ): Promise<PixCharge> {
   const expiresAt = new Date(o.now.getTime() + PIX_TTL_MS);
   const payment = await provider.platformPix({
+    ...(o.measurement ? { metadata: { revnu: o.measurement } } : {}),
     amountCents: inv.amount_cents,
     description: `${o.planName} — fatura ${inv.number}`,
     payerEmail: o.payer.email,

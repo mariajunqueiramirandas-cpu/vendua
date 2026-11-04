@@ -1,3 +1,4 @@
+import type { MeasurementContext } from './measurement.ts';
 import type { MerchantNotify } from '../../admin/context.ts';
 import { emitAdminTx } from '../../admin/live.ts';
 import type { Sql } from '../../platform/db.ts';
@@ -99,6 +100,7 @@ export interface BillingCtx {
   later: (fn: () => Promise<unknown>) => void;
   /** the owner's MP device id (the admin's x-vendua-device); none in jobs, webhooks and the CRM */
   deviceId?: string | null;
+  measurement?: MeasurementContext | undefined;
 }
 
 async function storeName(tx: Sql, tenantId: string) {
@@ -327,6 +329,7 @@ export async function beginPayment(
           planName: plan.name,
           origin: ctx.origin,
           deviceId: ctx.deviceId ?? null,
+          measurement: ctx.measurement,
           now,
           drop: dropPix(ctx),
         }),
@@ -468,6 +471,7 @@ export async function ensureRenewal(
         planName: plan.name,
         origin: ctx.origin,
         deviceId: ctx.deviceId ?? null,
+        measurement: ctx.measurement,
         now,
         drop: dropPix(ctx),
       });
@@ -515,6 +519,7 @@ export async function reissuePix(
       planName: label,
       origin: ctx.origin,
       deviceId: ctx.deviceId ?? null,
+      measurement: ctx.measurement,
       now,
       drop: dropPix(ctx),
     }),
@@ -592,6 +597,7 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
             planName: plan.name,
             origin: ctx.origin,
             deviceId: ctx.deviceId ?? null,
+            measurement: ctx.measurement,
             now,
             drop: dropPix(ctx),
           }),
@@ -656,6 +662,7 @@ async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow
       planName: plan.name,
       origin: ctx.origin,
       deviceId: ctx.deviceId ?? null,
+      measurement: ctx.measurement,
       now,
       drop: dropPix(ctx),
     }),
@@ -810,6 +817,7 @@ async function packPix(
       planName: `Duá ${pack.name}`,
       origin: ctx.origin,
       deviceId: ctx.deviceId ?? null,
+      measurement: ctx.measurement,
       now,
       drop: dropPix(ctx),
     }),
