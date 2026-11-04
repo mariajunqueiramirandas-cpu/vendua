@@ -140,7 +140,10 @@ describe('Revnu measurement', () => {
     process.env.REVNU_EVENT_KEY = 'test-only';
     const bodies: unknown[] = [];
     let fail = false;
-    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (
+      _url: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
       bodies.push(JSON.parse(String(init?.body)));
       return new Response('{}', { status: fail ? 503 : 200 });
     }) as unknown as typeof fetch);
