@@ -23,7 +23,8 @@
     "test": "bun tools/workspaces.mjs test",
     "test:e2e": "bun --filter @vendua/site test:e2e",
     "format": "bun --filter @vendua/site format",
-    "format:check": "bun --filter @vendua/site format:check"
+    "format:check": "bun --filter @vendua/site format:check",
+    "revnu:test": "bun packages/core/src/modules/billing/measurement.ts"
   },
   "devDependencies": {
     "@vendua/cli": "workspace:*",

@@ -1,3 +1,4 @@
+import { measurementContext } from './measurement.ts';
 import type { Context, Hono } from 'hono';
 import { audit } from '../../admin/audit.ts';
 import {
@@ -614,7 +615,14 @@ async function ensureFirstCharge(
   };
   const deviceId = deviceIdOr(c.req.header('x-vendua-device'));
   return withEffects(
-    { sql: d.sql, provider: d.provider, notify: d.notify, origin, deviceId },
+    {
+      sql: d.sql,
+      provider: d.provider,
+      notify: d.notify,
+      origin,
+      deviceId,
+      measurement: measurementContext(c.req.header('x-vendua-measurement')),
+    },
     (ctx) =>
       withTenant(d.sql, owner.tenant_id, async (tx) => {
         // the order the first try took (phone, then plan): two signups can't both start a trial

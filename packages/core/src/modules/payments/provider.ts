@@ -29,6 +29,9 @@ export interface OAuthTokens {
 }
 
 export interface ProviderPayment {
+  metadata?: Record<string, unknown>;
+  payerEmail?: string;
+  currency?: string;
   id: string;
   status: ProviderPaymentStatus;
   statusDetail: string | null;
@@ -63,6 +66,7 @@ export interface PixItem {
 }
 
 export interface PixRequest {
+  metadata?: Record<string, unknown>;
   amountCents: number;
   description: string;
   /** MP requires a payer email for Pix. One per person: an address shared by many payers reads

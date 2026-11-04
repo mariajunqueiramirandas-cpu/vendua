@@ -80,6 +80,15 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
       : new ApiError(0, 'NETWORK_ERROR', 'sem conexão');
   };
   const auth = platform.http.headers();
+  const revnu = (
+    window as Window & {
+      revnu?: { getContext(): { anonymousId?: string; consentState?: string } };
+    }
+  ).revnu?.getContext();
+  const measurement =
+    mutating && /^\/(account|signup)(\/|$)/.test(path) && revnu?.consentState
+      ? JSON.stringify({ anonymousId: revnu.anonymousId, consentState: revnu.consentState })
+      : undefined;
   try {
     let res: Response;
     try {
@@ -93,6 +102,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
           'x-vendua-admin': '1',
           ...(key ? { 'idempotency-key': key } : {}),
           ...(device ? { 'x-vendua-device': device } : {}),
+          ...(measurement ? { 'x-vendua-measurement': measurement } : {}),
           ...rest.headers,
         },
       });

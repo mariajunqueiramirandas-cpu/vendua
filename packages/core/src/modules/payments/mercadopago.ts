@@ -92,7 +92,9 @@ interface MpPayment {
   date_of_expiration?: string | null;
   point_of_interaction?: { transaction_data?: { qr_code?: string | null } | null } | null;
   three_ds_info?: { external_resource_url?: string | null; creq?: string | null } | null;
-  metadata?: { vendua_attempt?: unknown } | null;
+  metadata?: Record<string, unknown> | null;
+  payer?: { email?: string | null } | null;
+  currency_id?: string;
 }
 
 function paymentStatus(status: string | undefined, detail: string | null | undefined) {
@@ -151,6 +153,9 @@ export function mapPayment(p: MpPayment): ProviderPayment {
       : status;
   return {
     id: String(p.id ?? ''),
+    ...(p.metadata ? { metadata: p.metadata } : {}),
+    ...(p.payer?.email ? { payerEmail: p.payer.email } : {}),
+    ...(p.currency_id ? { currency: p.currency_id } : {}),
     status: finalStatus,
     statusDetail: p.status_detail ? String(p.status_detail).slice(0, 120) : null,
     kind: p.payment_method_id === 'pix' ? 'pix' : card ? 'card' : 'other',
@@ -361,6 +366,7 @@ export class MercadoPagoProvider implements PaymentProvider {
       ...(name || phone ? { payer: { ...name, ...(phone ? { phone } : {}) } } : {}),
     };
     return {
+      ...(req.metadata ? { metadata: req.metadata } : {}),
       transaction_amount: toReais(req.amountCents),
       description: req.description.slice(0, 200),
       payment_method_id: 'pix',
