@@ -65,6 +65,19 @@ function k07(dir: string): CheckResult {
   return problems.length ? fail(id, title, problems.join('\n')) : pass(id, title);
 }
 
+function resolveModule(base: string): string | null {
+  for (const cand of [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, 'index.ts'),
+    join(base, 'index.tsx'),
+  ]) {
+    if (existsSync(cand) && statSync(cand).isFile()) return cand;
+  }
+  return null;
+}
+
 /** Override module paths from the config's lazy imports. */
 function overrideFiles(dir: string): { key: string; file: string }[] {
   const cfg = join(dir, 'vendua.config.ts');
@@ -73,8 +86,10 @@ function overrideFiles(dir: string): { key: string; file: string }[] {
   const out: { key: string; file: string }[] = [];
   for (const m of src.matchAll(
     /['"]([a-z]+\.[A-Za-z]+)['"]\s*:\s*\(\)\s*=>\s*import\(\s*['"](\.[^'"]+)['"]\s*\)/g,
-  ))
-    out.push({ key: m[1]!, file: resolve(dir, m[2]!) });
+  )) {
+    const resolved = resolveModule(resolve(dir, m[2]!));
+    out.push({ key: m[1]!, file: resolved ?? resolve(dir, m[2]!) });
+  }
   return out;
 }
 
@@ -82,12 +97,13 @@ function overrideFiles(dir: string): { key: string; file: string }[] {
 function closure(entry: string): string[] {
   const seen = new Set<string>();
   const visit = (f: string) => {
-    if (seen.has(f) || !existsSync(f)) return;
-    seen.add(f);
-    for (const m of readFileSync(f, 'utf8').matchAll(/from\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
-      const base = resolve(dirname(f), m[1]!);
-      for (const cand of [base, `${base}.ts`, `${base}.tsx`])
-        if (existsSync(cand) && statSync(cand).isFile()) visit(cand);
+    const file = resolveModule(f);
+    if (!file || seen.has(file)) return;
+    seen.add(file);
+    const clean = stripComments(readFileSync(file, 'utf8'));
+    for (const m of clean.matchAll(/from\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      const target = resolveModule(resolve(dirname(file), m[1]!));
+      if (target) visit(target);
     }
   };
   visit(entry);
@@ -101,12 +117,20 @@ const IMPURE =
 const KERNEL_MAIN_IMPORT =
   /\b(import|export)\s+(type\s+)?(\{[^}]*\}|\*\s+as\s+\w+|\*|\w+(?:\s*,\s*\{[^}]*\})?)\s*from\s*['"]@vendua\/kernel['"]/g;
 
-function k08(dir: string): CheckResult {
+function k08(dir: string, declaredOverrides?: string[]): CheckResult {
   const id = 'K08';
   const title =
     'override-purity: overrides are presentational (no mutations, API or commerce primitives)';
   const problems: string[] = [];
-  for (const { key, file } of overrideFiles(dir)) {
+  const entries = overrideFiles(dir);
+  const foundKeys = new Set(entries.map((e) => e.key));
+  for (const key of declaredOverrides ?? []) {
+    if (!foundKeys.has(key))
+      problems.push(
+        `vendua.config.ts (${key}): override must be a static lazy import \`() => import('./...')\` so purity can be verified`,
+      );
+  }
+  for (const { key, file } of entries) {
     for (const f of closure(file)) {
       for (const { n, text } of lines(f)) {
         const hit = IMPURE.exec(text);
@@ -296,7 +320,7 @@ function k11(dir: string): CheckResult {
       if (!type.startsWith('store:'))
         problems.push(`sections/${f}: '${type}' — store modules use the store: namespace`);
       if (store[type]) problems.push(`sections/${f}: duplicate type '${type}'`);
-      if (/\bareas\s*:/.test(src) && !found[type]!.areas && !found[type]!.category)
+      if (/\bareas\s*:/.test(stripComments(src)) && !found[type]!.areas && !found[type]!.category)
         problems.push(
           `sections/${f}: areas must be a literal object (the build publishes them for template migrations)`,
         );
@@ -400,10 +424,9 @@ async function evalConfig(
   return JSON.parse(ev.output.trim().split('\n').pop() ?? '{}');
 }
 
-async function k13_14(dir: string): Promise<CheckResult[]> {
+function k13_14(cfg: { tokens?: unknown; overrides: string[] } | { error: string }): CheckResult[] {
   const t13 = 'tokens: complete, CSS-safe, WCAG AA on every default-surface pair';
   const t14 = `override budget: ≤ ${OVERRIDE_LIMIT} slot overrides (each freezes UI against Kernel improvements)`;
-  const cfg = await evalConfig(dir);
   if ('error' in cfg) return [fail('K13', t13, cfg.error), fail('K14', t14, cfg.error)];
   const v = validateTokens(cfg.tokens);
   const r13 = v.ok ? pass('K13', t13) : fail('K13', t13, v.errors.join('\n'));
@@ -415,10 +438,11 @@ async function k13_14(dir: string): Promise<CheckResult[]> {
   return [r13, r14];
 }
 
-async function k15(dir: string): Promise<CheckResult> {
+async function k15(dir: string, declaredOverrides?: string[]): Promise<CheckResult> {
   const id = 'K15';
   const title = 'overrides render their slot fixture (canonical props) without throwing';
-  if (overrideFiles(dir).length === 0) return pass(id, title, 'no overrides');
+  if (overrideFiles(dir).length === 0 && (declaredOverrides?.length ?? 0) === 0)
+    return pass(id, title, 'no overrides');
   const r = await run(['bun', join(PKG_DIR, 'src', 'render-overrides.tsx'), dir], dir, 90_000);
   const last = r.output.trim().split('\n').pop() ?? '';
   let parsed: { key: string; ok: boolean; error?: string }[];
@@ -434,15 +458,17 @@ async function k15(dir: string): Promise<CheckResult> {
 }
 
 export async function runLint(dir: string): Promise<CheckResult[]> {
+  const cfg = await evalConfig(dir);
+  const declared = 'error' in cfg ? undefined : cfg.overrides;
   return [
     k07(dir),
-    k08(dir),
+    k08(dir, declared),
     k09(dir),
     k10(dir),
     k11(dir),
     k12(dir),
-    ...(await k13_14(dir)),
-    await k15(dir),
+    ...k13_14(cfg),
+    await k15(dir, declared),
     ...runOwnership(dir),
   ];
 }

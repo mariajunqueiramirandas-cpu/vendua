@@ -30,7 +30,7 @@ type SummaryStore = Pick<
   StoreProfile,
   'deliveryEnabled' | 'pickupEnabled' | 'minOrderCents' | 'prepTimeMinutes'
 > &
-  Partial<Pick<StoreProfile, 'fulfillment'>>;
+  Partial<Pick<StoreProfile, 'fulfillment' | 'distancePricing'>>;
 
 /** The live kitchen (`StoreProfile.fulfillment`, Kernel 1.26) when Core sends it: a busy kitchen
  *  lengthens the pickup and every zone's ETA; a pause in the future holds delivery. */
@@ -46,8 +46,31 @@ export function deliverySummary(
   const extra = live?.deliveryExtraMinutes ?? 0;
   const until = live?.deliveryPausedUntil ?? null;
   const pausedUntil = until && Date.parse(until) > now.getTime() ? until : null;
-  // no zone, no address Core would deliver to
-  if (!store.deliveryEnabled || zones.length === 0) return { delivery: null, pickup };
+  if (!store.deliveryEnabled) return { delivery: null, pickup };
+  // distance-priced store with no fallback zones still delivers (and can be paused by Freio)
+  if (zones.length === 0) {
+    const dp = store.distancePricing;
+    if (!dp) return { delivery: null, pickup };
+    const from = dp.fromFeeCents;
+    const prep = live?.pickupMinutes ?? store.prepTimeMinutes;
+    return {
+      delivery: {
+        etaMin: prep + 10 + extra,
+        etaMax: prep + 30 + extra,
+        fee:
+          from === 0 && dp.feePerKmCents === 0
+            ? { form: 'free', cents: 0 }
+            : from === 0
+              ? { form: 'some-free', cents: 0 }
+              : { form: 'from', cents: from },
+        freeOverCents: dp.freeOverCents,
+        minOrderCents: store.minOrderCents,
+        minOrderVaries: false,
+        pausedUntil,
+      },
+      pickup,
+    };
+  }
   const floors = zones.map(zoneFeeFloor);
   const lowest = Math.min(...floors);
   const perKm = zones.some((z) => z.kind === 'radius' && (z.feePerKmCents ?? 0) > 0);

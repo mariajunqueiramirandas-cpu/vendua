@@ -33,12 +33,33 @@ let current: StorefrontTokens | null = null;
 let paths: Record<string, string> | null = null;
 let bundled: TemplateSet | null = null;
 let schemas: Record<string, unknown> | null = null;
-let adminOrigin: string | null = null;
+let adminOrigins: string[] = [];
+let activeParentOrigin: string | null = null;
 const listeners = new Set<() => void>();
 let started = false;
 
 export function isPreview(): boolean {
   return active;
+}
+
+function normalizeOrigin(origin: string | null | undefined): string | null {
+  if (!origin) return null;
+  try {
+    const parsed = new URL(origin).origin;
+    return parsed === 'null' ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
+function postToParent(payload: unknown) {
+  if (activeParentOrigin) {
+    window.parent.postMessage(payload, activeParentOrigin);
+    return;
+  }
+  for (const origin of adminOrigins) {
+    window.parent.postMessage(payload, origin);
+  }
 }
 
 function start() {
@@ -54,7 +75,8 @@ function start() {
       selected?: unknown;
     } | null;
     if (!d || d.type !== PREVIEW_MESSAGE.draft || e.source !== window.parent) return;
-    if (!adminOrigin || e.origin !== adminOrigin) return;
+    if (!adminOrigins.includes(e.origin)) return;
+    activeParentOrigin = e.origin;
     if (d.templates && typeof d.templates === 'object') {
       const next: TemplateSet = {};
       for (const [page, t] of Object.entries(d.templates as Record<string, unknown>)) {
@@ -86,13 +108,10 @@ function start() {
     'click',
     (e) => {
       const el = (e.target as Element | null)?.closest?.('[data-section-id]');
-      if (!el || !adminOrigin) return;
+      if (!el || adminOrigins.length === 0) return;
       e.preventDefault();
       e.stopPropagation();
-      window.parent.postMessage(
-        { type: PREVIEW_MESSAGE.select, id: el.getAttribute('data-section-id') },
-        adminOrigin,
-      );
+      postToParent({ type: PREVIEW_MESSAGE.select, id: el.getAttribute('data-section-id') });
     },
     true,
   );
@@ -100,24 +119,29 @@ function start() {
 }
 
 function announce() {
-  if (!adminOrigin) return;
-  window.parent.postMessage(
-    { type: PREVIEW_MESSAGE.ready, tokens: current, paths, templates: bundled, schemas },
-    adminOrigin,
-  );
+  if (adminOrigins.length === 0) return;
+  postToParent({
+    type: PREVIEW_MESSAGE.ready,
+    tokens: current,
+    paths,
+    templates: bundled,
+    schemas,
+  });
 }
 
-/** The merchant admin's origin, from Core — the only parent the preview listens to. */
-export function setPreviewOrigin(origin: string | null | undefined) {
-  let next: string | null = null;
-  try {
-    next = origin ? new URL(origin).origin : null;
-  } catch {
-    next = null;
+/** The merchant admin's origin(s), from Core — the only parents the preview listens to. */
+export function setPreviewOrigin(
+  origin: string | null | undefined,
+  extras?: readonly string[] | null,
+) {
+  const next: string[] = [];
+  for (const raw of [origin, ...(extras ?? [])]) {
+    const o = normalizeOrigin(raw);
+    if (o && !next.includes(o)) next.push(o);
   }
-  if (next === 'null') next = null;
-  if (next === adminOrigin) return;
-  adminOrigin = next;
+  if (next.length === adminOrigins.length && next.every((o, i) => o === adminOrigins[i])) return;
+  adminOrigins = next;
+  if (activeParentOrigin && !adminOrigins.includes(activeParentOrigin)) activeParentOrigin = null;
   if (started) announce();
 }
 

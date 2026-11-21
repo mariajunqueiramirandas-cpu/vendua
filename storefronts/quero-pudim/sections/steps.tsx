@@ -33,7 +33,7 @@ export default function Steps({ settings: s }: SectionProps<typeof schema>) {
         {(s.steps ?? []).map((step, i) => {
           const Icon = ICONS[step.icon];
           return (
-            <li key={step.title}>
+            <li key={`${step.title}:${i}`}>
               <span className="step-num">{String(i + 1).padStart(2, '0')}</span>
               <span className="step-badge">
                 <Icon size={24} strokeWidth={1.6} aria-hidden="true" />

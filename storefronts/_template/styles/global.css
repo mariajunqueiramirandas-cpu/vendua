@@ -8,8 +8,8 @@
 
   --ink: var(--v-color-text, #123c32);
   --spark: #d9f875;
-  /* ink on lime follows the store's text token — lime is always light */
-  --on-spark: var(--v-color-text, #123c32);
+  /* lime and pastel tints stay light in every tone, so their ink stays dark */
+  --on-spark: #123c32;
   --spark-soft: #f0fcc9;
   --tint-peach: #fde7d4;
   --tint-golden: #fbecd3;
@@ -394,6 +394,11 @@ img {
 
 .hero-status[data-status='paused'] {
   background: var(--tint-golden);
+  color: color-mix(in srgb, var(--on-spark) 82%, transparent);
+}
+
+.hero-status[data-status='paused'] strong {
+  color: var(--on-spark);
 }
 
 .hero-dot {
@@ -1095,6 +1100,33 @@ img {
   text-wrap: balance;
 }
 
+.menu-diets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.menu-diet {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--v-color-surface, #fffdf8);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--w-strong);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.menu-diet[aria-pressed='true'] {
+  border-color: var(--v-color-accent, #123c32);
+  background: var(--v-color-accent, #123c32);
+  color: var(--v-color-on-accent, #fffdf8);
+}
+
 .menu-empty-art {
   display: grid;
   place-items: center;
@@ -1103,7 +1135,7 @@ img {
   margin-bottom: 12px;
   border-radius: 30px;
   background: var(--spark-soft);
-  color: var(--ink);
+  color: var(--on-spark);
   rotate: -4deg;
 }
 
@@ -1159,7 +1191,7 @@ img {
 }
 
 .dish[data-target]::before {
-  background: var(--spark-soft);
+  background: color-mix(in srgb, var(--spark) 22%, var(--v-color-bg, #f7f4ea));
   opacity: 1;
 }
 

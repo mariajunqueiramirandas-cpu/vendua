@@ -11,11 +11,13 @@ export function noticeSeverity(n: Notice): 'info' | 'warning' | 'blocking' {
   return SEVERITIES.has(s) ? (s as 'info' | 'warning' | 'blocking') : 'info';
 }
 
+const SAFE_URL = /^(?:https?:\/\/|\/(?!\/)|#|mailto:|tel:)/i;
+
 /** Unknown action types degrade to a link when they carry an href, else are omitted. */
 export function noticeLinks(n: Notice): { label: string; href: string; action: NoticeAction }[] {
   return (n.actions ?? []).slice(0, 2).flatMap((a) => {
     const href = (a as Record<string, unknown>).href;
-    return typeof href === 'string' && typeof a.label === 'string'
+    return typeof href === 'string' && SAFE_URL.test(href) && typeof a.label === 'string'
       ? [{ label: a.label, href, action: a }]
       : [];
   });

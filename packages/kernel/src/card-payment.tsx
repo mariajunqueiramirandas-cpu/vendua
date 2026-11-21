@@ -233,6 +233,8 @@ function FakeCardForm({ onSubmit }: { onSubmit: (input: CardPaymentInput) => voi
   );
 }
 
+const SAFE_CHALLENGE = /^(?:https?:\/\/|\/(?!\/))/i;
+
 /** The bank's 3-D Secure, inside the page: a form posts `creq` into the frame at once (the
  *  bank expects the challenge within seconds); the frame says COMPLETE when it ends. */
 export function ChallengeFrame({
@@ -249,8 +251,10 @@ export function ChallengeFrame({
   const frame = useRef<HTMLIFrameElement>(null);
   const done = useRef(onComplete);
   done.current = onComplete;
+  const safe = SAFE_CHALLENGE.test(url);
 
   useEffect(() => {
+    if (!safe) return;
     form.current?.submit();
     const onMessage = (e: MessageEvent) => {
       const source = frame.current?.contentWindow;
@@ -259,7 +263,9 @@ export function ChallengeFrame({
     };
     globalThis.addEventListener('message', onMessage);
     return () => globalThis.removeEventListener('message', onMessage);
-  }, []);
+  }, [safe]);
+
+  if (!safe) return null;
 
   return (
     <div className="v-cardpay-challenge" data-vendua="card-challenge">

@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { X } from 'lucide-react';
 import type { SlotProps } from '@vendua/kernel';
 import { isBlocking, noticeLinks, noticeSeverity } from '@vendua/kernel/rules';
@@ -6,6 +7,7 @@ import { isBlocking, noticeLinks, noticeSeverity } from '@vendua/kernel/rules';
  *  blocking). The Kernel falls back to it per notice kind, so it handles every kind. */
 // typed loosely: an override module's default must take any slot's props (SlotComponent)
 export default function BrandNotice(props: Record<string, unknown>) {
+  const titleId = useId();
   const { notice, onDismiss, onAction } = props as SlotProps['system.Notice'];
   if (!notice) return null;
   const severity = noticeSeverity(notice);
@@ -19,9 +21,12 @@ export default function BrandNotice(props: Record<string, unknown>) {
       data-severity={severity}
       role={blocking ? 'alertdialog' : 'status'}
       aria-modal={blocking || undefined}
+      aria-labelledby={blocking ? titleId : undefined}
     >
       <div className="qp-notice-body">
-        <strong className="qp-notice-title">{notice.title}</strong>
+        <strong id={titleId} className="qp-notice-title">
+          {notice.title}
+        </strong>
         {notice.body ? <p className="qp-notice-text">{notice.body}</p> : null}
         {links.length > 0 ? (
           <p className="qp-notice-links">

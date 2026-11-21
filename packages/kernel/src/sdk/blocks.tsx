@@ -1,6 +1,6 @@
 import { PARTY_PATH, usePartyProfiles } from '../pages/party.tsx';
 import { PLANS_PATH, useShopperPlans } from '../pages/plans.tsx';
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   useCopy,
   useDeliverySummary,
@@ -15,7 +15,7 @@ import { PixQr } from '@vendua/ui-defaults';
 import { cardState } from '../rules/card.ts';
 import { deliveryWords } from '../rules/delivery.ts';
 import { formatCents, LOCALE, plural } from '../rules/format.ts';
-import { ORDER_STATE_LABEL, PIX_KEY_LABEL, TERMINAL_ORDER_STATES } from '../rules/orders.ts';
+import { orderStateLabel, PIX_KEY_LABEL, TERMINAL_ORDER_STATES } from '../rules/orders.ts';
 import { isValidPhone } from '../rules/phone.ts';
 import { errorCopy } from '../errors.ts';
 import { NotifyMeButton } from '../primitives.tsx';
@@ -69,12 +69,16 @@ export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
 export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
   const product = usePageProduct();
   const { status, label } = useStoreStatus();
+  const inputId = useId();
   const [phone, setPhone] = useState('');
   const [done, setDone] = useState(false);
   // Kernel 1.7: outside its schedule (availabilityLabel) a product comes back by itself — no waitlist
   const restock = product?.status === 'sold_out' && !product.availabilityLabel;
   const waitlist = useWaitlist(restock ? product.id : undefined);
   const subject = restock ? 'product' : status === 'paused' || status === 'closed' ? 'store' : null;
+  useEffect(() => {
+    setDone(false);
+  }, [product?.id, subject]);
   if (!subject) return null;
   if (done || waitlist.joined)
     return (
@@ -96,7 +100,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
           if (isValidPhone(phone)) void waitlist.join(phone).catch(() => {});
         }}
       >
-        <label className="v-label" htmlFor="v-notify-phone">
+        <label className="v-label" htmlFor={inputId}>
           {settings.title}
         </label>
         {others > 0 ? (
@@ -106,7 +110,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
         ) : null}
         <div className="v-notify-row">
           <input
-            id="v-notify-phone"
+            id={inputId}
             type="tel"
             inputMode="tel"
             autoComplete="tel"
@@ -135,7 +139,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
   }
   return (
     <div className="v-notify" data-part="root" data-subject="store">
-      <label className="v-label" htmlFor="v-notify-phone">
+      <label className="v-label" htmlFor={inputId}>
         {settings.storeTitle}
       </label>
       {label ? (
@@ -145,7 +149,7 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
       ) : null}
       <div className="v-notify-row">
         <input
-          id="v-notify-phone"
+          id={inputId}
           type="tel"
           inputMode="tel"
           autoComplete="tel"
@@ -307,7 +311,7 @@ function RecentOrderCard({ id, title }: { id: string; title: string }) {
                 month: 'short',
                 ...(timeZone ? { timeZone } : {}),
               })
-            : (ORDER_STATE_LABEL[order.state] ?? order.state)}
+            : orderStateLabel(order.state, order.delivery.mode)}
           {' · '}
           <span className="v-num">{formatCents(order.totalCents, store?.currency ?? 'BRL')}</span>
         </span>

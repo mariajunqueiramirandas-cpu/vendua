@@ -37,9 +37,9 @@ interface KernelCtx {
   tokens: StorefrontTokens;
   /** sections + template snapshot the build bundled (virtual:vendua/storefront) */
   storefront: StorefrontBundle;
-  /** bumps refetch hooks subscribed to a key */
-  invalidate: (key: string) => void;
-  subscribe: (key: string, fn: () => void) => () => void;
+  /** bumps refetch hooks subscribed to a key; seeded = cache already holds fresh data */
+  invalidate: (key: string, seeded?: boolean) => void;
+  subscribe: (key: string, fn: (seeded?: boolean) => void) => () => void;
 }
 
 const Ctx = createContext<KernelCtx | null>(null);
@@ -131,7 +131,7 @@ export function VenduaProvider({
     takeTrackingLink(apiRef.current.api);
   }
   const api = apiRef.current.api;
-  const listeners = useRef(new Map<string, Set<() => void>>());
+  const listeners = useRef(new Map<string, Set<(seeded?: boolean) => void>>());
 
   const ctx = useMemo<KernelCtx>(
     () => ({
@@ -139,8 +139,8 @@ export function VenduaProvider({
       config,
       tokens,
       storefront,
-      invalidate(key) {
-        listeners.current.get(key)?.forEach((fn) => fn());
+      invalidate(key, seeded = false) {
+        listeners.current.get(key)?.forEach((fn) => fn(seeded));
       },
       subscribe(key, fn) {
         let set = listeners.current.get(key);
@@ -440,6 +440,8 @@ export function useQuery<T>(
 } {
   const { api, subscribe, invalidate } = useKernel();
   const [, setTick] = useState(0);
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
   const cache = cacheFor(api);
   const entry = cache.get(key) ?? {};
 
@@ -456,7 +458,8 @@ export function useQuery<T>(
       }
       const runToken = Symbol(key);
       e.runToken = runToken;
-      e.inflight = fetcher()
+      e.inflight = fetcherRef
+        .current()
         .then((data) => {
           const cur = cache.get(key);
           if (cur?.runToken === runToken) cache.set(key, { resolved: true, data });
@@ -476,7 +479,13 @@ export function useQuery<T>(
     entry.inflight?.finally(() => {
       if (alive) setTick((t) => t + 1);
     });
-    const unsub = subscribe(key, run);
+    const unsub = subscribe(key, (seeded) => {
+      if (seeded) {
+        if (alive) setTick((t) => t + 1);
+      } else {
+        run();
+      }
+    });
     return () => {
       alive = false;
       unsub();
@@ -501,7 +510,7 @@ export function useQuery<T>(
 // mounted providers only — unmounted caches are WeakMap-GC'd
 const liveProviders = new Set<{
   cache: Map<string, CacheEntry>;
-  invalidate: (key: string) => void;
+  invalidate: (key: string, seeded?: boolean) => void;
 }>();
 
 /** Warm a query without subscribing (ProductLink hover/focus) — no-op when cached or in flight. */
@@ -539,9 +548,10 @@ export function invalidateQuery(key: string, data?: unknown) {
   for (const live of liveProviders) {
     if (data !== undefined) {
       live.cache.set(key, { resolved: true, data });
+      live.invalidate(key, true);
     } else {
       live.cache.delete(key);
+      live.invalidate(key, false);
     }
-    live.invalidate(key);
   }
 }

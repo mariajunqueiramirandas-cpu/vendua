@@ -207,8 +207,10 @@ export function StoreChat({
   const finishVoice = async () => {
     const r = recording.current;
     if (!r) return;
+    const mine = takeGen.current;
     recording.current = null;
     const take = await r.stop();
+    if (!live.current || mine !== takeGen.current) return;
     if (take) await sendTake(take.blob, take.seconds);
     else setVoice(null);
   };
@@ -323,7 +325,9 @@ export function StoreChat({
       return;
     }
     if (!lastReply || idNow === announced.current) return;
+    const initialHydration = announced.current === null && !open && unread === 0;
     announced.current = idNow;
+    if (initialHydration) return;
     setAnnounce(
       open
         ? `${label(lastReply.author)}: ${lastReply.body}`

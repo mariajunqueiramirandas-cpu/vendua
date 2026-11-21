@@ -321,10 +321,13 @@ export function CheckoutPage() {
   const [scheduleError, setScheduleError] = useState<string | undefined>();
   // a coupon Core refused at submit (the field shows it like an apply failure)
   const [couponError, setCouponError] = useState<string | undefined>();
+  const schedule = cart?.schedule;
+  const encomenda = schedule?.required === true;
   // Kernel 1.26: the kitchen paused delivery for now; an encomenda for another day still goes
-  const pausedWords = scheduledFor
-    ? null
-    : (deliveryWords(summary, store?.currency, store?.hours.timezone)?.paused ?? null);
+  const pausedWords =
+    scheduledFor || encomenda
+      ? null
+      : (deliveryWords(summary, store?.currency, store?.hours.timezone)?.paused ?? null);
   const deliveryOk = store?.deliveryEnabled !== false && !pausedWords;
   const pickupOk = store?.pickupEnabled !== false;
   // Kernel 1.15 (ADR 0024): Core prices the confirmed pin by road distance
@@ -479,8 +482,6 @@ export function CheckoutPage() {
     typeof navigator !== 'undefined' &&
     'geolocation' in navigator &&
     zones.some((z) => z.kind === 'radius' || z.kind === 'polygon');
-  const schedule = cart?.schedule;
-  const encomenda = schedule?.required === true;
   const closedNow =
     cart?.status !== 'open'
       ? null
@@ -571,6 +572,7 @@ export function CheckoutPage() {
   useEffect(() => {
     if (!pricesByMethod) return;
     let live = true;
+    setPriceFailed('');
     api.cart(pay).then(
       (r) => {
         if (live && r.cart.status === 'open') setPriced({ key: priceKey, totals: r.cart.totals });
@@ -951,7 +953,7 @@ export function CheckoutPage() {
   };
 
   const place = async () => {
-    if (submitting.current || pending || closedNow) return;
+    if (submitting.current || pending || pricing || closedNow) return;
     if (encomenda && !atTable && !scheduledFor) {
       setScheduleError('Escolha a data da encomenda.');
       return;
@@ -1025,7 +1027,7 @@ export function CheckoutPage() {
         leaveTable();
         showInfo('table', copy.title, copy.body);
       }
-      if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
+      if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE' || code === 'DATE_FULL')
         setScheduleError(errorCopy(code).title);
       if (code === 'INVALID_CHANGE')
         setChangeError(

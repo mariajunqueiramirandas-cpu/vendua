@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "vendua": {
+    "tenant": "quero-pudim"
+  },
   "scripts": {
     "dev": "vite",
     "check": "tsc --noEmit -p tsconfig.json",

@@ -8,10 +8,12 @@ import {
   priceWords,
   productAnchor,
   useCardState,
+  useCopy,
   useMoney,
   useStore,
   type CatalogProduct,
 } from '@vendua/kernel';
+import { dietaryBadges } from '@vendua/kernel/rules';
 import { ProductFigure } from './ProductFigure.tsx';
 import { flavorOf, KIT_FLAVOR } from './flavor.ts';
 
@@ -26,6 +28,8 @@ export interface ProductCardProps {
   soldOutLabel?: string | undefined;
   /** larger, horizontal on wide screens */
   feature?: boolean | undefined;
+  /** attach #produto-<slug> anchor (set only on the primary catalog grid to avoid duplicate IDs) */
+  anchor?: boolean | undefined;
 }
 
 /** Product card: tinted media (photo or flavour art), one-tap add where nothing needs choosing.
@@ -37,18 +41,22 @@ export function ProductCard({
   cta,
   soldOutLabel = 'Esgotado hoje',
   feature,
+  anchor,
 }: ProductCardProps) {
   const card = useCardState(p);
   const price = priceDisplay(p);
+  const diets = dietaryBadges(p);
   const money = useMoney();
   const { store } = useStore();
+  const { vocabulary } = useCopy();
   const flavor = p.kind === 'combo' ? KIT_FLAVOR : flavorOf(p.name);
+  const [adds, setAdds] = useState(0);
   const [added, setAdded] = useState(false);
   useEffect(() => {
     if (!added) return;
     const t = setTimeout(() => setAdded(false), 1600);
     return () => clearTimeout(t);
-  }, [added]);
+  }, [added, adds]);
   // a product off its schedule says when it's back (Core's words) instead of "esgotado hoje"
   const soldOutText = card.scheduleLabel ?? soldOutLabel;
   const flag =
@@ -57,25 +65,27 @@ export function ProductCard({
       : card.badge === 'low-stock'
         ? { text: `Restam ${card.stockLeft}`, tone: 'low' }
         : card.badge === 'all-in-bag'
-          ? { text: 'Tudo na sacola', tone: 'soft' }
+          ? { text: `Tudo ${vocabulary.inBag}`, tone: 'soft' }
           : card.badge === 'preorder'
             ? { text: 'Sob encomenda', tone: 'soft' }
             : null;
+  const labelParts = [p.name, priceWords(price, store?.currency)];
+  if (price.promoLabel) labelParts.push(price.promoLabel);
+  if (flag) labelParts.push(flag.text);
+  if (diets.length) labelParts.push(...diets);
 
   return (
     <li
-      id={productAnchor(p.slug)}
+      id={anchor ? productAnchor(p.slug) : undefined}
       className="pcard"
       data-soldout={card.soldOut || undefined}
       data-feature={feature || undefined}
+      data-quick={card.canQuickAdd || undefined}
       style={{ '--tint': flavor.tint } as CSSProperties}
     >
       <ProductLink product={p} asChild>
-        <a
-          className="pcard-link"
-          aria-label={`${p.name}, ${priceWords(price, store?.currency)}${card.soldOut ? `, ${soldOutText}` : ''}`}
-        >
-          <div className="pcard-media">
+        <a className="pcard-link" aria-label={labelParts.join(', ')}>
+          <div className="pcard-media" data-vt-src={`product:${p.slug}`}>
             <ProductImage
               product={p}
               alt=""
@@ -105,6 +115,15 @@ export function ProductCard({
             <h3 className="pcard-name">{p.name}</h3>
             {p.description ? <p className="pcard-desc">{p.description}</p> : null}
             {price.promoLabel ? <p className="pcard-promo">Promoção · {price.promoLabel}</p> : null}
+            {diets.length > 0 ? (
+              <p className="pcard-diets">
+                {diets.map((tag) => (
+                  <span key={tag} className="pcard-diet">
+                    {tag}
+                  </span>
+                ))}
+              </p>
+            ) : null}
             <p className="pcard-foot">
               <span className="pcard-price" data-form={price.form}>
                 {price.struckCents !== null ? (
@@ -121,12 +140,19 @@ export function ProductCard({
         </a>
       </ProductLink>
       {card.canQuickAdd ? (
-        <AddToCart product={p} asChild onAdded={() => setAdded(true)}>
+        <AddToCart
+          product={p}
+          asChild
+          onAdded={() => {
+            setAdds((n) => n + 1);
+            setAdded(true);
+          }}
+        >
           <button
             type="button"
             className="pcard-add"
             data-added={added || undefined}
-            aria-label={added ? `${p.name} adicionado` : `Adicionar ${p.name} à sacola`}
+            aria-label={added ? `${p.name} adicionado` : `Adicionar ${p.name} ${vocabulary.toBag}`}
           >
             {added ? <Check size={18} aria-hidden="true" /> : <Plus size={18} aria-hidden="true" />}
           </button>

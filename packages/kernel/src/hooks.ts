@@ -248,7 +248,7 @@ export function useCart(): {
   mutations: KernelCartMutations;
   refetch: () => void;
 } {
-  const { api, invalidate } = useKernel();
+  const { api } = useKernel();
   const q = useQuery('cart', () => {
     const asked = api.sessionToken;
     if (!asked) return Promise.resolve(null);
@@ -266,16 +266,12 @@ export function useCart(): {
     );
   });
 
-  const bump = useCallback(
-    (cart: Cart) => {
-      // seed, don't evict: an evict→refetch gap drops cart to null mid-render,
-      // re-firing checkout effects into a POST loop
-      invalidateQuery('cart', cart);
-      invalidate('cart');
-      return cart;
-    },
-    [invalidate],
-  );
+  const bump = useCallback((cart: Cart) => {
+    // seed, don't evict: an evict→refetch gap drops cart to null mid-render,
+    // re-firing checkout effects into a POST loop
+    invalidateQuery('cart', cart);
+    return cart;
+  }, []);
 
   const mutations = useMemo<KernelCartMutations>(
     () => ({
@@ -873,10 +869,14 @@ export function useOrders(phone?: string): {
   const { api } = useKernel();
   const [, bumpTick] = useState(0);
   const known = api.customerPhones();
-  const target = phone ?? known[0];
-  const key = `customer-orders:${target ?? ''}`;
+  const rawTarget = phone ?? known[0];
+  const normalized = rawTarget ? phoneKey(rawTarget) : '';
+  const target = rawTarget;
+  const key = `customer-orders:${normalized}`;
   const q = useQuery(key, () =>
-    target && known.includes(phoneKey(target)) ? api.customerOrders(target) : Promise.resolve(null),
+    normalized && api.customerPhones().includes(normalized)
+      ? api.customerOrders(normalized)
+      : Promise.resolve(null),
   );
   const needsVerification =
     !q.loading && (q.data === null || q.error?.code === 'CUSTOMER_REQUIRED');
@@ -885,9 +885,11 @@ export function useOrders(phone?: string): {
       const p = phoneOverride ?? phone;
       if (!p) throw new ApiError(422, 'INVALID_CUSTOMER', 'phone is required');
       const verified = await api.verifyCustomer(p, orderNumber);
-      invalidateQuery(`customer-orders:${phoneOverride ?? phone ?? ''}`);
-      invalidateQuery(`customer-orders:${verified}`);
+      const pKey = phoneKey(p);
+      invalidateQuery(`customer-orders:${pKey}`);
+      if (verified !== pKey) invalidateQuery(`customer-orders:${verified}`);
       invalidateQuery(`loyalty:${verified}`);
+      if (pKey && pKey !== verified) invalidateQuery(`loyalty:${pKey}`);
       bumpTick((t) => t + 1);
     },
     [api, phone],
@@ -895,8 +897,9 @@ export function useOrders(phone?: string): {
   const forget = useCallback(() => {
     api.forgetCustomer(target);
     invalidateQuery(key);
+    if (normalized) invalidateQuery(`loyalty:${normalized}`);
     bumpTick((t) => t + 1);
-  }, [api, key, target]);
+  }, [api, key, target, normalized]);
   return {
     orders: q.data?.orders ?? [],
     phone: q.data?.phone ?? target,
@@ -917,9 +920,10 @@ export function useLoyalty(phone?: string): {
   refetch: () => void;
 } {
   const { api } = useKernel();
-  const target = phone ?? api.customerPhones()[0];
-  const q = useQuery(`loyalty:${target ?? ''}`, () =>
-    target ? api.loyalty(target).catch(() => null) : Promise.resolve(null),
+  const rawTarget = phone ?? api.customerPhones()[0];
+  const normalized = rawTarget ? phoneKey(rawTarget) : '';
+  const q = useQuery(`loyalty:${normalized}`, () =>
+    normalized ? api.loyalty(normalized).catch(() => null) : Promise.resolve(null),
   );
   return {
     card: q.data?.loyalty ?? null,

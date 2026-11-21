@@ -171,13 +171,13 @@ export function componentTypes(t: PageTemplate): Set<ComponentType> {
 
 /** A merchant/staff edit that drops a type records it, so no migration re-adds it. */
 export function withRemovals(prev: PageTemplate | null, next: PageTemplate): PageTemplate {
-  const removed = new Set<ComponentType>(next.removed ?? prev?.removed ?? []);
+  const removed = new Set<ComponentType>([...(prev?.removed ?? []), ...(next.removed ?? [])]);
+  const now = componentTypes(next);
   if (prev) {
-    const now = componentTypes(next);
     for (const t of componentTypes(prev)) if (!now.has(t)) removed.add(t);
-    // re-adding by hand clears the tombstone
-    for (const t of now) removed.delete(t);
   }
+  // re-adding by hand clears the tombstone
+  for (const t of now) removed.delete(t);
   const list = [...removed].slice(-LIMITS.removed);
   const out: PageTemplate = { ...next };
   if (list.length) out.removed = list;

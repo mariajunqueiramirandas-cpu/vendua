@@ -88,13 +88,15 @@ function ShareCart() {
       const nav = globalThis.navigator as Navigator | undefined;
       if (nav?.share) {
         await nav.share({ title: vocabulary.yourBag, url }).catch(() => {});
-      } else {
-        await nav?.clipboard?.writeText(url);
+      } else if (nav?.clipboard?.writeText) {
+        await nav.clipboard.writeText(url);
         showInfo(
           'share',
           `Link ${vocabulary.ofBag} copiado`,
           'Abra em outro aparelho ou mande para alguém.',
         );
+      } else {
+        showInfo('share', `Copie o link ${vocabulary.ofBag}`, url);
       }
     } catch (err) {
       showError(err);
@@ -159,23 +161,50 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
   // Kernel 1.22 — at a table nothing is delivered
   const atTable = !!useTableSession() && store?.dineIn?.enabled === true;
   const remembered = customer?.address;
-  const [where, setWhere] = useState<{ arg: QuoteWhere; place: string } | null>(() => {
+  const [where, setWhere] = useState<{ arg: QuoteWhere; place: string } | null>(null);
+  const [cep, setCep] = useState(() => maskCep(remembered?.cep ?? ''));
+  const [editing, setEditing] = useState(true);
+  const [estimate, setEstimate] = useState<Estimate>({ kind: 'idle' });
+  const initialized = useRef(false);
+
+  // wait for store so cold loads know whether delivery is priced by distance or by zones
+  useEffect(() => {
+    if (!store || initialized.current) return;
+    initialized.current = true;
     const pin = pinOf(remembered);
     const bairro = remembered?.neighborhood.trim();
     const place = bairro || remembered?.street.trim() || '';
-    if (byDistance) return pin ? { arg: pin, place } : null;
-    if (!pin && !bairro) return null;
-    return { arg: { ...(bairro ? { neighborhood: bairro } : {}), ...(pin ?? {}) }, place };
-  });
-  const [cep, setCep] = useState(() => maskCep(remembered?.cep ?? ''));
-  const [editing, setEditing] = useState(where === null);
-  const [estimate, setEstimate] = useState<Estimate>({ kind: 'idle' });
+    if (byDistance) {
+      if (pin) {
+        setWhere({ arg: pin, place });
+        setEditing(false);
+      }
+      return;
+    }
+    if (pin || bairro) {
+      setWhere({ arg: { ...(bairro ? { neighborhood: bairro } : {}), ...(pin ?? {}) }, place });
+      setEditing(false);
+    } else if (isValidCep(cep)) {
+      void lookup(cep);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store]);
+
+  // if store switched to distance pricing, a neighborhood-only quote is no longer valid
+  useEffect(() => {
+    if (byDistance && where && where.arg.lat == null) {
+      setWhere(null);
+      setEstimate({ kind: 'idle' });
+    }
+  }, [byDistance, where]);
+
   // Core's totals change with the bag: ask again so the figures stay its own
   const t = cart.totals;
   const cartKey = [t.subtotalCents, t.discountCents ?? 0, t.itemCount].join('|');
 
   useEffect(() => {
-    if (!where || atTable) return;
+    if (!where || atTable || !store) return;
+    if (byDistance && where.arg.lat == null) return;
     let live = true;
     setEstimate({ kind: 'pending' });
     quote({ ...where.arg, withCart: true }).then(
@@ -195,10 +224,8 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where, cartKey, atTable]);
+  }, [where, cartKey, atTable, store, byDistance]);
 
-  // a remembered CEP alone (no bairro) is looked up once
-  const autoCep = useRef(where === null && !byDistance && isValidCep(cep));
   const lookup = async (value: string) => {
     setEstimate({ kind: 'pending' });
     const r = await cepLookup.lookup(value);
@@ -209,12 +236,6 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
     if (bairro) setWhere({ arg: { neighborhood: bairro }, place: bairro });
     else setEstimate({ kind: 'later', place: `CEP ${maskCep(value)}` });
   };
-  useEffect(() => {
-    if (!autoCep.current) return;
-    autoCep.current = false;
-    void lookup(cep);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   if (
     !store ||
@@ -287,7 +308,9 @@ function DeliveryEstimate({ cart, currency }: { cart: Cart; currency: string }) 
               Entrega para <strong>{estimate.place || 'seu endereço'}</strong>:{' '}
               <span className="v-num">{fee > 0 ? money(fee) : 'grátis'}</span>
               {estimate.quote.etaMin != null
-                ? ` · ${estimate.quote.etaMin}–${estimate.quote.etaMax} min`
+                ? estimate.quote.etaMax != null && estimate.quote.etaMax !== estimate.quote.etaMin
+                  ? ` · ${estimate.quote.etaMin}–${estimate.quote.etaMax} min`
+                  : ` · ${estimate.quote.etaMin} min`
                 : ''}
             </p>
             {totals ? (
@@ -384,11 +407,20 @@ export function CartContents({
   const { store } = useStore();
   const { vocabulary } = useCopy();
   const { config } = useKernel();
+  const atTable = !!useTableSession() && store?.dineIn?.enabled === true;
   const go = useNavigateTo();
   const currency = store?.currency ?? 'BRL';
   const browse = onClose ?? (() => go(resolvePaths(config).catalog));
   const open = cart?.status === 'open' && cart.items.length > 0;
-  const closed = open ? closedNote(store, cart.items, vocabulary.bag) : null;
+  const closed = !open
+    ? null
+    : atTable
+      ? store?.status === 'closed'
+        ? 'A loja está fechada agora. Os pedidos pela mesa voltam quando ela abrir.'
+        : store?.status === 'paused'
+          ? 'A loja pausou os pedidos por alguns instantes. Tente de novo daqui a pouco.'
+          : null
+      : closedNote(store, cart.items, vocabulary.bag);
 
   if (loading && !cart) return <CartSkeleton bag={vocabulary.bag} />;
   if (!open)

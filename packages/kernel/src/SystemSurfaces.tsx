@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -160,7 +161,7 @@ function ChatSurface({
   const [seen, setSeen] = useState<number | null>(null);
   if (chat.loading === false && seen === null) setSeen(replies);
   if (open && seen !== replies) setSeen(replies);
-  const [resolveLink] = useState(() => (url: string) => chatLink(url, publicUrl));
+  const resolveLink = useCallback((url: string) => chatLink(url, publicUrl), [publicUrl]);
   if (!chat.available || !chat.name || !chat.intro) return null;
   return (
     <Slot
@@ -216,7 +217,7 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   const transient = useTransientNotices();
 
   // re-render at the nearest future startsAt/endsAt boundary
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!envelope) return;
     const now = Date.now();
@@ -231,7 +232,7 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
     if (nearest === Infinity) return;
     const id = setTimeout(() => setTick((t) => t + 1), Math.min(nearest - now + 50, 2 ** 31 - 1));
     return () => clearTimeout(id);
-  }, [envelope]);
+  }, [envelope, tick]);
 
   const visible = visibleNotices(envelope?.notices ?? []);
   const blocking = visible.filter(isBlocking);
@@ -278,13 +279,17 @@ function Toast({
   const exit = useRef<Animation | null>(null);
 
   useLayoutEffect(() => {
+    const el = ref.current;
     if (!leaving) {
       // raised again while on its way out
       exit.current?.cancel();
       exit.current = null;
+      if (el) {
+        el.style.transform = '';
+        el.style.opacity = '';
+      }
       return;
     }
-    const el = ref.current;
     const gone = () => onGone(notice.id);
     if (!el || typeof el.animate !== 'function') return gone();
     const to = exitTo.get(notice.id) ?? 'translateY(12px) scale(0.96)';

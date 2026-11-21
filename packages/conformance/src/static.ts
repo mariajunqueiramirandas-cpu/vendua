@@ -300,18 +300,18 @@ function k03(dir: string): CheckResult {
         [...code[i]!.matchAll(/\[\s*['"`]fetch['"`]\s*\]/g)].some((m) => bare[i]![m.index] === '[')
       )
         problems.push(`${loc}: direct fetch() — use @vendua/kernel api`);
-      if (/\baxios\b/.test(line)) problems.push(`${loc}: axios — use @vendua/kernel api`);
-      if (/\bXMLHttpRequest\b/.test(line))
+      if (/\baxios\b/.test(bare[i]!)) problems.push(`${loc}: axios — use @vendua/kernel api`);
+      if (/\bXMLHttpRequest\b/.test(bare[i]!))
         problems.push(`${loc}: XMLHttpRequest — use @vendua/kernel api`);
-      if (/\bnew\s+EventSource\b/.test(line))
+      if (/\bnew\s+EventSource\b/.test(bare[i]!))
         problems.push(
           `${loc}: new EventSource — raw transport; use useOrder(id) (live by default, SSE with a poll fallback)`,
         );
-      if (/\bnavigator\s*\??\.\s*sendBeacon\b/.test(line))
+      if (/\bnavigator\s*\??\.\s*sendBeacon\b/.test(bare[i]!))
         problems.push(
           `${loc}: navigator.sendBeacon — raw transport; use useAnalytics().track('custom.<name>') (consent-gated)`,
         );
-      if (/\bnew\s+WebSocket\b/.test(line))
+      if (/\bnew\s+WebSocket\b/.test(bare[i]!))
         problems.push(
           `${loc}: new WebSocket — raw transport; use the @vendua/kernel api client and its hooks`,
         );
@@ -346,6 +346,8 @@ function k03(dir: string): CheckResult {
   return pass(id, title);
 }
 
+const RESERVED_PAGE_HANDLES = new Set(['v1', 'storefront', 'checkout', 'control']);
+
 function k04(dir: string): CheckResult {
   const id = 'K04';
   const title = 'no page routes under reserved API prefixes; no literal commerce-endpoint calls';
@@ -353,12 +355,9 @@ function k04(dir: string): CheckResult {
 
   for (const file of sourceFiles(dir)) {
     const rel = file.slice(dir.length + 1);
-    const lines = readFileSync(file, 'utf8').split('\n');
-    lines.forEach((line, i) => {
+    const cleanLines = stripComments(readFileSync(file, 'utf8')).split('\n');
+    cleanLines.forEach((line, i) => {
       const loc = `${rel}:${i + 1}`;
-      const trimmed = line.trim();
-      if (trimmed.startsWith('//') || trimmed.startsWith('*')) return;
-
       for (const m of line.matchAll(/\bpath\s*[:=]\s*['"`]([^'"`]+)['"`]/g)) {
         const p = m[1]!.replace(/^\/+/, '');
         if (RESERVED_ROUTE_PREFIXES.some((pre) => p === pre || p.startsWith(`${pre}/`)))
@@ -373,6 +372,17 @@ function k04(dir: string): CheckResult {
         );
       }
     });
+  }
+
+  const tplDir = join(dir, 'templates');
+  if (existsSync(tplDir)) {
+    for (const name of readdirSync(tplDir)) {
+      const m = /^page\.([a-z0-9-]+)\.json$/i.exec(name);
+      if (m && RESERVED_PAGE_HANDLES.has(m[1]!.toLowerCase()))
+        problems.push(
+          `templates/${name}: content page handle '${m[1]}' collides with a reserved route prefix`,
+        );
+    }
   }
 
   if (problems.length) return fail(id, title, problems.join('\n'));

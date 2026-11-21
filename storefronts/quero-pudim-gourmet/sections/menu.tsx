@@ -1,15 +1,17 @@
 import { RefreshCw, Search, SearchX, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BlockArea,
   defineSection,
   text,
+  useCopy,
   useMenu,
   usePageContext,
   useReducedMotion,
   useScrollSpy,
   type SectionProps,
 } from '@vendua/kernel';
+import { DIETARY_FILTERS } from '@vendua/kernel/rules';
 import { DishRow, type DishLabels } from './_shared/Dish.tsx';
 
 // The menu as a delivery app lays it out: search, a sticky strip of categories that follows the
@@ -25,8 +27,8 @@ export const schema = defineSection({
     soldOutLabel: text({ max: 30, default: 'esgotado' }),
     lowStockLabel: text({ max: 30, default: 'restam' }),
     preorderLabel: text({ max: 30, default: 'sob encomenda' }),
-    inBagLabel: text({ max: 30, default: 'na sacola' }),
-    allInBagLabel: text({ max: 30, default: 'tudo na sacola' }),
+    inBagLabel: text({ max: 30, default: '' }),
+    allInBagLabel: text({ max: 30, default: '' }),
     resultsLabel: text({ max: 40, default: 'Resultados' }),
     emptyTitle: text({ max: 80, default: 'O cardápio está quase pronto' }),
     emptyText: text({ max: 200, default: 'Volte daqui a pouco para ver as novidades.' }),
@@ -43,15 +45,29 @@ const SPY_MARGIN = '-140px 0px -55% 0px';
 
 export default function Menu({ settings: s }: SectionProps<typeof schema>) {
   const [query, setQuery] = useState('');
-  // the whole menu feeds the tab strip; the searched one, the results
+  const [diet, setDiet] = useState<string[]>([]);
+  // the whole menu feeds the tab strip; the searched/filtered one, the results
   const { categories: menu, loading, error, refetch } = useMenu();
-  const found = useMenu({ query });
+  const availableDiets = useMemo(() => {
+    const present = new Set<string>();
+    for (const c of menu)
+      for (const p of c.products) for (const t of p.dietaryTags ?? []) present.add(t);
+    return DIETARY_FILTERS.filter((f) => present.has(f.id));
+  }, [menu]);
+  const chosen = useMemo(
+    () => diet.filter((id) => availableDiets.some((f) => f.id === id)),
+    [diet, availableDiets],
+  );
+  const found = useMenu({ query, dietary: chosen });
   const { page } = usePageContext();
+  const { vocabulary } = useCopy();
   const still = useReducedMotion();
   const q = query.trim();
+  const narrowed = q !== '' || chosen.length > 0;
   const tabsRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const jumping = useRef(false);
+  const jumpCleanup = useRef<(() => void) | null>(null);
   const [tapped, setTapped] = useState<string | null>(null);
 
   const labels: DishLabels = {
@@ -59,43 +75,53 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
     soldOut: s.soldOutLabel,
     lowStock: s.lowStockLabel,
     preorder: s.preorderLabel,
-    inBag: s.inBagLabel,
-    allInBag: s.allInBagLabel,
+    inBag: s.inBagLabel || vocabulary.inBag,
+    allInBag: s.allInBagLabel || `tudo ${vocabulary.inBag}`,
   };
 
-  const results = q
+  const results = narrowed
     ? found.categories.flatMap((c) => c.products.map((p) => ({ product: p, category: c.name })))
     : [];
 
-  const spied = useScrollSpy(q ? [] : menu.map((c) => `cat-${c.slug}`), {
+  const spied = useScrollSpy(narrowed ? [] : menu.map((c) => `cat-${c.slug}`), {
     rootMargin: SPY_MARGIN,
   });
   // a tapped tab owns the highlight until its scroll lands and the reading moves on
   useEffect(() => {
     if (!jumping.current) setTapped(null);
   }, [spied]);
+  useEffect(() => () => jumpCleanup.current?.(), []);
   const active = tapped ?? spied?.slice(4) ?? null;
 
   // keep the lit tab in view inside the strip, without moving the page
   useEffect(() => {
     const strip = tabsRef.current;
-    const tab = strip?.querySelector<HTMLElement>(`[data-cat="${active}"]`);
+    const tab = active
+      ? Array.from(strip?.querySelectorAll<HTMLElement>('[data-cat]') ?? []).find(
+          (el) => el.dataset.cat === active,
+        )
+      : null;
     if (!strip || !tab) return;
     const left = tab.offsetLeft - strip.clientWidth / 2 + tab.clientWidth / 2;
     strip.scrollTo({ left, behavior: still ? 'auto' : 'smooth' });
   }, [active, still]);
 
   const goTo = (slug: string) => {
+    jumpCleanup.current?.();
     setQuery('');
+    setDiet([]);
     setTapped(slug);
     jumping.current = true;
     const release = () => {
       jumping.current = false;
       window.removeEventListener('scrollend', release);
+      window.clearTimeout(timer);
+      if (jumpCleanup.current === release) jumpCleanup.current = null;
     };
     window.addEventListener('scrollend', release);
     // browsers without scrollend (and a jump that doesn't move) still hand the strip back
-    window.setTimeout(release, 1200);
+    const timer = window.setTimeout(release, 1200);
+    jumpCleanup.current = release;
     requestAnimationFrame(() =>
       document
         .getElementById(`cat-${slug}`)
@@ -103,13 +129,18 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
     );
   };
 
+  const toggleDiet = (id: string) =>
+    setDiet((d) => (d.includes(id) ? d.filter((x) => x !== id) : [...d, id]));
+
   const Title = page === 'catalog' ? 'h1' : 'h2';
+  const CatTitle = s.title ? (page === 'catalog' ? 'h2' : 'h3') : 'h2';
+  const bare = !loading && !error && menu.length === 0;
 
   return (
     <section id="cardapio" className="menu" aria-label={s.title || s.categoriesLabel}>
       {s.title ? <Title className="menu-title">{s.title}</Title> : null}
 
-      <div className="menu-bar">
+      <div className="menu-bar" hidden={bare || undefined}>
         <form role="search" className="menu-search" onSubmit={(e) => e.preventDefault()}>
           <Search size={18} aria-hidden="true" className="menu-search-icon" />
           <label htmlFor="menu-busca" className="sr-only">
@@ -142,6 +173,25 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
           ) : null}
         </form>
 
+        {availableDiets.length > 0 ? (
+          <div className="menu-diets" role="group" aria-label={s.categoriesLabel}>
+            {availableDiets.map((f) => {
+              const on = chosen.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  className="menu-diet"
+                  aria-pressed={on}
+                  onClick={() => toggleDiet(f.id)}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
         {menu.length > 1 ? (
           <nav className="menu-tabs" aria-label={s.categoriesLabel}>
             <div className="menu-tabs-strip" ref={tabsRef}>
@@ -151,7 +201,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
                   href={`#cat-${c.slug}`}
                   data-cat={c.slug}
                   className="menu-tab"
-                  aria-current={!q && active === c.slug ? 'true' : undefined}
+                  aria-current={!narrowed && active === c.slug ? 'true' : undefined}
                   onClick={(e) => {
                     e.preventDefault();
                     goTo(c.slug);
@@ -191,12 +241,12 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
             {s.retryLabel}
           </button>
         </div>
-      ) : q ? (
+      ) : narrowed ? (
         results.length ? (
           <div className="menu-cat">
-            <h3 className="menu-cat-title">
+            <CatTitle className="menu-cat-title">
               {s.resultsLabel} <span className="menu-count tnum">{results.length}</span>
-            </h3>
+            </CatTitle>
             <ol className="menu-list">
               {results.map(({ product, category }) => (
                 <DishRow key={product.id} product={product} category={category} labels={labels} />
@@ -207,7 +257,14 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
           <div className="menu-empty" role="status">
             <SearchX size={24} aria-hidden="true" />
             <p className="menu-empty-title">{s.noMatchTitle}</p>
-            <button type="button" className="menu-pill" onClick={() => setQuery('')}>
+            <button
+              type="button"
+              className="menu-pill"
+              onClick={() => {
+                setQuery('');
+                setDiet([]);
+              }}
+            >
               {s.resetLabel}
             </button>
           </div>
@@ -225,9 +282,9 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
             className="menu-cat"
             aria-labelledby={`cat-${c.slug}-h`}
           >
-            <h3 id={`cat-${c.slug}-h`} className="menu-cat-title">
+            <CatTitle id={`cat-${c.slug}-h`} className="menu-cat-title">
               {c.name} <span className="menu-count tnum">{c.products.length}</span>
-            </h3>
+            </CatTitle>
             {c.description ? <p className="menu-cat-desc">{c.description}</p> : null}
             <ol className="menu-list">
               {c.products.map((p) => (

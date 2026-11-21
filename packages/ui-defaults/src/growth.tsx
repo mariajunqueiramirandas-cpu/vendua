@@ -446,14 +446,18 @@ export function PixQr({ payload, label }: { payload: string; label: string }) {
   );
 }
 
-/** Re-renders every `ms` (0 = never) — the Pix countdown's clock. */
-function useNow(ms: number): number {
+/** Re-renders every `ms` (0 = never) until `until` passes — the Pix countdown's clock. */
+function useNow(ms: number, until: number): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!ms) return;
-    const t = setInterval(() => setNow(Date.now()), ms);
+    if (!ms || !Number.isFinite(until) || Date.now() >= until) return;
+    const t = setInterval(() => {
+      const cur = Date.now();
+      setNow(cur);
+      if (cur >= until) clearInterval(t);
+    }, ms);
     return () => clearInterval(t);
-  }, [ms]);
+  }, [ms, until]);
   return now;
 }
 
@@ -470,7 +474,7 @@ export function PixPayment({
 }: SlotProps['checkout.PixPayment']) {
   const [copied, setCopied] = useState(false);
   const deadline = expiresAt ? Date.parse(expiresAt) : NaN;
-  const now = useNow(Number.isFinite(deadline) ? 1000 : 0);
+  const now = useNow(Number.isFinite(deadline) ? 1000 : 0, deadline);
   const left = Number.isFinite(deadline) ? deadline - now : null;
   const copy = async () => {
     try {

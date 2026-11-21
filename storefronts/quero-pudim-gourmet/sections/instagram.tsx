@@ -27,16 +27,18 @@ export default function Instagram({ settings: s }: SectionProps<typeof schema>) 
   const handle = s.handle || (contacts.instagram ? `@${contacts.instagram.handle}` : '');
   if (!href) return null;
   return (
-    <section className="insta" aria-labelledby={titleId}>
+    <section className="insta" aria-labelledby={s.title ? titleId : undefined}>
       <div className="insta-card">
         <span className="insta-mark" aria-hidden="true">
           <InstagramIcon size={26} strokeWidth={1.6} />
         </span>
         <div className="insta-copy">
           {s.kicker ? <p className="kicker">{s.kicker}</p> : null}
-          <h2 id={titleId} className="insta-title">
-            {s.title}
-          </h2>
+          {s.title ? (
+            <h2 id={titleId} className="insta-title">
+              {s.title}
+            </h2>
+          ) : null}
           {s.text ? <p className="insta-text">{s.text}</p> : null}
         </div>
         <div className="insta-actions">

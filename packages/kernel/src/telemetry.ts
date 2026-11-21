@@ -71,25 +71,43 @@ export function readConsent(): ConsentState | null {
   }
 }
 
+let cachedRaw: string | null | undefined;
+let cachedConsent: ConsentState | null = null;
+let memoryConsent: ConsentState | null = null;
+const consentListeners = new Set<() => void>();
+
 export function writeConsent(purposes: ConsentPurpose[]): ConsentState {
   const state: ConsentState = { version: 1, purposes, at: new Date().toISOString() };
   try {
-    globalThis.localStorage?.setItem(CONSENT_KEY, JSON.stringify(state));
+    const raw = JSON.stringify(state);
+    globalThis.localStorage?.setItem(CONSENT_KEY, raw);
+    cachedRaw = raw;
+    cachedConsent = state;
+    memoryConsent = null;
   } catch {
     /* private mode — decision lives for this page only */
+    memoryConsent = state;
   }
-  memoryConsent = state;
   consentListeners.forEach((fn) => fn());
   return state;
 }
-let memoryConsent: ConsentState | null = null;
-const consentListeners = new Set<() => void>();
+
 export function onConsentChange(fn: () => void): () => void {
   consentListeners.add(fn);
   return () => consentListeners.delete(fn);
 }
 export function currentConsent(): ConsentState | null {
-  return memoryConsent ?? readConsent();
+  try {
+    const raw = globalThis.localStorage?.getItem(CONSENT_KEY) ?? null;
+    if (raw === null && memoryConsent) return memoryConsent;
+    if (raw === cachedRaw) return cachedConsent;
+    cachedRaw = raw;
+    const parsed = raw ? (JSON.parse(raw) as ConsentState) : null;
+    cachedConsent = parsed?.version === 1 && Array.isArray(parsed.purposes) ? parsed : null;
+    return cachedConsent;
+  } catch {
+    return memoryConsent;
+  }
 }
 
 class Beacon {

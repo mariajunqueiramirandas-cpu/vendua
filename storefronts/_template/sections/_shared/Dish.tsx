@@ -13,6 +13,7 @@ import {
   type CatalogProduct,
   type PriceDisplay,
 } from '@vendua/kernel';
+import { dietaryBadges } from '@vendua/kernel/rules';
 import { DishArt, dishOf } from './DishArt.tsx';
 import { Price } from './Price.tsx';
 import { useInBag } from './useInBag.ts';
@@ -88,24 +89,52 @@ function Media({
 }
 
 // the Kernel picks the one badge; the words are the menu's
-function Tags({ card, labels }: { card: CardState; labels: DishLabels }) {
+function Tags({
+  card,
+  shown,
+  diets,
+  labels,
+}: {
+  card: CardState;
+  shown: PriceDisplay;
+  diets: string[];
+  labels: DishLabels;
+}) {
+  let primary = null;
   switch (card.badge) {
     case 'sold-out':
-      return card.scheduleLabel ? <span className="dish-tag">{card.scheduleLabel}</span> : null;
+      primary = card.scheduleLabel ? <span className="dish-tag">{card.scheduleLabel}</span> : null;
+      break;
     case 'all-in-bag':
-      return <span className="dish-tag">{labels.allInBag}</span>;
+      primary = <span className="dish-tag">{labels.allInBag}</span>;
+      break;
     case 'low-stock':
-      return (
+      primary = (
         <span className="dish-tag" data-tone="spark">
           {labels.lowStock}
           {card.stockLeft ? ` ${card.stockLeft}` : ''}
         </span>
       );
+      break;
     case 'preorder':
-      return <span className="dish-tag">{labels.preorder}</span>;
-    default:
-      return null;
+      primary = <span className="dish-tag">{labels.preorder}</span>;
+      break;
   }
+  return (
+    <>
+      {shown.promoLabel ? (
+        <span className="dish-tag" data-tone="spark">
+          {shown.promoLabel}
+        </span>
+      ) : null}
+      {primary}
+      {diets.map((tag) => (
+        <span key={tag} className="dish-tag">
+          {tag}
+        </span>
+      ))}
+    </>
+  );
 }
 
 function AddButton({ p, d, labels }: { p: CatalogProduct; d: DishState; labels: DishLabels }) {
@@ -168,16 +197,32 @@ function DishPrice({ shown }: { shown: PriceDisplay }) {
   return <Price cents={shown.cents} className="dish-price" />;
 }
 
-function useLinkLabel(p: CatalogProduct, shown: PriceDisplay, d: DishState, labels: DishLabels) {
+function useLinkLabel(
+  p: CatalogProduct,
+  shown: PriceDisplay,
+  d: DishState,
+  diets: string[],
+  labels: DishLabels,
+) {
   const { store } = useStore();
-  return `${p.name}, ${priceWords(shown, store?.currency)}${d.card.soldOut ? `, ${labels.soldOut}` : ''}${d.inBag ? `, ${d.inBag} ${labels.inBag}` : ''}`;
+  const parts = [p.name, priceWords(shown, store?.currency)];
+  if (shown.promoLabel) parts.push(shown.promoLabel);
+  if (d.card.soldOut) parts.push(labels.soldOut);
+  else if (d.card.allInBag) parts.push(labels.allInBag);
+  else if (d.card.badge === 'low-stock')
+    parts.push(`${labels.lowStock}${d.card.stockLeft ? ` ${d.card.stockLeft}` : ''}`);
+  else if (d.card.badge === 'preorder') parts.push(labels.preorder);
+  if (diets.length) parts.push(...diets);
+  if (d.inBag) parts.push(`${d.inBag} ${labels.inBag}`);
+  return parts.join(', ');
 }
 
 /** A menu line: words on the left, the dish on the right, one-tap add on the photo's corner. */
 export function DishRow({ product: p, category, labels }: DishProps) {
   const d = useDish(p);
   const shown = priceDisplay(p);
-  const label = useLinkLabel(p, shown, d, labels);
+  const diets = dietaryBadges(p);
+  const label = useLinkLabel(p, shown, d, diets, labels);
   return (
     // the Kernel scrolls a #produto-<slug> link here and marks it data-target for a moment
     <li id={productAnchor(p.slug)} className="dish" data-soldout={d.card.soldOut || undefined}>
@@ -188,7 +233,7 @@ export function DishRow({ product: p, category, labels }: DishProps) {
             {p.description ? <span className="dish-desc">{p.description}</span> : null}
             <span className="dish-foot">
               <DishPrice shown={shown} />
-              <Tags card={d.card} labels={labels} />
+              <Tags card={d.card} shown={shown} diets={diets} labels={labels} />
             </span>
           </span>
           <Media
@@ -209,7 +254,8 @@ export function DishRow({ product: p, category, labels }: DishProps) {
 export function DishCard({ product: p, category, labels }: DishProps) {
   const d = useDish(p);
   const shown = priceDisplay(p);
-  const label = useLinkLabel(p, shown, d, labels);
+  const diets = dietaryBadges(p);
+  const label = useLinkLabel(p, shown, d, diets, labels);
   return (
     <li className="dish-card" data-soldout={d.card.soldOut || undefined}>
       <ProductLink product={p} asChild>
@@ -224,7 +270,7 @@ export function DishCard({ product: p, category, labels }: DishProps) {
           <span className="dish-name">{p.name}</span>
           <span className="dish-foot">
             <DishPrice shown={shown} />
-            <Tags card={d.card} labels={labels} />
+            <Tags card={d.card} shown={shown} diets={diets} labels={labels} />
           </span>
         </a>
       </ProductLink>

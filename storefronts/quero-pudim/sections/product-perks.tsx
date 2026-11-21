@@ -23,10 +23,10 @@ export default function ProductPerks({ settings }: BlockProps<typeof schema>) {
   if (items.length === 0) return null;
   return (
     <p className="small muted pd-perks">
-      {items.map((it) => {
+      {items.map((it, i) => {
         const Icon = ICONS[it.icon];
         return (
-          <span key={it.text}>
+          <span key={`${it.text}:${i}`}>
             <Icon size={16} aria-hidden="true" />
             {interpolate(it.text)}
           </span>

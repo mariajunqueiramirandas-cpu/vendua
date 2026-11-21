@@ -1085,9 +1085,11 @@ export function createApp({
       loader: ops.loader,
     };
     if (!templatesJson) return c.json(state);
-    const adminOrigin = JSON.stringify(previewParent(c));
+    const primary = previewParent(c);
+    const adminOrigin = JSON.stringify(primary);
+    const adminOrigins = JSON.stringify([...new Set([primary, ...appOrigins])]);
     return c.body(
-      `${JSON.stringify(state).slice(0, -1)},"templates":${templatesJson},"adminOrigin":${adminOrigin}}`,
+      `${JSON.stringify(state).slice(0, -1)},"templates":${templatesJson},"adminOrigin":${adminOrigin},"adminOrigins":${adminOrigins}}`,
       200,
       { 'content-type': 'application/json' },
     );

@@ -87,7 +87,11 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
         <button
           type="button"
           className="btn btn-ghost"
-          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate(links.catalog))}
+          onClick={() => {
+            const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+            if (idx > 0) navigate(-1);
+            else navigate(links.catalog);
+          }}
         >
           <ArrowLeft size={16} aria-hidden="true" /> Voltar
         </button>
@@ -150,9 +154,9 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
               {selected && price ? (
                 <div style={{ marginBottom: 8 }}>
                   {s.featuredLabel ? <span className="qr-chip">{s.featuredLabel}</span> : null}
-                  <h2 className="display display-md" style={{ marginTop: 4 }}>
+                  <h1 className="display display-md" style={{ marginTop: 4 }}>
                     {selected.name}
-                  </h2>
+                  </h1>
                   {selected.description ? (
                     <p className="small muted qr-desc">{selected.description}</p>
                   ) : null}
@@ -169,7 +173,7 @@ export default function QrMenu({ settings: s }: SectionProps<typeof schema>) {
                 </div>
               ) : (
                 <div style={{ marginBottom: 8 }}>
-                  <h2 className="display display-md">{s.title}</h2>
+                  <h1 className="display display-md">{s.title}</h1>
                   {s.subtitle ? <p className="small muted">{s.subtitle}</p> : null}
                 </div>
               )}

@@ -186,7 +186,9 @@ export function CartSheet({ background }: { background: Loc }) {
     const set = (y: number) => {
       offset.current = y;
       panel.style.transform = y ? `translateY(${y}px)` : '';
-      scrim.style.opacity = String(Math.max(0, 1 - Math.max(0, y) / panel.offsetHeight));
+      scrim.style.opacity = String(
+        Math.max(0, 1 - Math.max(0, y) / Math.max(1, panel.offsetHeight)),
+      );
     };
     const begin = (x: number, y: number, target: EventTarget | null) => {
       if (wide() || closing.current || !(target instanceof Element)) return;
@@ -236,7 +238,10 @@ export function CartSheet({ background }: { background: Loc }) {
         duration,
       });
       scrim.animate(
-        [{ opacity: Math.max(0, 1 - Math.max(0, y) / panel.offsetHeight) }, { opacity: 1 }],
+        [
+          { opacity: Math.max(0, 1 - Math.max(0, y) / Math.max(1, panel.offsetHeight)) },
+          { opacity: 1 },
+        ],
         { duration: Math.min(duration, 300), easing: 'ease-out' },
       );
     };

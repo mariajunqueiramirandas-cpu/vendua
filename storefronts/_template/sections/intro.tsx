@@ -15,16 +15,29 @@ export const schema = defineSection({
 });
 
 export default function Intro({ settings }: SectionProps<typeof schema>) {
+  const href = settings.ctaHref;
+  const internal = !!href && href.startsWith('/') && !href.startsWith('//');
+  const external = !!href && /^https?:\/\//i.test(href);
   return (
     <section className="intro">
       <div className="intro-inner">
         {settings.eyebrow ? <p className="intro-eyebrow">{settings.eyebrow}</p> : null}
         <h1 className="intro-title">{settings.title}</h1>
         {settings.text ? <p className="intro-text">{settings.text}</p> : null}
-        {settings.ctaLabel && settings.ctaHref ? (
-          <Link className="intro-cta" to={settings.ctaHref}>
-            {settings.ctaLabel}
-          </Link>
+        {settings.ctaLabel && href ? (
+          internal ? (
+            <Link className="intro-cta" to={href}>
+              {settings.ctaLabel}
+            </Link>
+          ) : (
+            <a
+              className="intro-cta"
+              href={href}
+              {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            >
+              {settings.ctaLabel}
+            </a>
+          )
         ) : null}
         <BlockArea name="aside" className="intro-aside" />
       </div>

@@ -28,9 +28,21 @@ export default function Closing({ settings: s }: SectionProps<typeof schema>) {
         </div>
         <div className="closing-actions">
           {s.ctaLabel && s.ctaHref ? (
-            <Link to={s.ctaHref} className="btn btn-lg btn-light">
-              {s.ctaLabel}
-            </Link>
+            s.ctaHref.startsWith('/') && !s.ctaHref.startsWith('//') ? (
+              <Link to={s.ctaHref} className="btn btn-lg btn-light">
+                {s.ctaLabel}
+              </Link>
+            ) : (
+              <a
+                href={s.ctaHref}
+                className="btn btn-lg btn-light"
+                {...(/^https?:\/\//i.test(s.ctaHref)
+                  ? { target: '_blank', rel: 'noopener noreferrer' }
+                  : {})}
+              >
+                {s.ctaLabel}
+              </a>
+            )
           ) : null}
           {whatsapp ? (
             <a

@@ -55,6 +55,8 @@ const tileUrl = (template: string, z: number, x: number, y: number) =>
 const same = (a: LatLng, b: LatLng | null) =>
   !!b && Math.abs(a.lat - b.lat) < 1e-5 && Math.abs(a.lng - b.lng) < 1e-5;
 
+const useIsoLayoutEffect = typeof document !== 'undefined' ? useLayoutEffect : useEffect;
+
 export function LocationPicker({
   center,
   precision,
@@ -82,7 +84,7 @@ export function LocationPicker({
 
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  useLayoutEffect(() => {
+  useIsoLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
     const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
@@ -95,7 +97,7 @@ export function LocationPicker({
 
   // pointers down on the map: one pans, two pinch-zoom
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const drag = useRef<{ x: number; y: number; origin: { x: number; y: number } } | null>(null);
+  const drag = useRef<{ x: number; y: number; center: LatLng } | null>(null);
   const pinch = useRef<number | null>(null);
 
   const zoomBy = (d: number) =>
@@ -115,7 +117,7 @@ export function LocationPicker({
     if (e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    drag.current = { x: e.clientX, y: e.clientY, origin: project(view.center, view.zoom) };
+    drag.current = { x: e.clientX, y: e.clientY, center: view.center };
     pinch.current = spread();
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -134,10 +136,12 @@ export function LocationPicker({
     }
     const d = drag.current;
     if (!d) return;
-    const origin = d.origin;
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
-    setView((v) => ({ ...v, center: unproject(origin.x - dx, origin.y - dy, v.zoom) }));
+    setView((v) => {
+      const origin = project(d.center, v.zoom);
+      return { ...v, center: unproject(origin.x - dx, origin.y - dy, v.zoom) };
+    });
   };
   const onPointerEnd = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
@@ -151,7 +155,7 @@ export function LocationPicker({
     pinch.current = spread();
     const rest = [...pointers.current.values()][0];
     // the finger left after a pinch pans from where it is now
-    drag.current = rest ? { ...rest, origin: project(view.center, view.zoom) } : null;
+    drag.current = rest ? { ...rest, center: view.center } : null;
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const pan: Record<string, [number, number]> = {
