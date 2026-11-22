@@ -46,7 +46,6 @@
       "devDependencies": {
         "@axe-core/playwright": "4.13.0",
         "@capacitor/cli": "8.5.3",
-        "@happy-dom/global-registrator": "20.0.11",
         "@playwright/test": "1.63.0",
         "@tailwindcss/vite": "4.3.3",
         "@types/bun": "1.4.2",

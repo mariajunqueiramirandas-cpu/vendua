@@ -41,13 +41,14 @@ export function useDelay(storeName: string) {
       api.delay(v.order.id, v.minutes, v.idem),
     onSuccess: ({ order, notified }) => {
       swap(order);
-      if (!notified && order.customer.phone)
+      const url = delayWhatsappUrl(order, storeName, tz);
+      if (!notified && url)
         toast(`O cliente do #${order.number} ainda não sabe do novo horário.`, {
           tone: 'info',
           ms: 8000,
           action: {
             label: 'avisar',
-            run: () => platform.openExternal(delayWhatsappUrl(order, storeName, tz)),
+            run: () => platform.openExternal(url),
           },
         });
     },
