@@ -262,7 +262,12 @@ export default function StoreHub() {
           to: '/impressoras',
           Icon: Printer,
           title: 'Impressoras',
-          line: printing ? printersLine(prn.data) : { text: 'Fora do seu plano' },
+          line: printing
+            ? printersLine(prn.data)
+            : // a plan that has printing reads as closed until its first payment
+              {
+                text: s?.status.billingHold ? 'Abre quando o plano for pago' : 'Fora do seu plano',
+              },
         },
       ],
     },

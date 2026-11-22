@@ -3,8 +3,6 @@ import {
   Bell,
   BellSlash,
   CaretDown,
-  CheckCircle,
-  Circle,
   ClockCountdown,
   CloudWarning,
   Eye,
@@ -50,6 +48,7 @@ import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { BILLING_HOLD_TEXT, isBillingHold } from '../store/BillingHold.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
+import { SetupCard } from '../setup/SetupCard.tsx';
 import { SavingsCard } from './SavingsCard.tsx';
 import { FreioCard } from '../store/Freio.tsx';
 import { forgetIfReset, hasLeft } from '../onboarding/progress.ts';
@@ -98,6 +97,10 @@ export default function Home() {
   )
     return <Navigate to="/bem-vindo" replace />;
 
+  // a store still being set up: its list leads, and the live panels wait for a first order
+  const setup = !!data && can(s.user.role, 'manager') && data.checklist.some((c) => !c.done);
+  const fresh = setup && data!.totalOrders === 0;
+
   if (error && !data)
     return (
       <div className="mx-auto max-w-[880px] p-4 md:p-8">
@@ -116,24 +119,31 @@ export default function Home() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
         <div className="contents space-y-5 lg:block lg:space-y-6">
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
-          <Section title="Agora na loja" className="order-3 lg:order-none">
-            {data ? <Feed data={data} /> : <RowsSkeleton rows={4} trailing={false} />}
-          </Section>
+          {/* before the first order the live panels wait, so the list takes their place */}
+          {fresh ? (
+            <SetupCard checklist={data!.checklist} className="order-1 lg:order-none" />
+          ) : null}
+          {fresh ? null : (
+            <Section title="Agora na loja" className="order-3 lg:order-none">
+              {data ? <Feed data={data} /> : <RowsSkeleton rows={4} trailing={false} />}
+            </Section>
+          )}
         </div>
         <div className="contents space-y-5 lg:block lg:space-y-6">
+          {setup && !fresh ? (
+            <SetupCard checklist={data!.checklist} className="order-1 lg:order-none" />
+          ) : null}
           <Section title="Precisa de você" className="order-1 lg:order-none">
             {data ? <Attention data={data} /> : <RowsSkeleton rows={2} />}
           </Section>
           <FreioCard className="order-1 lg:order-none" />
-          <DeviceCard className="order-2 lg:order-none" />
-          {data && can(s.user.role, 'manager') && data.checklist.some((c) => !c.done) ? (
-            <div className="order-2 lg:order-none">
-              <Checklist items={data.checklist} onboarding={data.onboarding} />
-            </div>
-          ) : null}
-          <Section title="Mais vendidos hoje" className="order-4 lg:order-none">
-            {data ? <Best data={data} /> : <RowsSkeleton rows={3} avatar={false} />}
-          </Section>
+          {/* the setup list carries this device's step while it's on screen */}
+          {setup ? null : <DeviceCard className="order-2 lg:order-none" />}
+          {fresh ? null : (
+            <Section title="Mais vendidos hoje" className="order-4 lg:order-none">
+              {data ? <Best data={data} /> : <RowsSkeleton rows={3} avatar={false} />}
+            </Section>
+          )}
           <SavingsCard className="order-5 lg:order-none" />
         </div>
       </div>
@@ -230,7 +240,8 @@ function Hero({ data }: { data: HomeData }) {
         </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        {w ? (
+        {/* while the plan holds the store, the pay link below already says why it's closed */}
+        {w && !hold ? (
           <button
             type="button"
             onClick={() => setSheet('pause')}
@@ -404,10 +415,12 @@ const TONE_DISC: Record<Tone, string> = {
 };
 
 function Attention({ data }: { data: HomeData }) {
-  // three lead; the rest is one tap away, never silently dropped
+  // three lead; the rest is one tap away, never silently dropped. The plan's first payment is
+  // the header's own action (Hero), so it isn't said twice.
   const [all, setAll] = useState(false);
-  const items = all ? data.attention : data.attention.slice(0, 3);
-  const more = data.attention.length - items.length;
+  const list = data.attention.filter((a) => a.kind !== 'billing_pending');
+  const items = all ? list : list.slice(0, 3);
+  const more = list.length - items.length;
   if (!items.length)
     return (
       <DuaNote pose="avatar-feliz" title="Tudo em dia">
@@ -456,87 +469,6 @@ function Attention({ data }: { data: HomeData }) {
           ver mais {more} <CaretDown weight="bold" className="size-4" />
         </button>
       ) : null}
-    </Card>
-  );
-}
-
-function Checklist({
-  items,
-  onboarding,
-}: {
-  items: HomeData['checklist'];
-  onboarding: HomeData['onboarding'] | undefined;
-}) {
-  const done = items.filter((i) => i.done).length;
-  const pct = done / items.length;
-  const r = 22;
-  const c = 2 * Math.PI * r;
-  return (
-    <Card as="section" className="p-5" aria-label="deixe sua loja pronta">
-      <div className="flex items-center gap-4">
-        <svg
-          viewBox="0 0 56 56"
-          className="size-14 shrink-0 -rotate-90"
-          role="img"
-          aria-label={`${done} de ${items.length} passos prontos`}
-        >
-          <circle
-            cx="28"
-            cy="28"
-            r={r}
-            fill="none"
-            stroke="var(--surface-sunken)"
-            strokeWidth="6"
-          />
-          <circle
-            cx="28"
-            cy="28"
-            r={r}
-            fill="none"
-            stroke="var(--chart)"
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeDasharray={`${pct * c} ${c}`}
-            className="transition-[stroke-dasharray] duration-700"
-          />
-        </svg>
-        <div>
-          <p className="t-title-2">Deixe sua loja pronta</p>
-          <p className="t-body text-muted">
-            {done} de {items.length} passos
-          </p>
-        </div>
-      </div>
-      <ButtonLink to="/bem-vindo" variant="spark" block className="mt-4">
-        {onboarding?.finished
-          ? 'terminar o que falta'
-          : onboarding?.step
-            ? 'continuar o passo a passo'
-            : 'fazer o passo a passo'}
-      </ButtonLink>
-      <ul className="mt-3 space-y-1">
-        {items.map((i) => (
-          <li key={i.id}>
-            <Link
-              to={i.href}
-              className={cn(
-                'press-row flex min-h-12 items-center gap-3 rounded-md px-2 hover:bg-hover',
-                i.done && 'text-muted',
-              )}
-            >
-              {i.done ? (
-                <CheckCircle weight="fill" className="size-6 shrink-0 text-success" />
-              ) : (
-                <Circle className="size-6 shrink-0 text-faint" />
-              )}
-              <span className={cn('flex-1', i.done && 'line-through decoration-line-strong')}>
-                {i.label}
-              </span>
-              {!i.done ? <ArrowRight className="size-4 text-muted" /> : null}
-            </Link>
-          </li>
-        ))}
-      </ul>
     </Card>
   );
 }

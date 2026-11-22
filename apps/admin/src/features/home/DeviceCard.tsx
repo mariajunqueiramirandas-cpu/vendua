@@ -34,26 +34,92 @@ function usePushOff() {
   return off;
 }
 
-export function DeviceCard({ className }: { className?: string }) {
+/**
+ * What this device still needs so no order is missed: put the app on the home screen, then let it
+ * ring with the app closed. `run` does the next one (the iPhone gets its steps in `sheet`).
+ */
+export function useDeviceStep() {
   const s = useSession();
   const qc = useQueryClient();
   const mode = useSyncExternalStore(platform.install.onChange, platform.install.mode);
   const pushOff = usePushOff();
   const nav = useNavigate();
-  const [hidden, setHidden] = useState<string[]>([]);
   const [howto, setHowto] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pushed, setPushed] = useState(false);
+  const step: 'install' | 'push' | null = mode
+    ? 'install'
+    : // on iPhone only the installed app can receive notifications
+      pushOff && !pushed && (platform.install.installed() || mode !== 'ios')
+      ? 'push'
+      : null;
+  const run = async () => {
+    if (step === 'install') {
+      if (mode === 'ios') return setHowto(true);
+      if (await platform.install.prompt()) toast('Pronto! O app está na sua tela de início.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await platform.push.enable(s.push);
+      if (r === 'on') {
+        await api.updateMe({ prefs: { push: true } });
+        void qc.invalidateQueries({ queryKey: qk.session });
+        setPushed(true);
+        // prove it end to end: the merchant hears it ring now, not on the first order
+        const t = await api.testAlert().catch(() => null);
+        void qc.invalidateQueries({ queryKey: qk.alerts });
+        if (!t || t.failed)
+          toast('Os avisos ligaram, mas o de teste não chegou.', {
+            tone: 'error',
+            ms: 8000,
+            action: { label: 'ver avisos', run: () => nav('/perfil/avisos') },
+          });
+        else toast('Avisos ligados. Mandamos um de teste: ele deve tocar agora.');
+      } else if (r === 'denied')
+        toast.error('Os avisos foram bloqueados. Libere nas configurações do aparelho.');
+    } catch (e) {
+      toast.error(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const sheet = (
+    <Sheet open={howto} onOpenChange={setHowto} title="Instalar no iPhone">
+      <ol className="t-body-lg space-y-4 pt-1">
+        <li className="flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
+            <Export className="size-5" aria-hidden />
+          </span>
+          <span>
+            Toque em <b>Compartilhar</b> na barra do Safari.
+          </span>
+        </li>
+        <li className="flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
+            <PlusSquare className="size-5" aria-hidden />
+          </span>
+          <span>
+            Escolha <b>Adicionar à Tela de Início</b> e toque em <b>Adicionar</b>.
+          </span>
+        </li>
+        <li className="flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
+            <BellRinging className="size-5" aria-hidden />
+          </span>
+          <span>Abra pelo ícone novo e ligue os avisos de pedido.</span>
+        </li>
+      </ol>
+    </Sheet>
+  );
+  return { step, busy, run, sheet };
+}
 
-  const card: 'install' | 'push' | null =
-    mode && !dismissed('install') && !hidden.includes('install')
-      ? 'install'
-      : // on iPhone only the installed app can receive notifications
-        pushOff &&
-          (platform.install.installed() || mode !== 'ios') &&
-          !dismissed('push') &&
-          !hidden.includes('push')
-        ? 'push'
-        : null;
+export function DeviceCard({ className }: { className?: string }) {
+  const device = useDeviceStep();
+  const [hidden, setHidden] = useState<string[]>([]);
+  const card =
+    device.step && !dismissed(device.step) && !hidden.includes(device.step) ? device.step : null;
   if (!card) return null;
 
   const dismiss = () => {
@@ -89,39 +155,8 @@ export function DeviceCard({ className }: { className?: string }) {
           <Button
             size="sm"
             className="mt-3"
-            loading={busy}
-            onClick={async () => {
-              if (card === 'install') {
-                if (mode === 'ios') return setHowto(true);
-                if (await platform.install.prompt())
-                  toast('Pronto! O app está na sua tela de início.');
-                return;
-              }
-              setBusy(true);
-              try {
-                const r = await platform.push.enable(s.push);
-                if (r === 'on') {
-                  await api.updateMe({ prefs: { push: true } });
-                  void qc.invalidateQueries({ queryKey: qk.session });
-                  setHidden((h) => [...h, 'push']);
-                  // prove it end to end: the merchant hears it ring now, not on the first order
-                  const t = await api.testAlert().catch(() => null);
-                  void qc.invalidateQueries({ queryKey: qk.alerts });
-                  if (!t || t.failed)
-                    toast('Os avisos ligaram, mas o de teste não chegou.', {
-                      tone: 'error',
-                      ms: 8000,
-                      action: { label: 'ver avisos', run: () => nav('/perfil/avisos') },
-                    });
-                  else toast('Avisos ligados. Mandamos um de teste: ele deve tocar agora.');
-                } else if (r === 'denied')
-                  toast.error('Os avisos foram bloqueados. Libere nas configurações do aparelho.');
-              } catch (e) {
-                toast.error(messageOf(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
+            loading={device.busy}
+            onClick={() => void device.run()}
           >
             {card === 'install' ? 'instalar o app' : 'ligar os avisos'}
           </Button>
@@ -135,32 +170,7 @@ export function DeviceCard({ className }: { className?: string }) {
           <X className="size-4" />
         </button>
       </div>
-      <Sheet open={howto} onOpenChange={setHowto} title="Instalar no iPhone">
-        <ol className="t-body-lg space-y-4 pt-1">
-          <li className="flex items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
-              <Export className="size-5" aria-hidden />
-            </span>
-            <span>
-              Toque em <b>Compartilhar</b> na barra do Safari.
-            </span>
-          </li>
-          <li className="flex items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
-              <PlusSquare className="size-5" aria-hidden />
-            </span>
-            <span>
-              Escolha <b>Adicionar à Tela de Início</b> e toque em <b>Adicionar</b>.
-            </span>
-          </li>
-          <li className="flex items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sunken">
-              <BellRinging className="size-5" aria-hidden />
-            </span>
-            <span>Abra pelo ícone novo e ligue os avisos de pedido.</span>
-          </li>
-        </ol>
-      </Sheet>
+      {device.sheet}
     </Card>
   );
 }

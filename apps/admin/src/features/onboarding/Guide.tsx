@@ -1,4 +1,3 @@
-import { CheckCircle } from '@phosphor-icons/react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../../ui/cn.ts';
 import { Mascote, type Pose } from '../../ui/Mascote.tsx';
@@ -85,55 +84,6 @@ export function Say({
         <Mascote pose={praise ? 'avatar-feliz' : 'avatar-ola'} size={36} className="size-8" />
       </span>
       {line}
-    </div>
-  );
-}
-
-/**
- * Duá reacting to the answer just given, above the next question: a small face and one line.
- * Only after an answer (a question opened from the map or by "voltar" has nothing to react
- * to), so the question itself stays the one thing to read. When the answer opened a new part,
- * Duá shows up in that part's pose instead (the brush for the look, the parcel for the service…).
- */
-export function Reaction({
-  children,
-  done,
-  pose,
-}: {
-  children: ReactNode;
-  done?: string | null;
-  /** a part begins: Duá at work on it */
-  pose?: Pose | null;
-}) {
-  return (
-    <div className={cn('flex gap-3', pose ? 'items-end' : 'items-center')}>
-      <span
-        aria-hidden
-        className={cn(
-          'dua-disc animate-pop grid shrink-0 place-items-center bg-spark-soft',
-          pose ? 'size-[5.5rem] sm:size-24' : 'size-11',
-        )}
-      >
-        <Mascote
-          pose={pose ?? 'avatar-feliz'}
-          size={pose ? 96 : 48}
-          className={pose ? 'size-[5rem] sm:size-[5.5rem]' : 'size-10'}
-        />
-      </span>
-      <p
-        role="status"
-        className={cn(
-          't-body min-w-0 rounded-lg bg-surface px-4 py-2.5 depth-1',
-          pose ? 'mb-3 rounded-bl-sm' : 'rounded-bl-sm',
-        )}
-      >
-        {done ? (
-          <span className="t-caption mb-0.5 flex items-center gap-1 font-semibold text-success">
-            <CheckCircle weight="fill" className="size-4 shrink-0" aria-hidden /> {done}
-          </span>
-        ) : null}
-        <span className="font-semibold">{children}</span>
-      </p>
     </div>
   );
 }

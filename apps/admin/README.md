@@ -27,13 +27,15 @@ cd storefronts/quero-pudim && bun run dev
 
 The seed makes one store, Quero Pudim, deliberately blank (no hours, delivery, Pix or menu),
 with Vinícius, phone `(22) 98179-5040`, as its owner. A blank store opens Início straight into
-`/bem-vindo`, the step-by-step onboarding (`features/onboarding`: one question per screen in
-four parts, Duá reacting to each answer, the store assembling as it goes as a card above the
-question on phones (`StoreCard`) and in a window beside it from 1200 px (`Vitrine`), and a map of
-every question behind the header's place (`Ribbon`) or as a spine beside the question;
-`flow.ts` decides which questions a store gets and which part of the store each one changes). Core keeps where it stopped (`GET/PATCH /admin/v1/onboarding`); re-seed to reset and run
-it again ("continuar depois" is remembered by Core too: open `/admin/bem-vindo` directly).
-`/bem-vindo?passo=horarios` opens one question and returns to the finale. CI and fleet runs need a menu and the canary
+`/bem-vindo`, the onboarding (`features/onboarding`): four screens, one per part of the store (a cara,
+atendimento, pagamento for the owner, cardápio), each with its questions as sections, good answers
+already filled in and one "Continuar" that saves the lot (`screens.tsx`), then the finale. The store
+assembles as it goes, as a card above the screen on phones (`StoreCard`) and in a window beside it
+from 1200 px (`Vitrine`). Core keeps where it stopped (`GET/PATCH /admin/v1/onboarding`); re-seed to
+reset and run it again. `/bem-vindo?passo=atendimento` opens one screen and goes back where it came
+from (the old step names, `?passo=horarios`, land on the screen that asks them: `flow.ts`). What's
+left is one list, `features/setup/SetupCard.tsx`, on the finale and at the top of Início. Signup
+(`/comecar`) is four screens too, with the plan on the last one. CI and fleet runs need a menu and the canary
 tenants instead: `cd packages/core && bun run seed:fixtures`. `bun scripts/demo-orders.ts` needs a menu
 first (finish the onboarding), then places a few live orders.
 
