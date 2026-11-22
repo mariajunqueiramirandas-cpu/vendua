@@ -5,11 +5,8 @@ import type { PayNext, StoreRef } from '../../lib/api.ts';
 // token, which can create a store for this phone, only in sessionStorage (this tab).
 
 export type StepId =
-  | 'plano'
   | 'loja'
-  | 'tipo'
   | 'voce'
-  | 'whatsapp'
   | 'codigo'
   | 'existente'
   | 'pagamento'
@@ -51,7 +48,7 @@ export interface Draft {
 }
 
 export const EMPTY: Draft = {
-  step: 'plano',
+  step: 'loja',
   planId: null,
   storeName: '',
   slug: '',
@@ -70,6 +67,8 @@ export const EMPTY: Draft = {
   created: null,
 };
 
+const LEGACY: Record<string, StepId> = { plano: 'loja', tipo: 'loja', whatsapp: 'voce' };
+
 const KEY = 'vendua-signup';
 const TOKEN = 'vendua-signup-token';
 // an unfinished signup is kept 30 minutes from its last answer (the owner's call), as long as
@@ -81,7 +80,9 @@ export function loadDraft(): Draft {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null') as (Draft & { at?: number }) | null;
     if (raw && typeof raw.step === 'string' && Date.now() - (raw.at ?? 0) < MAX_AGE) {
       const { at: _at, ...d } = raw;
-      return { ...EMPTY, ...d };
+      // a draft from the longer flow (a plan first, the WhatsApp on its own screen)
+      const step = (LEGACY[d.step as string] ?? d.step) as StepId;
+      return { ...EMPTY, ...d, step };
     }
   } catch {
     /* private mode or a bad value: start over */

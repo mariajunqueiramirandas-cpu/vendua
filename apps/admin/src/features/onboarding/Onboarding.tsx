@@ -1,8 +1,8 @@
 import { platform } from '../../platform/index.ts';
-import { X } from '@phosphor-icons/react';
+import { Check, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   api,
   type Category,
@@ -18,59 +18,28 @@ import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { useKeyboard } from '../../ui/keyboard.ts';
-import type { Pose } from '../../ui/Mascote.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { ImportFlow } from '../import/ImportFlow.tsx';
-import { Finale, FinaleHero, type Pending } from './Finale.tsx';
-import {
-  after,
-  ALL_STEPS,
-  answered,
-  CHAPTERS,
-  chapterOf,
-  isStep,
-  landOn,
-  LINE_SHORT,
-  FOLLOWS,
-  SPOT,
-  STEP_FOR_ITEM,
-  stepsFor,
-  type StepId,
-} from './flow.ts';
-import { Guide, Reaction, Say } from './Guide.tsx';
+import { Finale, FinaleHero } from './Finale.tsx';
+import { SCREENS, screenOf, screensFor, type ScreenId, type StepId } from './flow.ts';
+import { Guide, Say } from './Guide.tsx';
 import { Ribbon, TRACKS } from './Ribbon.tsx';
 import { MiniStore, type Draft } from './MiniStore.tsx';
-import { Welcome, type ChapterProgress } from './Overview.tsx';
-import { StepMap, type Mark } from './StepMap.tsx';
 import { StoreCard } from './StoreCard.tsx';
 import { SPOT_LINE, Vitrine } from './Vitrine.tsx';
 import { planState, PlanBanner, PlanPix, usePlan } from './PlanPay.tsx';
 import { forgetIfReset, markLeft, readStep, saveStep } from './progress.ts';
-import { GENERIC, segmentOf, type SegmentId } from './segments.ts';
-import {
-  HoursStep,
-  HowStep,
-  LogoStep,
-  NameStep,
-  PickupStep,
-  AddressStep,
-  ProductsStep,
-  SegmentStep,
-  TaglineStep,
-  WhatsappStep,
-  type StepProps,
-  Voice,
-} from './steps.tsx';
-import { ColorsStep, DeliveryStep, MercadoPagoStep, MethodsStep, PixStep } from './steps-more.tsx';
+import { GENERIC, segmentOf } from './segments.ts';
+import { AtendimentoScreen, CaraScreen, PagamentoScreen, type ScreenProps } from './screens.tsx';
+import { ProductsStep, Voice } from './steps.tsx';
 
-// The store builds itself (§6.8): one question per screen in four parts, Duá reacting to each
-// answer, and the store assembling as it goes. On phones and tablets the store is a card above
-// the question, in its own colour (the card Início will wear); from 1200 px it stands lit in a
-// shop window cut into the paper beside the question, with the map of questions as a spine on the
-// other side. The header names the place and, below 1200 px, opens that map. Every answer saves
-// on "Continuar"; where the merchant stopped lives in Core, so any device picks up from there.
+// The store builds itself (§6.8): four screens, each one part of the store with its questions
+// together and good answers already filled in, and the store assembling as it goes. On phones and
+// tablets the store is a card above the screen, in its own colour; from 1200 px it stands lit in a
+// shop window beside it, with the four parts as a spine on the other side. Every screen saves on
+// "Continuar"; where the merchant stopped lives in Core, so any device picks up from there.
 
 const draftOf = (s: StoreView, t: StoreTokens | null): Draft => ({
   name: s.profile.name,
@@ -82,23 +51,6 @@ const draftOf = (s: StoreView, t: StoreTokens | null): Draft => ({
   accent: t?.color.accent ?? null,
   onAccent: t?.color.onAccent ?? null,
 });
-
-// this tab already walked in: a reload resumes the question instead of the welcome-back map
-const TAB = 'vendua-onboarding-tab';
-const inTab = () => {
-  try {
-    return sessionStorage.getItem(TAB) === '1';
-  } catch {
-    return false;
-  }
-};
-const markTab = () => {
-  try {
-    sessionStorage.setItem(TAB, '1');
-  } catch {
-    /* private mode */
-  }
-};
 
 export default function Onboarding() {
   const session = useSession();
@@ -167,25 +119,18 @@ function Flow({
   const owner = can(session.user.role, 'owner');
   const storeId = session.store.id;
   const qc = useQueryClient();
+  const nav = useNavigate();
   const [params, setParams] = useSearchParams();
-  const products = useMemo(
-    () => categories.flatMap((c) => c.products).map((p) => ({ ...p, imageUrl: p.imageUrl })),
-    [categories],
-  );
+  const products = useMemo(() => categories.flatMap((c) => c.products), [categories]);
 
-  // what decides the questions is read once, as the wizard opens: a question answered on the way
-  // stays in the list, so the count doesn't jump under the merchant's thumb
+  // what decides the screen's questions is read once, as the wizard opens: an answer given on the
+  // way doesn't make a question vanish under the merchant's thumb
   const [known] = useState(() => ({
     askSegment: !ob.segment,
     askName: ob.from !== 'signup',
     importable: products.length === 0,
-    owner,
-    mp:
-      owner &&
-      platform.canPay &&
-      pay.mercadoPago.available &&
-      pay.mercadoPago.status !== 'connected',
   }));
+  const [segmentId, setSegmentId] = useState(ob.segment);
   const [tokens, setTokens] = useState(savedTokens);
   useEffect(() => setTokens((t) => t ?? savedTokens), [savedTokens]);
   const [draft, setDraft] = useState<Draft>(() => draftOf(s, savedTokens));
@@ -204,69 +149,38 @@ function Flow({
     if (liveLogo) setDraft((x) => (x.logoUrl ? x : { ...x, logoUrl: liveLogo }));
   }, [liveLogo]);
 
-  const steps = useMemo(
-    () => stepsFor({ ...known, pickup: draft.pickup, delivery: draft.delivery }),
-    [known, draft.pickup, draft.delivery],
-  );
-  const questions: StepId[] = steps.filter((x) => x !== 'oi' && x !== 'pronto');
-  const segment = segmentOf(ob.segment) ?? GENERIC;
+  const screens = useMemo(() => screensFor(owner), [owner]);
+  const questions = screens.filter((x): x is Exclude<ScreenId, 'pronto'> => x !== 'pronto');
+  const segment = segmentOf(segmentId) ?? GENERIC;
 
-  // where to open: a deep link (?passo=), Mercado Pago's return, the saved place, or the start
-  const first = useRef<{ step: StepId; solo: boolean; resume: StepId | null } | null>(null);
+  // where to open: a link to one screen (?passo=, the old step names too), Mercado Pago's return,
+  // where the merchant stopped, the finale once it's done, or the first screen
+  const first = useRef<{ step: StepId; solo: boolean } | null>(null);
   if (!first.current) {
     forgetIfReset(storeId, ob.resetAt);
-    const passo = params.get('passo');
-    // a saved question that dropped out of this store's list (answered elsewhere, Mercado Pago
-    // connected) resumes at the one after it
-    const raw = [ob.step, readStep(storeId)].find(
-      (x): x is StepId => isStep(x) && x !== 'oi' && x !== 'pronto',
-    );
-    const landed = raw ? landOn(steps, raw) : null;
-    const saved = landed && landed !== 'pronto' ? landed : undefined;
-    const mp = params.get('mp');
-    if (isStep(passo) && steps.includes(passo))
-      first.current = { step: passo, solo: true, resume: null };
-    else if (mp && owner)
-      first.current = {
-        step: mp === 'connected' ? after(steps, 'mercadopago') : landOn(steps, 'mercadopago'),
-        solo: false,
-        resume: null,
-      };
-    else if (saved && inTab()) first.current = { step: saved, solo: false, resume: null };
-    else if (saved || ob.finishedAt)
-      first.current = { step: 'oi', solo: false, resume: saved ?? null };
-    // signup's own welcome already said hello: straight to the first question
-    else if (ob.from === 'signup')
-      first.current = { step: questions[0]!, solo: false, resume: null };
-    else first.current = { step: 'oi', solo: false, resume: null };
+    const passo = screenOf(params.get('passo'), screens);
+    const saved = screenOf(ob.step, screens) ?? screenOf(readStep(storeId), screens);
+    first.current =
+      passo && passo !== 'pronto'
+        ? { step: passo, solo: true }
+        : params.get('mp') && owner
+          ? { step: 'pagamento', solo: false }
+          : ob.finishedAt
+            ? { step: 'pronto', solo: false }
+            : { step: saved ?? questions[0]!, solo: false };
   }
   const [step, setStep] = useState<StepId>(first.current.step);
-  const stepRef = useRef(step);
-  stepRef.current = step;
-  const stepsRef = useRef(steps);
-  stepsRef.current = steps;
-  // each question counts as its own page, so the CRM sees where the setup stalls
+  const solo = first.current.solo;
+  // each screen counts as its own page, so the CRM sees where the setup stalls
   useEffect(() => trackPageview(`/bem-vindo/${step}`), [step]);
-  const [solo, setSolo] = useState(first.current.solo);
-  // Duá's line over the next question: praise for the answer, a part that just finished, and
-  // the pose of the part that begins
-  const [said, setSaid] = useState<{
-    praise: string | null;
-    done: string | null;
-    pose: Pose | null;
-  } | null>(null);
-  // which way the questions slide: forward from the right, back from the left
+  const [praise, setPraise] = useState<string | null>(null);
   const [dir, setDir] = useState<'fwd' | 'back'>('fwd');
-  // questions the merchant moved on from this visit (an import declined counts as answered)
-  const [left, setLeft] = useState<ReadonlySet<StepId>>(() => new Set());
   const [peek, setPeek] = useState(false);
-  const [map, setMap] = useState(false);
   // bumps when an answer changed the store, so its card lights up
   const [spark, setSpark] = useState(0);
-  // the furthest question "Continuar" got to (a jump from the map or "voltar" doesn't move it):
-  // the ones before it that need no answer of their own (the methods, an import declined) count
-  const [furthest, setFurthest] = useState<StepId | null>(() =>
-    ob.finishedAt ? 'pronto' : isStep(ob.step) ? ob.step : null,
+  // the furthest screen reached: the header fills up to it
+  const [furthest, setFurthest] = useState(() =>
+    ob.finishedAt ? screens.length - 1 : Math.max(0, screens.indexOf(screenOf(ob.step, screens)!)),
   );
 
   const remember = useCallback(
@@ -278,47 +192,31 @@ function Flow({
     [qc],
   );
   const go = useCallback(
-    (
-      to: StepId,
-      p: string | null,
-      how: 'step' | 'jump' | 'detour' = 'step',
-      /** the question just left closed its part: how many of it were left for later */
-      part: { later: number } | null = null,
-    ) => {
-      const from = stepRef.current;
-      const ahead = ALL_STEPS.indexOf(to) > ALL_STEPS.indexOf(from);
-      const was = chapterOf(from);
-      const now = chapterOf(to);
-      // a new part on the way forward: Duá introduces it, and ticks off the one just finished
-      const parts = CHAPTERS.filter((c) => c.steps.some((x) => stepsRef.current.includes(x)));
-      // (not on a jump from the map, nor on a detour from the finale)
-      const entering = ahead && how === 'step' && !!now && now.id !== was?.id;
-      const n = `Parte ${parts.findIndex((c) => c.id === was?.id) + 1} de ${parts.length}`;
-      const finished =
-        entering && was && part
-          ? part.later
-            ? `${n} feita (${part.later} para depois)`
-            : `${n} pronta`
-          : null;
-      const line = [p, entering ? now!.start : null].filter(Boolean).join(' ');
-      setSaid(line ? { praise: line, done: finished, pose: entering ? now!.pose : null } : null);
-      setDir(ahead ? 'fwd' : 'back');
+    (to: StepId, said: string | null = null) => {
+      setDir(
+        to === 'importar' || screens.indexOf(to as ScreenId) >= screens.indexOf(step as ScreenId)
+          ? 'fwd'
+          : 'back',
+      );
+      setPraise(said);
       setStep(to);
-      if (p) setSpark((n) => n + 1);
-      saveStep(storeId, to);
-      markTab();
-      void remember(to === 'pronto' ? { step: to, finished: true } : { step: to });
+      if (said) setSpark((n) => n + 1);
+      if (to !== 'importar') {
+        const at = screens.indexOf(to);
+        setFurthest((f) => Math.max(f, at));
+        saveStep(storeId, to);
+        void remember(to === 'pronto' ? { step: to, finished: true } : { step: to });
+      }
       if (to === 'pronto') void qc.invalidateQueries({ queryKey: qk.home });
       window.scrollTo({ top: 0 });
     },
-    [storeId, remember, qc],
+    [screens, step, storeId, remember, qc],
   );
 
-  // Mercado Pago's return and deep links from the finale: read once, then out of the address
+  // Mercado Pago's return: read once, then out of the address
   useEffect(() => {
     const mp = params.get('mp');
-    const passo = params.get('passo');
-    if (!mp && !passo) return;
+    if (!mp && !params.get('passo')) return;
     if (mp === 'connected') {
       toast('Mercado Pago conectado! O cartão já aparece no site.');
       void qc.invalidateQueries({ queryKey: qk.payments });
@@ -328,13 +226,9 @@ function Flow({
           ? 'A conexão foi cancelada no Mercado Pago. Dá para tentar de novo.'
           : 'Não deu para conectar o Mercado Pago. Tente de novo.',
       );
-    if (isStep(passo) && steps.includes(passo) && passo !== step) {
-      setSolo(true);
-      go(passo, null, 'detour');
-    }
     setParams({}, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params]);
+  }, []);
 
   const save = useCallback(
     (body: Record<string, unknown>) =>
@@ -353,95 +247,24 @@ function Flow({
     [qc],
   );
 
-  const facts = {
-    s,
-    pay,
-    segment: ob.segment,
-    products: products.length,
-    hasColors: !!tokens,
-    reached: furthest,
+  const at = questions.indexOf(step as never);
+  const next = (said?: string) => {
+    // a link to one screen (from the setup list, from Duá's training) goes back where it came from
+    if (solo) {
+      if (said) toast(said);
+      if ((window.history.state as { idx?: number } | null)?.idx) return nav(-1);
+      return go('pronto');
+    }
+    go(questions[at + 1] ?? 'pronto', said ?? null);
   };
-  const at = steps.indexOf(step);
-  // a detour from the finale answers its question and what that question opens, then goes back
-  const soloNext = (): StepId =>
-    FOLLOWS[step]?.find((x) => steps.includes(x) && !answered(x, facts)) ?? 'pronto';
-  const mark = (x: StepId): Mark =>
-    x === step
-      ? 'current'
-      : answered(x, facts)
-        ? 'done'
-        : ob.skipped.includes(x)
-          ? 'skipped'
-          : left.has(x)
-            ? 'done'
-            : 'open';
-  const settled = (x: StepId) => {
-    const m = mark(x);
-    return m === 'done' || m === 'skipped';
-  };
-  const next = (p?: string, skipping = false) => {
-    const to = solo ? soloNext() : (steps[Math.min(at + 1, steps.length - 1)] ?? 'pronto');
-    // the last question of its part, with every other one of it settled: Duá ticks the part off
-    const was = chapterOf(step);
-    const rest = was ? was.steps.filter((x) => x !== step && steps.includes(x)) : [];
-    const part =
-      !solo && was && chapterOf(to)?.id !== was.id && rest.every(settled)
-        ? { later: rest.filter((x) => mark(x) === 'skipped').length + (skipping ? 1 : 0) }
-        : null;
-    setLeft((x) => new Set(x).add(step));
-    if (!solo) setFurthest((f) => (!f || ALL_STEPS.indexOf(to) > ALL_STEPS.indexOf(f) ? to : f));
-    go(to, p ?? null, solo ? 'detour' : 'step', part);
-  };
-  const back = at > 0 && !solo ? () => go(steps[at - 1]!, null) : null;
-  const skip = () => {
-    const skipped = [...new Set([...ob.skipped, step])].slice(-20);
-    qc.setQueryData<OnboardingData>(qk.onboarding, (o) => (o ? { ...o, skipped } : o));
-    void remember({ skipped });
-    next(undefined, true);
-  };
-  // straight to any question, from the map; the focus then goes to its title, not back to the
-  // header that opened the map
-  const jumped = useRef(false);
-  const jump = (to: StepId) => {
-    jumped.current = true;
-    setMap(false);
-    setSolo(false);
-    if (to !== step) go(to, null, 'jump');
-  };
-  const chapter = chapterOf(step);
-  const inChapter = chapter ? chapter.steps.filter((x) => steps.includes(x)) : [];
+  const back = solo ? null : at > 0 ? () => go(questions[at - 1]!) : null;
   const me = { name: session.user.name, phone: session.user.phone };
-  const props: StepProps = { s, draft, patch, save, next, back, skip, segment, me };
+  const props: ScreenProps = { s, draft, patch, save, next, back, segment, me };
 
   const leave = () => {
     markLeft(storeId);
     void remember({ dismissed: true });
   };
-
-  // ── the welcome-back map and the finale ──
-  const progress: ChapterProgress[] = CHAPTERS.map((c) => {
-    const mine = c.steps.filter((x) => steps.includes(x));
-    return {
-      id: c.id,
-      total: mine.length,
-      done: mine.filter((x) => answered(x, facts) || ob.skipped.includes(x) || left.has(x)).length,
-      later: mine.filter((x) => !answered(x, facts) && ob.skipped.includes(x)).length,
-    };
-  });
-  // a returning merchant picks up at the first question still open from where they stopped
-  // (they may have stopped on one they went back to), else the first open one at all
-  const open = (x: StepId) => !answered(x, facts) && !ob.skipped.includes(x);
-  const saved = first.current.resume;
-  const resumeAt =
-    (saved ? questions.slice(Math.max(0, questions.indexOf(saved))).find(open) : undefined) ??
-    questions.find(open);
-  const returning = !!(saved || ob.finishedAt);
-  const resume =
-    step === 'oi' && returning && resumeAt
-      ? { step: resumeAt, chapter: chapterOf(resumeAt)!.id, label: LINE_SHORT[resumeAt] }
-      : null;
-  // came back with every question answered: the welcome offers the finale, or a review
-  const complete = step === 'oi' && returning && !resumeAt;
 
   const hold = s.status.billingHold;
   const plan = usePlan(owner, hold);
@@ -452,46 +275,13 @@ function Flow({
     enabled: owner && step === 'pronto',
   });
   const ps = planState(plan.data);
-  const pending: Pending[] = [
-    ...ob.checklist
-      .filter((c) => !c.done && c.id !== 'first_order')
-      .filter((c) => c.id !== 'pix' || owner)
-      .map((c) => {
-        // "logo e WhatsApp": whichever of the two is missing
-        const to = c.id === 'profile' && s.profile.logoUrl ? 'whatsapp' : STEP_FOR_ITEM[c.id];
-        return {
-          id: c.id,
-          label: c.label,
-          to: to && steps.includes(to) ? `/bem-vindo?passo=${to}` : c.href,
-        };
-      }),
-    // delivery the merchant wants but left unpriced: pickup alone already ticks Core's item
-    ...((draft.delivery || ob.skipped.includes('entrega')) &&
-    !answered('entrega', facts) &&
-    ob.checklist.some((c) => c.id === 'delivery' && c.done)
-      ? [{ id: 'entrega', label: 'Preço da entrega', to: '/bem-vindo?passo=entrega' }]
-      : []),
-    ...(owner &&
-    platform.canPay &&
-    pay.mercadoPago.available &&
-    pay.mercadoPago.status !== 'connected'
-      ? [
-          {
-            id: 'mp',
-            label: 'Receber cartão pelo site',
-            to: steps.includes('mercadopago') ? '/bem-vindo?passo=mercadopago' : '/loja/pagamentos',
-          },
-        ]
-      : []),
-  ];
-
-  // each part of the header's hairline fills as its questions are answered (or left for later)
-  const parts = CHAPTERS.flatMap((c) => {
-    const mine = c.steps.filter((x) => steps.includes(x));
-    return mine.length
-      ? [{ id: c.id, label: c.label, fill: mine.filter(settled).length / mine.length }]
-      : [];
-  });
+  const current = step === 'importar' ? 'cara' : step;
+  const screen = SCREENS.find((x) => x.id === current);
+  const parts = questions.map((id, i) => ({
+    id,
+    label: SCREENS.find((x) => x.id === id)!.label,
+    fill: step === 'pronto' || i < furthest || i < at ? 1 : i === at ? 0.5 : 0,
+  }));
   const header =
     step === 'pronto' ? (
       <Ribbon
@@ -500,52 +290,21 @@ function Flow({
         done={!hold}
         exit={<Exit leave={leave} done />}
       />
-    ) : step === 'oi' ? (
-      <Ribbon parts={parts} place="Montar a loja" exit={<Exit leave={leave} />} />
     ) : (
       <Ribbon
         parts={parts}
-        place={chapter?.label ?? ''}
-        count={`${inChapter.indexOf(step) + 1} de ${inChapter.length}`}
-        onPlace={() => setMap(true)}
+        place={screen?.label ?? ''}
+        count={
+          solo
+            ? undefined
+            : `${Math.max(0, questions.indexOf(current as never)) + 1} de ${questions.length}`
+        }
         exit={<Exit leave={leave} worded />}
       />
     );
 
   let body: React.ReactNode;
-  if (step === 'oi')
-    body = (
-      <Welcome
-        first={session.user.name.trim().split(/\s+/)[0] ?? ''}
-        questions={questions.length}
-        minutes={Math.max(2, Math.round((questions.length * 20) / 60))}
-        progress={progress}
-        resume={resume}
-        complete={complete}
-        onStart={() => go(complete ? 'pronto' : (resume?.step ?? questions[0]!), null)}
-        onReview={() => go(questions[0]!, null, 'jump')}
-        later={questions.filter((x) => !answered(x, facts) && ob.skipped.includes(x)).length}
-        onLeave={leave}
-      />
-    );
-  else if (step === 'tipo')
-    body = (
-      <SegmentStep
-        back={back}
-        current={ob.segment}
-        onPick={async (id: SegmentId) => {
-          try {
-            qc.setQueryData(qk.onboarding, await api.updateOnboarding({ segment: id }));
-          } catch (e) {
-            toast.error(messageOf(e));
-            return false;
-          }
-          next(segmentOf(id)?.praise);
-          return true;
-        }}
-      />
-    );
-  else if (step === 'importar')
+  if (step === 'importar')
     body = (
       <ImportFlow
         where="onboarding"
@@ -553,54 +312,70 @@ function Flow({
         hasProducts={products.length > 0}
         intro={
           <div>
-            <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem] xl:text-[2.75rem] xl:leading-[3.125rem]">
-              Já vende em outro app de cardápio?
+            <h1 className="t-title-1 text-balance text-[1.875rem] leading-[2.25rem] tracking-[-0.03em] md:text-[2.5rem] md:leading-[2.875rem]">
+              Trazer de outro app
             </h1>
             <div className="mt-4">
-              <Say praise={said?.pose ? null : said?.praise} face={!said?.pose}>
+              <Say>
                 Cole o link da sua loja e eu trago produtos, fotos, horários e Pix. Você confere
                 tudo antes de entrar.
               </Say>
             </div>
           </div>
         }
-        onSkip={() => next()}
-        onBack={back}
-        onPhotosDone={() => next('Cardápio dentro! Depois coloque as fotos de cada produto.')}
+        onSkip={() => go('cara')}
+        onBack={() => go('cara')}
+        onPhotosDone={() => go('cara', 'Cardápio dentro! Depois coloque as fotos de cada produto.')}
         onApplied={() =>
           void qc
             .fetchQuery({ queryKey: qk.store, queryFn: api.store, staleTime: 0 })
             .then((fresh) => setDraft(draftOf(fresh, tokens)))
             .catch(() => undefined)
-            .finally(() => next('Trouxe tudo! Agora é só conferir.'))
+            .finally(() => go('cara', 'Trouxe tudo! Confira cada parte e ajuste o que quiser.'))
         }
       />
     );
-  else if (step === 'nome') body = <NameStep {...props} />;
-  else if (step === 'logo') body = <LogoStep {...props} />;
-  else if (step === 'cores')
+  else if (step === 'cara')
     body = (
-      <ColorsStep
+      <CaraScreen
         {...props}
+        askName={known.askName}
+        segmentId={segmentId}
+        onSegment={
+          known.askSegment
+            ? async (id) => {
+                try {
+                  qc.setQueryData(qk.onboarding, await api.updateOnboarding({ segment: id }));
+                  setSegmentId(id);
+                  return true;
+                } catch (e) {
+                  toast.error(messageOf(e));
+                  return false;
+                }
+              }
+            : null
+        }
         tokens={tokens}
-        onSaved={(t) => {
+        onTokens={(t) => {
           setTokens(t);
           void qc.invalidateQueries({ queryKey: qk.appearance });
         }}
+        onImport={known.importable && products.length === 0 ? () => go('importar') : null}
       />
     );
-  else if (step === 'frase') body = <TaglineStep {...props} />;
-  else if (step === 'whatsapp') body = <WhatsappStep {...props} />;
-  else if (step === 'endereco') body = <AddressStep {...props} />;
-  else if (step === 'horarios') body = <HoursStep {...props} />;
-  else if (step === 'como') body = <HowStep {...props} />;
-  else if (step === 'retirada') body = <PickupStep {...props} />;
-  else if (step === 'entrega') body = <DeliveryStep {...props} />;
-  else if (step === 'formas') body = <MethodsStep {...props} pay={pay} />;
-  else if (step === 'pix') body = <PixStep {...props} pay={pay} />;
-  else if (step === 'mercadopago') body = <MercadoPagoStep {...props} />;
-  else if (step === 'produtos')
-    body = <ProductsStep {...props} products={products} categories={categories} />;
+  else if (step === 'atendimento') body = <AtendimentoScreen {...props} />;
+  else if (step === 'pagamento') body = <PagamentoScreen {...props} pay={pay} />;
+  else if (step === 'cardapio')
+    body = (
+      <ProductsStep
+        next={next}
+        back={back}
+        skip={() => next()}
+        segment={segment}
+        products={products}
+        categories={categories}
+      />
+    );
   else
     body = (
       <Finale
@@ -629,12 +404,12 @@ function Flow({
             </p>
           )
         }
-        pending={pending}
+        checklist={ob.checklist}
       />
     );
 
-  const question = step !== 'oi' && step !== 'pronto';
-  const spot = question ? (SPOT[step] ?? null) : null;
+  const question = step !== 'pronto' && step !== 'importar';
+  const spot = question ? (screen?.spot ?? null) : null;
   const preview = (wide?: boolean) => (
     <MiniStore
       draft={draft}
@@ -649,49 +424,74 @@ function Flow({
       className={wide ? 'w-[min(100%,280px,calc((100dvh-19rem)*0.47))]' : undefined}
     />
   );
-  const stepMap = <StepMap steps={steps} mark={mark} onJump={jump} />;
   const name = draft.name.trim() || s.profile.name;
 
   return (
-    // a column as tall as the screen, so a question's bar can hold the bottom on phones (not
-    // while typing: the keyboard covers the bottom)
+    // a column as tall as the screen, so a screen's bar can hold the bottom on phones (not while
+    // typing: the keyboard covers the bottom)
     <div className="flex min-h-dvh min-w-0 flex-col overflow-x-clip kb:min-h-0">
       {header}
       {step !== 'pronto' ? <PlanBanner owner={owner} hold={hold} /> : null}
       <div
         className={cn(
-          // one column on phones and tablets; from 1200 px the map, the question and the window,
+          // one column on phones and tablets; from 1200 px the parts, the screen and the window,
           // on the header's own tracks
           'mx-auto grid w-full max-w-[84rem] flex-1 grid-cols-[minmax(0,1fr)] px-4 pt-4 md:px-8 md:pt-6 lg:pt-6',
           TRACKS,
-          // a question's bar keeps the screen's bottom edge (ActionBar `pinned`), scrolled or not
           question ? 'pb-[var(--kb,0px)] lg:pb-10' : 'pb-[calc(1.5rem+var(--kb,0px))] lg:pb-10',
         )}
       >
-        {question ? (
+        {question && !solo ? (
           <nav
-            aria-label="todas as perguntas"
-            // its rows' text on the track's edge, their highlight in the gutter
-            // the first part's row on the title's first line (the same breath above both)
+            aria-label="partes da loja"
             className="hidden lg:sticky lg:top-[5.5rem] lg:-mx-2 lg:block lg:self-start lg:pt-2"
           >
-            <StepMap rail steps={steps} mark={mark} onJump={jump} />
-            <p className="t-caption mt-4 px-2 text-muted">
-              <span className="tnum font-semibold text-ink">
-                {questions.filter(settled).length} de {questions.length}
-              </span>{' '}
-              respondidas
-            </p>
+            <ol className="space-y-1">
+              {questions.map((id, i) => {
+                const x = SCREENS.find((y) => y.id === id)!;
+                const now = id === current;
+                const done = !now && (i < furthest || i < at);
+                return (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      onClick={() => id !== step && go(id)}
+                      aria-current={now ? 'step' : undefined}
+                      className={cn(
+                        'press-row flex min-h-12 w-full items-center gap-3 rounded-md px-2 text-left',
+                        now ? 'bg-surface font-semibold depth-1' : 'hover:bg-hover',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'grid size-8 shrink-0 place-items-center rounded-full',
+                          done
+                            ? 'bg-success text-on-primary'
+                            : now
+                              ? 'bg-spark text-on-spark'
+                              : 'bg-sunken text-muted',
+                        )}
+                      >
+                        {done ? (
+                          <Check weight="bold" className="size-4" aria-hidden />
+                        ) : (
+                          <x.Icon weight="duotone" className="size-4.5" aria-hidden />
+                        )}
+                      </span>
+                      <span className={cn('min-w-0 truncate', !now && !done && 'text-muted')}>
+                        {x.label}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
           </nav>
-        ) : null}
+        ) : (
+          <span className="hidden lg:block" aria-hidden />
+        )}
 
-        <main
-          className={cn(
-            'mx-auto flex w-full max-w-xl flex-col lg:mx-0 lg:pt-2',
-            // the welcome and the finale have no map: they take its track too, a little wider
-            question ? 'lg:max-w-none' : 'lg:col-span-2 lg:max-w-[44rem]',
-          )}
-        >
+        <main className="mx-auto flex w-full max-w-xl flex-col lg:mx-0 lg:max-w-none lg:pt-2">
           {step === 'pronto' ? (
             <div className="mb-6 lg:hidden">
               <FinaleHero name={name} live={!hold} phone={preview()} accent={draft.accent} />
@@ -719,12 +519,9 @@ function Flow({
               dir === 'back' ? 'animate-step-back' : 'animate-step-fwd',
             )}
           >
-            {question && said?.pose ? (
-              <Reaction done={said.done} pose={said.pose}>
-                {said.praise}
-              </Reaction>
-            ) : null}
-            <Voice.Provider value={question ? said : null}>{body}</Voice.Provider>
+            <Voice.Provider value={question ? { praise, done: null, pose: null } : null}>
+              {body}
+            </Voice.Provider>
           </div>
         </main>
 
@@ -752,30 +549,14 @@ function Flow({
       </div>
 
       {question ? (
-        <>
-          <Sheet
-            open={peek}
-            onOpenChange={setPeek}
-            title="Sua loja, ao vivo"
-            description="Cada resposta entra aqui na hora. O que está marcado é o que essa pergunta muda."
-          >
-            <div className="mx-auto max-w-[300px] py-2">{preview()}</div>
-          </Sheet>
-          <Sheet
-            open={map}
-            onOpenChange={setMap}
-            onCloseAutoFocus={(e) => {
-              if (!jumped.current) return;
-              jumped.current = false;
-              e.preventDefault();
-              document.querySelector<HTMLElement>('main h1')?.focus({ preventScroll: true });
-            }}
-            title="Todas as perguntas"
-            description="Toque em qualquer uma para ir direto. O que você já respondeu fica guardado."
-          >
-            <div className="pb-2">{stepMap}</div>
-          </Sheet>
-        </>
+        <Sheet
+          open={peek}
+          onOpenChange={setPeek}
+          title="Sua loja, ao vivo"
+          description="Cada resposta entra aqui na hora."
+        >
+          <div className="mx-auto max-w-[300px] py-2">{preview()}</div>
+        </Sheet>
       ) : null}
     </div>
   );

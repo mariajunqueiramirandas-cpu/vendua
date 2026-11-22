@@ -29,8 +29,8 @@ import { cn } from '../../ui/cn.ts';
 import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { DocumentInput, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
-import { perMonth, shortName } from '../../ui/PlanCard.tsx';
-import { PlanCards, PlanCompare, PlanTrialStrip } from '../../ui/PlanPicker.tsx';
+import { perMonth, publicPlans } from '../../ui/PlanCard.tsx';
+import { CLOSED_LINE, PlanCompare, promiseOf } from '../../ui/PlanPicker.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
 import { StepFrame } from '../../ui/StepFrame.tsx';
 import { DOCUMENT_ERR, PAYER_EMAIL_RE, expiry, savePending } from '../auth/pending.ts';
@@ -56,111 +56,13 @@ export interface FlowProps {
 
 export const addressOf = (slug: string, domain: string) => `${slug || 'sualoja'}.${domain}`;
 
-// ── 1 · plano ────────────────────────────────────────────────────────────
-
-export function PlanStep({
-  d,
-  patch,
-  go,
-  plans,
-  notice,
-  trialEligible,
-}: FlowProps & {
-  /** known once the phone is confirmed (a return to this step): one trial per owner */
-  trialEligible?: boolean | undefined;
-}) {
-  // the CRM's switch plus the platform's WhatsApp, email and a way to pay (Core decides)
-  const open = plans.signup.open;
-  // the trial is for a new owner paying the Venduá: not with an access code
-  const trial = plans.billing.available && !d.byCode && trialEligible !== false;
-  const openPlans = plans.plans.filter((p) => p.available);
-  const trialPlans = trial ? openPlans.filter((p) => p.trialDays > 0) : [];
-  const trialPlan = trialPlans.find((p) => p.recommended) ?? trialPlans[0];
-  const everyTrials =
-    trialPlans.length > 1 &&
-    trialPlans.length === openPlans.length &&
-    trialPlans.every((p) => p.trialDays === trialPlans[0]!.trialDays);
-  const chosen = plans.plans.find((p) => p.id === d.planId);
-  const referral = useSignupReferral(d.referral, d.planId);
+export function SignupSkeleton() {
   return (
-    <StepFrame
-      title="Escolha o seu plano"
-      hint={
-        plans.plans.every((p) => p.feeBps === 0)
-          ? 'Um preço por mês, com Pix ou cartão, e nenhuma taxa por pedido. Dá para trocar quando quiser.'
-          : 'Um preço por mês, com Pix ou cartão. Dá para trocar quando quiser.'
-      }
-      label={chosen ? `Continuar com o ${shortName(chosen)}` : 'Continuar'}
-      disabled={!open || !chosen?.available}
-      onSubmit={() => go('loja')}
-      solidBar
-    >
-      {notice ? (
-        <p className="t-body rounded-md bg-warning-soft px-4 py-3 text-warning" role="status">
-          {notice}
-        </p>
-      ) : null}
-      {!open ? (
-        <DuaNote
-          pose="horarios"
-          title="O cadastro pela internet abre em breve"
-          action={
-            <ButtonLink to="/entrar" variant="secondary" size="sm">
-              já tenho loja, entrar
-            </ButtonLink>
-          }
-        >
-          Ainda não dá para criar uma loja por aqui. Enquanto isso, veja o que cada plano tem.
-        </DuaNote>
-      ) : !plans.billing.available ? (
-        <DuaNote pose="seguranca" title="Por enquanto, só com código de acesso">
-          Recebeu um código da Venduá? Pode seguir: ele vai na última pergunta.
-        </DuaNote>
-      ) : null}
-      {referral.data && open ? <ReferralNote referral={referral.data.referral} /> : null}
-      {trialPlan ? (
-        <PlanTrialStrip
-          plan={trialPlan}
-          every={everyTrials}
-          selected={d.planId === trialPlan.id}
-          onPick={() => patch({ planId: trialPlan.id })}
-        />
-      ) : null}
-      <PlanCards
-        plans={plans.plans}
-        selected={d.planId}
-        onSelect={(planId) => patch({ planId })}
-        address={addressOf(d.slug, plans.storeDomain)}
-        trial={trial}
-        wide
-        className="pt-2"
-      />
-      <PlanCompare plans={plans.plans} trial={trial} />
-    </StepFrame>
-  );
-}
-
-export function PlanStepSkeleton() {
-  return (
-    <div className="space-y-6" role="status" aria-label="carregando os planos">
+    <div className="space-y-6" role="status" aria-label="carregando">
       <Skeleton className="h-9 w-64" />
       <Skeleton className="h-6 w-full max-w-md" />
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)] lg:items-start lg:gap-5">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className={cn(
-              'space-y-3 rounded-lg bg-surface p-5 depth-1',
-              i === 1 ? 'rounded-xl pt-8 depth-3' : 'lg:mt-8',
-            )}
-          >
-            <Skeleton className="h-7 w-40" />
-            <Skeleton className={cn('w-32', i === 1 ? 'h-11' : 'h-8')} />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        ))}
-      </div>
+      <Skeleton className="h-14 w-full" />
+      <Skeleton className="h-14 w-full" />
     </div>
   );
 }
@@ -214,21 +116,53 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
             ? 'unknown'
             : 'checking';
   const name = d.storeName.trim();
-  const address = addressOf(slug, plans.storeDomain);
+  const open = plans.signup.open;
+  // the address follows the name by itself: it opens for editing only when asked, or when
+  // there's something to fix in it
+  const [editSlug, setEditSlug] = useState(d.slugTouched || !!notice);
+  const slugOpen = editSlug || state === 'busy';
+  const [tried, setTried] = useState(false);
+  const missing =
+    name.length < 2
+      ? 'Escreva o nome da loja.'
+      : state !== 'free' && state !== 'unknown'
+        ? state === 'checking'
+          ? 'Conferindo o endereço…'
+          : 'Escolha outro endereço.'
+        : !d.segment
+          ? 'Toque no que a loja vende.'
+          : null;
   return (
     <StepFrame
       title="Como se chama a sua loja?"
-      hint="O nome que seus clientes vão ver, e o endereço da loja na internet."
-      back={() => go('plano')}
+      hint="O nome que o cliente vê e o que você vende. Com isso eu já deixo horários e exemplos do seu jeito."
       // a check that failed (offline blip) doesn't block: Core checks again when creating
-      disabled={name.length < 2 || (state !== 'free' && state !== 'unknown')}
-      onSubmit={() => go('tipo', { praise: `${name}… que nome bonito!` })}
+      disabled={!open || !!missing}
+      why={tried ? missing : undefined}
+      onSubmit={() => {
+        setTried(true);
+        go('voce', { praise: segmentOf(d.segment)?.praise ?? `${name}… que nome bonito!` });
+      }}
     >
+      {!open ? (
+        <DuaNote
+          pose="horarios"
+          title="O cadastro pela internet abre em breve"
+          action={
+            <ButtonLink to="/entrar" variant="secondary" size="sm">
+              já tenho loja, entrar
+            </ButtonLink>
+          }
+        >
+          Ainda não dá para criar uma loja por aqui.
+        </DuaNote>
+      ) : null}
       <Field label="Nome da loja" htmlFor="su-name">
         <TextInput
           id="su-name"
           maxLength={60}
           autoComplete="off"
+          autoCapitalize="words"
           placeholder="Ex.: Doces da Maria"
           value={d.storeName}
           onChange={(e) => {
@@ -236,70 +170,84 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
           }}
         />
       </Field>
-      <Field
-        label="Endereço da loja"
-        htmlFor="su-slug"
-        error={
-          notice ??
-          (state === 'busy' ? (SLUG_WHY[res?.reason ?? 'taken'] ?? SLUG_WHY.taken!) : null)
-        }
-        helper="Só letras sem acento, números e hífen. É o link que você manda para os clientes."
-      >
-        <TextInput
-          id="su-slug"
-          inputMode="url"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          maxLength={40}
-          placeholder="doces-da-maria"
-          value={d.slug}
-          aria-invalid={state === 'busy' || undefined}
-          // what was typed becomes the address Core will store ("doces-" → "doces")
-          onBlur={() => res && res.slug !== d.slug && patch({ slug: res.slug })}
-          onChange={(e) =>
-            patch({
-              slug: e.target.value
-                .toLowerCase()
-                .replace(/\s+/g, '-')
-                .replace(/[^a-z0-9-]/g, ''),
-              slugTouched: true,
-            })
+      {slugOpen ? (
+        <Field
+          label="Endereço da loja"
+          htmlFor="su-slug"
+          error={
+            notice ??
+            (state === 'busy' ? (SLUG_WHY[res?.reason ?? 'taken'] ?? SLUG_WHY.taken!) : null)
           }
-        />
-      </Field>
-      <div
-        className={cn(
-          'flex items-center gap-3 rounded-lg px-4 py-3 ring-1 transition-colors',
-          state === 'free'
-            ? 'bg-success-soft ring-success/30'
-            : state === 'busy'
-              ? 'bg-danger-soft ring-danger/30'
-              : 'bg-sunken ring-line',
-        )}
-        aria-live="polite"
-      >
-        <Globe className="size-5 shrink-0 text-muted" aria-hidden />
-        <p className="tnum min-w-0 flex-1 break-all font-semibold">
-          <span className="font-normal text-muted">https://</span>
-          {address}
-        </p>
-        <span className="t-caption inline-flex shrink-0 items-center gap-1 font-semibold">
-          {state === 'checking' ? (
-            <>
-              <Spinner className="size-4" /> <span className="text-muted">conferindo</span>
-            </>
-          ) : state === 'free' ? (
-            <span className="inline-flex items-center gap-1 text-success">
-              <CheckCircle weight="fill" className="size-4" /> livre
-            </span>
-          ) : state === 'busy' ? (
-            <span className="inline-flex items-center gap-1 text-danger">
-              <WarningCircle weight="fill" className="size-4" /> em uso
-            </span>
-          ) : null}
-        </span>
-      </div>
+          helper="Só letras sem acento, números e hífen. É o link que você manda para os clientes."
+        >
+          <TextInput
+            id="su-slug"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={40}
+            placeholder="doces-da-maria"
+            value={d.slug}
+            aria-invalid={state === 'busy' || undefined}
+            // what was typed becomes the address Core will store ("doces-" → "doces")
+            onBlur={() => res && res.slug !== d.slug && patch({ slug: res.slug })}
+            onChange={(e) =>
+              patch({
+                slug: e.target.value
+                  .toLowerCase()
+                  .replace(/\s+/g, '-')
+                  .replace(/[^a-z0-9-]/g, ''),
+                slugTouched: true,
+              })
+            }
+          />
+        </Field>
+      ) : null}
+      {name || slugOpen ? (
+        <div
+          className={cn(
+            '-mt-2 flex items-center gap-3 rounded-lg px-4 py-2.5 ring-1 transition-colors',
+            state === 'free'
+              ? 'bg-success-soft ring-success/30'
+              : state === 'busy'
+                ? 'bg-danger-soft ring-danger/30'
+                : 'bg-sunken ring-line',
+          )}
+          aria-live="polite"
+        >
+          <Globe className="size-5 shrink-0 text-muted" aria-hidden />
+          <p className="tnum min-w-0 flex-1 text-[0.9375rem]">
+            <span className="break-all font-semibold">{slug || 'sualoja'}</span>
+            <wbr />
+            <span className="text-muted">.{plans.storeDomain}</span>
+          </p>
+          <span className="t-caption inline-flex shrink-0 items-center gap-1 font-semibold">
+            {state === 'checking' ? (
+              <>
+                <Spinner className="size-4" /> <span className="text-muted">conferindo</span>
+              </>
+            ) : state === 'free' ? (
+              <span className="inline-flex items-center gap-1 text-success">
+                <CheckCircle weight="fill" className="size-4" /> livre
+              </span>
+            ) : state === 'busy' ? (
+              <span className="inline-flex items-center gap-1 text-danger">
+                <WarningCircle weight="fill" className="size-4" /> em uso
+              </span>
+            ) : null}
+          </span>
+          {slugOpen ? null : (
+            <button
+              type="button"
+              onClick={() => setEditSlug(true)}
+              className="t-label -my-1 -mr-2 inline-flex min-h-11 items-center rounded-md px-2 text-muted underline underline-offset-2 hover:text-ink"
+            >
+              mudar
+            </button>
+          )}
+        </div>
+      ) : null}
       {state === 'busy' && res?.suggestion ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="t-body text-muted">Que tal</span>
@@ -316,55 +264,74 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
           Não conseguimos conferir agora. Pode seguir: conferimos de novo ao criar a loja.
         </p>
       ) : null}
+      <fieldset className="space-y-3 pt-1">
+        <legend className="t-label mb-3">O que a loja vende?</legend>
+        <SegmentPicker compact value={d.segment} onPick={(id) => patch({ segment: id })} />
+      </fieldset>
     </StepFrame>
   );
 }
 
-// ── 2b · what the store sells ───────────────────────────────────────────────
+// ── 2 · você + WhatsApp → the code ──────────────────────────────────────────
 
-export function TipoStep({ d, patch, go }: FlowProps) {
-  const pick = (id: string) => {
-    patch({ segment: id });
-    go('voce', { praise: segmentOf(id)?.praise ?? null });
-  };
-  return (
-    <StepFrame
-      title="E o que a loja vende?"
-      hint="Com isso eu já deixo horários, exemplos e ideias que combinam com você. Um toque basta."
-      back={() => go('loja')}
-      disabled={!d.segment}
-      onSubmit={() => d.segment && pick(d.segment)}
-    >
-      <SegmentPicker value={d.segment} onPick={pick} />
-    </StepFrame>
-  );
-}
-
-// ── 3 · você ────────────────────────────────────────────────────────────────
-
-export function YouStep({ d, patch, go, notice }: FlowProps) {
+export function YouStep({
+  d,
+  patch,
+  go,
+  notice,
+  onDevCode,
+}: FlowProps & { onDevCode: (c: string | null) => void }) {
   const [touched, setTouched] = useState(false);
   const [docTouched, setDocTouched] = useState(false);
+  const [shown, setShown] = useState(fmtPhone(d.phone));
+  const [digits, setDigits] = useState<string | null>(d.phone);
+  const [phoneErr, setPhoneErr] = useState<string | null>(null);
   const name = d.ownerName.trim();
   const email = d.email.trim();
   const emailOk = PAYER_EMAIL_RE.test(email);
   const docOk = parseDocument(d.document) !== null;
-  // Core sent us back here for the document: its notice goes on that field
+  // Core sent us back here for the document or the phone: its notice goes on that field
   const docNotice = notice === DOCUMENT_ERR ? notice : null;
-  const emailNotice = docNotice ? null : notice;
+  const emailNotice = notice && /e-mail/i.test(notice) ? notice : null;
+  const topNotice = notice && !docNotice && !emailNotice ? notice : null;
   const first = name.split(/\s+/)[0] ?? '';
+  const start = useMutation({
+    mutationFn: (p: string) => api.signup.otpStart(p),
+    onSuccess: (r, p) => {
+      onDevCode(r.devCode ?? null);
+      patch({ phone: p, codeSentAt: Date.now(), codeExpiresAt: expiry(r.expiresAt) });
+      go('codigo', { praise: first ? `Prazer, ${first}!` : null });
+    },
+    onError: (e) =>
+      setPhoneErr(
+        e instanceof ApiError && e.code === 'SIGNUP_CLOSED'
+          ? CREATE_ERR.SIGNUP_CLOSED!
+          : messageOf(e),
+      ),
+  });
   return (
     <StepFrame
       title="E você, como se chama?"
-      hint="O e-mail recebe as faturas do plano e também serve para entrar no painel."
-      back={() => go('tipo')}
+      hint="Seu WhatsApp é a sua senha: mando um código para confirmar. O e-mail e o CPF ou CNPJ vão na cobrança do plano."
+      back={() => go('loja')}
+      busy={start.isPending}
       disabled={name.length < 2}
+      why="Escreva o seu nome."
+      label="receber código no WhatsApp"
       onSubmit={() => {
         setTouched(true);
         setDocTouched(true);
-        if (emailOk && docOk) go('whatsapp', { praise: first ? `Prazer, ${first}!` : null });
+        if (!digits) setPhoneErr('Digite o celular com DDD, como (22) 99999-0000.');
+        if (!emailOk || !docOk || !digits) return;
+        setPhoneErr(null);
+        start.mutate(digits);
       }}
     >
+      {topNotice ? (
+        <p className="t-body rounded-md bg-warning-soft px-4 py-3 text-warning" role="status">
+          {topNotice}
+        </p>
+      ) : null}
       <Field label="Seu nome" htmlFor="su-owner">
         <TextInput
           id="su-owner"
@@ -374,6 +341,26 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
           placeholder="Ex.: Maria Souza"
           value={d.ownerName}
           onChange={(e) => patch({ ownerName: e.target.value })}
+        />
+      </Field>
+      <Field
+        label={
+          <span className="inline-flex items-center gap-2">
+            <WhatsappLogo weight="fill" className="size-5 text-success" aria-hidden /> Seu WhatsApp,
+            com DDD
+          </span>
+        }
+        htmlFor="su-phone"
+        error={phoneErr}
+      >
+        <PhoneInput
+          id="su-phone"
+          value={shown}
+          onChange={(v, dd) => {
+            setShown(v);
+            setDigits(dd);
+            setPhoneErr(null);
+          }}
         />
       </Field>
       <Field
@@ -405,7 +392,6 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
       <Field
         label="CPF ou CNPJ"
         htmlFor="su-doc"
-        helper="Vai na cobrança do plano: o seu CPF ou o CNPJ da loja."
         error={docNotice ?? (docTouched && !docOk ? DOCUMENT_ERR : null)}
       >
         <DocumentInput
@@ -414,72 +400,6 @@ export function YouStep({ d, patch, go, notice }: FlowProps) {
           invalid={docTouched && !docOk}
           onBlur={() => d.document && setDocTouched(true)}
           onChange={(v) => patch({ document: v })}
-        />
-      </Field>
-    </StepFrame>
-  );
-}
-
-// ── 4 · WhatsApp + code ─────────────────────────────────────────────────────
-
-export function WhatsappStep({
-  d,
-  patch,
-  go,
-  notice,
-  onDevCode,
-}: FlowProps & { onDevCode: (c: string | null) => void }) {
-  const [shown, setShown] = useState(fmtPhone(d.phone));
-  const [digits, setDigits] = useState<string | null>(d.phone);
-  const [err, setErr] = useState<string | null>(null);
-  const start = useMutation({
-    mutationFn: (p: string) => api.signup.otpStart(p),
-    onSuccess: (r, p) => {
-      onDevCode(r.devCode ?? null);
-      patch({ phone: p, codeSentAt: Date.now(), codeExpiresAt: expiry(r.expiresAt) });
-      go('codigo');
-    },
-    onError: (e) =>
-      setErr(
-        e instanceof ApiError && e.code === 'SIGNUP_CLOSED'
-          ? CREATE_ERR.SIGNUP_CLOSED!
-          : messageOf(e),
-      ),
-  });
-  return (
-    <StepFrame
-      title="Qual é o seu WhatsApp?"
-      hint="Mandamos um código para confirmar. É por ele que você entra no painel, sem senha."
-      back={() => go('voce')}
-      busy={start.isPending}
-      label="receber código"
-      onSubmit={() => {
-        if (!digits) return setErr('Digite o celular com DDD, como (22) 99999-0000.');
-        setErr(null);
-        start.mutate(digits);
-      }}
-    >
-      {notice ? (
-        <p className="t-body rounded-md bg-warning-soft px-4 py-3 text-warning" role="status">
-          {notice}
-        </p>
-      ) : null}
-      <Field
-        label={
-          <span className="inline-flex items-center gap-2">
-            <WhatsappLogo weight="fill" className="size-5 text-success" /> WhatsApp com DDD
-          </span>
-        }
-        htmlFor="su-phone"
-        error={err}
-      >
-        <PhoneInput
-          id="su-phone"
-          value={shown}
-          onChange={(v, dd) => {
-            setShown(v);
-            setDigits(dd);
-          }}
         />
       </Field>
     </StepFrame>
@@ -543,7 +463,7 @@ export function CodeStep({
           <strong className="whitespace-nowrap text-ink">{fmtPhone(phone)}</strong>.
         </>
       }
-      back={() => go('whatsapp')}
+      back={() => go('voce')}
       busy={verify.isPending}
       disabled={!/^\d{6}$/.test(code)}
       label="confirmar"
@@ -610,7 +530,7 @@ export function ExistingStep({ d, go, verified }: FlowProps & { verified: Verifi
     <StepFrame
       title={n === 1 ? 'Esse WhatsApp já tem uma loja' : `Esse WhatsApp já tem ${n} lojas`}
       hint="Quer entrar numa delas ou criar uma loja nova? As duas coisas podem conviver."
-      back={() => go('whatsapp')}
+      back={() => go('voce')}
       label="criar uma loja nova"
       onSubmit={() => go('pagamento')}
     >
@@ -727,7 +647,7 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
   const field = e.field ?? '';
   if (e.code === 'SIGNUP_EXPIRED')
     return {
-      step: 'whatsapp',
+      step: 'voce',
       notice: 'Passou tempo demais desde o código. Confirme o WhatsApp de novo.',
     };
   if (e.code === 'SLUG_TAKEN')
@@ -746,14 +666,14 @@ function stepFor(e: unknown): { step: StepId; notice: string } | null {
             ? DOCUMENT_ERR
             : 'Confira o seu nome.',
     };
-  if (field === 'segment') return { step: 'tipo', notice: 'Escolha de novo o que a loja vende.' };
+  if (field === 'segment') return { step: 'loja', notice: 'Escolha de novo o que a loja vende.' };
   if (e.code === 'PLAN_UNAVAILABLE')
     return {
-      step: 'plano',
+      step: 'pagamento',
       notice: 'Esse plano ainda não está aberto para assinatura. Escolha outro.',
     };
   if (e.code === 'UNKNOWN_PLAN' || field === 'planId')
-    return { step: 'plano', notice: 'Esse plano mudou. Escolha de novo.' };
+    return { step: 'pagamento', notice: 'Esse plano mudou. Escolha de novo.' };
   return null;
 }
 
@@ -766,11 +686,105 @@ const CREATE_ERR: Record<string, string> = {
   INVALID_ACCESS_CODE: 'Esse código não confere. Confira e tente de novo.',
 };
 
+/**
+ * The plan, on the last screen: the chosen one as a single row (the site's pick, or the one with
+ * the trial) with "trocar"; open, every public plan as a compact radio row and the comparison.
+ */
+function PlanChoice({
+  plans,
+  selected,
+  onSelect,
+  trial,
+}: {
+  plans: PlansData;
+  selected: string | null;
+  onSelect: (id: string) => void;
+  /** the free days show beside the plans that have them */
+  trial: boolean;
+}) {
+  const list = publicPlans(plans.plans);
+  const chosen = list.find((p) => p.id === selected);
+  const [open, setOpen] = useState(!chosen);
+  const row = (p: Plan, on: boolean) => (
+    <span className="min-w-0 flex-1">
+      <span className="flex items-baseline justify-between gap-3">
+        <span className="font-semibold">{p.name}</span>
+        <span className="tnum shrink-0 font-display font-semibold">{perMonth(p)}</span>
+      </span>
+      <span className="mt-1 flex items-start justify-between gap-3">
+        <span className="t-caption min-w-0 text-muted">
+          {p.available ? promiseOf(p) : CLOSED_LINE}
+        </span>
+        {on ? (
+          <CheckCircle weight="fill" className="size-6 shrink-0 text-primary" aria-hidden />
+        ) : trial && p.available && p.trialDays > 0 ? (
+          <span className="t-caption shrink-0 font-semibold text-success">
+            {p.trialDays} dias grátis
+          </span>
+        ) : null}
+      </span>
+      {p.recommended ? (
+        <span className="t-caption mt-2 inline-block rounded-full bg-spark px-2 py-0.5 font-semibold text-on-spark">
+          recomendado
+        </span>
+      ) : null}
+    </span>
+  );
+  if (!open && chosen)
+    return (
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="t-label">Seu plano</p>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="t-label -my-2 -mr-2 inline-flex min-h-11 items-center rounded-md px-2 underline underline-offset-2 hover:bg-hover"
+          >
+            ver os planos
+          </button>
+        </div>
+        <div className="flex rounded-lg bg-surface p-4 ring-1 ring-line depth-1">
+          {row(chosen, false)}
+        </div>
+      </div>
+    );
+  return (
+    <div className="space-y-3">
+      <div role="radiogroup" aria-label="planos" className="space-y-2">
+        {list.map((p) => {
+          const on = p.id === selected;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              disabled={!p.available}
+              onClick={() => {
+                haptic.tick();
+                onSelect(p.id);
+              }}
+              className={cn(
+                'press flex w-full items-center gap-3 rounded-lg bg-surface p-4 text-left transition-[box-shadow,background-color] hover:bg-hover disabled:opacity-60',
+                on ? 'ring-2 ring-primary depth-1' : 'ring-1 ring-line',
+              )}
+            >
+              {row(p, on)}
+            </button>
+          );
+        })}
+      </div>
+      <PlanCompare plans={plans.plans} trial={trial} />
+    </div>
+  );
+}
+
 export function PayStep({
   d,
   patch,
   go,
   plans,
+  notice,
   verified,
   onCreated,
 }: FlowProps & {
@@ -876,10 +890,12 @@ export function PayStep({
                 ? 'Sem cartão e sem cobrança agora: a loja já abre para pedidos.'
                 : 'Dá para trocar depois, em Conta e plano.'
       }
-      back={() => go(verified.existingStores.length ? 'existente' : 'whatsapp')}
+      back={() => go(verified.existingStores.length ? 'existente' : 'voce')}
       busy={create.isPending}
       disabled={
-        !plan || couponPending || (byCode ? code.trim().length < 12 : !plans.billing.available)
+        !plan?.available ||
+        couponPending ||
+        (byCode ? code.trim().length < 12 : !plans.billing.available)
       }
       label={
         freeDays
@@ -893,6 +909,18 @@ export function PayStep({
         create.mutate();
       }}
     >
+      {notice ? (
+        <p className="t-body rounded-md bg-warning-soft px-4 py-3 text-warning" role="status">
+          {notice}
+        </p>
+      ) : null}
+      {referral.data ? <ReferralNote referral={referral.data.referral} /> : null}
+      <PlanChoice
+        plans={plans}
+        selected={d.planId}
+        onSelect={(planId) => patch({ planId })}
+        trial={!byCode && plans.billing.available && !!verified.trialEligible && !trialLost}
+      />
       {/* an applied coupon is why this step reads as it does: it leads */}
       {d.coupon ? couponField : null}
       {byCode ? (
@@ -975,28 +1003,23 @@ export function PayStep({
         </p>
       ) : null}
       {plan && !trial ? (
-        <div className="rounded-lg bg-sunken p-4">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="font-semibold">{plan.name}</p>
-            {applied?.discountedCents != null ? (
-              <p className="flex items-baseline gap-2">
-                <s className="tnum text-muted">{perMonth(plan)}</s>
-                <span className="tnum font-display text-lg font-semibold text-success">
-                  {money(applied.discountedCents)}/mês
-                </span>
-              </p>
-            ) : (
-              <p className="tnum font-display text-lg font-semibold">{perMonth(plan)}</p>
-            )}
-          </div>
-          {firstMonths ? <p className="t-body mt-1 font-semibold">{firstMonths}</p> : null}
-          <p className="t-body mt-2 text-muted">
+        <div className="space-y-2 rounded-lg bg-sunken p-4">
+          {applied?.discountedCents != null ? (
+            <p className="flex items-baseline gap-2">
+              <s className="tnum text-muted">{perMonth(plan)}</s>
+              <span className="tnum font-display text-lg font-semibold text-success">
+                {money(applied.discountedCents)}/mês
+              </span>
+            </p>
+          ) : null}
+          {firstMonths ? <p className="t-body font-semibold">{firstMonths}</p> : null}
+          <p className="t-body text-muted">
             {byCode
               ? 'A loja abre para pedidos quando a equipe confirmar o pagamento. Enquanto isso, você já monta o cardápio.'
               : 'A loja abre para pedidos assim que o primeiro pagamento entrar. Enquanto isso, você já monta o cardápio.'}
           </p>
           {plan.feeBps === 0 ? (
-            <p className="t-caption mt-2 text-muted">
+            <p className="t-caption text-muted">
               Nenhuma taxa da Venduá por pedido. O Mercado Pago cobra a tarifa dele nos pagamentos
               online dos seus clientes.
             </p>

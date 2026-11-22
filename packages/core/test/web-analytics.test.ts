@@ -341,23 +341,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('web analytics (db)', () => {
     const at = (r: typeof before, step: string) =>
       r.signup.find((x) => x.step === step)?.visitors ?? 0;
     const who = { 'user-agent': `${UA} funnel-${run}` };
-    await collect({ p: 'admin', id: `b${run}fun1`, path: '/admin/comecar/plano' }, who);
-    await collect({ p: 'admin', id: `b${run}fun2`, path: '/admin/comecar/plano' }, who);
-    await collect({ p: 'admin', id: `b${run}fun3`, path: '/admin/comecar/loja' }, who);
+    await collect({ p: 'admin', id: `b${run}fun1`, path: '/admin/comecar/loja' }, who);
+    await collect({ p: 'admin', id: `b${run}fun2`, path: '/admin/comecar/loja' }, who);
+    await collect({ p: 'admin', id: `b${run}fun3`, path: '/admin/comecar/voce' }, who);
     const after = await read();
     expect(after.signup.map((x) => x.step)).toEqual([
-      'plano',
       'loja',
-      'tipo',
       'voce',
-      'whatsapp',
       'codigo',
       'pagamento',
       'pronto',
     ]);
-    expect(at(after, 'plano') - at(before, 'plano')).toBe(1);
     expect(at(after, 'loja') - at(before, 'loja')).toBe(1);
-    expect(after.setup[0]?.step).toBe('oi');
+    expect(at(after, 'voce') - at(before, 'voce')).toBe(1);
+    expect(after.setup[0]?.step).toBe('cara');
     expect(after.stores.created).toBeGreaterThanOrEqual(0);
     await sql`delete from web_analytics_events where beacon_id like ${`b${run}fun%`}`;
   });

@@ -34,64 +34,44 @@ import {
   CodeStep,
   ExistingStep,
   PayStep,
-  PlanStep,
-  PlanStepSkeleton,
+  SignupSkeleton,
   StoreStep,
   Summary,
-  TipoStep,
-  WhatsappStep,
   YouStep,
   type FlowProps,
 } from './steps.tsx';
 import { appPath } from '../../app/paths.ts';
 
-// Self-serve signup (/comecar): the same one-question-per-screen conversation as the
-// onboarding, ending in a paid plan. Plan → store → you → WhatsApp → payment → create; then a
-// card hand-off to Mercado Pago or a Pix to pay here, and the welcome into /bem-vindo.
+// Self-serve signup (/comecar): four screens. The store (name, address, what it sells) → you
+// and your WhatsApp → the code → the plan and how to pay → create; then a card hand-off to
+// Mercado Pago or a Pix to pay here, and the welcome into /bem-vindo. The plan comes last, once
+// the merchant has something of theirs on screen and Core knows whether the phone may trial.
 
-const QUESTIONS: StepId[] = ['plano', 'loja', 'tipo', 'voce', 'whatsapp', 'pagamento'];
+const QUESTIONS: StepId[] = ['loja', 'voce', 'codigo', 'pagamento'];
 const AT: Partial<Record<StepId, number>> = {
-  plano: 0,
-  loja: 1,
-  tipo: 2,
-  voce: 3,
-  whatsapp: 4,
-  codigo: 4,
-  existente: 4,
-  pagamento: 5,
+  loja: 0,
+  voce: 1,
+  codigo: 2,
+  existente: 2,
+  pagamento: 3,
 };
-const PRE = new Set<StepId>([
-  'plano',
-  'loja',
-  'tipo',
-  'voce',
-  'whatsapp',
-  'codigo',
-  'existente',
-  'pagamento',
-]);
+const PRE = new Set<StepId>(['loja', 'voce', 'codigo', 'existente', 'pagamento']);
 
 const LINE: Record<StepId, string> = {
-  plano: 'Oi! Vou abrir a sua loja com você, rapidinho e sem palavra difícil.',
-  loja: 'Agora o mais importante: o nome!',
-  tipo: 'Me conta mais da loja.',
-  voce: 'Quero saber com quem estou falando.',
-  whatsapp: 'É pelo WhatsApp que você entra no painel. Nada de senha.',
+  loja: 'Oi! Eu sou o Duá. São só 4 telas para criar a sua loja.',
+  voce: 'Agora, quem manda na loja.',
   codigo: 'Mandei o código. Pode abrir o WhatsApp, eu espero aqui.',
   existente: 'Olha só, a gente já se conhece.',
-  pagamento: 'Última pergunta, prometo.',
+  pagamento: 'Última tela, prometo.',
   cartao: 'Vou te levar ao Mercado Pago rapidinho.',
   confirmando: 'Só um instante…',
   pix: 'Falta só o Pix. Quando cair, eu aviso.',
   pronto: '',
 };
 const POSE: Record<StepId, Pose> = {
-  plano: 'avatar-ola',
-  loja: 'loja',
-  tipo: 'avatar-pensando',
+  loja: 'avatar-ola',
   voce: 'avatar-feliz',
-  whatsapp: 'seguranca',
-  codigo: 'avatar-pensando',
+  codigo: 'seguranca',
   existente: 'avatar-feliz',
   pagamento: 'pagamento',
   cartao: 'pagamento',
@@ -111,12 +91,12 @@ function resume(d: Draft): { d: Draft; notice: string | null } {
       notice: null,
     };
   }
-  if (!PRE.has(d.step)) return { d: { ...d, step: 'plano' }, notice: null };
+  if (!PRE.has(d.step)) return { d: { ...d, step: 'loja' }, notice: null };
   if (d.step === 'codigo' && (!d.codeExpiresAt || d.codeExpiresAt < Date.now()))
-    return { d: { ...d, step: 'whatsapp' }, notice: 'O código venceu. Peça outro.' };
+    return { d: { ...d, step: 'voce' }, notice: 'O código venceu. Peça outro.' };
   if ((d.step === 'existente' || d.step === 'pagamento') && !loadToken(d.phone))
     return {
-      d: { ...d, step: 'whatsapp' },
+      d: { ...d, step: 'voce' },
       notice: 'Para continuar de onde parou, confirme o WhatsApp de novo.',
     };
   return { d, notice: null };
@@ -203,7 +183,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       !list.some((p) => p.id === cur.current.planId) ||
       // a closed plan is swapped only before the owner moves on: further along (a signup that
       // created its store and is resuming) Core decides whether the store still holds it
-      (cur.current.step === 'plano' && !open.some((p) => p.id === cur.current.planId))
+      (!cur.current.created && !open.some((p) => p.id === cur.current.planId))
     ) {
       const trials = plans.data?.billing.available
         ? open.filter((p) => p.trialDays > 0 && p.priceCents !== null)
@@ -239,8 +219,6 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   const answered = at ?? QUESTIONS.length;
   const questions = QUESTIONS.length;
   const done = !PRE.has(step);
-  // three plans side by side need the whole width: the summary waits for the next step
-  const wide = step === 'plano';
 
   const props: FlowProps | null = plans.data ? { d, patch, go, notice, plans: plans.data } : null;
   // the free days this signup starts with, once the phone is known to be eligible
@@ -320,20 +298,16 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
     body = plans.error ? (
       <ErrorState error={plans.error} retry={() => void plans.refetch()} />
     ) : (
-      <PlanStepSkeleton />
+      <SignupSkeleton />
     );
-  else if (step === 'plano')
-    body = <PlanStep {...props} trialEligible={verified ? verified.trialEligible : undefined} />;
   else if (step === 'loja') body = <StoreStep {...props} />;
-  else if (step === 'tipo') body = <TipoStep {...props} />;
-  else if (step === 'voce') body = <YouStep {...props} />;
-  else if (step === 'whatsapp') body = <WhatsappStep {...props} onDevCode={setDevCode} />;
+  else if (step === 'voce') body = <YouStep {...props} onDevCode={setDevCode} />;
   else if (step === 'codigo')
     body = <CodeStep {...props} devCode={devCode} onVerified={setVerified} />;
   else if (!verified)
     // the token went (another tab, cleared storage): the phone must be confirmed again
     body = (
-      <WhatsappStep
+      <YouStep
         {...props}
         notice="Confirme o WhatsApp de novo para continuar."
         onDevCode={setDevCode}
@@ -396,12 +370,10 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
       <div
         className={cn(
           'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-8 md:px-8',
-          step !== 'pronto' && !wide && 'lg:grid-cols-[minmax(0,1fr)_360px]',
+          step !== 'pronto' && 'lg:grid-cols-[minmax(0,1fr)_360px]',
         )}
       >
-        <main
-          className={cn('mx-auto w-full max-w-xl space-y-8', wide ? 'lg:max-w-none' : 'lg:mx-0')}
-        >
+        <main className="mx-auto w-full max-w-xl space-y-8 lg:mx-0">
           {step !== 'pronto' ? (
             <Guide turn={step} pose={POSE[step]}>
               {praise ? <strong className="mr-1">{praise}</strong> : null}
@@ -410,7 +382,7 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
           ) : null}
           {body}
         </main>
-        {step !== 'pronto' && !wide ? (
+        {step !== 'pronto' ? (
           <aside
             className="hidden lg:sticky lg:top-24 lg:block lg:self-start"
             aria-label="resumo da sua loja"

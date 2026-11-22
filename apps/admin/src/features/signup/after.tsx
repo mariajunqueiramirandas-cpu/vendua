@@ -17,7 +17,7 @@ import { ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PixCode, useIssuePix } from '../../ui/PixCode.tsx';
 import { DocumentGate, needsDocument } from '../account/DocumentGate.tsx';
-import { ChapterList } from '../onboarding/Overview.tsx';
+import { SCREENS } from '../onboarding/flow.ts';
 import { Spinner } from '../../ui/Spinner.tsx';
 import type { Draft } from './progress.ts';
 import { platform } from '../../platform/index.ts';
@@ -444,13 +444,25 @@ export function Welcome({
         </div>
       </section>
       <div>
-        <p className="t-title-2">Agora, a parte gostosa: montar a loja</p>
+        <p className="t-title-2">Agora, montar a loja: {SCREENS.length} telas</p>
         <p className="t-body mt-1 text-muted">
-          Quatro partes, uma pergunta de cada vez, e você vê a loja aparecendo. Já começo com o que
-          você me contou.
+          Já deixei quase tudo preenchido com o que você me contou. É só conferir e ajustar.
         </p>
+        <ol className="mt-4 flex flex-wrap gap-2">
+          {SCREENS.map((x, i) => (
+            <li
+              key={x.id}
+              className="t-label inline-flex min-h-10 items-center gap-2 rounded-full bg-surface py-1 pl-1.5 pr-3.5 ring-1 ring-line"
+            >
+              <span className="grid size-7 place-items-center rounded-full bg-sunken">
+                <x.Icon weight="duotone" className="size-4" aria-hidden />
+              </span>
+              <span className="sr-only">{i + 1}.</span>
+              {x.label}
+            </li>
+          ))}
+        </ol>
       </div>
-      <ChapterList />
       <Button variant="spark" size="lg" block onClick={onGo}>
         montar minha loja <ArrowRight />
       </Button>

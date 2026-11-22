@@ -1,5 +1,4 @@
 import {
-  ArrowRight,
   ArrowSquareOut,
   Copy,
   DownloadSimple,
@@ -16,14 +15,9 @@ import { Confetti } from '../../ui/Celebration.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { Qr, qrPng } from '../../ui/Qr.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import type { ChecklistItem } from '../../lib/api.ts';
+import { SetupCard } from '../setup/SetupCard.tsx';
 import { glowOf } from './Vitrine.tsx';
-
-export interface Pending {
-  id: string;
-  label: string;
-  /** into the wizard (`/bem-vindo?passo=…`) or the screen that holds it */
-  to: string;
-}
 
 const copy = (text: string, done: string) =>
   void navigator.clipboard.writeText(text).then(
@@ -104,7 +98,7 @@ export function Finale({
   live,
   trialEndsAt = null,
   waiting,
-  pending,
+  checklist,
 }: {
   url: string;
   name: string;
@@ -114,7 +108,8 @@ export function Finale({
   trialEndsAt?: string | null;
   /** what opens it (the plan's Pix, or a line saying who confirms it) */
   waiting: ReactNode;
-  pending: Pending[];
+  /** Core's setup checklist: the list of what's left starts with it */
+  checklist: ChecklistItem[];
 }) {
   const bare = url.replace(/^https?:\/\//, '');
   const text = useMemo(() => `A ${name} agora tem loja online! Peça por aqui: ${url}`, [name, url]);
@@ -243,24 +238,7 @@ export function Finale({
         </div>
       </Card>
 
-      {pending.length ? (
-        <Card className="p-5">
-          <p className="t-title-2">Ficou para depois</p>
-          <p className="t-body mt-1 text-muted">Sem pressa. Quando der, é só tocar.</p>
-          <ul className="mt-3">
-            {pending.map((p) => (
-              <li key={p.id}>
-                <Link
-                  to={p.to}
-                  className="press-row -mx-2 flex min-h-12 items-center justify-between gap-3 rounded-md px-2 hover:bg-hover"
-                >
-                  {p.label} <ArrowRight className="size-4 text-faint" />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ) : null}
+      <SetupCard checklist={checklist} title="O que falta" />
       <ButtonLink to="/" size="lg" block>
         Ir para o meu painel
       </ButtonLink>

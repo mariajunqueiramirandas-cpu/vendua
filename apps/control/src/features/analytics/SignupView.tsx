@@ -8,33 +8,18 @@ import { FunnelBars } from './Bars.tsx';
 
 // the admin's own words for each question, so staff read the funnel as a merchant saw it
 const SIGNUP: Record<string, string> = {
-  plano: 'plano',
-  loja: 'nome e endereço',
-  tipo: 'o que vende',
-  voce: 'dono (nome, e-mail, CPF/CNPJ)',
-  whatsapp: 'WhatsApp',
+  loja: 'nome, endereço e o que vende',
+  voce: 'dono e WhatsApp',
   codigo: 'código do WhatsApp',
-  pagamento: 'pagamento',
+  pagamento: 'plano e pagamento',
   pronto: 'loja criada',
 };
 const SETUP: Record<string, string> = {
-  oi: 'boas-vindas',
-  tipo: 'tipo de loja',
+  cara: 'a cara da loja',
   importar: 'importar cardápio',
-  nome: 'nome',
-  logo: 'logo',
-  cores: 'cores',
-  frase: 'frase',
-  whatsapp: 'WhatsApp da loja',
-  endereco: 'endereço da loja',
-  horarios: 'horários',
-  como: 'retirada ou entrega',
-  retirada: 'retirada',
-  entrega: 'entrega',
-  formas: 'formas de pagamento',
-  pix: 'chave Pix',
-  mercadopago: 'Mercado Pago',
-  produtos: 'produtos',
+  atendimento: 'atendimento',
+  pagamento: 'pagamento',
+  cardapio: 'cardápio',
   pronto: 'pronto',
 };
 

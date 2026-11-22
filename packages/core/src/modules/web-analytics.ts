@@ -337,35 +337,15 @@ export async function storefrontReport(sql: Sql, days: ReportDays): Promise<Stor
 
 /** The admin's signup questions, in order (apps/admin signup/progress.ts): each is sent as a page
  *  view of `/admin/comecar/<step>`, so drop-off is read from the same anonymous counts. */
-export const SIGNUP_STEPS = [
-  'plano',
-  'loja',
-  'tipo',
-  'voce',
-  'whatsapp',
-  'codigo',
-  'pagamento',
-  'pronto',
-] as const;
-/** The onboarding's screens, in order (apps/admin onboarding/flow.ts), as `/admin/bem-vindo/<step>`. */
+export const SIGNUP_STEPS = ['loja', 'voce', 'codigo', 'pagamento', 'pronto'] as const;
+/** The onboarding's screens, in order (apps/admin onboarding/flow.ts), as `/admin/bem-vindo/<step>`
+ *  ('importar' is the detour from the first screen to bring a menu from another app). */
 export const SETUP_STEPS = [
-  'oi',
-  'tipo',
+  'cara',
   'importar',
-  'nome',
-  'logo',
-  'cores',
-  'frase',
-  'whatsapp',
-  'endereco',
-  'horarios',
-  'como',
-  'retirada',
-  'entrega',
-  'formas',
-  'pix',
-  'mercadopago',
-  'produtos',
+  'atendimento',
+  'pagamento',
+  'cardapio',
   'pronto',
 ] as const;
 

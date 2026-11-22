@@ -9,11 +9,51 @@ export function SegmentPicker({
   value,
   onPick,
   busy,
+  compact,
 }: {
   value: string | null;
   onPick: (id: SegmentId) => void;
   busy?: boolean;
+  /** chips that wrap, for a screen that asks more than this (signup's first screen) */
+  compact?: boolean;
 }) {
+  if (compact)
+    return (
+      <div role="radiogroup" aria-label="o que a loja vende" className="flex flex-wrap gap-2">
+        {SEGMENTS.map((s) => {
+          const on = value === s.id;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              disabled={busy}
+              onClick={() => {
+                haptic.tick();
+                onPick(s.id);
+              }}
+              className={cn(
+                't-label press inline-flex min-h-11 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 transition-[background-color,box-shadow] duration-(--duration-quick) disabled:opacity-60',
+                on
+                  ? 'bg-spark-soft ring-2 ring-inset ring-primary'
+                  : 'bg-surface ring-1 ring-inset ring-line-strong hover:bg-hover',
+              )}
+            >
+              <span
+                className={cn(
+                  'grid size-8 shrink-0 place-items-center rounded-full transition-colors duration-(--duration-quick)',
+                  on ? 'bg-spark text-on-spark' : 'bg-sunken text-ink',
+                )}
+              >
+                <s.Icon weight="duotone" className="size-5" aria-hidden />
+              </span>
+              {s.label}
+            </button>
+          );
+        })}
+      </div>
+    );
   return (
     <div
       role="radiogroup"
