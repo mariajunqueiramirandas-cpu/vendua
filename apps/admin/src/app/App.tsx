@@ -1,11 +1,11 @@
-import { lazy, Suspense, useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { awaitingCardReturn } from '../features/signup/progress.ts';
 import { trackPageview } from '../lib/analytics.ts';
 import { platform } from '../platform/index.ts';
 import { ApiError } from '../lib/api.ts';
-import { clearPersisted } from '../lib/persist.ts';
+import { resetClient } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
 import { can, featureOpen, SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { LockedPage } from '../ui/PlanLocked.tsx';
@@ -88,9 +88,15 @@ export default function App() {
   const nav = useNavigate();
   // once signed out, a background re-check keeps the sign-in on screen (its step lives there)
   const signedOut = useRef(false);
+  const [expired, setExpired] = useState(false);
   const tooOld = useStoreUpdate();
   useEffect(() => {
-    const on = () => void qc.invalidateQueries({ queryKey: qk.session });
+    const on = () => {
+      if (signedOut.current) return;
+      signedOut.current = true;
+      setExpired(true);
+      void resetClient(qc, new ApiError(401, 'UNAUTHENTICATED', 'Sessão encerrada'));
+    };
     window.addEventListener('vendua:unauthenticated', on);
     return () => window.removeEventListener('vendua:unauthenticated', on);
   }, [qc]);
@@ -103,7 +109,7 @@ export default function App() {
   // Mercado Pago sends the card authorization back to /admin/?assinatura=retorno
   const retorno = new URLSearchParams(loc.search).get('assinatura') === 'retorno';
   const toSignup = retorno && loc.pathname !== '/comecar' && awaitingCardReturn();
-  const hasSession = !!q.data;
+  const hasSession = !!q.data && !expired;
   useEffect(() => {
     if (hasSession) void platform.push.rebind();
   }, [hasSession]);
@@ -123,22 +129,21 @@ export default function App() {
     window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
   }, [retorno, toSignup, hasSession, loc.pathname, qc, nav]);
 
-  const unauth =
-    (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
-  signedOut.current = unauth || (signedOut.current && !q.data);
+  const sessionError = q.error instanceof ApiError && q.error.status === 401 ? q.error : null;
+  const unauth = expired || !!sessionError;
   // Signed out from under us (expired, revoked, a redeploy with a fresh database): nothing of
   // that session may leak into the next sign-in — not its screens' data, not a write queued
   // offline, which would otherwise replay into whichever store signs in next.
-  // A query still watched here belongs to a screen shown signed out (the signup's plans and slug
-  // check): removing it mid-fetch strands its observer on a skeleton forever, so it stays.
   useEffect(() => {
-    if (!unauth) return;
-    qc.getMutationCache().clear();
-    qc.removeQueries({
-      predicate: (x) => x.queryKey[0] !== qk.session[0] && x.getObserversCount() === 0,
-    });
-    void clearPersisted();
-  }, [unauth, qc]);
+    if (sessionError && !signedOut.current) {
+      signedOut.current = true;
+      setExpired(true);
+      void resetClient(qc, sessionError);
+    } else if (q.isSuccess && q.data && signedOut.current) {
+      signedOut.current = false;
+      setExpired(false);
+    }
+  }, [sessionError, q.isSuccess, q.data, qc]);
 
   // the style reference renders without a session (CI screenshots it)
   if (loc.pathname === '/_ui')
@@ -217,41 +222,41 @@ export default function App() {
                   <Route path="cozinha/painel" element={<Pickup />} />
                   <Route path="pdv" element={<PdvVender />} />
                   <Route path="pdv/mesas" element={<PdvMesas />} />
-                  <Route path="pdv/mesas/qr" element={<PdvQr />} />
+                  {manager && <Route path="pdv/mesas/qr" element={<PdvQr />} />}
                   <Route path="pdv/comanda/:id" element={<PdvComanda />} />
                   <Route path="pdv/caixa" element={<PdvCaixa />} />
                   <Route path="pdv/caixa/:id" element={<PdvReport />} />
-                  <Route path="cardapio" element={<Menu />} />
-                  <Route path="cardapio/produto/:id" element={<ProductPage />} />
-                  <Route path="cardapio/importar" element={<ImportPage />} />
-                  <Route path="cardapio/estoque" element={<Stock />} />
-                  <Route path="cardapio/insumos" element={<Insumos />} />
-                  <Route path="cardapio/festa" element={<Festa />} />
-                  <Route path="cardapio/planos" element={<Planos />} />
-                  <Route path="loja" element={<StoreHub />} />
-                  <Route path="loja/perfil" element={<StoreProfile />} />
-                  <Route path="loja/horarios" element={<StoreHours />} />
-                  <Route path="loja/entrega" element={<StoreDelivery />} />
-                  <Route path="loja/preparo" element={<StorePace />} />
-                  <Route path="loja/encomendas" element={<StoreEncomendas />} />
-                  <Route path="loja/site" element={<StoreSite />} />
-                  <Route path="pagamentos" element={<Payments />} />
-                  <Route path="loja/pagamentos" element={<PaymentMethods />} />
-                  <Route path="whatsapp" element={<Whatsapp />} />
-                  <Route path="impressoras" element={<Printers />} />
-                  <Route path="impressoras/parear" element={<Printers />} />
-                  <Route path="clientes" element={<Customers />} />
-                  <Route path="clientes/:phone" element={<CustomerPage />} />
-                  <Route path="marketing" element={<Marketing />} />
-                  <Route path="marketing/divulgar" element={<MarketingShare />} />
-                  <Route path="marketing/lembretes" element={<MarketingReminders />} />
-                  <Route path="marketing/cartao" element={<BagCard />} />
-                  <Route path="marketing/status" element={<StatusDoDia />} />
-                  <Route path="aparencia" element={<Appearance />} />
-                  <Route path="relatorios" element={<Reports />} />
-                  <Route path="equipe" element={<Team />} />
-                  <Route path="equipe/atividade" element={<TeamActivity />} />
-                  <Route path="conta" element={<Account />} />
+                  {manager && <Route path="cardapio" element={<Menu />} />}
+                  {manager && <Route path="cardapio/produto/:id" element={<ProductPage />} />}
+                  {manager && <Route path="cardapio/importar" element={<ImportPage />} />}
+                  {manager && <Route path="cardapio/estoque" element={<Stock />} />}
+                  {manager && <Route path="cardapio/insumos" element={<Insumos />} />}
+                  {manager && <Route path="cardapio/festa" element={<Festa />} />}
+                  {manager && <Route path="cardapio/planos" element={<Planos />} />}
+                  {manager && <Route path="loja" element={<StoreHub />} />}
+                  {manager && <Route path="loja/perfil" element={<StoreProfile />} />}
+                  {manager && <Route path="loja/horarios" element={<StoreHours />} />}
+                  {manager && <Route path="loja/entrega" element={<StoreDelivery />} />}
+                  {manager && <Route path="loja/preparo" element={<StorePace />} />}
+                  {manager && <Route path="loja/encomendas" element={<StoreEncomendas />} />}
+                  {manager && <Route path="loja/site" element={<StoreSite />} />}
+                  {manager && <Route path="pagamentos" element={<Payments />} />}
+                  {manager && <Route path="loja/pagamentos" element={<PaymentMethods />} />}
+                  {manager && <Route path="whatsapp" element={<Whatsapp />} />}
+                  {manager && <Route path="impressoras" element={<Printers />} />}
+                  {manager && <Route path="impressoras/parear" element={<Printers />} />}
+                  {manager && <Route path="clientes" element={<Customers />} />}
+                  {manager && <Route path="clientes/:phone" element={<CustomerPage />} />}
+                  {manager && <Route path="marketing" element={<Marketing />} />}
+                  {manager && <Route path="marketing/divulgar" element={<MarketingShare />} />}
+                  {manager && <Route path="marketing/lembretes" element={<MarketingReminders />} />}
+                  {manager && <Route path="marketing/cartao" element={<BagCard />} />}
+                  {manager && <Route path="marketing/status" element={<StatusDoDia />} />}
+                  {manager && <Route path="aparencia" element={<Appearance />} />}
+                  {manager && <Route path="relatorios" element={<Reports />} />}
+                  {manager && <Route path="equipe" element={<Team />} />}
+                  {manager && <Route path="equipe/atividade" element={<TeamActivity />} />}
+                  {owner && <Route path="conta" element={<Account />} />}
                   <Route path="perfil" element={<Profile />} />
                   <Route path="perfil/avisos" element={<ProfileAlerts />} />
                   <Route path="perfil/aparelhos" element={<ProfileDevices />} />

@@ -1,3 +1,4 @@
+import { ErrorState } from '../../ui/feedback.tsx';
 import { CookingPot } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type CmvReport } from '../../lib/api.ts';
@@ -20,7 +21,7 @@ export function CmvSection({
   params: { period: string } | { from: string; to: string };
 }) {
   const key = 'period' in params ? qk.cmv(params.period) : qk.cmv('custom', params.from, params.to);
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, error, refetch } = useQuery({
     queryKey: key,
     queryFn: () => api.cmv(params),
     placeholderData: (prev) => prev,
@@ -31,7 +32,9 @@ export function CmvSection({
       title="Custo e margem"
       hint="O CMV: quanto custou o que você vendeu, pela ficha técnica de cada produto na hora da venda."
     >
-      {!data ? (
+      {error && !data ? (
+        <ErrorState error={error} retry={() => void refetch()} />
+      ) : !data ? (
         <Card className="p-5">
           <RowsSkeleton rows={3} avatar={false} />
         </Card>

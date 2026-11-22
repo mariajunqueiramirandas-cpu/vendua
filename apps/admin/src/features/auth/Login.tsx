@@ -372,6 +372,7 @@ function CodeStep({
       restart();
       onResent(r.expiresAt);
     },
+    onError: (e) => setErr(messageOf(e)),
   });
   return (
     <Counter
@@ -408,7 +409,7 @@ function CodeStep({
           size="lg"
           block
           loading={verify.isPending}
-          disabled={code.length < 6}
+          disabled={!/^\d{6}$/.test(code)}
           onClick={() => verify.mutate(code)}
           icon={<ArrowRight />}
         >

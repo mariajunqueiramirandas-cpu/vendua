@@ -56,6 +56,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       aria-busy={loading || undefined}
       className={cn(base, variants[variant], sizes[size], block && 'w-full', className)}
       {...rest}
+      disabled={Boolean(rest.disabled || loading)}
     >
       {loading ? <Spinner className="absolute" /> : null}
       <span className={cn('inline-flex items-center gap-2', loading && 'opacity-0')}>

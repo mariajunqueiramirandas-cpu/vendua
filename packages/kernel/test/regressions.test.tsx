@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { CheckoutButton } from '../src/primitives.tsx';
-import { invalidateQuery, useKernel, useQuery } from '../src/provider.tsx';
+import { invalidateQuery, useQuery } from '../src/provider.tsx';
 import { ERROR_COPY, deliverySummary, errorCopy, noticeLinks } from '../src/rules/index.ts';
 import { useConsent } from '../src/hooks.ts';
 import { PRODUCT, STORE, flush, mockCore, mount, type Mounted } from './harness.tsx';
@@ -17,11 +17,9 @@ describe('Kernel regression suite', () => {
   test('returning shopper with saved consent in localStorage mounts without infinite render loop', async () => {
     mockCore();
     let renders = 0;
-    let seenPurposes: string[] | null = null;
     function Reader() {
       renders++;
       const { consent } = useConsent();
-      seenPurposes = consent?.purposes ?? null;
       return <p data-test="consent">{consent ? consent.purposes.join(',') : 'none'}</p>;
     }
     m = await mount({
@@ -32,11 +30,11 @@ describe('Kernel regression suite', () => {
           at: '2026-10-01T12:00:00.000Z',
         }),
       },
-      config: { tenant: 'quero-pudim', consent: { purposes: ['analytics', 'marketing'] } },
+      config: { consent: { purposes: ['analytics'] } },
       children: <Reader />,
     });
     await flush();
-    expect(seenPurposes).toEqual(['analytics']);
+    expect(document.querySelector('[data-test=consent]')?.textContent).toBe('analytics');
     expect(renders).toBeLessThan(10);
   });
 
@@ -44,10 +42,7 @@ describe('Kernel regression suite', () => {
     mockCore();
     let reads = 0;
     let latest: string | undefined;
-    let currentApi: ReturnType<typeof useKernel>['api'] | null = null;
     function Probe() {
-      const { api } = useKernel();
-      currentApi = api;
       const q = useQuery('probe:item', async () => {
         reads++;
         return { value: `read-${reads}` };
@@ -61,7 +56,7 @@ describe('Kernel regression suite', () => {
     expect(latest).toBe('read-1');
 
     await act(async () => {
-      invalidateQuery('probe:item', { value: 'seeded' }, currentApi!);
+      invalidateQuery('probe:item', { value: 'seeded' });
     });
     await flush();
     expect(latest).toBe('seeded');
@@ -146,11 +141,16 @@ describe('Kernel regression suite', () => {
       prepTimeMinutes: 30,
       distancePricing: {
         fromFeeCents: 600,
+        baseFeeCents: 600,
+        minFeeCents: 600,
+        center: { lat: -22.93, lng: -42.51 },
+        tiles: { url: 'https://t.test/{z}/{x}/{y}.png', attribution: 'Map', maxZoom: 19 },
         feePerKmCents: 200,
         maxKm: 8,
         freeOverCents: 8000,
       },
       fulfillment: {
+        level: 'pickup_only' as const,
         pickupMinutes: 30,
         deliveryExtraMinutes: 5,
         deliveryPausedUntil: '2099-01-01T20:00:00.000Z',

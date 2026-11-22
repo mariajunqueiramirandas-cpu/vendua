@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "bun test test/",
     "check": "tsc --noEmit -p tsconfig.json",
     "build": "vite build && bun scripts/budget.ts",
     "build:native": "vite build --mode native && bun scripts/budget.ts --native && bun scripts/bundle-native.ts",
@@ -43,6 +44,8 @@
     "@axe-core/playwright": "4.13.0",
     "@capacitor/cli": "8.5.3",
     "@playwright/test": "1.63.0",
+    "@happy-dom/global-registrator": "20.0.11",
+    "@types/bun": "1.4.2",
     "@tailwindcss/vite": "4.3.3",
     "@types/leaflet": "1.9.20",
     "@types/react": "18.3.18",

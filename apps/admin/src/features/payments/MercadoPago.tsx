@@ -70,6 +70,12 @@ export function useMpArrival() {
 
 const LAST_ERROR: Record<string, string> = {
   token_unreadable: 'Precisamos da sua autorização de novo.',
+  no_refresh_token: 'Precisamos da sua autorização de novo.',
+  unauthorized: 'A autorização venceu ou foi removida na sua conta Mercado Pago.',
+  restricted: 'O Mercado Pago restringiu os recebimentos desta conta.',
+  invalid: 'O Mercado Pago não aceitou a última atualização da autorização.',
+  not_found: 'O Mercado Pago não encontrou essa autorização.',
+  unavailable: 'O Mercado Pago está indisponível no momento.',
   token_expired: 'A autorização venceu.',
   invalid_grant: 'A autorização foi removida na sua conta Mercado Pago.',
   revoked: 'A autorização foi removida na sua conta Mercado Pago.',

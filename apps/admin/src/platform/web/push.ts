@@ -59,9 +59,11 @@ function sameKey(sub: PushSubscription, key: Uint8Array) {
  *  delivered to, so the admin offers to turn push on again, which re-subscribes. */
 export async function pushState(cfg: PushConfig): Promise<PushState> {
   if (!pushSupported(cfg)) return 'unsupported';
+  if (Notification.permission !== 'granted')
+    return Notification.permission === 'denied' ? 'denied' : 'off';
   const sub = await currentSubscription().catch(() => null);
   if (sub && sameKey(sub, keyBytes(cfg.publicKey!))) return 'on';
-  return Notification.permission === 'denied' ? 'denied' : 'off';
+  return 'off';
 }
 
 export async function disablePush() {

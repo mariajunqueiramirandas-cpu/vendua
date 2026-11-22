@@ -795,10 +795,12 @@ export function mountVendedor(d: AdminDeps) {
         body.teach === true &&
         typeof body.question === 'string' &&
         typeof body.answer === 'string'
-      )
+      ) {
         await tx`insert into store_knowledge (tenant_id, kind, status, source, question, answer, created_by)
           values (${t.id}, 'answer', 'live', 'ensaio', ${text(body.question, 'question', 500, 3)},
                   ${text(body.answer, 'answer', 2000, 1)}, ${m.userId})`;
+        await tx`update store_agent set pack_version = pack_version + 1 where tenant_id = ${t.id}`;
+      }
       await emitAdminTx(tx, t.id, 'vendedor', 'knowledge');
       return { status: 200, body: await ensaioView(tx, t.id) };
     }),
@@ -897,10 +899,17 @@ export function mountVendedor(d: AdminDeps) {
   const onboardingView = async (tx: Sql, tenantId: string) => {
     const agent = await loadAgent(tx, tenantId);
     const [r] = await tx<
-      { products: number; hours: number; pickup: boolean; zones: number; wa: string | null }[]
+      {
+        products: number;
+        hours: number;
+        pickup: boolean;
+        distance_pricing: boolean;
+        zones: number;
+        wa: string | null;
+      }[]
     >`
       select (select count(*) from products where tenant_id = ${tenantId} and status = 'active')::int as products,
-        coalesce(jsonb_array_length(s.hours -> 'windows'), 0)::int as hours, s.pickup_enabled as pickup,
+        coalesce(jsonb_array_length(s.hours -> 'windows'), 0)::int as hours, s.pickup_enabled as pickup, s.distance_pricing,
         (select count(*) from delivery_zones z where z.tenant_id = ${tenantId} and z.active)::int as zones,
         (select state from store_whatsapp w where w.tenant_id = ${tenantId}) as wa
       from store_settings s where s.tenant_id = ${tenantId}`;
@@ -914,7 +923,7 @@ export function mountVendedor(d: AdminDeps) {
       readiness: {
         menu: (r?.products ?? 0) > 0,
         hours: (r?.hours ?? 0) > 0,
-        fulfilment: !!r?.pickup || (r?.zones ?? 0) > 0,
+        fulfilment: !!r?.pickup || !!r?.distance_pricing || (r?.zones ?? 0) > 0,
         whatsapp: r?.wa === 'open',
         whatsappState: r?.wa ?? null,
       },

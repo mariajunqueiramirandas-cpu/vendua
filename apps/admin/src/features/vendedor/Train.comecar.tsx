@@ -260,7 +260,7 @@ export function Finale({
             <ChecklistRow
               state="done"
               title="Acertou no cliente oculto"
-              value={`${latest.passed ?? 0} de ${latest.total}`}
+              value={`${latest.passed ?? 0} de ${latest.total - (latest.results ?? []).filter((r) => r.skipped).length}`}
             />
           ) : null
         ) : null}

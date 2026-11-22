@@ -1,6 +1,7 @@
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { NavLink } from 'react-router-dom';
-import { api, type Incident } from '../lib/api.ts';
+import { api, withRetryScope, type Incident } from '../lib/api.ts';
 import { qk } from '../lib/query.ts';
 import { featureOpen, ROLE_LABEL, useSession } from '../lib/session.ts';
 import { Sheet } from '../ui/Sheet.tsx';
@@ -10,6 +11,8 @@ import { NavLock, UserMenu } from './Shell.tsx';
 import { resetClient } from '../lib/persist.ts';
 import { appPath } from './paths.ts';
 import { platform } from '../platform/index.ts';
+import { toast } from '../ui/Toast.tsx';
+import { messageOf } from '../ui/feedback.tsx';
 
 export /** "Mais": large tiles with a live hint each (§3.1), under the sidebar's headings. */
 function MoreSheet({
@@ -108,6 +111,23 @@ export function SwitchStoreSheet({
 }) {
   const s = useSession();
   const qc = useQueryClient();
+  const switching = useRef(false);
+  const [pending, setPending] = useState(false);
+  const changeStore = async (id: string) => {
+    if (switching.current) return;
+    switching.current = true;
+    setPending(true);
+    try {
+      await withRetryScope({}, () => api.switchStore(id));
+      await platform.push.disable().catch(() => undefined);
+      await resetClient(qc);
+      window.location.assign(appPath('/'));
+    } catch (e) {
+      toast.error(messageOf(e));
+      switching.current = false;
+      setPending(false);
+    }
+  };
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title="Trocar de loja">
       <ul className="space-y-2 pt-1">
@@ -115,14 +135,8 @@ export function SwitchStoreSheet({
           <li key={st.id}>
             <button
               type="button"
-              disabled={st.id === s.store.id}
-              onClick={async () => {
-                // the device's subscription belongs to the store being left
-                await platform.push.disable().catch(() => undefined);
-                await api.switchStore(st.id);
-                await resetClient(qc);
-                window.location.assign(appPath('/'));
-              }}
+              disabled={pending || st.id === s.store.id}
+              onClick={() => void changeStore(st.id)}
               className="press-row flex min-h-16 w-full items-center gap-3 rounded-md px-4 text-left ring-1 ring-line hover:bg-hover disabled:bg-spark-soft disabled:ring-spark"
             >
               <span className="min-w-0 flex-1">

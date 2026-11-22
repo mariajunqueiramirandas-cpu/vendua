@@ -7,7 +7,7 @@ import { Chips, Field, MoneyField, Segmented, TextArea } from '../../ui/fields.t
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { REFUND_REASONS, useRefund } from './actions.ts';
-import { refundable } from './PaymentSection.tsx';
+import { paymentTotals, refundable, refundAmount } from './payment-totals.ts';
 
 /**
  * Online refund: all of what's left, or part of it; a reason; hold to confirm (§2.2.1).
@@ -15,18 +15,21 @@ import { refundable } from './PaymentSection.tsx';
  */
 export function RefundSheet({
   order,
-  payment,
+  payments,
   open,
   onOpenChange,
 }: {
   order: Order;
-  payment: OrderPayment | null;
+  payments: OrderPayment[] | undefined;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
   const refund = useRefund();
   const { online } = useLiveState();
-  const left = refundable(payment);
+  const captured = (payments ?? []).filter((p) => refundable(p) > 0 || p.refundedCents > 0);
+  const totals = paymentTotals(captured);
+  const left = totals.refundable;
+  const methods = new Set(captured.filter((p) => refundable(p) > 0).map((p) => p.kind));
   const [mode, setMode] = useState<'all' | 'part'>('all');
   const [cents, setCents] = useState<number | null>(null);
   const [reason, setReason] = useState('');
@@ -37,7 +40,7 @@ export function RefundSheet({
     setCents(null);
     setReason('');
     setOther('');
-  }, [open]);
+  }, [open, order.id]);
 
   const amount = mode === 'all' ? left : (cents ?? 0);
   const tooMuch = mode === 'part' && cents !== null && cents > left;
@@ -48,7 +51,7 @@ export function RefundSheet({
     refund.mutate(
       {
         order,
-        amountCents: mode === 'all' || amount === left ? null : amount,
+        amountCents: refundAmount(amount, left),
         reason: text,
         shown: amount,
       },
@@ -61,9 +64,11 @@ export function RefundSheet({
       onOpenChange={onOpenChange}
       title={`Devolver dinheiro do pedido #${order.number}`}
       description={
-        payment?.kind === 'card'
-          ? 'O Mercado Pago estorna no cartão que o cliente usou.'
-          : 'O Mercado Pago devolve o Pix para a conta de quem pagou.'
+        methods.size > 1
+          ? 'O Mercado Pago devolve cada valor pelo meio que o cliente usou.'
+          : methods.has('card')
+            ? 'O Mercado Pago estorna no cartão que o cliente usou.'
+            : 'O Mercado Pago devolve o Pix para a conta de quem pagou.'
       }
       footer={
         <div className="space-y-2">
@@ -87,9 +92,9 @@ export function RefundSheet({
         <div className="rounded-md bg-sunken px-4 py-3">
           <p className="t-caption text-muted">Dá para devolver até</p>
           <p className="t-title-2 tnum">{money(left)}</p>
-          {payment && payment.refundedCents > 0 ? (
+          {totals.refunded > 0 ? (
             <p className="t-caption text-muted">
-              de {money(payment.amountCents)} pagos · {money(payment.refundedCents)} já devolvido
+              de {money(totals.amount)} pagos · {money(totals.refunded)} já devolvido
             </p>
           ) : null}
         </div>
@@ -142,8 +147,8 @@ export function RefundSheet({
 
         {inProgress && mode === 'all' ? (
           <p className="t-caption text-muted">
-            O pedido continua aberto. Se não vai mais entregar, use “cancelar pedido”: o dinheiro
-            volta sozinho.
+            O pedido continua aberto. Se não vai mais entregar, use “cancelar pedido”. O sinal,
+            quando já recebido, fica com a loja.
           </p>
         ) : null}
       </div>

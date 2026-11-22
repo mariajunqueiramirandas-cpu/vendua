@@ -126,7 +126,7 @@ export default function Home() {
           </Section>
           <FreioCard className="order-1 lg:order-none" />
           <DeviceCard className="order-2 lg:order-none" />
-          {data && data.checklist.some((c) => !c.done) ? (
+          {data && can(s.user.role, 'manager') && data.checklist.some((c) => !c.done) ? (
             <div className="order-2 lg:order-none">
               <Checklist items={data.checklist} onboarding={data.onboarding} />
             </div>
@@ -267,6 +267,7 @@ function Hero({ data }: { data: HomeData }) {
         ) : phase === 'paused' ? (
           <button
             type="button"
+            disabled={resume.isPending}
             onClick={() => resume.mutate()}
             className="press t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-primary px-3.5 text-on-primary"
           >
@@ -357,7 +358,7 @@ function Hero({ data }: { data: HomeData }) {
             {data.best[0] ? `Campeão: ${data.best[0].name} (${data.best[0].qty}). ` : ''}
             {data.busiest ? `Hora mais movimentada: ${data.busiest.hour}h. ` : ''}
             {t.lastWeekOrders
-              ? `Na mesma ${new Date().toLocaleDateString('pt-BR', { weekday: 'long' })} passada: ${plural(t.lastWeekOrders, 'pedido', 'pedidos')}.`
+              ? `Na mesma ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', timeZone: data.timezone })} passada: ${plural(t.lastWeekOrders, 'pedido', 'pedidos')}.`
               : ''}
           </p>
         </div>

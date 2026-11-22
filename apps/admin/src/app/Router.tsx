@@ -171,6 +171,8 @@ export function Router({ basename, children }: { basename: string; children: Rea
           .catch(() => undefined)
           .then(() => {
             if (pending.current === vt) pending.current = null;
+            if (morph && morph.el.style.viewTransitionName === MORPH && token === running)
+              morph.el.style.viewTransitionName = '';
             if (dst) dst.style.viewTransitionName = '';
             if (token === running) {
               delete root.dataset.vt;

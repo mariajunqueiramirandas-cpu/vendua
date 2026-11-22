@@ -16,8 +16,11 @@ const openStore = () => {
 export function useStoreUpdate(): boolean {
   const [hard, setHard] = useState(false);
   useEffect(() => {
-    const on = (e: Event) => {
-      if ((e as CustomEvent<{ hard?: boolean }>).detail?.hard) return setHard(true);
+    let softShown = false;
+    const on = (e?: Event) => {
+      if ((e as CustomEvent<{ hard?: boolean }> | undefined)?.detail?.hard) return setHard(true);
+      if (softShown) return;
+      softShown = true;
       toast('Tem uma versão nova do app na loja, com melhorias para você.', {
         tone: 'info',
         ms: 10_000,
@@ -25,6 +28,7 @@ export function useStoreUpdate(): boolean {
       });
     };
     window.addEventListener('vendua:store-update', on);
+    if (platform.updates.needsStoreUpdate?.()) on();
     return () => window.removeEventListener('vendua:store-update', on);
   }, []);
   return hard;

@@ -46,11 +46,11 @@ function enhance(data: ImageData) {
     b += d[i + 2]!;
     hist[Math.round(0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!)]!++;
   }
-  const avg = (r + g + b) / (3 * n);
+  if (!n) return;
+  const avg = (r + g + b) / 3;
   // gentle: halfway to neutral so warm food photos stay warm
-  const kr = 1 + (avg / (r / n) - 1) * 0.5;
-  const kg = 1 + (avg / (g / n) - 1) * 0.5;
-  const kb = 1 + (avg / (b / n) - 1) * 0.5;
+  const gain = (sum: number) => (sum ? 1 + (avg / sum - 1) * 0.5 : 1);
+  const [kr, kg, kb] = [gain(r), gain(g), gain(b)];
   let acc = 0,
     lo = 0,
     hi = 255;

@@ -76,7 +76,7 @@ export function PaySheet({
   const [when, setWhen] = useState<'now' | 'later'>('now');
   const [laterMethod, setLaterMethod] = useState<PdvMethod | null>(null);
   const [changeFor, setChangeFor] = useState(0);
-  const atDoor = !!later && when === 'later';
+  const atDoor = !!later && when === 'later' && totalCents > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -98,6 +98,7 @@ export function PaySheet({
   }, [totalCents, single]);
 
   const target = single ? amount : totalCents;
+  const courtesy = !single && target === 0;
   const paid = entries.reduce((n, e) => n + e.amountCents, 0);
   // display only: the gap between Core's total and what was typed in
   const rest = target - paid;
@@ -124,14 +125,15 @@ export function PaySheet({
   }, [amount]);
 
   const valid =
-    entries.length > 0 &&
-    target > 0 &&
-    entries.every(
-      (e) =>
-        e.amountCents > 0 &&
-        (e.method !== 'cash' || !e.tenderedCents || e.tenderedCents >= e.amountCents),
-    ) &&
-    (single ? amount <= totalCents && paid === amount : rest === 0);
+    courtesy ||
+    (entries.length > 0 &&
+      target > 0 &&
+      entries.every(
+        (e) =>
+          e.amountCents > 0 &&
+          (e.method !== 'cash' || !e.tenderedCents || e.tenderedCents >= e.amountCents),
+      ) &&
+      (single ? amount <= totalCents && paid === amount : rest === 0));
 
   const laterValid =
     !!laterMethod && (laterMethod !== 'cash' || changeFor === 0 || changeFor >= totalCents);
@@ -146,13 +148,15 @@ export function PaySheet({
       });
       return;
     }
-    if (!valid || !caixaOpen) return;
+    if (!valid || (!caixaOpen && !courtesy)) return;
     onSubmit(
-      entries.map((e) => ({
-        method: e.method,
-        amountCents: e.amountCents,
-        ...(e.method === 'cash' && e.tenderedCents ? { tenderedCents: e.tenderedCents } : {}),
-      })),
+      courtesy
+        ? []
+        : entries.map((e) => ({
+            method: e.method,
+            amountCents: e.amountCents,
+            ...(e.method === 'cash' && e.tenderedCents ? { tenderedCents: e.tenderedCents } : {}),
+          })),
     );
   };
   const submitRef = useRef(submit);
@@ -179,7 +183,10 @@ export function PaySheet({
       title={title}
       footer={
         <div className="space-y-2">
-          {atDoor ? null : !caixaOpen ? null : !single && entries.length > 0 && rest !== 0 ? (
+          {atDoor ? null : !caixaOpen ? null : !single &&
+            !courtesy &&
+            entries.length > 0 &&
+            rest !== 0 ? (
             <p
               className={cn('t-label tnum text-center', rest > 0 ? 'text-warning' : 'text-danger')}
               role="status"
@@ -191,7 +198,7 @@ export function PaySheet({
             size="lg"
             block
             loading={busy && !paused}
-            disabled={(atDoor ? !laterValid : !valid || !caixaOpen) || busy}
+            disabled={(atDoor ? !laterValid : !valid || (!caixaOpen && !courtesy)) || busy}
             onClick={submit}
             icon={paused ? <WifiSlash /> : atDoor && laterMethod ? <Moped /> : undefined}
           >
@@ -201,9 +208,11 @@ export function PaySheet({
                 ? laterMethod
                   ? 'enviar o pedido'
                   : 'escolha como vai pagar'
-                : entries.length
-                  ? `${submitLabel} ${money(single ? amount : totalCents)}`
-                  : 'escolha como vai pagar'}
+                : courtesy
+                  ? 'confirmar cortesia'
+                  : entries.length
+                    ? `${submitLabel} ${money(single ? amount : totalCents)}`
+                    : 'escolha como vai pagar'}
           </Button>
         </div>
       }
@@ -214,7 +223,7 @@ export function PaySheet({
           <p className="tnum t-display">{money(totalCents)}</p>
         </div>
 
-        {later ? (
+        {later && !courtesy ? (
           <Segmented
             label="quando o cliente paga"
             value={when}
@@ -239,7 +248,7 @@ export function PaySheet({
           />
         ) : null}
 
-        {atDoor ? null : !caixaOpen ? (
+        {atDoor || courtesy ? null : !caixaOpen ? (
           <Notice
             tone="warning"
             icon={<LockSimple weight="fill" />}
@@ -282,7 +291,7 @@ export function PaySheet({
           </Field>
         ) : null}
 
-        <div hidden={atDoor}>
+        <div hidden={atDoor || courtesy}>
           <div className="mb-2 flex items-center justify-between gap-3">
             <p className="t-label">Como vai pagar?</p>
             {!single ? (
@@ -291,7 +300,13 @@ export function PaySheet({
                 size="sm"
                 icon={<ArrowsSplit />}
                 aria-pressed={split}
-                onClick={() => setSplit((v) => !v)}
+                onClick={() => {
+                  setSplit(!split);
+                  if (!split || !entries.length) return;
+                  const first = entries[0]!;
+                  setEntries([{ ...first, amountCents: target }]);
+                  setActive(first.id);
+                }}
                 className="-mr-2"
               >
                 {split ? 'uma forma só' : 'dividir em formas'}
@@ -313,7 +328,7 @@ export function PaySheet({
           ) : null}
         </div>
 
-        {!atDoor && split && entries.length ? (
+        {!atDoor && !courtesy && split && entries.length ? (
           <ul className="space-y-2" aria-label="pagamentos">
             {entries.map((e) => {
               const Icon = PDV_METHOD_ICON[e.method];
@@ -354,7 +369,7 @@ export function PaySheet({
             />
           ) : null,
         )}
-        {entries
+        {(courtesy ? [] : entries)
           .filter((e) => !atDoor && e.method === 'pix' && e.amountCents > 0)
           .map((e) => (
             <PixBox key={e.id} cents={e.amountCents} manager={manager} />

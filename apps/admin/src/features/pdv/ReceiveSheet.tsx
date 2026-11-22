@@ -46,6 +46,7 @@ export default function ReceiveSheet({ order, onClose }: { order: Order; onClose
     onError: (e) => {
       haptic.error();
       if (isCode(e, 'CAIXA_CLOSED')) {
+        close();
         void qc.invalidateQueries({ queryKey: ['pdv'] });
         toast(pdvError(e), {
           tone: 'error',

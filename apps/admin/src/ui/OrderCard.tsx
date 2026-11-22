@@ -201,6 +201,8 @@ export function OrderCard({
     () => () => {
       clearTimeout(back.current);
       clearTimeout(hold.current);
+      anim.current?.cancel();
+      anim.current = null;
     },
     [],
   );

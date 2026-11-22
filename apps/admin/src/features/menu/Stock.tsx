@@ -26,7 +26,7 @@ import {
 import { ago, money, num, when } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { moneyInput, parseMoney } from '../../lib/parse.ts';
-import { optimistic, qk, useMutation } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
@@ -165,15 +165,23 @@ export default function Stock() {
   const adjust = useMutation({
     mutationFn: (changes: { productId: string; add: number; reason?: StockReason }[]) =>
       api.adjustStock(changes),
-    onMutate: (changes) => {
+    onMutate: async (changes) => {
       const add = new Map(changes.map((c) => [c.productId, c.add]));
-      return optimistic<Catalog>(qc, qk.catalog, (d) =>
-        mapProducts(d, (p) =>
-          add.has(p.id) && p.stockQuantity != null
-            ? withStock(p, Math.min(MAX, Math.max(0, p.stockQuantity + add.get(p.id)!)))
-            : p,
-        ),
+      await qc.cancelQueries({ queryKey: qk.catalog });
+      const changed = new Map<string, { before: number; after: number }>();
+      qc.setQueryData<Catalog>(
+        qk.catalog,
+        (d) =>
+          d &&
+          mapProducts(d, (p) => {
+            const amount = add.get(p.id);
+            if (amount === undefined || p.stockQuantity == null) return p;
+            const after = Math.min(MAX, Math.max(0, p.stockQuantity + amount));
+            changed.set(p.id, { before: p.stockQuantity, after });
+            return withStock(p, after);
+          }),
       );
+      return changed;
     },
     onSuccess: (r) => {
       // Core's numbers win over the guess (a sale may have landed in between)
@@ -187,8 +195,16 @@ export default function Stock() {
             : `Voltou! Avisamos ${r.waitlistWoken} pessoas da lista de espera`,
         );
     },
-    onError: (e, _v, ctx) => {
-      ctx?.restore();
+    onError: (e, _v, changed) => {
+      qc.setQueryData<Catalog>(
+        qk.catalog,
+        (d) =>
+          d &&
+          mapProducts(d, (p) => {
+            const change = changed?.get(p.id);
+            return change && p.stockQuantity === change.after ? withStock(p, change.before) : p;
+          }),
+      );
       toast.error(`O estoque não foi salvo. ${messageOf(e)}`);
     },
     // under 'catalog': the overview and the adicionais refresh with it
@@ -197,16 +213,25 @@ export default function Stock() {
   const adjustAddons = useMutation({
     mutationFn: (changes: { key: string; add: number; reason?: StockReason }[]) =>
       api.adjustAddons(changes),
-    onMutate: (changes) => {
+    onMutate: async (changes) => {
       const add = new Map(changes.map((c) => [c.key, c.add]));
-      return optimistic<Addons>(qc, qk.addons, (d) => ({
-        ...d,
-        addons: d.addons.map((a) =>
-          add.has(a.key) && a.stockQuantity != null
-            ? withAddonStock(a, Math.min(MAX, Math.max(0, a.stockQuantity + add.get(a.key)!)))
-            : a,
-        ),
-      }));
+      await qc.cancelQueries({ queryKey: qk.addons });
+      const changed = new Map<string, { before: number; after: number }>();
+      qc.setQueryData<Addons>(
+        qk.addons,
+        (d) =>
+          d && {
+            ...d,
+            addons: d.addons.map((a) => {
+              const amount = add.get(a.key);
+              if (amount === undefined || a.stockQuantity == null) return a;
+              const after = Math.min(MAX, Math.max(0, a.stockQuantity + amount));
+              changed.set(a.key, { before: a.stockQuantity, after });
+              return withAddonStock(a, after);
+            }),
+          },
+      );
+      return changed;
     },
     onSuccess: (r) => {
       qc.setQueryData<Addons>(qk.addons, (d) =>
@@ -220,8 +245,20 @@ export default function Stock() {
           : d,
       );
     },
-    onError: (e, _v, ctx) => {
-      ctx?.restore();
+    onError: (e, _v, changed) => {
+      qc.setQueryData<Addons>(
+        qk.addons,
+        (d) =>
+          d && {
+            ...d,
+            addons: d.addons.map((a) => {
+              const change = changed?.get(a.key);
+              return change && a.stockQuantity === change.after
+                ? withAddonStock(a, change.before)
+                : a;
+            }),
+          },
+      );
       toast.error(`O estoque não foi salvo. ${messageOf(e)}`);
     },
     onSettled: () => {
@@ -233,7 +270,9 @@ export default function Stock() {
   const inflight = useRef(new Set<Promise<unknown>>());
   const track = (p: Promise<unknown>) => {
     inflight.current.add(p);
-    void p.finally(() => inflight.current.delete(p));
+    const done = () => inflight.current.delete(p);
+    void p.then(done, done);
+    return p;
   };
   const run = (changes: Change[]) => {
     const reason = (c: Change) => (c.reason ? { reason: c.reason } : {});
@@ -243,8 +282,10 @@ export default function Stock() {
     const as = changes
       .filter((c) => c.sk.startsWith('a:'))
       .map((c) => ({ key: c.sk.slice(2), add: c.add, ...reason(c) }));
-    if (ps.length) track(adjust.mutateAsync(ps).catch(() => undefined));
-    if (as.length) track(adjustAddons.mutateAsync(as).catch(() => undefined));
+    return Promise.all([
+      ...(ps.length ? [track(adjust.mutateAsync(ps))] : []),
+      ...(as.length ? [track(adjustAddons.mutateAsync(as))] : []),
+    ]);
   };
   const send = useRef(run);
   send.current = run;
@@ -256,15 +297,16 @@ export default function Stock() {
       .map(([sk, add]) => ({ sk, add }));
     pendingRef.current = {};
     setPending({});
-    if (changes.length) send.current(changes);
+    if (changes.length) void send.current(changes).catch(() => undefined);
   };
   const flushRef = useRef(flush);
   flushRef.current = flush;
 
-  const tap = (sk: string, by: number) => {
+  const tap = (sk: string, by: number, quantity: number | null) => {
     haptic.tick();
     setPending((s) => {
-      const next = { ...s, [sk]: (s[sk] ?? 0) + by };
+      const n = quantity ?? 0;
+      const next = { ...s, [sk]: Math.min(MAX, Math.max(0, n + (s[sk] ?? 0) + by)) - n };
       pendingRef.current = next;
       return next;
     });
@@ -569,7 +611,7 @@ export default function Stock() {
                                   count={countOf(sk, p.stockQuantity)}
                                   dirty={!!pending[sk]}
                                   flash={flash === sk}
-                                  onTap={(by) => tap(sk, by)}
+                                  onTap={(by) => tap(sk, by, p.stockQuantity)}
                                   onEdit={() => edit({ type: 'product', p })}
                                 />
                               );
@@ -597,7 +639,7 @@ export default function Stock() {
                           a={a}
                           count={countOf(sk, a.stockQuantity)}
                           dirty={!!pending[sk]}
-                          onTap={(by) => tap(sk, by)}
+                          onTap={(by) => tap(sk, by, a.stockQuantity)}
                           onEdit={() => edit({ type: 'addon', a })}
                         />
                       );
@@ -614,7 +656,7 @@ export default function Stock() {
           costFirst={uncosted}
           onClose={() => setEditing(null)}
           onAdd={(s, add, reason) => run([{ sk: skOf(s), add, reason }])}
-          settled={() => Promise.all([...inflight.current])}
+          settled={() => Promise.allSettled([...inflight.current])}
           onPricing={(p) => {
             setEditing(null);
             // after the count sheet's history entry is gone, or its back-pop closes this one too
@@ -979,7 +1021,7 @@ function CountSheet({
   /** opened from "sem custo": the cost is what they came for */
   costFirst: boolean;
   onClose: () => void;
-  onAdd: (s: Subject, add: number, reason: StockReason) => void;
+  onAdd: (s: Subject, add: number, reason: StockReason) => Promise<unknown>;
   settled: () => Promise<unknown>;
   onPricing: (p: Product) => void;
 }) {
@@ -1032,7 +1074,8 @@ function CountSheet({
       void qc.invalidateQueries({ queryKey: qk.stockOverview });
     },
   });
-  const saving = saveProduct.isPending || saveAddon.isPending;
+  const [adding, setAdding] = useState(false);
+  const saving = saveProduct.isPending || saveAddon.isPending || adding;
   /** → people woken from the waiting list */
   const write = async (x: Subject, patch: Patch) =>
     x.type === 'product'
@@ -1077,6 +1120,8 @@ function CountSheet({
       setErr(`Tem só ${now} em estoque.`);
       return;
     }
+    if (saving) return;
+    setAdding(true);
     try {
       const patch: Patch = {};
       if (valid && mode === 'contei') patch.stockQuantity = n!;
@@ -1086,8 +1131,9 @@ function CountSheet({
       if ('stockQuantity' in patch) await settled();
       if (Object.keys(patch).length) woken = await write(s, patch);
       // a delivery or a loss is relative: the sales of the last minutes still count
-      if (valid && n && mode === 'chegou') onAdd(s, n, 'delivery');
-      if (valid && n && mode === 'perdi') onAdd(s, -n, 'loss');
+      if (valid && n && mode === 'chegou' && now < MAX)
+        await onAdd(s, Math.min(n, MAX - now), 'delivery');
+      if (valid && n && mode === 'perdi') await onAdd(s, -n, 'loss');
       haptic.commit();
       toast(
         result !== null
@@ -1099,6 +1145,8 @@ function CountSheet({
       onClose();
     } catch (e) {
       setErr(messageOf(e));
+    } finally {
+      setAdding(false);
     }
   };
 

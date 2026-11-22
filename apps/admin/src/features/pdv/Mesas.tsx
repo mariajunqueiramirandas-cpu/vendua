@@ -421,7 +421,7 @@ function NewTabSheet({
     if (!open) return;
     setLabel(suggestion);
     setName('');
-  }, [open, suggestion]);
+  }, [open]);
   const ok = label.trim().length > 0;
   return (
     <Sheet
@@ -486,9 +486,10 @@ function AddTablesSheet({
   useEffect(() => {
     if (!open) return;
     const n = Math.max(0, ...tables.map((t) => Number(/(\d+)\s*$/.exec(t.label)?.[1] ?? 0)));
+    setPrefix('Mesa');
     setFrom(String(n + 1));
     setTo(String(n + (n ? 5 : 10)));
-  }, [open, tables]);
+  }, [open]);
   const a = Math.max(0, Math.floor(Number(from) || 0));
   const b = Math.max(0, Math.floor(Number(to) || 0));
   const count = b >= a && a > 0 ? b - a + 1 : 0;

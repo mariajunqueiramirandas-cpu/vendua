@@ -1,7 +1,7 @@
 import { ArrowLeft, Camera, Images, X } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
-import { api, ApiError, type PhotoMenuItem } from '../../lib/api.ts';
+import { api, ApiError, withRetryScope, type PhotoMenuItem } from '../../lib/api.ts';
 import { num } from '../../lib/format.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
@@ -18,6 +18,7 @@ import { base64, shrinkPhoto } from '../copilot/media.ts';
 // does anything get written (POST /products/import/items).
 
 const MAX_PHOTOS = 8;
+const BATCH_SIZE = 300;
 
 type Row = PhotoMenuItem & { key: string };
 
@@ -42,6 +43,8 @@ export function PhotoImport({
 }) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
+  const saved = useRef({ created: 0, categories: 0 });
+  const accepted = useRef(new Set<string>());
   const [rows, setRows] = useState<Row[]>([]);
   const [reading, setReading] = useState<{ at: number; of: number } | null>(null);
   const [misses, setMisses] = useState<string[]>([]);
@@ -51,10 +54,11 @@ export function PhotoImport({
     const missed: string[] = [];
     for (const [i, f] of list.entries()) {
       setReading({ at: i + 1, of: list.length });
+      let url: string | undefined;
       try {
         const p = await shrinkPhoto(f);
+        url = p.url;
         const r = await api.importPhoto({ mime: p.mime, data: await base64(p.blob) });
-        URL.revokeObjectURL(p.url);
         if (!r.items.length) missed.push(`A foto ${i + 1} não mostrou produtos com preço.`);
         // overlapping prints repeat products: one row per name and price
         setRows((prev) => {
@@ -67,6 +71,8 @@ export function PhotoImport({
       } catch (e) {
         missed.push(`A foto ${i + 1}: ${photoError(e)}.`);
         if (e instanceof ApiError && e.code === 'RATE_LIMITED') break;
+      } finally {
+        if (url) URL.revokeObjectURL(url);
       }
     }
     if (files.length > MAX_PHOTOS)
@@ -76,7 +82,20 @@ export function PhotoImport({
   };
 
   const create = useMutation({
-    mutationFn: () => api.importItems(rows.map(({ key: _k, ...it }) => it)),
+    mutationFn: async (batch: Row[], ctx) => {
+      const remaining = batch.filter((r) => !accepted.current.has(r.key));
+      for (let i = 0; i < remaining.length; i += BATCH_SIZE) {
+        const part = remaining.slice(i, i + BATCH_SIZE);
+        const r = await withRetryScope(ctx, () =>
+          api.importItems(part.map(({ key: _, ...item }) => item)),
+        );
+        for (const item of part) accepted.current.add(item.key);
+        saved.current.created += r.created;
+        saved.current.categories += r.categories;
+        setRows((current) => current.filter((row) => !accepted.current.has(row.key)));
+      }
+      return saved.current;
+    },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
       toast(
@@ -84,7 +103,10 @@ export function PhotoImport({
       );
       onDone(r.created);
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e) => {
+      if (saved.current.created) void qc.invalidateQueries({ queryKey: qk.catalog });
+      toast.error(messageOf(e));
+    },
   });
 
   const patch = (key: string, p: Partial<PhotoMenuItem>) =>
@@ -229,7 +251,7 @@ export function PhotoImport({
           size="lg"
           disabled={!valid}
           loading={create.isPending}
-          onClick={() => create.mutate()}
+          onClick={() => create.mutate(rows)}
         >
           criar {num(rows.length)} {rows.length === 1 ? 'produto' : 'produtos'}
         </Button>

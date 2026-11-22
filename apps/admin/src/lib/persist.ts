@@ -1,6 +1,8 @@
 import { dehydrate, hydrate, type DehydratedState, type QueryClient } from '@tanstack/react-query';
 import { platform } from '../platform/index.ts';
-import type { Account } from './api.ts';
+import { advanceSessionEpoch, type Account, type ApiError } from './api.ts';
+import { resetLive } from './live.ts';
+import { qk } from './query.ts';
 import { forgetRecent } from './recent.ts';
 
 // The last-known data survives a restart (IndexedDB): the app opens straight to the
@@ -17,8 +19,21 @@ function open() {
   db ??= new Promise((ok, fail) => {
     const r = indexedDB.open(DB, 1);
     r.onupgradeneeded = () => r.result.createObjectStore('kv');
-    r.onsuccess = () => ok(r.result);
-    r.onerror = () => fail(r.error);
+    r.onsuccess = () => {
+      const connection = r.result;
+      connection.onclose = () => {
+        db = null;
+      };
+      connection.onversionchange = () => {
+        connection.close();
+        db = null;
+      };
+      ok(connection);
+    };
+    r.onerror = () => {
+      db = null;
+      fail(r.error);
+    };
   });
   return db;
 }
@@ -29,6 +44,7 @@ async function run<T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBReq
     const r = f(tx.objectStore('kv'));
     tx.oncomplete = () => ok(r.result);
     tx.onerror = () => fail(tx.error);
+    tx.onabort = () => fail(tx.error);
   });
 }
 
@@ -59,11 +75,30 @@ export function clearPersisted() {
 }
 
 /** Sign out / switch store: nothing of this session may outlive it. */
-export async function resetClient(qc: QueryClient) {
-  qc.clear();
+export async function resetClient(qc: QueryClient, expired?: ApiError) {
+  advanceSessionEpoch();
+  resetLive();
   forgetMoves();
   forgetRecent();
-  await clearPersisted();
+  const session = qc.getQueryCache().find({ queryKey: qk.session, exact: true });
+  // Keep the observer used by Login and any public signup query.
+  await qc.cancelQueries(
+    {
+      predicate: (q) => !expired || q.queryKey[0] !== 'signup',
+    },
+    { revert: !expired },
+  );
+  if (expired) {
+    session?.setState({ data: undefined, error: expired, status: 'error', fetchStatus: 'idle' });
+    qc.getMutationCache().clear();
+    qc.removeQueries({
+      predicate: (q) => q !== session && q.queryKey[0] !== 'signup',
+    });
+    await Promise.all([clearPersisted(), platform.session.clear().catch(() => undefined)]);
+  } else {
+    qc.clear();
+    await clearPersisted();
+  }
 }
 
 // features/orders/transition.ts keeps unanswered order moves (whole orders, shopper data
@@ -121,9 +156,8 @@ export function persistCache(qc: QueryClient) {
     }
   });
   window.addEventListener('vendua:unauthenticated', () => {
-    forgetMoves();
-    void clearPersisted();
-    // the app's token is what Core just refused: a sign-in mints a new one
-    void platform.session.clear().catch(() => undefined);
+    if (timer) clearTimeout(timer);
+    timer = null;
+    forgetRecent();
   });
 }

@@ -45,7 +45,7 @@ export function ProductCard({
 }: ProductCardProps) {
   const card = useCardState(p);
   const price = priceDisplay(p);
-  const diets = dietaryBadges(p);
+  const diets = dietaryBadges(p).map((badge) => badge.label);
   const money = useMoney();
   const { store } = useStore();
   const { vocabulary } = useCopy();

@@ -21,7 +21,7 @@ import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
 const WEEK = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 /** a ceiling the merchant turns on starts here */
 const DEFAULT_CAP = 5;
-const PRE_METHODS: PayMethod[] = ['pix', 'card_online', 'card_on_delivery', 'cash', 'meal_voucher'];
+const PRE_METHODS: PayMethod[] = ['pix', 'card_on_delivery', 'cash', 'meal_voucher'];
 /** the share a sinal starts at when the owner turns it on */
 const DEFAULT_SINAL_BPS = 5000;
 const POLICY_MAX = 600;

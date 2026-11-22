@@ -35,7 +35,7 @@ export const CodeInput = forwardRef<
       else inputs.current[full.length]?.focus();
       return;
     }
-    const next = (value.slice(0, i) + d + value.slice(i + 1)).slice(0, 6);
+    const next = (value.slice(0, i).padEnd(i, ' ') + (d || ' ') + value.slice(i + 1)).trimEnd();
     onChange(next);
     if (d && i < 5) inputs.current[i + 1]?.focus();
     if (next.length === 6 && /^\d{6}$/.test(next)) onComplete(next);
@@ -54,10 +54,18 @@ export const CodeInput = forwardRef<
               autoComplete="off"
               autoFocus={i === 0}
               maxLength={i === 0 ? 6 : 1}
-              value={value[i] ?? ''}
+              value={value[i]?.trim() ?? ''}
+              onPaste={(e) => {
+                const digits = e.clipboardData.getData('text').replace(/\D/g, '');
+                if (digits.length === 6) {
+                  e.preventDefault();
+                  setAt(0, digits);
+                }
+              }}
               onChange={(e) => setAt(i, e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Backspace' && !value[i] && i > 0) inputs.current[i - 1]?.focus();
+                if (e.key === 'Backspace' && !value[i]?.trim() && i > 0)
+                  inputs.current[i - 1]?.focus();
               }}
               aria-invalid={invalid ? true : undefined}
               className={cn(
@@ -68,7 +76,7 @@ export const CodeInput = forwardRef<
           ))}
         </div>
       </fieldset>
-      {canPaste && value.length < 6 ? (
+      {canPaste && !/^\d{6}$/.test(value) ? (
         <Button
           variant="secondary"
           size="sm"

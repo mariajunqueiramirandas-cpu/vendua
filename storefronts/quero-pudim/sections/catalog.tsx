@@ -9,7 +9,7 @@ import {
   useMenu,
   type SectionProps,
 } from '@vendua/kernel';
-import { DIETARY_FILTERS } from '@vendua/kernel/rules';
+import { DIETARY_FILTERS, DIETARY_LABEL } from '@vendua/kernel/rules';
 import { ProductCard } from './_shared/ProductCard.tsx';
 import { Skeleton } from './_shared/Skeleton.tsx';
 
@@ -46,11 +46,11 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
   const availableDiets = useMemo(() => {
     const present = new Set<string>();
     for (const c of categories)
-      for (const p of c.products) for (const t of p.dietaryTags ?? []) present.add(t);
-    return DIETARY_FILTERS.filter((f) => present.has(f.id));
+      for (const p of c.products) for (const t of p.dietary ?? []) present.add(t);
+    return DIETARY_FILTERS.filter((tag) => present.has(tag));
   }, [categories]);
   const chosen = useMemo(
-    () => diet.filter((id) => availableDiets.some((f) => f.id === id)),
+    () => diet.filter((id) => availableDiets.includes(id)),
     [diet, availableDiets],
   );
   const { categories: found } = useMenu({ query, dietary: chosen });
@@ -130,17 +130,17 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
         ) : null}
         {availableDiets.length > 0 ? (
           <div className="catalog-diets" role="group" aria-label="Filtros">
-            {availableDiets.map((f) => {
-              const on = chosen.includes(f.id);
+            {availableDiets.map((tag) => {
+              const on = chosen.includes(tag);
               return (
                 <button
-                  key={f.id}
+                  key={tag}
                   type="button"
                   className="catalog-diet"
                   aria-pressed={on}
-                  onClick={() => toggleDiet(f.id)}
+                  onClick={() => toggleDiet(tag)}
                 >
-                  {f.label}
+                  {DIETARY_LABEL[tag]}
                 </button>
               );
             })}

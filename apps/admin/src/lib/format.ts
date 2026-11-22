@@ -15,8 +15,8 @@ export const money = (cents: number) => formatCents(cents, 'BRL');
 export const moneyShort = (cents: number) => brlShort.format(Math.round(cents / 100));
 export const moneyCompact = (cents: number) => {
   const v = cents / 100;
-  if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1).replace('.', ',')} mi`;
-  if (v >= 10_000) return `R$ ${Math.round(v / 1000)} mil`;
+  if (Math.abs(v) >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1).replace('.', ',')} mi`;
+  if (Math.abs(v) >= 10_000) return `R$ ${v < 0 ? '-' : ''}${Math.round(Math.abs(v) / 1000)} mil`;
   return moneyShort(cents);
 };
 export const num = (n: number) => n.toLocaleString('pt-BR');
@@ -39,12 +39,13 @@ const dayKey = (d: Date, tz?: string) =>
 
 /** "sáb, 27 set" */
 export function dateShort(iso: string | Date, tz?: string) {
-  const d = typeof iso === 'string' ? new Date(iso.length === 10 ? `${iso}T12:00:00` : iso) : iso;
+  const dateOnly = typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = typeof iso === 'string' ? new Date(dateOnly ? `${iso}T12:00:00Z` : iso) : iso;
   return new Intl.DateTimeFormat('pt-BR', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
-    timeZone: tz,
+    timeZone: dateOnly ? 'UTC' : tz,
   })
     .format(d)
     .replace(/\./g, '')

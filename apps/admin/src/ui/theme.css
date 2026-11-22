@@ -32,6 +32,7 @@
   --warning: #9a5200;
   --warning-soft: #fff0d6;
   --danger: #b3261e;
+  --danger-on-dark: #ff8a7f;
   --danger-soft: #fbe4e1;
   --info: #2456b0;
   --info-soft: #e3eeff;
@@ -176,6 +177,7 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-danger: var(--danger);
+  --color-danger-on-dark: var(--danger-on-dark);
   --color-danger-soft: var(--danger-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
@@ -562,6 +564,9 @@
     var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -1098,7 +1103,7 @@ html:is([data-vt-morph='order'], [data-vt-morph='customer'])::view-transition-ne
 
 /* reduced motion: transforms become a short fade, nothing loops (§5.1) */
 @media (prefers-reduced-motion: reduce) {
-  *,
+  *:not(.animate-drain),
   *::before,
   *::after {
     animation-duration: 120ms !important;

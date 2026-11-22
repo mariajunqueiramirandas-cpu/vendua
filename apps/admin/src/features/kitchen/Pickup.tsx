@@ -103,16 +103,20 @@ function PickupPanel() {
   }, [ready]);
   useEffect(() => {
     if (!stage) return;
+    let callTimer: number | undefined;
     if (prefs.current.call) {
       chimeCall();
       const who = prefs.current.names && stage.name ? `, ${stage.name}` : '';
-      window.setTimeout(
+      callTimer = window.setTimeout(
         () => speak(`Pedido ${stage.number}${who}. Pronto para retirada!`, { rate: 0.95 }),
         900,
       );
     }
     const t = window.setTimeout(() => setStage(line.current.shift() ?? null), SPOTLIGHT_MS);
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(t);
+      window.clearTimeout(callTimer);
+    };
   }, [stage]);
 
   if (isPending) return <KitchenSkeleton pickup />;

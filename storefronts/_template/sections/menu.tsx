@@ -12,7 +12,7 @@ import {
   useScrollSpy,
   type SectionProps,
 } from '@vendua/kernel';
-import { DIETARY_FILTERS } from '@vendua/kernel/rules';
+import { DIETARY_FILTERS, DIETARY_LABEL } from '@vendua/kernel/rules';
 import { DishGlyph } from './_shared/DishArt.tsx';
 import { DishRow, type DishLabels } from './_shared/Dish.tsx';
 
@@ -53,11 +53,11 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
   const availableDiets = useMemo(() => {
     const present = new Set<string>();
     for (const c of menu)
-      for (const p of c.products) for (const t of p.dietaryTags ?? []) present.add(t);
-    return DIETARY_FILTERS.filter((f) => present.has(f.id));
+      for (const p of c.products) for (const t of p.dietary ?? []) present.add(t);
+    return DIETARY_FILTERS.filter((tag) => present.has(tag));
   }, [menu]);
   const chosen = useMemo(
-    () => diet.filter((id) => availableDiets.some((f) => f.id === id)),
+    () => diet.filter((id) => availableDiets.includes(id)),
     [diet, availableDiets],
   );
   const found = useMenu({ query, dietary: chosen });
@@ -179,17 +179,17 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
 
         {availableDiets.length > 0 ? (
           <div className="menu-diets" role="group" aria-label={s.categoriesLabel}>
-            {availableDiets.map((f) => {
-              const on = chosen.includes(f.id);
+            {availableDiets.map((tag) => {
+              const on = chosen.includes(tag);
               return (
                 <button
-                  key={f.id}
+                  key={tag}
                   type="button"
                   className="menu-diet"
                   aria-pressed={on}
-                  onClick={() => toggleDiet(f.id)}
+                  onClick={() => toggleDiet(tag)}
                 >
-                  {f.label}
+                  {DIETARY_LABEL[tag]}
                 </button>
               );
             })}

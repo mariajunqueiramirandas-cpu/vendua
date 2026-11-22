@@ -133,7 +133,7 @@ export function Sheet({
         {/* keep in step with SCRIM in lib/theme.ts (the dimmed status bar) */}
         <Drawer.Overlay className="fixed inset-0 z-[60] bg-[rgb(10_16_13/0.42)]" />
         <Drawer.Content
-          aria-describedby={undefined}
+          {...(!description ? { 'aria-describedby': undefined } : {})}
           onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             'fixed z-[61] flex flex-col bg-surface text-ink outline-none depth-3',

@@ -122,7 +122,10 @@ function TabScreen() {
       if (r.tab.status === 'closed') toast('Comanda paga e fechada. A mesa está livre.');
     },
     onError: (e) => {
-      if (isCode(e, 'CAIXA_CLOSED')) void qc.invalidateQueries({ queryKey: qk.pdv.state });
+      if (isCode(e, 'CAIXA_CLOSED')) {
+        setSheet(null);
+        void qc.invalidateQueries({ queryKey: ['pdv'] });
+      }
       onErr(e);
     },
   });
@@ -602,6 +605,7 @@ function Rounds({
   onCancel: (r: TabRound) => void;
   onAdd: (() => void) | undefined;
 }) {
+  const manager = useCan('manager');
   return (
     <section aria-labelledby="rodadas-t">
       <h3 id="rodadas-t" className="t-title-2 mb-3 px-1">
@@ -627,6 +631,7 @@ function Rounds({
             // paid online: its money went through Mercado Pago, so undoing it is the order's refund
             const cancellable =
               tab.status === 'open' &&
+              (!tab.paidCents || manager) &&
               !gone &&
               r.state !== 'delivered' &&
               !r.paidOnline &&
@@ -934,7 +939,7 @@ function MoveSheet({
     setTableId(tab.tableId);
     setLabel(tab.label);
     setCustomer(tab.customerName ?? '');
-  }, [open, tab]);
+  }, [open, tab.id]);
   const busyTables = new Set((data?.tabs ?? []).map((t) => t.tableId).filter(Boolean));
   const free = (data?.tables ?? []).filter((t) => t.id === tab.tableId || !busyTables.has(t.id));
   const p: { tableId?: string; label?: string; customerName?: string } = {};

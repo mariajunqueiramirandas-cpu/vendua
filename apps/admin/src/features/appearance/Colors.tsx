@@ -1,3 +1,4 @@
+import { mediaUrl } from '../../lib/media.ts';
 import { Check, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import {
   CONTRAST_PAIRS,
@@ -128,8 +129,18 @@ export function Colors({
 }) {
   const [fromLogo, setFromLogo] = useState<string[]>([]);
   useEffect(() => {
+    setFromLogo([]);
     if (!logoUrl) return;
-    logoColors(logoUrl).then(setFromLogo, () => setFromLogo([]));
+    let active = true;
+    void logoColors(mediaUrl(logoUrl)).then(
+      (colors) => {
+        if (active) setFromLogo(colors);
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
   }, [logoUrl]);
   const c = value.color;
   const setColor = (color: Color) => onChange({ ...value, color });
@@ -206,14 +217,13 @@ export function Colors({
             );
           })}
         </div>
-        <ColorRow
-          label="Outra cor"
-          hint="Ou digite o código da sua marca."
-          value={c.accent}
-          onChange={(v) => setColor(withAccent(c, v))}
-          className="mt-4"
-        />
       </Group>
+      <ColorRow
+        label="Outra cor"
+        hint="Ou digite o código da sua marca."
+        value={c.accent}
+        onChange={(v) => setColor(withAccent(c, v))}
+      />
 
       <Group title="Fundo" hint="O tom da página e dos cartões em volta." radio>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))] gap-2">

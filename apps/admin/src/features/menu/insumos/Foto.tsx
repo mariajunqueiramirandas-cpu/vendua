@@ -15,7 +15,7 @@ import { moneyInput, parseMoney } from '../../../lib/parse.ts';
 import { useMutation } from '../../../lib/query.ts';
 import { Button, IconButton } from '../../../ui/Button.tsx';
 import { cn } from '../../../ui/cn.ts';
-import { messageOf } from '../../../ui/feedback.tsx';
+import { messageOf, ValidationError } from '../../../ui/feedback.tsx';
 import { Field, Select, TextInput } from '../../../ui/fields.tsx';
 import { Notice } from '../../../ui/Notice.tsx';
 import { Sheet } from '../../../ui/Sheet.tsx';
@@ -151,15 +151,18 @@ export function PhotoSheet({
     const missed: string[] = [];
     for (const [i, f] of list.entries()) {
       setReading({ at: i + 1, of: list.length });
+      let url: string | undefined;
       try {
         const p = await shrinkPhoto(f);
+        url = p.url;
         const r = await api.insumosPhoto({ mime: p.mime, data: await base64(p.blob) });
-        URL.revokeObjectURL(p.url);
         if (!r.rows.length) missed.push(`A foto ${i + 1} não mostrou insumos.`);
-        setRows((prev) => [...prev, ...r.rows.map((x) => rowOf(x, by))]);
+        setRows((prev) => [...prev, ...r.rows.map((x) => rowOf(x, by))].slice(0, 80));
       } catch (e) {
         missed.push(`A foto ${i + 1}: ${photoError(e)}.`);
         if (e instanceof ApiError && ['RATE_LIMITED', 'MEDIA_UNAVAILABLE'].includes(e.code)) break;
+      } finally {
+        if (url) URL.revokeObjectURL(url);
       }
     }
     if (files.length > MAX_PHOTOS)
@@ -183,7 +186,7 @@ export function PhotoSheet({
       const items = rows.map((r): InsumoImportItem => {
         const fail = (msg: string) => {
           setBad(r.key);
-          return new Error(msg);
+          return new ValidationError(msg);
         };
         const name = r.name.trim();
         if (r.target === NEW && !name) throw fail('Dê um nome ao insumo novo.');

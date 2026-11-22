@@ -318,7 +318,11 @@ export function mountPayments(d: AdminDeps) {
           throw new HttpError(422, 'BAD_REQUEST', 'keep at least one payment method', {
             field: 'methods',
           });
-        if (pm.includes('card_online') && !isOnline(await loadConnection(tx, t.id), provider))
+        if (
+          pm.includes('card_online') &&
+          !methods.includes('card_online') &&
+          !isOnline(await loadConnection(tx, t.id), provider)
+        )
           throw new HttpError(
             422,
             'MP_NOT_CONNECTED',

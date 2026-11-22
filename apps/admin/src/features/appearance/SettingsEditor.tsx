@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Plus, Trash } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { DEFAULT_PATHS } from '@vendua/kernel/rules';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api } from '../../lib/api.ts';
 import { plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
@@ -44,6 +44,7 @@ export function SettingsEditor({
       : u.startsWith('/') && !u.startsWith('//')
         ? origin + u
         : u;
+  const itemKeys = useRef(new WeakMap<Values, string>());
   const set = (k: string, v: unknown) => {
     const next = { ...value };
     if (v === '' || v === undefined) delete next[k];
@@ -197,52 +198,57 @@ export function SettingsEditor({
             return (
               <Field key={f.key} label={f.label}>
                 <div className="space-y-3">
-                  {items.map((it, i) => (
-                    <div key={i} className="rounded-md p-3 ring-1 ring-line">
-                      <div className="mb-2 flex items-center">
-                        <span className="t-caption flex-1 font-semibold text-muted">
-                          {i + 1}º item
-                        </span>
-                        <IconButton
-                          label="subir item"
-                          disabled={i === 0}
-                          onClick={() => set(f.key, swap(items, i, i - 1))}
-                        >
-                          <ArrowUp />
-                        </IconButton>
-                        <IconButton
-                          label="descer item"
-                          disabled={i === items.length - 1}
-                          onClick={() => set(f.key, swap(items, i, i + 1))}
-                        >
-                          <ArrowDown />
-                        </IconButton>
-                        <IconButton
-                          label="tirar item"
-                          onClick={() =>
+                  {items.map((it, i) => {
+                    const key = itemKeys.current.get(it) ?? crypto.randomUUID();
+                    itemKeys.current.set(it, key);
+                    return (
+                      <div key={key} className="rounded-md p-3 ring-1 ring-line">
+                        <div className="mb-2 flex items-center">
+                          <span className="t-caption flex-1 font-semibold text-muted">
+                            {i + 1}º item
+                          </span>
+                          <IconButton
+                            label="subir item"
+                            disabled={i === 0}
+                            onClick={() => set(f.key, swap(items, i, i - 1))}
+                          >
+                            <ArrowUp />
+                          </IconButton>
+                          <IconButton
+                            label="descer item"
+                            disabled={i === items.length - 1}
+                            onClick={() => set(f.key, swap(items, i, i + 1))}
+                          >
+                            <ArrowDown />
+                          </IconButton>
+                          <IconButton
+                            label="tirar item"
+                            onClick={() =>
+                              set(
+                                f.key,
+                                items.filter((_, k) => k !== i),
+                              )
+                            }
+                          >
+                            <Trash />
+                          </IconButton>
+                        </div>
+                        <SettingsEditor
+                          origin={origin}
+                          fields={f.of}
+                          value={it}
+                          idPrefix={`${id}-${key}`}
+                          onChange={(nv) => {
+                            itemKeys.current.set(nv, key);
                             set(
                               f.key,
-                              items.filter((_, k) => k !== i),
-                            )
-                          }
-                        >
-                          <Trash />
-                        </IconButton>
+                              items.map((x, k) => (k === i ? nv : x)),
+                            );
+                          }}
+                        />
                       </div>
-                      <SettingsEditor
-                        origin={origin}
-                        fields={f.of}
-                        value={it}
-                        idPrefix={`${id}-${i}`}
-                        onChange={(nv) =>
-                          set(
-                            f.key,
-                            items.map((x, k) => (k === i ? nv : x)),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                   {items.length < f.max ? (
                     <Button
                       variant="ghost"

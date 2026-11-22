@@ -97,6 +97,7 @@ export interface Platform {
     apply(): void;
     ready(): boolean;
     onReady(fn: () => void): () => void;
+    needsStoreUpdate?(): boolean;
   };
   install: {
     mode(): 'prompt' | 'ios' | null;

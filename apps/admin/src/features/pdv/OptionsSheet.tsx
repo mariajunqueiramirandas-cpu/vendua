@@ -69,6 +69,7 @@ function Options({
   const noteId = useId();
 
   // a group with one choice starts on its only option when it's required
+  const loaded = !!q.data;
   useEffect(() => {
     if (!q.data) return;
     const start: Picks = {};
@@ -77,7 +78,7 @@ function Options({
       if (need(g) === 1 && g.maxSelect === 1 && live.length === 1) start[live[0]!.id!] = 1;
     }
     setMods(start);
-  }, [q.data]);
+  }, [product.id, loaded]);
 
   if (q.error) return <ErrorState error={q.error} retry={() => void q.refetch()} />;
   if (!q.data)

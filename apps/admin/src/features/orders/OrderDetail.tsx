@@ -14,7 +14,7 @@ import {
   WhatsappLogo,
   XCircle,
 } from '@phosphor-icons/react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Order, OrderPayment, OrderPrintJob, OrderState } from '../../lib/api.ts';
 import { clock, dateShort, money, phone, when } from '../../lib/format.ts';
@@ -37,7 +37,8 @@ import {
   useSoldOutToday,
   useTransition,
 } from './actions.ts';
-import { PaymentSection, primaryPayment, refundable } from './PaymentSection.tsx';
+import { PaymentSection } from './PaymentSection.tsx';
+import { paymentTotals } from './payment-totals.ts';
 import { RefundSheet } from './RefundSheet.tsx';
 import { afterHeld, holdMove, useHeldStates, withHeld } from './transition.ts';
 
@@ -64,14 +65,18 @@ export function OrderDetail({
   const [soldOutOpen, setSoldOutOpen] = useState(false);
   const manager = can(s.user.role, 'manager');
   const online = !!order.payment.online;
-  const main = primaryPayment(payments);
-  const canRefund = online && manager && refundable(main) > 0;
+  const canRefund = online && manager && paymentTotals(payments).refundable > 0;
   const next = nextStep(order.state, order.delivery.mode);
   const nm = next ? STATE_META[next.to] : null;
   const advance = () =>
     next && holdMove(order, next.to, order.state === 'placed' ? prepDefault : undefined);
   const products = soldOutItems(order);
-  const cancellable = !['delivered', 'cancelled', 'refunded'].includes(order.state);
+  const hasPayment =
+    ['paid', 'partially_refunded', 'refunded', 'charged_back', 'in_mediation'].includes(
+      order.payment.status,
+    ) || !!order.payment.sinal?.depositPaidAt;
+  const cancellable =
+    !['delivered', 'cancelled', 'refunded'].includes(order.state) && (manager || !hasPayment);
   const d = order.delivery;
   const ModeIcon = modeOf(d).Icon;
   const pdvOpen = featureOpen(s, 'pdv');
@@ -415,9 +420,18 @@ export function OrderDetail({
         </div>
       ) : null}
 
-      <CancelSheet order={order} open={cancelOpen} onOpenChange={setCancelOpen} />
+      <CancelSheet
+        order={order}
+        open={cancelOpen && (cancellable || (manager && order.state === 'delivered' && !online))}
+        onOpenChange={setCancelOpen}
+      />
       {online ? (
-        <RefundSheet order={order} payment={main} open={refundOpen} onOpenChange={setRefundOpen} />
+        <RefundSheet
+          order={order}
+          payments={payments}
+          open={refundOpen}
+          onOpenChange={setRefundOpen}
+        />
       ) : null}
     </div>
   );
@@ -435,17 +449,38 @@ export function CancelSheet({
   const move = useTransition();
   const [reason, setReason] = useState<string>('');
   const [other, setOther] = useState('');
+  const sending = useRef(false);
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setReason('');
+      setOther('');
+    }
+  }, [open, order.id]);
   const refund = order.state === 'delivered';
   const text = reason === 'outro' ? other.trim() : reason;
-  const paid = order.payment.status === 'paid' || order.payment.status === 'partially_refunded';
+  const sinal = order.payment.sinal;
+  const retainSinal = !refund && !!sinal?.depositPaidAt;
+  const paid =
+    order.payment.status === 'paid' || order.payment.status === 'partially_refunded' || retainSinal;
   const paidOnline = paid && !!order.payment.online;
   const go = async () => {
     // a step still waiting out its "desfazer" reaches Core first
-    await afterHeld(order.id);
-    move.mutate(
-      { order, to: refund ? 'refunded' : 'cancelled', reason: text, idem: `cancel-${order.id}` },
-      { onSuccess: () => onOpenChange(false) },
-    );
+    if (sending.current || !text) return;
+    sending.current = true;
+    setWaiting(true);
+    try {
+      await afterHeld(order.id);
+      await move.mutateAsync(
+        { order, to: refund ? 'refunded' : 'cancelled', reason: text, idem: `cancel-${order.id}` },
+        { onSuccess: () => onOpenChange(false) },
+      );
+    } catch {
+      // The transition reports the error.
+    } finally {
+      sending.current = false;
+      setWaiting(false);
+    }
   };
   return (
     <Sheet
@@ -455,20 +490,22 @@ export function CancelSheet({
       description={
         refund
           ? 'Registra que o dinheiro foi devolvido. Faça a devolução pelo seu banco antes.'
-          : paidOnline
-            ? 'Esse pedido foi pago pelo Mercado Pago. Ao cancelar, o que o cliente pagou volta para ele sozinho, pelo mesmo meio.'
-            : paid
-              ? 'Esse pedido já foi pago. Depois de cancelar, devolva o valor ao cliente pelo seu banco.'
-              : 'O cliente vê o motivo na página do pedido. Não dá para desfazer.'
+          : retainSinal
+            ? 'O sinal fica com a loja. Se o restante foi pago pelo Mercado Pago, ele volta pelo mesmo meio.'
+            : paidOnline
+              ? 'Esse pedido foi pago pelo Mercado Pago. Ao cancelar, o que o cliente pagou volta para ele sozinho, pelo mesmo meio.'
+              : paid
+                ? 'Esse pedido já foi pago. Depois de cancelar, devolva o valor ao cliente pelo seu banco.'
+                : 'O cliente vê o motivo na página do pedido. Não dá para desfazer.'
       }
       footer={
         paid || refund ? (
-          <HoldButton disabled={!text} onConfirm={() => void go()}>
-            {move.isPending
+          <HoldButton disabled={!text || waiting} onConfirm={() => void go()}>
+            {waiting
               ? 'cancelando…'
               : refund
                 ? 'segure para estornar'
-                : paidOnline
+                : paidOnline && !retainSinal
                   ? 'segure para cancelar e devolver'
                   : 'segure para cancelar'}
           </HoldButton>
@@ -478,7 +515,7 @@ export function CancelSheet({
             size="lg"
             block
             disabled={!text}
-            loading={move.isPending}
+            loading={waiting}
             onClick={() => void go()}
           >
             cancelar pedido

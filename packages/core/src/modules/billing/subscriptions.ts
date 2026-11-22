@@ -475,7 +475,7 @@ export async function ensureRenewal(
   return inv;
 }
 
-/** Re-issue the Pix of one open invoice (expired, or never issued). */
+/** Issue a Pix for one unpaid invoice without changing the subscription payment method. */
 export async function reissuePix(
   ctx: BillingCtx,
   tx: Sql,
@@ -492,12 +492,12 @@ export async function reissuePix(
   )[0];
   if (!inv) throw new HttpError(404, 'INVOICE_NOT_FOUND', 'invoice not found');
   if (
-    inv.status !== 'open' ||
-    inv.method !== 'pix' ||
+    (inv.status !== 'open' && inv.status !== 'failed') ||
+    (inv.method !== 'pix' && inv.method !== 'card') ||
     (inv.kind === 'upgrade' && (!sub || !upgradeLive(sub, inv, now)))
   )
-    throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
-  if (pixIsLive(inv, now) && !o.force) return inv;
+    throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an unpaid invoice gets a new Pix');
+  if (inv.status === 'open' && inv.method === 'pix' && pixIsLive(inv, now) && !o.force) return inv;
   const payer = await payerFor(tx, tenantId, sub?.payer_email);
   if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
@@ -519,8 +519,12 @@ export async function reissuePix(
       drop: dropPix(ctx),
     }),
   );
+  const [ready] = await tx<InvoiceRow[]>`
+    update invoices set method = 'pix', status = 'open' where tenant_id = ${tenantId} and id = ${out.id}
+    returning *
+  `;
   await emitAdminTx(tx, tenantId, 'billing');
-  return out;
+  return ready!;
 }
 
 /**

@@ -28,12 +28,14 @@ export function useWakeLock(key = KEY, initial = false) {
     if (!on || !platform.keepAwake.supported()) return;
     let release: (() => void) | null = null;
     let live = true;
+    let taking = false;
     const take = async () => {
-      if (document.visibilityState !== 'visible' || release) return;
+      if (document.visibilityState !== 'visible' || release || taking) return;
+      taking = true;
       try {
         const r = await platform.keepAwake.hold(() => {
           release = null;
-          setHeld(false);
+          if (live) setHeld(false);
         });
         if (!r) return;
         if (!live) return r();
@@ -41,6 +43,8 @@ export function useWakeLock(key = KEY, initial = false) {
         setHeld(true);
       } catch {
         /* battery saver or no gesture yet: retried on the next return */
+      } finally {
+        taking = false;
       }
     };
     void take();

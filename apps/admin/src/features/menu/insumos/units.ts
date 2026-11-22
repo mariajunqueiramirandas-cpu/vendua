@@ -12,6 +12,8 @@ export const INPUT_UNITS: Record<InsumoUnit, InputUnit[]> = {
   ml: ['L', 'ml'],
   un: ['un'],
 };
+const MAX_LINE_MILLI = 1_000_000_000;
+const MAX_STOCK_MILLI = 1_000_000_000_000;
 const FACTOR: Record<InputUnit, number> = { g: 1000, kg: 1e6, ml: 1000, L: 1e6, un: 1000 };
 
 export const UNIT_LABEL: Record<InsumoUnit, string> = {
@@ -44,13 +46,19 @@ export function inputUnitOf(milli: number | null, unit: InsumoUnit): InputUnit {
 }
 
 /** "1,5" in kg → 1_500_000; null = not a number we take */
-export function parseQty(s: string, u: InputUnit): number | null {
+export function parseQty(
+  s: string,
+  u: InputUnit,
+  mode: 'line' | 'stock' | 'threshold' = 'line',
+): number | null {
   // "1,5" or "1.5"; with a comma, dots are thousands ("1.250,5")
   const raw = s.trim();
   const t = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw;
   if (!/^\d{1,9}(\.\d{0,3})?$/.test(t)) return null;
   const v = Math.round(Number(t) * FACTOR[u]);
-  return v > 0 ? v : null;
+  return v > 0 || (v === 0 && mode === 'stock')
+    ? Math.min(v, mode === 'line' ? MAX_LINE_MILLI : MAX_STOCK_MILLI)
+    : null;
 }
 
 /** milli → what goes in an input typed in `u` */
@@ -94,8 +102,8 @@ export function packsLabel(
 
 /** pt-BR plural for a pack's name: caixa → caixas, fardo → fardos, saco → sacos */
 function plural(w: string) {
-  if (/[aeiou]$/i.test(w)) return `${w}s`;
   if (/ão$/i.test(w)) return w.replace(/ão$/i, 'ões');
+  if (/[aeiou]$/i.test(w)) return `${w}s`;
   if (/[rz]$/i.test(w)) return `${w}es`;
   if (/l$/i.test(w)) return w.replace(/l$/i, 'is');
   return `${w}s`;

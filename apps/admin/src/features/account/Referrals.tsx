@@ -1,3 +1,4 @@
+import { copyText } from '../../ui/CopyValue.tsx';
 import { CheckCircle, Copy, Gift, Hourglass, WhatsappLogo } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api.ts';
@@ -49,7 +50,9 @@ export function Referrals() {
             variant="secondary"
             icon={<Copy />}
             onClick={() =>
-              void navigator.clipboard.writeText(url).then(() => toast('Link copiado'))
+              void copyText(url).then((ok) =>
+                ok ? toast('Link copiado') : toast.error('Não deu para copiar o link.'),
+              )
             }
           >
             copiar

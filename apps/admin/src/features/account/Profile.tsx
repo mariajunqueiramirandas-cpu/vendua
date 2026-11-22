@@ -105,6 +105,7 @@ function ProfileView({ view }: { view: View }) {
   const end = useMutation({
     mutationFn: api.endSession,
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.sessions }),
+    onError: (e) => toast.error(messageOf(e)),
   });
   return (
     <PageBody>
@@ -259,12 +260,15 @@ function ProfileView({ view }: { view: View }) {
                             toast.error(
                               'O navegador bloqueou os avisos. Libere nas configurações do site.',
                             );
-                          else toast('Avisos ligados neste aparelho ✓');
+                          else if (r === 'on') {
+                            toast('Avisos ligados neste aparelho ✓');
+                            void setPref({ push: true });
+                          }
                         } else {
                           await platform.push.disable();
                           setPush('off');
+                          void setPref({ push: false });
                         }
-                        void setPref({ push: v });
                       } catch (e) {
                         toast.error(messageOf(e));
                       }
@@ -359,6 +363,9 @@ function ProfileView({ view }: { view: View }) {
                 nele.
               </DuaNote>
               <Card className="divide-y divide-line">
+                {sessions.error ? (
+                  <ErrorState error={sessions.error} retry={() => void sessions.refetch()} />
+                ) : null}
                 {sessions.isPending ? <Skeleton className="h-16 rounded-none" delay={0} /> : null}
                 {(sessions.data?.sessions ?? []).map((x) => (
                   <div key={x.id} className="flex min-h-16 items-center gap-3 px-4 py-2">
@@ -370,7 +377,13 @@ function ProfileView({ view }: { view: View }) {
                       </p>
                     </div>
                     {!x.current ? (
-                      <Button size="sm" variant="ghost" onClick={() => end.mutate(x.id)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={end.isPending}
+                        loading={end.isPending && end.variables === x.id}
+                        onClick={() => end.mutate(x.id)}
+                      >
                         sair
                       </Button>
                     ) : null}

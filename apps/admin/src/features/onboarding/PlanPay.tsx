@@ -1,3 +1,4 @@
+import { platform } from '../../platform/index.ts';
 import { ArrowSquareOut, Clock, PixLogo } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -66,7 +67,17 @@ export function PlanPix({ a, invoiceId }: { a: Account; invoiceId: string | null
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
   const gate = needsDocument(a);
-  useIssuePix(inv, inv?.status !== 'paid' && !issue.isPending && !gate, issue.mutate);
+  useIssuePix(
+    inv,
+    platform.canPay && inv?.status !== 'paid' && !issue.isPending && !gate,
+    issue.mutate,
+  );
+  if (!platform.canPay)
+    return (
+      <p className="t-body text-muted">
+        A loja abre assim que o pagamento do plano for confirmado.
+      </p>
+    );
   if (gate && inv?.status !== 'paid') return <DocumentGate />;
   if (!inv)
     return (
@@ -135,21 +146,21 @@ export function PlanBanner({ owner, hold }: { owner: boolean; hold: boolean }) {
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 md:px-8">
         <Clock weight="bold" className="size-5 shrink-0 text-warning" aria-hidden />
         <p className="t-body min-w-0 flex-1 text-ink">{text}</p>
-        {st.kind === 'pix' ? (
+        {platform.canPay && st.kind === 'pix' ? (
           <Button size="sm" icon={<PixLogo />} onClick={() => setOpen(true)}>
             pagar agora
           </Button>
-        ) : st.kind === 'card' && st.url ? (
+        ) : platform.canPay && st.kind === 'card' && st.url ? (
           <Button
             size="sm"
             icon={<ArrowSquareOut />}
-            onClick={() => window.location.assign(st.url!)}
+            onClick={() => platform.openExternal(st.url!)}
           >
             autorizar
           </Button>
         ) : null}
       </div>
-      {st.kind === 'pix' && account.data ? (
+      {platform.canPay && st.kind === 'pix' && account.data ? (
         <Sheet
           open={open}
           onOpenChange={setOpen}

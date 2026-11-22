@@ -15,7 +15,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 export function useSessionQuery() {
   return useQuery({
     queryKey: qk.session,
-    queryFn: api.session,
+    queryFn: ({ signal }) => api.session(signal),
     staleTime: 30_000,
     // the restored copy (persist.ts) may outlive its cookie — a redeploy with fresh
     // volumes — so every boot checks it against Core instead of trusting its age
@@ -24,8 +24,12 @@ export function useSessionQuery() {
     retry: (n, e) => n < 2 && !(e instanceof ApiError && e.status >= 400 && e.status < 500),
     // signed out there is nothing to refresh, and a refetch would reset the sign-in
     // halfway (the merchant switched to WhatsApp for the code and came back)
-    refetchOnWindowFocus: (q) => q.state.data !== undefined,
-    refetchOnReconnect: (q) => q.state.data !== undefined,
+    refetchOnWindowFocus: (q) =>
+      q.state.data !== undefined &&
+      !(q.state.error instanceof ApiError && q.state.error.status === 401),
+    refetchOnReconnect: (q) =>
+      q.state.data !== undefined &&
+      !(q.state.error instanceof ApiError && q.state.error.status === 401),
   });
 }
 

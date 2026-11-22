@@ -221,7 +221,7 @@ function useLinkLabel(
 export function DishRow({ product: p, category, labels }: DishProps) {
   const d = useDish(p);
   const shown = priceDisplay(p);
-  const diets = dietaryBadges(p);
+  const diets = dietaryBadges(p).map((badge) => badge.label);
   const label = useLinkLabel(p, shown, d, diets, labels);
   return (
     // the Kernel scrolls a #produto-<slug> link here and marks it data-target for a moment
@@ -254,7 +254,7 @@ export function DishRow({ product: p, category, labels }: DishProps) {
 export function DishCard({ product: p, category, labels }: DishProps) {
   const d = useDish(p);
   const shown = priceDisplay(p);
-  const diets = dietaryBadges(p);
+  const diets = dietaryBadges(p).map((badge) => badge.label);
   const label = useLinkLabel(p, shown, d, diets, labels);
   return (
     <li className="dish-card" data-soldout={d.card.soldOut || undefined}>

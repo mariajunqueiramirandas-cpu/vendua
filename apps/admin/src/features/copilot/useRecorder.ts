@@ -37,12 +37,14 @@ export function useRecorder({
   const mounted = useRef(true);
   // bumped by a cancel while the mic permission is still pending, so that take never starts
   const gen = useRef(0);
+  const asking = useRef(false);
 
   const stop = useCallback((keep: boolean) => {
     const l = live.current;
     if (!l) {
       gen.current++;
-      setState('idle');
+      asking.current = false;
+      if (mounted.current) setState('idle');
       return;
     }
     l.keep = keep;
@@ -52,7 +54,8 @@ export function useRecorder({
   }, []);
 
   const start = useCallback(async () => {
-    if (live.current) return;
+    if (live.current || asking.current) return;
+    asking.current = true;
     setError(null);
     setState('asking');
     const mine = ++gen.current;
@@ -61,6 +64,7 @@ export function useRecorder({
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
       if (!mounted.current || mine !== gen.current) return;
+      asking.current = false;
       const name = e instanceof DOMException ? e.name : '';
       setError(
         name === 'NotAllowedError' || name === 'SecurityError'
@@ -76,6 +80,7 @@ export function useRecorder({
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
+    asking.current = false;
     let rec: MediaRecorder;
     try {
       const mimeType = pickMime();
@@ -97,6 +102,7 @@ export function useRecorder({
       const l = live.current;
       live.current = null;
       stream.getTracks().forEach((t) => t.stop());
+      if (!mounted.current) return;
       setState('idle');
       setElapsed(0);
       if (!l?.keep) return;

@@ -76,6 +76,8 @@ export function ZoneMap({
       ro?.disconnect();
       map.current?.remove();
       map.current = null;
+      layer.current = null;
+      edit.current = null;
     };
     // mount once; draw() below follows the data
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,6 +214,7 @@ export function ZoneMap({
       role="application"
       // a drag on the map moves the map (or a corner), never the sheet around it
       data-vaul-no-drag=""
+      data-no-pull=""
       aria-label={
         label ??
         (editing

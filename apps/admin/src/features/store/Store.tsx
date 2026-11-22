@@ -833,7 +833,7 @@ function Delivery({
                     <CommitInput
                       id="pk-how"
                       multiline
-                      maxLength={400}
+                      maxLength={300}
                       value={o.pickupInstructions ?? ''}
                       placeholder="Ex.: Toque o interfone da casa 2. Retiradas até as 18h."
                       onCommit={(v) => patch({ operations: { pickupInstructions: v || null } })}

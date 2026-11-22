@@ -344,14 +344,16 @@ export default function Orders() {
             <Button variant="secondary" size="lg" block onClick={() => nav(`/pedidos/${more.id}`)}>
               ver detalhes
             </Button>
-            <a
-              href={orderWhatsappUrl(more, s.store.name)}
-              target="_blank"
-              rel="noreferrer"
-              className="press t-label flex min-h-14 items-center justify-center rounded-lg bg-whatsapp text-on-whatsapp"
-            >
-              chamar no WhatsApp
-            </a>
+            {more.customer.phone ? (
+              <a
+                href={orderWhatsappUrl(more, s.store.name)}
+                target="_blank"
+                rel="noreferrer"
+                className="press t-label flex min-h-14 items-center justify-center rounded-lg bg-whatsapp text-on-whatsapp"
+              >
+                chamar no WhatsApp
+              </a>
+            ) : null}
             {printing.available ? (
               <Button
                 variant="secondary"

@@ -165,10 +165,12 @@ export function BulkPriceSheet({
   const sign = dir === 'up' ? 1 : -1;
   // what Core will refuse, said before the tap: a price that would reach zero
   const zeroed =
-    mode === 'amount' && dir === 'down' && amount
-      ? products.filter((p) => p.priceCents - amount <= 0)
-      : [];
-  const ok = mode === 'percent' ? pctOk : !!amount && amount > 0 && !zeroed.length;
+    mode === 'percent' && pctOk
+      ? products.filter((p) => Math.round((p.priceCents * (100 + sign * n)) / 1000) * 10 <= 0)
+      : mode === 'amount' && dir === 'down' && amount
+        ? products.filter((p) => p.priceCents - amount <= 0)
+        : [];
+  const ok = !zeroed.length && (mode === 'percent' ? pctOk : !!amount && amount > 0);
   const sample = products.find((p) => p.priceCents > 0) ?? null;
   const example =
     sample && ok

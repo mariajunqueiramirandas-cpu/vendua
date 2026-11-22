@@ -250,6 +250,7 @@ export function CropSheet({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [enhance, setEnhance] = useState(false);
   const [busy, setBusy] = useState(false);
+  const generation = useRef(0);
   const frame = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const [fw, setFw] = useState(320);
@@ -258,9 +259,13 @@ export function CropSheet({
   close.current = onClose;
   useEffect(() => {
     if (!file) return;
+    generation.current++;
     let cancelled = false;
     let decoded: ImageBitmap | null = null;
     setBmp(null);
+    setBusy(false);
+    setAspect(initial);
+    setEnhance(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     const u = URL.createObjectURL(file);
@@ -279,11 +284,12 @@ export function CropSheet({
     );
     return () => {
       cancelled = true;
+      generation.current++;
       URL.revokeObjectURL(u);
       // a phone photo decodes to ~50 MB; iOS kills the tab after a few left open
       decoded?.close();
     };
-  }, [file]);
+  }, [file, initial]);
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
@@ -308,23 +314,30 @@ export function CropSheet({
   const crop: Crop = { x: -left / dw, y: -top / dh, w: fw / dw, h: fh / dh };
 
   const save = async () => {
-    if (!bmp) return;
+    if (!bmp || !file || busy) return;
+    const saving = generation.current;
     setBusy(true);
     try {
       const prepared = await prepareImage(bmp, crop, { enhance });
+      if (saving !== generation.current) return;
       const up = await api.uploadMedia(prepared.blob, prepared);
+      if (saving !== generation.current) return;
       await onDone({ url: up.url, width: up.width, height: up.height, alt: null });
     } catch (e) {
-      toast.error(messageOf(e));
+      if (saving === generation.current) toast.error(messageOf(e));
     } finally {
-      setBusy(false);
+      if (saving === generation.current) setBusy(false);
     }
   };
 
   return (
     <Sheet
       open={!!file}
-      onOpenChange={(v) => !v && onClose()}
+      onOpenChange={(v) => {
+        if (v) return;
+        generation.current++;
+        onClose();
+      }}
       title="Ajustar foto"
       description="Arraste para posicionar. O quadro é como a foto aparece na loja."
       footer={
@@ -336,6 +349,7 @@ export function CropSheet({
       <div className="space-y-4 pt-2">
         <div
           ref={frame}
+          data-vaul-no-drag=""
           className="relative w-full touch-none select-none overflow-hidden rounded-lg bg-sunken ring-2 ring-spark"
           style={{ aspectRatio: ASPECTS[aspect] }}
           onPointerDown={(e) => {
@@ -347,6 +361,7 @@ export function CropSheet({
             if (d) setPan({ x: d.px + e.clientX - d.x, y: d.py + e.clientY - d.y });
           }}
           onPointerUp={() => (drag.current = null)}
+          onPointerCancel={() => (drag.current = null)}
           onWheel={(e) => setZoom((z) => Math.max(1, Math.min(4, z - e.deltaY / 500)))}
         >
           {url && bmp ? (

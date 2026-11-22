@@ -1,5 +1,6 @@
 import { Lightbulb, X } from '@phosphor-icons/react';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { platform } from '../platform/index.ts';
 import { ApiError } from '../lib/api.ts';
 import { cn } from './cn.ts';
 import { Button } from './Button.tsx';
@@ -136,15 +137,28 @@ export function Loading({
   );
 }
 
+/** A message for an invalid value detected before sending it to Core. */
+export class ValidationError extends Error {}
+
 /** Errors say what happened, in words, and how to fix it. */
 export function messageOf(err: unknown): string {
+  if (err instanceof ValidationError) return err.message;
   if (err instanceof ApiError) {
     if (err.code === 'TIMEOUT') return 'A conexão está lenta. Confira a internet e tente de novo.';
     if (err.status === 0) return 'Sem conexão. Confira a internet e tente de novo.';
     if (err.code === 'PLAN_REQUIRED')
       return err.details?.reason === 'unpaid'
-        ? 'Isso libera assim que o pagamento do plano entrar. Veja em Conta e plano.'
-        : 'Isso faz parte de outro plano. Veja os planos em Conta e plano.';
+        ? platform.canPay
+          ? 'Isso libera assim que o pagamento do plano entrar. Veja em Conta e plano.'
+          : 'Isso libera assim que o pagamento do plano entrar. Acompanhe no painel pelo navegador.'
+        : platform.canPay
+          ? 'Isso faz parte de outro plano. Veja os planos em Conta e plano.'
+          : 'Isso faz parte de outro plano. Veja os planos no painel pelo navegador.';
+    if (!platform.canPay && err.code === 'BILLING_HOLD')
+      return 'A loja abre para pedidos assim que o pagamento do plano for confirmado. Acompanhe no painel pelo navegador.';
+    if (!platform.canPay && err.code === 'PAYER_DOCUMENT_REQUIRED')
+      return 'Informe o CPF ou o CNPJ da cobrança em Conta e plano pelo navegador.';
+    if (Object.hasOwn(FRIENDLY, err.code)) return FRIENDLY[err.code]!;
     if (err.status === 403)
       return 'Seu acesso não permite fazer isso. Peça para quem é dono da loja.';
     if (err.status === 429) return 'Muitas tentativas seguidas. Espere um minuto e tente de novo.';
@@ -188,6 +202,15 @@ export function encomendaConflictText(
 }
 
 const FRIENDLY: Record<string, string> = {
+  PAYMENT_LOCKED:
+    'O pagamento já está em processamento. Atualize o pedido antes de tentar de novo.',
+  CAIXA_CLOSED: 'O caixa fechou. Abra um caixa para receber.',
+  ORDER_ON_TAB: 'Esse pedido é de uma comanda. Receba pela comanda.',
+  PAYMENT_PDV: 'O pagamento desse pedido é registrado no caixa.',
+  TENANT_SUSPENDED: 'O acesso da loja está suspenso. Fale com a equipe Venduá.',
+  NOT_AVAILABLE: 'Isso não está disponível agora. Atualize a página e tente de novo.',
+  INVOICE_NOT_OPEN: 'Essa fatura já mudou. Atualize a lista de faturas.',
+  ORDER_BUSY: 'Já tem uma alteração em andamento nesse pedido. Espere um instante e tente de novo.',
   PAYER_DOCUMENT_REQUIRED:
     'Antes, informe o CPF ou o CNPJ da cobrança em Conta e plano, em Pagamento do plano.',
   INVALID_CODE: 'Código errado ou vencido. Confira ou peça outro.',

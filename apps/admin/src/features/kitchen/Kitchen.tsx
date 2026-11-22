@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, type KitchenItem, type KitchenTicket } from '../../lib/api.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 import { isPlanRequired, useCan, useFeature } from '../../lib/session.ts';
 import { chimeLate, chimeTicket } from '../../lib/sound.ts';
 import { useWakeLock } from '../../lib/wakeLock.ts';
@@ -76,6 +77,7 @@ function KitchenBoard() {
   const { data, error, refetch, isPending } = useKitchen();
   const nav = useNavigate();
   const canManage = useCan('manager');
+  const timezone = useStoreQuery().data?.hours.timezone;
   const [pref, setPref] = usePref<string>('vendua-kds-station', 'all');
   const [sound, setSound] = usePref('vendua-kds-sound', true);
   const [voice, setVoice] = usePref('vendua-kds-voice', false);
@@ -85,7 +87,7 @@ function KitchenBoard() {
   const now = useTicker(10_000);
   const [tab, setTab] = useState<Tab>('fila');
   const [sheet, setSheet] = useState<SheetId>(null);
-  const [menu, setMenu] = useState<KitchenTicket | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
@@ -105,6 +107,7 @@ function KitchenBoard() {
   );
 
   const tickets = data?.tickets ?? [];
+  const menu = tickets.find((t) => t.id === menuId) ?? null;
   const incoming = useMemo(
     () =>
       tickets
@@ -172,19 +175,23 @@ function KitchenBoard() {
       haptic.newOrder();
       if (live.current.voice) news.forEach((t) => speak(spoken(t, live.current.station)));
     }
+    let active = true;
     for (const id of prev) {
-      if (ids.has(id)) continue;
+      if (ids.has(id) || bumps.waiting(id)) continue;
       // gone: ready (here or elsewhere) or cancelled — only Core knows which
       void api
         .order(id)
         .then(({ order }) => {
-          if (order.state !== 'cancelled') return;
+          if (!active || bumps.waiting(id) || order.state !== 'cancelled') return;
           toast.error(`Pedido #${order.number} foi cancelado. Pode parar o preparo.`);
           if (live.current.sound) chimeLate();
           if (live.current.voice) speak(`Atenção: pedido ${order.number} cancelado.`);
         })
         .catch(() => undefined);
     }
+    return () => {
+      active = false;
+    };
   }, [data]);
 
   useEffect(() => {
@@ -300,8 +307,10 @@ function KitchenBoard() {
       // a focused button already answers Enter and Space itself
       const onButton = !!target.closest('button, a');
       let handled = true;
-      if (/^[1-9]$/.test(e.key)) pick(Number(e.key) - 1);
-      else if (e.key === 'ArrowRight') pick(i + 1);
+      if (/^[1-9]$/.test(e.key)) {
+        if (Number(e.key) > q.length) return;
+        pick(Number(e.key) - 1);
+      } else if (e.key === 'ArrowRight') pick(i + 1);
       else if (e.key === 'ArrowLeft') pick(i < 0 ? q.length - 1 : i - 1);
       else if (e.key === 'ArrowDown' && cur)
         setCursor(c === null ? 0 : Math.min(mine.length - 1, c + 1));
@@ -357,7 +366,7 @@ function KitchenBoard() {
           bumpAt={bumps.pending[t.id]}
           onToggle={onToggle}
           onAction={onAction}
-          onMore={setMenu}
+          onMore={(t) => setMenuId(t.id)}
           onUndo={onUndo}
           onSelect={onSelect}
         />
@@ -393,6 +402,7 @@ function KitchenBoard() {
         station={stationLabel}
         counts={counts}
         stats={data?.stats}
+        timezone={timezone}
         allDay={allDayOn}
         sound={sound}
         onStation={() => setSheet('station')}
@@ -510,10 +520,10 @@ function KitchenBoard() {
       <TicketMenu
         ticket={menu}
         canEdit={!!menu && (menu.state === 'confirmed' || menu.state === 'preparing')}
-        onClose={() => setMenu(null)}
+        onClose={() => setMenuId(null)}
         onRush={(t) => {
           rush.mutate({ ticket: t, rush: !t.rush });
-          setMenu(null);
+          setMenuId(null);
         }}
         onAllDone={(t) => {
           onToggle(
@@ -521,7 +531,7 @@ function KitchenBoard() {
             t.items.filter((i) => !i.doneAt),
             true,
           );
-          setMenu(null);
+          setMenuId(null);
         }}
         onReset={(t) => {
           onToggle(
@@ -529,7 +539,7 @@ function KitchenBoard() {
             t.items.filter((i) => i.doneAt),
             false,
           );
-          setMenu(null);
+          setMenuId(null);
         }}
         onOpen={(t) => nav(`/pedidos/${t.id}`)}
       />

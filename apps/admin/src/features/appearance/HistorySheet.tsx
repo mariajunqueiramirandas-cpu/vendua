@@ -32,10 +32,10 @@ export function HistorySheet({
     enabled: open,
   });
   const restore = useMutation({
-    mutationFn: (v: number) => api.restorePage(tpl, v),
-    onSuccess: () => {
+    mutationFn: (v: { tpl: TplId; version: number }) => api.restorePage(v.tpl, v.version),
+    onSuccess: (_, v) => {
       void qc.invalidateQueries({ queryKey: qk.appearance });
-      void qc.invalidateQueries({ queryKey: ['appearance', 'history', tpl] });
+      void qc.invalidateQueries({ queryKey: ['appearance', 'history', v.tpl] });
       toast('Versão restaurada e publicada ✓');
       onOpenChange(false);
     },
@@ -77,8 +77,12 @@ export function HistorySheet({
               <Button
                 size="sm"
                 variant="secondary"
-                loading={restore.isPending && restore.variables === h.version}
-                onClick={() => restore.mutate(h.version)}
+                loading={
+                  restore.isPending &&
+                  restore.variables?.version === h.version &&
+                  restore.variables.tpl === tpl
+                }
+                onClick={() => restore.mutate({ tpl, version: h.version })}
               >
                 voltar a esta
               </Button>

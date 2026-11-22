@@ -188,14 +188,15 @@ export default function Menu() {
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
     onSuccess: (r, v) => {
       if (v.silent) return;
-      const prev = availability(v.p);
+      const status = availability(v.p);
+      const prev = status === 'sold_out' && v.p.soldOutUntil ? 'sold_out_today' : status;
       toast(
         `${v.p.name}: ${AVAIL_LABEL[v.to]}${r.waitlistWoken ? ` · ${r.waitlistWoken} na lista de espera` : ''}`,
         {
           undo: () =>
             setAvail.mutate({
               p: { ...v.p },
-              to: prev === 'available' ? 'available' : prev === 'hidden' ? 'hidden' : 'sold_out',
+              to: prev,
               silent: true,
             }),
         },
@@ -1197,7 +1198,7 @@ function NewProductSheet({
       setErr(null);
       setCat((c) => c || cats[0]?.id || '');
     }
-  }, [open, cats]);
+  }, [open]);
   const create = useMutation({
     mutationFn: () =>
       api.createProduct({ name: name.trim(), priceCents: price ?? 0, categoryId: cat }),

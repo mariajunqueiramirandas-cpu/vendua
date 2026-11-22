@@ -140,7 +140,6 @@ function Editor({
     }
   });
   const origin = new URL(data.previewUrl).origin;
-  useEffect(() => setFrameReady(false), [reload]);
 
   useEffect(() => {
     void api.share().then(
@@ -170,7 +169,7 @@ function Editor({
           type: PREVIEW_MESSAGE.draft,
           templates: ed.previewDrafts,
           selected: selectedId,
-          ...(ed.tokens ? { tokens: ed.tokens } : {}),
+          tokens: ed.tokens ?? null,
           ...extra,
         },
         origin,
@@ -183,7 +182,7 @@ function Editor({
   }, [post]);
   const onFrame = useRef<(e: MessageEvent) => void>(() => undefined);
   onFrame.current = (e: MessageEvent) => {
-    if (e.origin !== origin) return;
+    if (e.origin !== origin || e.source !== frame.current?.contentWindow) return;
     const d = e.data as {
       type?: string;
       id?: string;
@@ -236,6 +235,7 @@ function Editor({
         ? productHref(config, slug)
         : '/';
   const src = `${data.previewUrl}${pathFor(ed.page)}?${PREVIEW_QUERY_PARAM}=1`;
+  useEffect(() => setFrameReady(false), [src, reload]);
 
   // undo and redo from the keyboard, unless a text field is handling its own
   useEffect(() => {
@@ -410,7 +410,7 @@ function Editor({
       // phones: the editor is the whole screen, sized to what the keyboard leaves visible (iOS
       // can pan the page under it), so nothing behind it scrolls and the form keeps its place
       <div
-        data-no-pull
+        data-no-pull=""
         className="fixed inset-0 z-[45] flex flex-col overflow-hidden bg-bg kb:bottom-auto kb:top-(--vvt) kb:h-(--vvh)"
       >
         {editing ? (

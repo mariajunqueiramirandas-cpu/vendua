@@ -1,3 +1,4 @@
+import { useCan, useFeature } from '../../lib/session.ts';
 import {
   ArrowLeft,
   CaretRight,
@@ -229,6 +230,7 @@ export function ConversationPane({
       () => setOutgoing((o) => o.map((x) => (x.key === key ? { ...x, failed: true } : x))),
     );
   };
+  const manager = useCan('manager');
   const verdict = useMutation({
     mutationFn: (v: { draftId: string; verdict: 'same' | 'different' }) =>
       api.vendedor.verdict(v.draftId, { verdict: v.verdict }),
@@ -343,7 +345,7 @@ export function ConversationPane({
             onWhy={openWhy}
             outgoing={outgoing}
             onRetry={(o) => send(o.text, o.key)}
-            verdict={(m, v) => verdict.mutate({ draftId: m.id, verdict: v })}
+            verdict={manager ? (m, v) => verdict.mutate({ draftId: m.id, verdict: v }) : undefined}
           />
         ) : (
           <p className="t-body py-10 text-center text-muted">Nenhuma mensagem ainda.</p>
@@ -581,7 +583,8 @@ function FloorFor({
   const t = d.thread;
   // a contact Duá stays out of gets no suggested replies: each ask is a model call
   const owner = t.floor !== 'agent' && t.floor !== 'muted' && !triaged(t.class);
-  const suggestions = useSuggestions(d, owner);
+  const available = useFeature('vendedor');
+  const suggestions = useSuggestions(d, owner && available);
   if (t.floor === 'muted')
     return (
       <section

@@ -469,10 +469,10 @@ function PrinterSheet({
     onError: (e) => toast.error(messageOf(e)),
   });
   const test = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (_: void, ctx) => {
       // the test prints with what's on screen
       await api.updatePrinter(id!, { paper: Number(paper) as 58 | 80, cut, codepage });
-      return api.testPrinter(id!);
+      return withRetryScope(ctx, () => api.testPrinter(id!));
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.printers });

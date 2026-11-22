@@ -46,7 +46,7 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
     ['pdv'],
   ],
   catalog: [['catalog'], qk.home, qk.share, qk.activity],
-  store: [qk.store, qk.home, qk.payments, qk.activity],
+  store: [qk.store, qk.home, qk.payments, qk.activity, qk.session],
   marketing: [qk.marketing, qk.home, qk.activity],
   // the session carries Perfil's "Duá pelo WhatsApp", which the owner's switch in Equipe gates
   team: [qk.team, qk.activity, qk.session],
@@ -174,16 +174,18 @@ function scheduleRepeat() {
 }
 
 async function onPlaced(orderId: string) {
+  const generation = liveGeneration;
   set({ unseen: [...new Set([...state.unseen, orderId])] });
   ring();
   scheduleRepeat();
   try {
     const { api } = await import('./api.ts');
     const { order } = await api.order(orderId);
+    if (generation !== liveGeneration) return;
     announce(`Pedido ${order.number} chegou, ${money(order.totalCents)}`);
     window.dispatchEvent(new CustomEvent('vendua:new-order', { detail: order }));
   } catch {
-    announce('Pedido novo chegou');
+    if (generation === liveGeneration) announce('Pedido novo chegou');
   }
 }
 
@@ -191,6 +193,7 @@ async function onPlaced(orderId: string) {
 // make sound (law 13). Once per handoff; Core emits it when a thread starts waiting.
 const rung = new Map<string, number>();
 async function onShopperWaiting(threadId: string) {
+  const generation = liveGeneration;
   const last = rung.get(threadId) ?? 0;
   if (Date.now() - last < 60_000) return;
   rung.set(threadId, Date.now());
@@ -206,7 +209,7 @@ async function onShopperWaiting(threadId: string) {
   try {
     const { api } = await import('./api.ts');
     const { thread } = await api.vendedor.thread(threadId);
-    if (!thread.waitingSince) return;
+    if (generation !== liveGeneration || !thread.waitingSince) return;
     announce(
       thread.reason
         ? `${thread.name} precisa de você, ${thread.reason}`
@@ -214,7 +217,7 @@ async function onShopperWaiting(threadId: string) {
     );
     window.dispatchEvent(new CustomEvent('vendua:shopper-waiting', { detail: thread }));
   } catch {
-    announce('Um cliente precisa de você');
+    if (generation === liveGeneration) announce('Um cliente precisa de você');
   }
 }
 
@@ -225,6 +228,24 @@ let everything = false;
 let paidWatch = new Set<string>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+let liveGeneration = 0;
+let disconnect: (() => void) | undefined;
+
+export function resetLive() {
+  liveGeneration++;
+  disconnect?.();
+  disconnect = undefined;
+  if (repeat) clearInterval(repeat);
+  if (flushTimer) clearTimeout(flushTimer);
+  repeat = null;
+  flushTimer = null;
+  dirty.clear();
+  paidWatch.clear();
+  rung.clear();
+  everything = false;
+  set({ streaming: false, unseen: [], presence: null });
+}
+
 function queueInvalidate(keys: readonly (readonly unknown[])[] | 'all') {
   if (keys === 'all') everything = true;
   else for (const k of keys) dirty.set(JSON.stringify(k), k);
@@ -232,6 +253,7 @@ function queueInvalidate(keys: readonly (readonly unknown[])[] | 'all') {
 }
 
 async function flush() {
+  const generation = liveGeneration;
   flushTimer = null;
   const keys = [...dirty.values()];
   const all = everything;
@@ -244,7 +266,7 @@ async function flush() {
       ? [queryClient.invalidateQueries()]
       : keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
   ).catch(() => undefined);
-  for (const id of watch) void chimeIfPaid(id);
+  if (generation === liveGeneration) for (const id of watch) void chimeIfPaid(id);
 }
 
 const isPaid = (id: string) =>
@@ -257,6 +279,7 @@ const knows = (id: string) =>
 
 /** An order this device knew as unpaid changed: ring if it's paid now (Pix landed). */
 async function chimeIfPaid(id: string) {
+  const generation = liveGeneration;
   try {
     // a fresh copy from the flush's own refetch counts; only an inactive one goes to the network
     const after = await queryClient.fetchQuery({
@@ -264,7 +287,8 @@ async function chimeIfPaid(id: string) {
       queryFn: async () => (await import('./api.ts')).api.order(id),
       staleTime: 5_000,
     });
-    if (after.order.payment.status === 'paid' && soundOn) chimePaid();
+    if (generation === liveGeneration && after.order.payment.status === 'paid' && soundOn)
+      chimePaid();
   } catch {
     /* the board still shows it */
   }
@@ -287,6 +311,7 @@ export function useLiveStream(enabled: boolean) {
     let pinged = false;
     const seen = () => void (lastSeen = Date.now());
     const handle = (name: string, data: string) => {
+      if (closed) return;
       seen();
       if (name === 'hello') {
         failures = 0;
@@ -365,7 +390,8 @@ export function useLiveStream(enabled: boolean) {
       set({ online: true });
       void queryClient.invalidateQueries();
       void queryClient.resumePausedMutations();
-      check();
+      if (!state.streaming) open();
+      else check();
     };
     const down = () => set({ online: false, streaming: false, presence: null });
     window.addEventListener('online', up);
@@ -388,7 +414,7 @@ export function useLiveStream(enabled: boolean) {
     };
     document.addEventListener('visibilitychange', vis);
     window.addEventListener('vendua:resume', vis);
-    return () => {
+    disconnect = () => {
       closed = true;
       clearTimeout(retry);
       clearInterval(watchdog);
@@ -398,5 +424,6 @@ export function useLiveStream(enabled: boolean) {
       document.removeEventListener('visibilitychange', vis);
       window.removeEventListener('vendua:resume', vis);
     };
+    return resetLive;
   }, [enabled]);
 }
