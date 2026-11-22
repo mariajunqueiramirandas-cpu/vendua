@@ -26,6 +26,7 @@ export interface InvoiceRow {
   status: 'open' | 'paid' | 'failed' | 'void';
   provider: string;
   provider_payment_id: string | null;
+  fallback_card_charge_id: string | null;
   pix_copy_paste: string | null;
   pix_expires_at: Date | null;
   due_at: Date;

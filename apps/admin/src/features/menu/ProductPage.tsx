@@ -1226,11 +1226,12 @@ function CopyOptionsSheet({
     enabled: !!from,
   });
   const groups = src.data?.product.groups ?? [];
+  const ready = !!src.data;
   useEffect(() => {
     setPick(new Set(groups.slice(0, room).map((_, k) => k)));
     // a new source picks its first groups, as many as fit
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src.data, room]);
+  }, [from?.id, ready]);
   const needle = q.trim().toLocaleLowerCase('pt-BR');
   const sources = cats
     .flatMap((c) => c.products)

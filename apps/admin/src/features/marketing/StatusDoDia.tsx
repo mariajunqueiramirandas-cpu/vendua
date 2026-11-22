@@ -411,13 +411,26 @@ function SwapSheet({
   onSave: (ids: string[]) => void;
 }) {
   const { data } = useQuery({ queryKey: qk.share, queryFn: api.share, enabled: open });
+  const catalog = useQuery({ queryKey: qk.catalog, queryFn: api.catalog, enabled: open });
+  const available = new Set(
+    catalog.data?.categories.flatMap((c) =>
+      c.products.filter((p) => p.liveStatus === 'active').map((p) => p.id),
+    ),
+  );
   const [picked, setPicked] = useState<string[]>(current);
+  const ready = picked.filter((id) => available.has(id) && data?.products.some((p) => p.id === id));
   useEffect(() => {
     if (open) setPicked(current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const toggle = (id: string) =>
-    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length < 3 ? [...p, id] : p));
+    setPicked((p) =>
+      p.includes(id)
+        ? p.filter((x) => x !== id)
+        : p.filter((id) => available.has(id)).length < 3
+          ? [...p, id]
+          : p,
+    );
   return (
     <Sheet
       open={open}
@@ -425,14 +438,16 @@ function SwapSheet({
       title="Produtos do status"
       description="Escolha até 3. Só entram os que estão à venda agora."
       footer={
-        <Button size="lg" block disabled={!picked.length} onClick={() => onSave(picked)}>
-          usar {picked.length} {picked.length === 1 ? 'produto' : 'produtos'}
+        <Button size="lg" block disabled={!ready.length} onClick={() => onSave(ready)}>
+          usar {ready.length} {ready.length === 1 ? 'produto' : 'produtos'}
         </Button>
       }
     >
       <ul className="divide-y divide-line pt-2">
         {(data?.products ?? []).map((p) => {
           const on = picked.includes(p.id);
+          const active = available.has(p.id);
+          if (!active && !on) return null;
           return (
             <li key={p.id}>
               <label className="flex min-h-14 cursor-pointer items-center gap-3 py-2">
@@ -440,7 +455,7 @@ function SwapSheet({
                   type="checkbox"
                   className="size-5 accent-[var(--color-primary)]"
                   checked={on}
-                  disabled={!on && picked.length >= 3}
+                  disabled={!on && (!active || ready.length >= 3)}
                   onChange={() => toggle(p.id)}
                 />
                 <span className="size-11 shrink-0 overflow-hidden rounded-sm bg-sunken">
@@ -455,7 +470,10 @@ function SwapSheet({
                     <NoPhoto />
                   )}
                 </span>
-                <span className="t-body min-w-0 flex-1 truncate">{p.name}</span>
+                <span className="t-body min-w-0 flex-1 truncate">
+                  {p.name}
+                  {active ? null : ' · indisponível'}
+                </span>
               </label>
             </li>
           );

@@ -404,6 +404,8 @@ export interface StateEnvelope {
   templates?: TemplateSet;
   /** Kernel 1.8: the merchant admin's origin, with `templates` — the editor preview's only parent */
   adminOrigin?: string | null;
+  /** Additional allowed admin origins (e.g. native app WebView) for editor preview */
+  adminOrigins?: string[];
 }
 
 export interface CartItem {
@@ -1398,7 +1400,7 @@ export function createApi(baseUrl = '') {
   ): Promise<void> => {
     let res: Response;
     try {
-      res = await fetch(co(`/orders/${id}/events`), {
+      res = await fetch(co(`/orders/${encodeURIComponent(id)}/events`), {
         headers: {
           accept: 'text/event-stream',
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
@@ -1653,7 +1655,7 @@ export function createApi(baseUrl = '') {
       );
     },
     updateItem: (itemId: string, qty: number) =>
-      apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
+      apiFetch<{ cart: Cart }>(co(`/cart/items/${encodeURIComponent(itemId)}`), {
         method: 'PATCH',
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify({ qty }),
@@ -1661,7 +1663,7 @@ export function createApi(baseUrl = '') {
     /** Kernel 1.21 — a line's note ('' clears it); a line that then matches another (same
      *  product, options and note) folds into it */
     setItemNote: (itemId: string, note: string) =>
-      apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
+      apiFetch<{ cart: Cart }>(co(`/cart/items/${encodeURIComponent(itemId)}`), {
         method: 'PATCH',
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify({ note: note.trim().slice(0, ITEM_NOTE_MAX) }),
@@ -1680,7 +1682,7 @@ export function createApi(baseUrl = '') {
         (r) => r.reminder,
       ),
     removeItem: (itemId: string) =>
-      apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
+      apiFetch<{ cart: Cart }>(co(`/cart/items/${encodeURIComponent(itemId)}`), {
         method: 'DELETE',
         headers: { ...auth(), 'idempotency-key': idemKey() },
       }).then((r) => r.cart),
@@ -1797,7 +1799,7 @@ export function createApi(baseUrl = '') {
     cancelUsualReminder: (orderId: string) => usualCall(orderId, 'DELETE'),
     order: (id: string) => {
       const bearer = orderBearer(id);
-      return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
+      return apiFetch<{ order: Order }>(co(`/orders/${encodeURIComponent(id)}`), {
         headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
       }).then((r) => r.order, forgetRefused(id));
     },
@@ -1812,50 +1814,59 @@ export function createApi(baseUrl = '') {
     ) => {
       const bearer = orderBearer(id);
       const deviceId = opts?.deviceId && DEVICE_ID_RE.test(opts.deviceId) ? opts.deviceId : null;
-      return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
-        method: 'POST',
-        headers: {
-          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
-          'idempotency-key': idemKey(),
+      return apiFetch<{ order: Order; next: PaymentNext }>(
+        co(`/orders/${encodeURIComponent(id)}/pay`),
+        {
+          method: 'POST',
+          headers: {
+            ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+            'idempotency-key': idemKey(),
+          },
+          ...(opts?.cardForm || deviceId
+            ? {
+                body: JSON.stringify({
+                  ...(opts?.cardForm ? { card: 'form' } : {}),
+                  ...(opts?.cardForm && opts.challengeDone ? { challenge: 'complete' } : {}),
+                  ...(deviceId ? { deviceId } : {}),
+                }),
+              }
+            : {}),
         },
-        ...(opts?.cardForm || deviceId
-          ? {
-              body: JSON.stringify({
-                ...(opts?.cardForm ? { card: 'form' } : {}),
-                ...(opts?.cardForm && opts.challengeDone ? { challenge: 'complete' } : {}),
-                ...(deviceId ? { deviceId } : {}),
-              }),
-            }
-          : {}),
-      }).then((r) => ({ ...r, next: safeNext(r.next) }));
+      ).then((r) => ({ ...r, next: safeNext(r.next) }));
     },
     /** Kernel 1.26 — the order's Pix through its tracking link (a Pix order only): the online
      *  Pix Core makes (or the one it has), with the status view back. 401 SESSION_REQUIRED for
      *  another method, 409 PAYMENT_NOT_REQUIRED (paid, closed or the store's own key) */
     payTracked: (id: string, opts?: { deviceId?: string | null }) => {
       const deviceId = opts?.deviceId && DEVICE_ID_RE.test(opts.deviceId) ? opts.deviceId : null;
-      return apiFetch<{ order: OrderTracking; next: PaymentNext }>(co(`/orders/${id}/pay`), {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${trackBearer(id) ?? ''}`,
-          'idempotency-key': idemKey(),
+      return apiFetch<{ order: OrderTracking; next: PaymentNext }>(
+        co(`/orders/${encodeURIComponent(id)}/pay`),
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${trackBearer(id) ?? ''}`,
+            'idempotency-key': idemKey(),
+          },
+          ...(deviceId ? { body: JSON.stringify({ deviceId }) } : {}),
         },
-        ...(deviceId ? { body: JSON.stringify({ deviceId }) } : {}),
-      }).then((r) => ({ ...r, next: safeNext(r.next) }), forgetTrack(id));
+      ).then((r) => ({ ...r, next: safeNext(r.next) }), forgetTrack(id));
     },
     /** Kernel 1.19 — pay a card_online order with the card form's token. 409
      *  PAYMENT_IN_PROGRESS (an earlier submit is unresolved), 409 PAYMENT_NOT_REQUIRED, 422
      *  INVALID_PAYMENT, 503 PAYMENT_UNAVAILABLE. */
     payCard: (id: string, input: CardPaymentInput) => {
       const bearer = orderBearer(id);
-      return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/card`), {
-        method: 'POST',
-        headers: {
-          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
-          'idempotency-key': idemKey(),
+      return apiFetch<{ order: Order; next: PaymentNext }>(
+        co(`/orders/${encodeURIComponent(id)}/card`),
+        {
+          method: 'POST',
+          headers: {
+            ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+            'idempotency-key': idemKey(),
+          },
+          body: JSON.stringify(input),
         },
-        body: JSON.stringify(input),
-      }).then((r) => ({ ...r, next: safeNext(r.next) }));
+      ).then((r) => ({ ...r, next: safeNext(r.next) }));
     },
     /** Kernel 1.3 — SSE over fetch (the session token rides as Bearer, which
      *  EventSource can't send). Calls `onOrder` per `order` event; resolves when
@@ -1871,7 +1882,7 @@ export function createApi(baseUrl = '') {
     orderWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) => {
       const bearer = orderBearer(id);
       return apiFetch<{ order: Order; changed: boolean }>(
-        co(`/orders/${id}?since=${since}&wait=${waitS}`),
+        co(`/orders/${encodeURIComponent(id)}?since=${since}&wait=${waitS}`),
         {
           headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
           ...(signal ? { signal } : {}),
@@ -1894,13 +1905,13 @@ export function createApi(baseUrl = '') {
       trackBearer(orderId) !== undefined,
     /** Kernel 1.21 — the order through its tracking link: status and items, nothing personal */
     orderStatus: (id: string) =>
-      apiFetch<{ order: OrderTracking }>(co(`/orders/${id}`), {
+      apiFetch<{ order: OrderTracking }>(co(`/orders/${encodeURIComponent(id)}`), {
         headers: { authorization: `Bearer ${trackBearer(id) ?? ''}` },
       }).then((r) => r.order, forgetTrack(id)),
     /** Kernel 1.21 — `orderWait` through the tracking link */
     orderStatusWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) =>
       apiFetch<{ order: OrderTracking; changed: boolean }>(
-        co(`/orders/${id}?since=${since}&wait=${waitS}`),
+        co(`/orders/${encodeURIComponent(id)}?since=${since}&wait=${waitS}`),
         {
           headers: { authorization: `Bearer ${trackBearer(id) ?? ''}` },
           ...(signal ? { signal } : {}),

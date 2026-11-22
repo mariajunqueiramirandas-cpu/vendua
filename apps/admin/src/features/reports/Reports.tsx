@@ -1,8 +1,11 @@
+import { PAY_LABEL } from '../../ui/PaymentChip.tsx';
+import { toast } from '../../ui/Toast.tsx';
+import { messageOf } from '../../ui/feedback.tsx';
 import { DownloadSimple, Info, MapPin } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
+import { api, type Kpis, type OrderPayMethod, type Reports as R } from '../../lib/api.ts';
 import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
 import { useStoreQuery } from '../store/StatusPill.tsx';
 import { qk } from '../../lib/query.ts';
@@ -20,16 +23,15 @@ import { CmvSection } from './Cmv.tsx';
 import { DEFAULT_PERIOD, isPeriod, PERIODS, reportsQuery } from './range.ts';
 import { platform } from '../../platform/index.ts';
 
-const METHOD: Record<string, string> = {
-  pix: 'Pix',
-  card_on_delivery: 'Cartão na entrega',
-  cash: 'Dinheiro',
-  meal_voucher: 'Vale-refeição',
-};
+const methodLabel = (method: string) => PAY_LABEL[method as OrderPayMethod] ?? method;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const validRange = (r: { from: string; to: string }) =>
-  DAY.test(r.from) && DAY.test(r.to) && r.from >= '2000' && r.from <= r.to;
+  DAY.test(r.from) &&
+  DAY.test(r.to) &&
+  r.from >= '2000' &&
+  r.from <= r.to &&
+  Date.parse(r.to) - Date.parse(r.from) < 366 * 86_400_000;
 // presets that end today: the chart's last column is the day still going
 const ENDS_TODAY = new Set(['hoje', '7d', '30d', 'mes']);
 
@@ -99,10 +101,13 @@ export default function Reports() {
             download
             onClick={(e) => {
               e.preventDefault();
-              void platform.share.download(
-                `/admin/v1/reports/orders.csv?${new URLSearchParams(rq.params)}`,
-                'pedidos.csv',
-              );
+              if (period === 'custom' && !validRange(custom)) return;
+              void platform.share
+                .download(
+                  `/admin/v1/reports/orders.csv?${new URLSearchParams(rq.params)}`,
+                  'pedidos.csv',
+                )
+                .catch((e) => toast.error(messageOf(e)));
             }}
             className="t-label inline-flex min-h-12 items-center gap-2 rounded-md px-4 ring-1 ring-line-strong hover:bg-hover"
           >
@@ -142,7 +147,11 @@ export default function Reports() {
           </div>
         ) : null}
       </div>
-      {error && !data ? (
+      {period === 'custom' && custom.from && custom.to && !validRange(custom) ? (
+        <p role="alert" className="t-body text-danger">
+          Escolha um intervalo válido de até 366 dias.
+        </p>
+      ) : error && !data ? (
         <ErrorState error={error} retry={() => void refetch()} />
       ) : !data ? (
         <ReportsSkeleton chips={false} />
@@ -272,14 +281,13 @@ export default function Reports() {
               <RankBars
                 title="Formas de pagamento"
                 summary={
-                  data.payments
-                    .map((p) => `${METHOD[p.method] ?? p.method}: ${p.orders}`)
-                    .join(' · ') || 'Sem vendas.'
+                  data.payments.map((p) => `${methodLabel(p.method)}: ${p.orders}`).join(' · ') ||
+                  'Sem vendas.'
                 }
                 format={money}
                 rows={data.payments.map((p) => ({
                   key: p.method,
-                  label: METHOD[p.method] ?? p.method,
+                  label: methodLabel(p.method),
                   value: p.revenueCents,
                   detail: plural(p.orders, 'pedido', 'pedidos'),
                 }))}

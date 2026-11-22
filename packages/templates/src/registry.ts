@@ -18,7 +18,7 @@ const deliveryEtaOnProduct = defineTemplateMigration({
   requiresKernel: '>=1.1.0',
   pages: ['product'],
   up(t, ctx) {
-    if (t.has('sdk:delivery-eta')) return;
+    if (t.has('sdk:delivery-eta') || t.wasRemoved('sdk:delivery-eta')) return;
     const hit = findArea(t, 'info', ctx.sections);
     if (!hit)
       throw new MigrationConflict(
@@ -38,7 +38,7 @@ const loyaltyTeaserOnProduct = defineTemplateMigration({
   requiresKernel: '>=1.2.0',
   pages: ['product'],
   up(t, ctx) {
-    if (t.has('sdk:loyalty-teaser')) return;
+    if (t.has('sdk:loyalty-teaser') || t.wasRemoved('sdk:loyalty-teaser')) return;
     const hit = findArea(t, 'promo', ctx.sections);
     if (!hit)
       throw new MigrationConflict(

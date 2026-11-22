@@ -79,6 +79,7 @@ export function Preview({
         </div>
       ) : null}
       <iframe
+        data-no-pull=""
         ref={frameRef}
         key={src}
         title="prévia da loja"
@@ -104,7 +105,7 @@ export function Preview({
     <div className={cn('flex h-full justify-center [container-type:size]', className)}>
       <div
         className={cn(
-          'relative h-fit overflow-hidden bg-[#0c1410] depth-3 noite:ring-1 noite:ring-line-strong',
+          'relative h-fit overflow-hidden bg-ink noite:bg-sunken depth-3 noite:ring-1 noite:ring-line-strong',
           device === 'phone'
             ? 'w-[min(100cqw,47cqh,420px)] rounded-[44px] px-3 pb-3 pt-10'
             : 'w-[min(100cqw,calc((100cqh-16px)*1.6+16px))] rounded-xl p-2',

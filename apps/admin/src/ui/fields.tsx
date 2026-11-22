@@ -1,4 +1,4 @@
-import { Check, Minus, Plus, WarningCircle } from '@phosphor-icons/react';
+import { CaretDown, Check, Minus, Plus, WarningCircle } from '@phosphor-icons/react';
 import {
   forwardRef,
   useEffect,
@@ -230,7 +230,10 @@ export function CommitInput({
 }) {
   const [draft, setDraft] = useState(value);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => setDraft(value), [value]);
+  useEffect(() => {
+    setDraft(value);
+    setErr(null);
+  }, [value]);
   const commit = () => {
     const e = validate?.(draft) ?? null;
     setErr(e);
@@ -257,7 +260,10 @@ export function CommitInput({
           {...common}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              e.currentTarget.blur();
+            }
           }}
         />
       )}
@@ -292,7 +298,10 @@ export function MoneyField({
 }) {
   const [draft, setDraft] = useState(moneyInput(cents));
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => setDraft(moneyInput(cents)), [cents]);
+  useEffect(() => {
+    setDraft(moneyInput(cents));
+    setErr(null);
+  }, [cents]);
   const commit = () => {
     if (!draft.trim() && allowEmpty) {
       setErr(null);
@@ -320,7 +329,12 @@ export function MoneyField({
         aria-invalid={err ? true : undefined}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
-        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }}
         className={cn('tnum', className)}
         {...rest}
       />
@@ -407,7 +421,10 @@ export function TimeInput({
 }) {
   const [draft, setDraft] = useState(value);
   const [bad, setBad] = useState(false);
-  useEffect(() => setDraft(value), [value]);
+  useEffect(() => {
+    setDraft(value);
+    setBad(false);
+  }, [value]);
   return (
     <LineInput
       id={id}
@@ -425,7 +442,12 @@ export function TimeInput({
           if (t !== value) onCommit(t);
         }
       }}
-      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
       className={cn(inputCls, 'tnum h-12 w-24 px-3 py-3 text-center leading-6')}
     />
   );
@@ -663,26 +685,25 @@ export function Select({
   label?: string;
 }) {
   return (
-    <select
-      id={id}
-      aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        inputCls,
-        'appearance-none bg-[length:20px] bg-[right_14px_center] bg-no-repeat pr-11',
-      )}
-      style={{
-        backgroundImage:
-          "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='none' stroke='%236b8177' stroke-width='20' stroke-linecap='round' stroke-linejoin='round' d='M208 96l-80 80-80-80'/%3E%3C/svg%3E\")",
-      }}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+    <div className="relative">
+      <select
+        id={id}
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(inputCls, 'appearance-none pr-11')}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <CaretDown
+        aria-hidden
+        className="pointer-events-none absolute right-3.5 top-1/2 size-5 -translate-y-1/2 text-muted"
+      />
+    </div>
   );
 }
 
@@ -708,7 +729,10 @@ export function SavedStepper({
     const v = pending.current;
     if (v === null) return;
     pending.current = null;
-    void save.current(v).finally(() => setDraft((d) => (d === v ? null : d)));
+    void save
+      .current(v)
+      .catch(() => undefined)
+      .finally(() => setDraft((d) => (d === v ? null : d)));
   };
   useEffect(() => flush, []);
   return (
@@ -729,16 +753,27 @@ export function SavedStepper({
 export function useSaveState() {
   const [state, setState] = useState<SaveState>('idle');
   const timer = useRef<ReturnType<typeof setTimeout>>();
+  const generation = useRef(0);
+  useEffect(
+    () => () => {
+      generation.current++;
+      clearTimeout(timer.current);
+    },
+    [],
+  );
   const track = async <T,>(p: Promise<T>): Promise<T> => {
+    const saving = ++generation.current;
     clearTimeout(timer.current);
     setState('saving');
     try {
       const out = await p;
-      setState('saved');
-      timer.current = setTimeout(() => setState('idle'), 2400);
+      if (saving === generation.current) {
+        setState('saved');
+        timer.current = setTimeout(() => setState('idle'), 2400);
+      }
       return out;
     } catch (e) {
-      setState('error');
+      if (saving === generation.current) setState('error');
       throw e;
     }
   };

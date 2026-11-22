@@ -6,6 +6,7 @@ import {
   number,
   text,
   useCatalog,
+  useCopy,
   usePageContext,
   useReducedMotion,
   type SectionProps,
@@ -23,8 +24,8 @@ export const schema = defineSection({
     soldOutLabel: text({ max: 30, default: 'esgotado' }),
     lowStockLabel: text({ max: 30, default: 'restam' }),
     preorderLabel: text({ max: 30, default: 'sob encomenda' }),
-    inBagLabel: text({ max: 30, default: 'na sacola' }),
-    allInBagLabel: text({ max: 30, default: 'tudo na sacola' }),
+    inBagLabel: text({ max: 30, default: '' }),
+    allInBagLabel: text({ max: 30, default: '' }),
     prevLabel: text({ max: 30, default: 'Anteriores' }),
     nextLabel: text({ max: 30, default: 'Próximos' }),
   },
@@ -59,6 +60,7 @@ function useEnds(list: RefObject<HTMLOListElement>, count: number) {
 export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
   const { categories } = useCatalog();
   const { params } = usePageContext();
+  const { vocabulary } = useCopy();
   const titleId = useId();
   const list = useRef<HTMLOListElement>(null);
   const still = useReducedMotion();
@@ -94,8 +96,8 @@ export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
     soldOut: s.soldOutLabel,
     lowStock: s.lowStockLabel,
     preorder: s.preorderLabel,
-    inBag: s.inBagLabel,
-    allInBag: s.allInBagLabel,
+    inBag: s.inBagLabel || vocabulary.inBag,
+    allInBag: s.allInBagLabel || `tudo ${vocabulary.inBag}`,
   };
 
   return (

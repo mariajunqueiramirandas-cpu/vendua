@@ -24,15 +24,19 @@ export default function Story({ settings: s }: SectionProps<typeof schema>) {
   if (!s.title && paragraphs.length === 0 && !s.quote) return null;
 
   return (
-    <section id="historia" className="story" aria-labelledby={titleId}>
+    <section id="historia" className="story" aria-labelledby={s.title ? titleId : undefined}>
       <div className="story-inner">
-        <header className="story-head">
-          {s.kicker ? <p className="kicker">{s.kicker}</p> : null}
-          <h2 id={titleId} className="story-title">
-            {s.title}
-          </h2>
-          <span className="rule" aria-hidden="true" />
-        </header>
+        {s.kicker || s.title ? (
+          <header className="story-head">
+            {s.kicker ? <p className="kicker">{s.kicker}</p> : null}
+            {s.title ? (
+              <h2 id={titleId} className="story-title">
+                {s.title}
+              </h2>
+            ) : null}
+            <span className="rule" aria-hidden="true" />
+          </header>
+        ) : null}
         <div className="story-body">
           {paragraphs.map((p, i) => (
             <p key={i}>{p}</p>

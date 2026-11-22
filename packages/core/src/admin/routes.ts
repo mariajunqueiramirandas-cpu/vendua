@@ -413,12 +413,20 @@ export function mountAdmin(o: MountAdminOpts) {
     );
     const target = stores.find((s) => s.tenant_id === body.storeId);
     if (!target) throw new HttpError(404, 'STORE_NOT_FOUND', 'store not found');
-    const sess = issueSession(
-      c,
-      await createSession(sql, target, sessionDevice(c), proof),
-      secure(c),
-    );
-    return c.json({ signedIn: true, store: publicStore(target), ...sess });
+    const next = await createSession(sql, target, sessionDevice(c), proof);
+    const previous = c.get('tenant').id;
+    if (target.tenant_id !== previous) {
+      // Once the switch succeeds, retire this device's alerts in the previous store.
+      await withTenant(sql, previous, async (tx) => {
+        await tx`delete from push_subscriptions where tenant_id = ${previous} and session_id = ${m.sessionId}`;
+        await tx`delete from push_devices where tenant_id = ${previous} and session_id = ${m.sessionId}`;
+      });
+    }
+    return c.json({
+      signedIn: true,
+      store: publicStore(target),
+      ...issueSession(c, next, secure(c)),
+    });
   });
 
   admin.patch('/me', async (c) => {
@@ -686,13 +694,27 @@ export function mountAdmin(o: MountAdminOpts) {
         order by p.status = 'archived', p.name limit 8
       `;
       const customers = await tx`
-        select customer_phone as phone, (array_agg(customer ->> 'name' order by placed_at desc))[1] as name,
-               count(*)::int as orders
-        from orders where tenant_id = ${tenant.id} and customer_phone is not null and (
-          translate(lower(customer ->> 'name'), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') like ${like}
-          ${digits.length >= 4 ? tx`or customer_phone like ${'%' + digits + '%'}` : tx``}
+        with matches as (
+          select customer_phone as phone
+          from orders where tenant_id = ${tenant.id} and customer_phone is not null and (
+            translate(lower(customer ->> 'name'), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') like ${like}
+            ${digits.length >= 4 ? tx`or customer_phone like ${'%' + digits + '%'}` : tx``}
+          )
+          union
+          select phone from customer_contacts where tenant_id = ${tenant.id} and (
+            translate(lower(name), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') like ${like}
+            ${digits.length >= 4 ? tx`or phone like ${'%' + digits + '%'}` : tx``}
+          )
         )
-        group by customer_phone order by max(placed_at) desc limit 8
+        select m.phone, coalesce(o.name, c.name) as name, o.orders
+        from matches m
+        left join customer_contacts c on c.tenant_id = ${tenant.id} and c.phone = m.phone
+        cross join lateral (
+          select (array_agg(customer ->> 'name' order by placed_at desc))[1] as name,
+                 count(*)::int as orders, max(placed_at) as last_order
+          from orders where tenant_id = ${tenant.id} and customer_phone = m.phone
+        ) o
+        order by coalesce(o.last_order, c.created_at) desc, m.phone limit 8
       `;
       return { orders, products, customers };
     });
@@ -709,6 +731,7 @@ export function mountAdmin(o: MountAdminOpts) {
       stream.onAbort(() => finish());
       let seq = 0;
       const unsubscribe = await hub.subscribe(tenant.id, (e) => {
+        if (e.topic === 'copilot' && e.id !== merchant.userId) return;
         void stream.writeSSE({ event: 'change', id: String(++seq), data: JSON.stringify(e) });
       });
       // who's in the store: viewers move with streams, carts with the database — send on change

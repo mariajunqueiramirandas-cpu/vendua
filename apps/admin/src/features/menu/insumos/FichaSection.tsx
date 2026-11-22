@@ -8,7 +8,7 @@ import { haptic } from '../../../lib/haptics.ts';
 import { qk, useMutation } from '../../../lib/query.ts';
 import { Button } from '../../../ui/Button.tsx';
 import { cn } from '../../../ui/cn.ts';
-import { messageOf } from '../../../ui/feedback.tsx';
+import { messageOf, ValidationError } from '../../../ui/feedback.tsx';
 import { Toggle } from '../../../ui/fields.tsx';
 import { RowsSkeleton } from '../../../ui/skeletons.tsx';
 import { toast } from '../../../ui/Toast.tsx';
@@ -57,7 +57,7 @@ export function FichaSection({ p }: { p: ProductDetail }) {
         const l = linesOf(drafts);
         if ('bad' in l) {
           setBad(l.bad);
-          throw new Error('Digite quanto vai de cada insumo.');
+          throw new ValidationError('Digite quanto vai de cada insumo.');
         }
         body.lines = l.lines;
       }
@@ -68,7 +68,7 @@ export function FichaSection({ p }: { p: ProductDetail }) {
           if ('bad' in l) {
             setBad(l.bad);
             setOpenOpt(id);
-            throw new Error('Digite quanto vai de cada insumo nas opções.');
+            throw new ValidationError('Digite quanto vai de cada insumo nas opções.');
           }
           return { id, lines: l.lines, ...(o.sameName ? { sameName: true } : {}) };
         });

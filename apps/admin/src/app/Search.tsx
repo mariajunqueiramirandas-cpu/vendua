@@ -117,7 +117,8 @@ export function SearchSheet({
   const qc = useQueryClient();
   const nav = useNavigate();
   const [q, setQ] = useState('');
-  const { term, intent } = parseQuery(q);
+  const manager = can(role, 'manager');
+  const { term, intent } = manager ? parseQuery(q) : { term: q.trim(), intent: null };
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
     const t = setTimeout(() => setDebounced(term), 160);
@@ -163,8 +164,8 @@ export function SearchSheet({
 
   // "esgotar hoje" and "voltar a vender" right on the result; "desfazer" puts back what Core says
   // it changed
-  const flip = (id: string, status: string) =>
-    qc.setQueryData<SearchResult>(key, (d) =>
+  const flip = (queryKey: readonly unknown[], id: string, status: string) =>
+    qc.setQueryData<SearchResult>(queryKey, (d) =>
       d ? { ...d, products: d.products.map((p) => (p.id === id ? { ...p, status } : p)) } : d,
     );
   const settle = () => {
@@ -172,11 +173,17 @@ export function SearchSheet({
     void qc.invalidateQueries({ queryKey: qk.home });
     void qc.invalidateQueries({ queryKey: ['search'] });
   };
+  const revert = useMutation({
+    mutationFn: api.bulkRevert,
+    onSuccess: settle,
+    onError: (e) => toast.error(messageOf(e)),
+  });
   const avail = useMutation({
     mutationFn: (v: { p: Product; to: 'sold_out_today' | 'available' }) => api.bulk([v.p.id], v.to),
     onMutate: (v) => {
       haptic.commit();
-      flip(v.p.id, v.to === 'available' ? 'active' : 'sold_out');
+      flip(key, v.p.id, v.to === 'available' ? 'active' : 'sold_out');
+      return { key };
     },
     onSuccess: (r, v) => {
       settle();
@@ -188,17 +195,13 @@ export function SearchSheet({
           : `${v.p.name} esgotado hoje. Volta amanhã sozinho.`,
         before.length
           ? {
-              undo: () =>
-                void api
-                  .bulkRevert(before)
-                  .then(settle)
-                  .catch((e) => toast.error(messageOf(e))),
+              undo: () => revert.mutate(before),
             }
           : {},
       );
     },
-    onError: (e, v) => {
-      flip(v.p.id, v.p.status);
+    onError: (e, v, ctx) => {
+      if (ctx) flip(ctx.key, v.p.id, v.p.status);
       haptic.error();
       toast.error(messageOf(e));
     },
@@ -243,7 +246,7 @@ export function SearchSheet({
     if (!enter) return;
     if (term && !settled) return;
     setEnter(false);
-    const only = intent && data ? data.products.filter(sellable) : [];
+    const only = manager && intent && data ? data.products.filter(sellable) : [];
     // done like a command: the sheet goes, so the toast's "desfazer" is in reach (a tap on the
     // row's button keeps the sheet for the next product, the flipped button being its undo)
     if (only.length === 1 && data!.products.length === 1) {

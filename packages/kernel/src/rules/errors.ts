@@ -66,6 +66,15 @@ export const ERROR_COPY: Record<string, { title: string; body?: string }> = {
   PAYMENT_NOT_REQUIRED: { title: 'Esse pedido não precisa de pagamento online' },
   PAYMENT_ONLINE: { title: 'Esse pagamento é confirmado pelo Mercado Pago' },
   PAYMENT_NOT_ALLOWED: { title: 'Encomendas aceitam outra forma de pagamento' },
+  PAYMENT_METHOD_UNAVAILABLE: {
+    title: 'Essa forma de pagamento não está disponível agora',
+    body: 'Escolha outra forma para continuar.',
+  },
+  PAYMENT_LOCKED: { title: 'Esse pagamento não pode mais ser alterado' },
+  INVALID_DELIVERY: { title: 'Confira o endereço de entrega' },
+  INVALID_CUSTOMER: { title: 'Confira seus dados', body: 'Informe nome e WhatsApp válidos.' },
+  INVALID_PHONE: { title: 'Confira seu WhatsApp', body: 'Informe o número com DDD.' },
+  INVALID_NOTES: { title: 'Observação longa demais', body: 'Reduza um pouco o texto.' },
   // Kernel 1.17 — the checkout shows `changeMessage` at the change field
   INVALID_CHANGE: { title: 'Confira o valor do troco' },
   // Kernel 1.19 — the in-page card

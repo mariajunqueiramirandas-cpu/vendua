@@ -1,3 +1,4 @@
+import { copyText } from '../../ui/CopyValue.tsx';
 import {
   ArrowRight,
   Check,
@@ -30,7 +31,7 @@ import { cn } from '../../ui/cn.ts';
 import { Chips, Field, TextInput, Toggle } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
-import { payError, REVIEW } from '../../ui/PaymentChip.tsx';
+import { PAY_LABEL, payError, REVIEW } from '../../ui/PaymentChip.tsx';
 import { PixQr } from '../../ui/PixCode.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { LinkList, LinkRow } from '../../ui/LinkRow.tsx';
@@ -179,7 +180,7 @@ export default function Payments() {
                     format={money}
                     rows={d.last30ByMethod.map((r) => ({
                       key: r.method,
-                      label: METHOD[r.method]?.label ?? r.method,
+                      label: PAY_LABEL[r.method] ?? r.method,
                       value: r.cents,
                     }))}
                   />
@@ -385,7 +386,8 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
     },
   });
   const live = mpLive(data.mercadoPago);
-  const on = (m: PayMethod) => data.methods.includes(m) && (m !== 'card_online' || live);
+  const effectiveMethods = live ? data.methods : data.methods.filter((m) => m !== 'card_online');
+  const on = (m: PayMethod) => effectiveMethods.includes(m);
   // a split only means something while the store both delivers and hands over at the counter
   const split = data.modes.delivery && data.modes.pickup;
   const takes = (mode: HandoverMode, methods: PayMethod[]) =>
@@ -396,7 +398,7 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
       (mode) =>
         takes(
           mode,
-          data.methods.filter((x) => x !== m),
+          effectiveMethods.filter((x) => x !== m),
         ).length === 0,
     );
   // turning `m` off for `mode` would leave encomendas (or their sinal) unpayable there: Core
@@ -405,13 +407,13 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
   const lockFor = (m: PayMethod, mode: HandoverMode): string | null => {
     const after = takes(
       mode,
-      data.methods.filter((x) => x !== m),
+      effectiveMethods.filter((x) => x !== m),
     );
     const lost = (ms: string[]) =>
-      ms.some((x) => (data.methods as string[]).includes(x)) &&
+      ms.some((x) => (effectiveMethods as string[]).includes(x)) &&
       !ms.some((x) => (after as string[]).includes(x));
     if (lost(enc.methods)) return encomendaConflictText(mode, 'encomenda', enc.methods);
-    if (enc.sinal && data.methods.includes('pix') && lost(['pix']))
+    if (enc.sinal && effectiveMethods.includes('pix') && lost(['pix']))
       return encomendaConflictText(mode, 'sinal', ['pix']);
     return null;
   };
@@ -442,9 +444,13 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
             <div className="min-w-0 flex-1">
               <Toggle
                 checked={on(m)}
-                disabled={!canEdit || locked || (on(m) && lastFor(m))}
+                disabled={
+                  !canEdit || save.isPending || saveOff.isPending || locked || (on(m) && lastFor(m))
+                }
                 onChange={(v) =>
-                  save.mutate(v ? [...data.methods, m] : data.methods.filter((x) => x !== m))
+                  save.mutate(
+                    v ? [...effectiveMethods, m] : effectiveMethods.filter((x) => x !== m),
+                  )
                 }
                 label={M.label}
                 description={hint(m)}
@@ -453,9 +459,9 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
                 <ModesLine
                   label={M.label}
                   takes={(mode) => !data.methodsOff[mode].includes(m)}
-                  last={(mode) => takes(mode, data.methods).length === 1}
+                  last={(mode) => takes(mode, effectiveMethods).length === 1}
                   lock={(mode) => lockFor(m, mode)}
-                  canEdit={canEdit}
+                  canEdit={canEdit && !save.isPending && !saveOff.isPending}
                   onToggle={(mode) => {
                     const off = data.methodsOff[mode];
                     saveOff.mutate({
@@ -586,9 +592,11 @@ function PixCard({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
               size="sm"
               icon={<Copy />}
               onClick={() =>
-                void navigator.clipboard
-                  .writeText(data.pix!.sample)
-                  .then(() => toast('Pix copia e cola copiado'))
+                void copyText(data.pix!.sample).then((ok) =>
+                  ok
+                    ? toast('Pix copia e cola copiado')
+                    : toast.error('Não conseguimos copiar o Pix.'),
+                )
               }
             >
               copiar Pix

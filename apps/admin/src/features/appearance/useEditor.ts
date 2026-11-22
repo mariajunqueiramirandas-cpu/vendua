@@ -1,3 +1,4 @@
+import { platform } from '../../platform/index.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { DEFAULT_TEMPLATES } from '@vendua/kernel/sdk-catalog';
 import { validateTemplate, type ComponentType } from '@vendua/templates';
@@ -231,9 +232,22 @@ export function useEditor(data: AppearanceData, storeId: string) {
     });
   }, [base]);
   // the frame reports the colours in force when Core has none of its own yet
+  const previousTokens = useRef(baseTokens);
   useEffect(() => {
-    if (!tokens && baseTokens) setH((h) => ({ ...h, doc: { ...h.doc, tokens: baseTokens } }));
-  }, [tokens, baseTokens]);
+    const before = previousTokens.current;
+    previousTokens.current = baseTokens;
+    if (same(before, baseTokens) && tokens) return;
+    const rebase = (doc: Doc) =>
+      (!doc.tokens || same(doc.tokens, before)) && !same(doc.tokens, baseTokens)
+        ? { ...doc, tokens: baseTokens }
+        : doc;
+    setH((h) => ({
+      ...h,
+      doc: rebase(h.doc),
+      past: h.past.map(rebase),
+      future: h.future.map(rebase),
+    }));
+  }, [baseTokens]);
 
   const dirtyTpl = (t: TplId) => !same(drafts[t], base[t].template);
   const dirtyTpls = TPLS.filter(dirtyTpl);
@@ -378,7 +392,14 @@ export function useEditor(data: AppearanceData, storeId: string) {
   };
   const add = (type: ComponentType, where: 'page' | 'layout') => {
     const t: TplId = where === 'layout' ? 'layout' : page;
-    const id = `${type.replace(/^(sdk|store):/, '')}-${Math.random().toString(36).slice(2, 6)}`;
+    const existing = new Set(
+      TPLS.flatMap((tpl) => drafts[tpl].sections.map((section) => section.id)),
+    );
+    const prefix = type.replace(/^(sdk|store):/, '').slice(0, 30);
+    let id: string;
+    do {
+      id = `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+    } while (existing.has(id));
     setSections(t, (ss) => {
       // in the layout, a new part goes above the page's own content
       const at = t === 'layout' ? ss.findIndex((x) => x.type === 'sdk:page-content') : ss.length;
@@ -428,6 +449,15 @@ export function useEditor(data: AppearanceData, storeId: string) {
 
   // ── publish ──────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<'idle' | 'publishing' | 'live'>('idle');
+  const phaseTimer = useRef<ReturnType<typeof setTimeout>>();
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearTimeout(phaseTimer.current);
+    };
+  }, []);
   const publish = useMutation({
     mutationFn: async (_: void, ctx) => {
       // each save re-enters the retry scope (lost at the previous await): a retry replays the
@@ -437,17 +467,21 @@ export function useEditor(data: AppearanceData, storeId: string) {
       if (tokensDirty && tokens) await withRetryScope(ctx, () => api.saveTokens(tokens));
       return { colours: tokensDirty };
     },
-    onMutate: () => setPhase('publishing'),
+    onMutate: () => {
+      clearTimeout(phaseTimer.current);
+      setPhase('publishing');
+    },
     onSuccess: async ({ colours }) => {
       await qc.invalidateQueries({ queryKey: qk.appearance });
+      if (!mounted.current) return;
       setPhase('live');
       toast(
         colours
           ? 'Página no ar ✓ As cores entram na próxima atualização da loja.'
           : 'Sua página está no ar ✓',
-        { action: { label: 'ver a loja', run: () => window.open(data.url, '_blank') } },
+        { action: { label: 'ver a loja', run: () => platform.openExternal(data.url) } },
       );
-      setTimeout(() => setPhase('idle'), 4000);
+      phaseTimer.current = setTimeout(() => setPhase('idle'), 4000);
     },
     onError: async (e) => {
       setPhase('idle');

@@ -73,7 +73,7 @@ export function checkForUpdate(): Promise<void> {
 /** A cold start: a bundle that downloads within ~3 s is applied before the first paint. */
 export async function updateOnLaunch() {
   await Promise.race([checkForUpdate(), new Promise((r) => setTimeout(r, 3000))]);
-  if (staged) await CapacitorUpdater.set({ id: staged.id });
+  if (staged) await CapacitorUpdater.set({ id: staged.id }).catch(() => undefined);
 }
 
 export const updateReady = () => !!staged;
@@ -83,7 +83,7 @@ export function onUpdate(fn: () => void) {
   return () => void subs.delete(fn);
 }
 export function applyUpdate() {
-  if (staged) void CapacitorUpdater.set({ id: staged.id });
+  if (staged) void CapacitorUpdater.set({ id: staged.id }).catch(() => undefined);
   else location.reload();
 }
 /** The router mounted and /session answered: this bundle works, keep it. */

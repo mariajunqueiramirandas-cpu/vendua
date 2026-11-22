@@ -85,9 +85,9 @@ export function draftsCost(drafts: Draft[], insumos: Insumo[], mode: OrderMode |
     if (mode && d.mode && d.mode !== mode) continue;
     if (!mode && d.mode) continue;
     const q = parseQty(d.qty, d.unit);
-    if (q != null) c += lineCost(q, by.get(d.ingredientId)?.costPerKCents ?? null);
+    if (q != null) c += (q * (by.get(d.ingredientId)?.costPerKCents ?? 0)) / 1e6;
   }
-  return c;
+  return Math.round(c);
 }
 
 const MODE_OPTIONS = [

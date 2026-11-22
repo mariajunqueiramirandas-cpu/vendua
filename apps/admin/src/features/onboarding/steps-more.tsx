@@ -1,3 +1,4 @@
+import { platform } from '../../platform/index.ts';
 import {
   ArrowSquareOut,
   Check,
@@ -606,9 +607,10 @@ export function PixStep({ pay, next, back, skip, me, s }: StepProps & { pay: Pay
 export function MercadoPagoStep({ back, skip }: StepProps) {
   const go = useMutation({
     mutationFn: () => api.mpConnect('onboarding'),
-    onSuccess: (r) => window.location.assign(r.url),
+    onSuccess: (r) => platform.openExternal(r.url),
     onError: (e) => toast.error(messageOf(e)),
   });
+  if (!platform.canPay) return null;
   return (
     <Frame
       title="Receber cartão pelo site"

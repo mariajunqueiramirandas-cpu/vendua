@@ -154,6 +154,7 @@ function AdjustmentSheet({
             <Button
               variant="ghost"
               loading={save.isPending && save.variables === null}
+              disabled={save.isPending}
               onClick={() => save.mutate(null)}
             >
               tirar
@@ -163,7 +164,7 @@ function AdjustmentSheet({
             size="lg"
             block
             loading={save.isPending && save.variables !== null}
-            disabled={!preview || pctBad || fixedBad}
+            disabled={save.isPending || !preview || pctBad || fixedBad}
             onClick={() => save.mutate(next)}
           >
             salvar

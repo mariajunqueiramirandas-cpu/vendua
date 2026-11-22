@@ -64,15 +64,23 @@ export default function Hero({ settings: s }: SectionProps<typeof schema>) {
         <span className="rule" aria-hidden="true" />
         {s.text ? <p className="hero-text">{s.text}</p> : null}
         <div className="hero-actions">
-          {href.startsWith('#') ? (
-            <a className="btn-ink" href={href}>
-              {s.ctaLabel}
-            </a>
-          ) : (
-            <Link className="btn-ink" to={href}>
-              {s.ctaLabel}
-            </Link>
-          )}
+          {s.ctaLabel ? (
+            href.startsWith('/') && !href.startsWith('//') ? (
+              <Link className="btn-ink" to={href}>
+                {s.ctaLabel}
+              </Link>
+            ) : (
+              <a
+                className="btn-ink"
+                href={href}
+                {...(/^https?:\/\//i.test(href)
+                  ? { target: '_blank', rel: 'noopener noreferrer' }
+                  : {})}
+              >
+                {s.ctaLabel}
+              </a>
+            )
+          ) : null}
           {status ? (
             <p className="hero-status" data-status={status} role="status">
               <span className="hero-dot" aria-hidden="true" />

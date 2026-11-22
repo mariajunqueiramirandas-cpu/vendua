@@ -29,7 +29,7 @@ import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { HelpButton, PageBody, PageHeader } from '../../ui/Page.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
-import { toast } from '../../ui/Toast.tsx';
+import { dismiss, toast } from '../../ui/Toast.tsx';
 import { ClassChip, FloorChip, ReasonChip, triaged } from '../../ui/vendedor/index.ts';
 import { ConversationPane, useMedia } from './Conversation.tsx';
 import { Initials, dayLabel, msgTime } from './Conversation.parts.tsx';
@@ -44,6 +44,19 @@ const HOLD_MS = 6000;
  * Several "para decidir" at once (undo beats confirm): the rows leave the list now, the decision
  * goes to Core after the toast's "desfazer" window, and "desfazer" just brings them back.
  */
+const classifications = new Map<number, number>();
+let classificationEpoch = 0;
+if (typeof window !== 'undefined') {
+  window.addEventListener('vendua:signedout', () => {
+    classificationEpoch++;
+    for (const [timer, toastId] of classifications) {
+      clearTimeout(timer);
+      dismiss(toastId);
+    }
+    classifications.clear();
+  });
+}
+
 function holdClassify(qc: QueryClient, ids: string[], as: 'shopper' | 'personal') {
   const drop = new Set(ids);
   qc.setQueriesData<InfiniteData<ThreadList>>(
@@ -66,9 +79,12 @@ function holdClassify(qc: QueryClient, ids: string[], as: 'shopper' | 'personal'
     void qc.invalidateQueries({ queryKey: ['vendedor'] });
     void qc.invalidateQueries({ queryKey: qk.session });
   };
+  const epoch = classificationEpoch;
   const timer = window.setTimeout(() => {
+    classifications.delete(timer);
     api.vendedor.classifyMany(ids, as).then(
       (r) => {
+        if (epoch !== classificationEpoch) return;
         refresh();
         if (r.skipped.length)
           toast(
@@ -77,13 +93,14 @@ function holdClassify(qc: QueryClient, ids: string[], as: 'shopper' | 'personal'
           );
       },
       (e) => {
+        if (epoch !== classificationEpoch) return;
         refresh();
         toast.error(messageOf(e));
       },
     );
   }, HOLD_MS);
   const n = ids.length;
-  toast(
+  const toastId = toast(
     as === 'shopper'
       ? n === 1
         ? 'Marcado como cliente. O Duá atende este contato.'
@@ -95,10 +112,12 @@ function holdClassify(qc: QueryClient, ids: string[], as: 'shopper' | 'personal'
       ms: HOLD_MS,
       undo: () => {
         window.clearTimeout(timer);
+        classifications.delete(timer);
         refresh();
       },
     },
   );
+  classifications.set(timer, toastId);
 }
 
 const fold = (s: string) =>

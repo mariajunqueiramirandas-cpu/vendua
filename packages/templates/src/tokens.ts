@@ -35,6 +35,8 @@ const FONT_WEIGHT = /^\d{3}( \d{3})?$|^(normal|bold)$/;
 // values land in CSS custom properties — no way to break out of the declaration
 const cssSafe = (v: string) => !/[;{}<>]|\/\*|url\s*\(\s*['"]?\s*javascript:/i.test(v);
 
+const fontSafe = (v: string) => cssSafe(v) && !/['"()\\\r\n]/.test(v);
+
 export function validateTokens(
   input: unknown,
 ): { ok: true; tokens: StorefrontTokens } | { ok: false; errors: string[] } {
@@ -73,6 +75,10 @@ export function validateTokens(
       font.srcs.forEach((f, i) => {
         if (!isObj(f) || !str(f.family) || !str(f.src))
           errors.push(`font.srcs[${i}] needs family + src`);
+        else if (!fontSafe(f.family as string))
+          errors.push(`font.srcs[${i}].family contains unsafe characters`);
+        else if (!fontSafe(f.src as string))
+          errors.push(`font.srcs[${i}].src contains unsafe characters`);
         else if (!/^(\/|https:\/\/)/.test(f.src as string))
           errors.push(`font.srcs[${i}].src must be a path or https URL`);
         // both land raw in an @font-face rule
@@ -95,10 +101,14 @@ export function validateTokens(
 const NAMED: Record<string, string> = {
   white: '#ffffff',
   black: '#000000',
-  transparent: '#00000000',
 };
 
-/** Parses the colour syntaxes tokens use (hex, rgb[a], hsl[a], a few names) to 0–255 RGB. */
+function parseAlpha(raw: string | undefined): number {
+  if (raw === undefined) return 1;
+  return raw.endsWith('%') ? Number(raw.slice(0, -1)) / 100 : Number(raw);
+}
+
+/** Parses opaque colour syntaxes tokens use (hex, rgb[a], hsl[a], white/black) to 0–255 RGB. */
 export function parseColor(input: string): [number, number, number] | null {
   const v = (NAMED[input.trim().toLowerCase()] ?? input).trim().toLowerCase();
   let m = /^#([0-9a-f]{3,8})$/.exec(v);
@@ -106,24 +116,36 @@ export function parseColor(input: string): [number, number, number] | null {
     let h = m[1]!;
     if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join('');
     if (h.length !== 6 && h.length !== 8) return null;
+    if (h.length === 8 && parseInt(h.slice(6, 8), 16) < 255) return null;
     return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
   }
-  m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(v);
-  if (m)
+  m =
+    /^rgba?\(\s*(\d+(?:\.\d+)?)[\s,]+(\d+(?:\.\d+)?)[\s,]+(\d+(?:\.\d+)?)(?:\s*(?:,|\/)\s*(\d+(?:\.\d+)?%?))?\s*\)$/.exec(
+      v,
+    );
+  if (m) {
+    const a = parseAlpha(m[4]);
+    if (!Number.isFinite(a) || a < 1) return null;
     return [Number(m[1]), Number(m[2]), Number(m[3])].map((x) => Math.min(255, x)) as [
       number,
       number,
       number,
     ];
-  m = /^hsla?\(\s*([\d.]+)(?:deg)?[\s,]+([\d.]+)%[\s,]+([\d.]+)%/.exec(v);
+  }
+  m =
+    /^hsla?\(\s*(\d+(?:\.\d+)?)(?:deg)?[\s,]+(\d+(?:\.\d+)?)%[\s,]+(\d+(?:\.\d+)?)%(?:\s*(?:,|\/)\s*(\d+(?:\.\d+)?%?))?\s*\)$/.exec(
+      v,
+    );
   if (m) {
+    const a = parseAlpha(m[4]);
+    if (!Number.isFinite(a) || a < 1) return null;
     const h = Number(m[1]) / 360;
     const s = Number(m[2]) / 100;
     const l = Number(m[3]) / 100;
     const f = (n: number) => {
       const k = (n + h * 12) % 12;
-      const a = s * Math.min(l, 1 - l);
-      return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+      const amp = s * Math.min(l, 1 - l);
+      return Math.round(255 * (l - amp * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
     };
     return [f(0), f(8), f(4)];
   }
@@ -159,6 +181,8 @@ export const CONTRAST_PAIRS: readonly [
   ['onAccent', 'accent'],
   ['danger', 'bg'],
   ['danger', 'surface'],
+  ['success', 'bg'],
+  ['success', 'surface'],
 ];
 
 /** WCAG AA (4.5:1) on every default-surface pair — a failure blocks release. */
@@ -166,7 +190,7 @@ export function contrastProblems(tokens: StorefrontTokens, min = 4.5): string[] 
   const out: string[] = [];
   for (const [fg, bg] of CONTRAST_PAIRS) {
     const r = contrastRatio(tokens.color[fg], tokens.color[bg]);
-    if (r === null)
+    if (r === null || !Number.isFinite(r))
       out.push(
         `color.${fg} / color.${bg}: cannot parse (${tokens.color[fg]} on ${tokens.color[bg]})`,
       );

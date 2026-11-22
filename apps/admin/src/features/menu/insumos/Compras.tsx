@@ -16,7 +16,7 @@ import { qk, useMutation } from '../../../lib/query.ts';
 import { Button, IconButton } from '../../../ui/Button.tsx';
 import { cn } from '../../../ui/cn.ts';
 import { copyText } from '../../../ui/CopyValue.tsx';
-import { messageOf } from '../../../ui/feedback.tsx';
+import { messageOf, ValidationError } from '../../../ui/feedback.tsx';
 import { Field, TextInput } from '../../../ui/fields.tsx';
 import { Sheet } from '../../../ui/Sheet.tsx';
 import { toast } from '../../../ui/Toast.tsx';
@@ -86,13 +86,15 @@ export function PurchaseSheet({
 
   const save = useMutation({
     mutationFn: () => {
-      if (!items.length) throw new Error('Adicione o que chegou.');
+      if (!items.length) throw new ValidationError('Adicione o que chegou.');
       const body = items.map((x) => {
         const q = parseQty(x.qty, x.unit);
         const c = parseMoney(x.paid);
         if (q == null || c == null) {
           setBad(x.key);
-          throw new Error(`${by.get(x.id)?.name ?? 'Insumo'}: diga quanto chegou e quanto pagou.`);
+          throw new ValidationError(
+            `${by.get(x.id)?.name ?? 'Insumo'}: diga quanto chegou e quanto pagou.`,
+          );
         }
         return { id: x.id, qtyMilli: q, costCents: c };
       });
@@ -395,7 +397,7 @@ export function PerOrderSheet({
       const l = linesOf(drafts);
       if ('bad' in l) {
         setBad(l.bad);
-        throw new Error('Digite quanto vai de cada um.');
+        throw new ValidationError('Digite quanto vai de cada um.');
       }
       return api.setPerOrder(l.lines);
     },

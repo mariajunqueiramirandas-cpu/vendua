@@ -133,8 +133,16 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
               variant="secondary"
               block
               icon={<Lightning weight="bold" />}
-              loading={on.isPending && on.variables?.coverage === undefined}
-              onClick={() => turnOn({ enabled: true }, 'O Duá está ligado')}
+              loading={on.isPending && on.variables?.coverage !== 'rehearsal'}
+              onClick={() =>
+                turnOn(
+                  {
+                    enabled: true,
+                    ...(data.agent.coverage === 'rehearsal' ? { coverage: 'always' } : {}),
+                  },
+                  'O Duá está ligado',
+                )
+              }
             >
               ligar agora
             </Button>
@@ -225,7 +233,15 @@ export function FirstUse({ data, owner }: { data: VendedorHome; owner: boolean }
                 block
                 icon={<Lightning weight="bold" />}
                 loading={on.isPending}
-                onClick={() => turnOn({ enabled: true }, 'O Duá está ligado')}
+                onClick={() =>
+                  turnOn(
+                    {
+                      enabled: true,
+                      ...(data.agent.coverage === 'rehearsal' ? { coverage: 'always' } : {}),
+                    },
+                    'O Duá está ligado',
+                  )
+                }
               >
                 ligar o Duá
               </Button>

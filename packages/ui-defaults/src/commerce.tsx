@@ -588,7 +588,8 @@ export function ProductCard({
   stockLeft,
   vocabulary = DEFAULT_VOCABULARY,
 }: SlotProps['catalog.ProductCard']) {
-  const [imgFailed, setImgFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const imgFailed = failedUrl !== null && failedUrl === product.imageUrl;
   const state = cardState(product, stockLeft ?? null);
   const price = priceDisplay(product);
   // Kernel 1.21 — what the product is (vegano, sem glúten, apimentado); allergen warnings are on
@@ -640,7 +641,7 @@ export function ProductCard({
                 alt=""
                 loading="lazy"
                 decoding="async"
-                onError={() => setImgFailed(true)}
+                onError={() => setFailedUrl(product.imageUrl ?? null)}
               />
             ) : (
               <span className="v-card-initial" data-figure={product.figureVariant}>

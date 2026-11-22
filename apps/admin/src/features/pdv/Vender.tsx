@@ -200,7 +200,10 @@ function Counter() {
         toast.error(pdvError(e));
         return;
       }
-      if (isCode(e, 'CAIXA_CLOSED')) void qc.invalidateQueries({ queryKey: ['pdv'] });
+      if (isCode(e, 'CAIXA_CLOSED')) {
+        setPayOpen(false);
+        void qc.invalidateQueries({ queryKey: ['pdv'] });
+      }
       toast.error(pdvError(e));
     },
   });
@@ -246,9 +249,15 @@ function Counter() {
 
   const clear = () => {
     const before: PickedLine[] = ticket.lines;
+    const beforeDiscount = discount;
     ticket.clear();
     setDiscount(null);
-    toast('Conta limpa.', { undo: () => ticket.restore(before) });
+    toast('Conta limpa.', {
+      undo: () => {
+        ticket.restore(before);
+        setDiscount(beforeDiscount);
+      },
+    });
   };
 
   // one sheet at a time: from the Conta sheet, the next opens once it has let go of history

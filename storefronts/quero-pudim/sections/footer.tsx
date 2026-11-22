@@ -32,17 +32,15 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
   const { contacts } = useLinks();
   const { rows, today } = useStoreHours();
   const anyOpen = rows.some((r) => !r.closed);
+  const showHours = anyOpen || Boolean(today?.special);
   const address = [store?.address, store?.city].filter(Boolean).join(', ');
+  const logoAlt = store ? [store.name, store.tagline].filter(Boolean).join(' — ') : '';
   return (
     <footer className="site-footer">
       <div className="container">
         <div className="footer-grid">
           <div className="footer-brand">
-            <img
-              src={settings.logo}
-              alt={store ? `${store.name} — ${store.tagline ?? ''}` : ''}
-              className="brand-img footer-logo"
-            />
+            <img src={settings.logo} alt={logoAlt} className="brand-img footer-logo" />
             {settings.blurb ? <p className="footer-blurb">{settings.blurb}</p> : null}
             <div className="footer-social">
               {contacts.instagram ? (
@@ -70,15 +68,38 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
           </div>
           <nav className="footer-col" aria-label="Links da loja">
             <p className="footer-title">{settings.eyebrow || 'Explore'}</p>
-            {(settings.links ?? []).map((l) => (
-              <Link key={l.href} to={l.href}>
-                {l.label}
-              </Link>
-            ))}
+            {(settings.links ?? []).map((l, i) =>
+              l.href.startsWith('/') && !l.href.startsWith('//') ? (
+                <Link key={`${l.href}:${i}`} to={l.href}>
+                  {l.label}
+                </Link>
+              ) : (
+                <a
+                  key={`${l.href}:${i}`}
+                  href={l.href}
+                  {...(/^https?:\/\//i.test(l.href)
+                    ? { target: '_blank', rel: 'noopener noreferrer' }
+                    : {})}
+                >
+                  {l.label}
+                </a>
+              ),
+            )}
             {settings.qrLabel && settings.qrHref ? (
-              <Link to={settings.qrHref}>
-                <QrCode size={16} aria-hidden="true" /> {settings.qrLabel}
-              </Link>
+              settings.qrHref.startsWith('/') && !settings.qrHref.startsWith('//') ? (
+                <Link to={settings.qrHref}>
+                  <QrCode size={16} aria-hidden="true" /> {settings.qrLabel}
+                </Link>
+              ) : (
+                <a
+                  href={settings.qrHref}
+                  {...(/^https?:\/\//i.test(settings.qrHref)
+                    ? { target: '_blank', rel: 'noopener noreferrer' }
+                    : {})}
+                >
+                  <QrCode size={16} aria-hidden="true" /> {settings.qrLabel}
+                </a>
+              )
             ) : null}
           </nav>
           <div className="footer-col">
@@ -88,7 +109,7 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
                 <MapPin size={16} aria-hidden="true" /> {address}
               </p>
             ) : null}
-            {anyOpen ? (
+            {showHours ? (
               <p className="footer-line tnum">
                 <Clock size={16} aria-hidden="true" />
                 <span className="footer-hours">
@@ -98,11 +119,13 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
                       {today.closed ? 'fechado' : windowsText(today.windows)}
                     </span>
                   ) : null}
-                  {rows.map((r) => (
-                    <span key={r.label} data-today={(r.today && !today?.special) || undefined}>
-                      {r.label}, {r.closed ? 'fechado' : windowsText(r.windows)}
-                    </span>
-                  ))}
+                  {anyOpen
+                    ? rows.map((r) => (
+                        <span key={r.label} data-today={(r.today && !today?.special) || undefined}>
+                          {r.label}, {r.closed ? 'fechado' : windowsText(r.windows)}
+                        </span>
+                      ))
+                    : null}
                 </span>
               </p>
             ) : null}

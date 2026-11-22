@@ -84,7 +84,9 @@ function PlanCard({ plan }: { plan: ShopperPlan }) {
       if (report.skipped.length)
         showInfo(
           'plan',
-          report.added ? 'Parte do plano foi para a sacola' : 'Nada disso está disponível agora',
+          report.added
+            ? `Parte do plano foi ${vocabulary.toBag}`
+            : 'Nada disso está disponível agora',
           report.skipped.map((s) => errorCopy(s.code).title).join(' · '),
         );
       go(KERNEL_PATHS.cart);

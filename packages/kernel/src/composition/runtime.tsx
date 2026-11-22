@@ -82,7 +82,7 @@ export function useTemplateSet(): TemplateSet {
   const q = useQuery('state:templates', () => api.state(true));
   const drafts = usePreviewTemplates();
   useEffect(() => {
-    if (isPreview() && q.data) setPreviewOrigin(q.data.adminOrigin);
+    if (isPreview() && q.data) setPreviewOrigin(q.data.adminOrigin, q.data.adminOrigins);
   }, [q.data]);
   return useMemo(
     () => ({

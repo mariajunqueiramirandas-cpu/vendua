@@ -208,7 +208,7 @@ function One({ t }: { t: ToastItem }) {
       )}
     >
       {t.tone === 'error' ? (
-        <WarningCircle weight="fill" className="size-5 shrink-0 text-[#ff8a7f]" aria-hidden />
+        <WarningCircle weight="fill" className="size-5 shrink-0 text-danger-on-dark" aria-hidden />
       ) : t.tone === 'ok' ? (
         <CheckCircle weight="fill" className="size-5 shrink-0 text-spark" aria-hidden />
       ) : null}

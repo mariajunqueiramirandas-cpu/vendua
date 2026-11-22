@@ -475,7 +475,7 @@ export async function ensureRenewal(
   return inv;
 }
 
-/** Re-issue the Pix of one open invoice (expired, or never issued). */
+/** Issue a Pix for one unpaid invoice without changing the subscription payment method. */
 export async function reissuePix(
   ctx: BillingCtx,
   tx: Sql,
@@ -492,12 +492,12 @@ export async function reissuePix(
   )[0];
   if (!inv) throw new HttpError(404, 'INVOICE_NOT_FOUND', 'invoice not found');
   if (
-    inv.status !== 'open' ||
-    inv.method !== 'pix' ||
+    (inv.status !== 'open' && inv.status !== 'failed') ||
+    (inv.method !== 'pix' && inv.method !== 'card') ||
     (inv.kind === 'upgrade' && (!sub || !upgradeLive(sub, inv, now)))
   )
-    throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
-  if (pixIsLive(inv, now) && !o.force) return inv;
+    throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an unpaid invoice gets a new Pix');
+  if (inv.status === 'open' && inv.method === 'pix' && pixIsLive(inv, now) && !o.force) return inv;
   const payer = await payerFor(tx, tenantId, sub?.payer_email);
   if (!payer)
     throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
@@ -519,8 +519,14 @@ export async function reissuePix(
       drop: dropPix(ctx),
     }),
   );
+  const [ready] = await tx<InvoiceRow[]>`
+    update invoices set method = 'pix', status = 'open',
+      fallback_card_charge_id = coalesce(${inv.method === 'card' ? inv.provider_payment_id : null}, fallback_card_charge_id)
+    where tenant_id = ${tenantId} and id = ${out.id}
+    returning *
+  `;
   await emitAdminTx(tx, tenantId, 'billing');
-  return out;
+  return ready!;
 }
 
 /**
@@ -1302,10 +1308,25 @@ export async function recordCardCharge(
   let inv = (
     await tx<InvoiceRow[]>`
       select * from invoices where tenant_id = ${tenantId} and provider = ${ctx.provider.name}
-        and provider_payment_id = ${charge.id}
+        and (provider_payment_id = ${charge.id} or fallback_card_charge_id = ${charge.id})
     `
   )[0];
-  if (inv?.status === 'paid') return;
+  if (inv?.status === 'paid') {
+    if (
+      charge.status === 'approved' &&
+      inv.method === 'pix' &&
+      inv.fallback_card_charge_id === charge.id
+    )
+      await recordBillingProblem(
+        tx,
+        tenantId,
+        'other',
+        `A fatura ${inv.number} já estava paga por Pix. O cartão também cobrou ${formatBRL(charge.amountCents)}. Confira a devolução no Mercado Pago.`,
+        `invoice-dup-card:${charge.id}`,
+        'Fatura paga por Pix e cartão',
+      );
+    return;
+  }
   // a replayed rejection: already recorded and told
   if (inv?.status === 'failed' && charge.status === 'rejected') return;
   if (!inv) {
@@ -1317,17 +1338,20 @@ export async function recordCardCharge(
           order by number desc limit 1
         `
       )[0];
-      inv = await upsertInvoice(tx, {
-        tenantId,
-        provider: ctx.provider.name,
-        drop: dropPix(ctx),
-        start: reuse?.period_start ?? charge.date,
-        planId: sub.plan_id,
-        amountCents: charge.amountCents,
-        method: 'card',
-        dueAt: charge.date,
-        reuse: reuse ?? null,
-      });
+      inv =
+        reuse?.status === 'open' && reuse.method === 'pix'
+          ? reuse
+          : await upsertInvoice(tx, {
+              tenantId,
+              provider: ctx.provider.name,
+              drop: dropPix(ctx),
+              start: reuse?.period_start ?? charge.date,
+              planId: sub.plan_id,
+              amountCents: charge.amountCents,
+              method: 'card',
+              dueAt: charge.date,
+              reuse: reuse ?? null,
+            });
     } else {
       let start = sub.current_period_end;
       const taken = (
@@ -1336,17 +1360,24 @@ export async function recordCardCharge(
         `
       )[0];
       if (taken?.status === 'paid') start = taken.period_end;
-      inv = await upsertInvoice(tx, {
-        tenantId,
-        provider: ctx.provider.name,
-        drop: dropPix(ctx),
-        start,
-        planId: chargePlanId(sub),
-        amountCents: charge.amountCents,
-        method: 'card',
-        dueAt: start,
-      });
+      inv =
+        taken?.status === 'open' && taken.method === 'pix'
+          ? taken
+          : await upsertInvoice(tx, {
+              tenantId,
+              provider: ctx.provider.name,
+              drop: dropPix(ctx),
+              start,
+              planId: chargePlanId(sub),
+              amountCents: charge.amountCents,
+              method: 'card',
+              dueAt: start,
+            });
     }
+  }
+  if (inv.status === 'open' && inv.method === 'pix') {
+    if (charge.status === 'rejected') return;
+    if (inv.provider_payment_id) dropPix(ctx)(inv.provider_payment_id);
   }
   // a charge in a coupon's discounted months uses one of them only at (or under) the coupon's
   // price: less than the list price for another reason (a price rise MP hasn't synced) uses none

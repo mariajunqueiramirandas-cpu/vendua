@@ -731,7 +731,9 @@ function Activity() {
           options={kinds}
         />
       </div>
-      {list.isPending ? (
+      {list.error && !list.data ? (
+        <ErrorState error={list.error} retry={() => void list.refetch()} />
+      ) : list.isPending ? (
         <RowsSkeleton rows={5} avatar={false} />
       ) : rows.length ? (
         <Card

@@ -137,7 +137,7 @@ function readableOn(fg: string, bgs: string[]): string {
  *  backgrounds stay, and a main colour too light to carry any text darkens. */
 export function readableColors(color: Color): Color {
   const out = { ...color };
-  for (const k of ['text', 'muted', 'danger'] as const)
+  for (const k of ['text', 'muted', 'danger', 'success'] as const)
     out[k] = readableOn(out[k], [out.bg, out.surface]);
   if ((contrastRatio(out.onAccent, out.accent) ?? 0) < MIN) {
     out.onAccent = onColor(out.accent);

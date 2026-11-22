@@ -83,7 +83,11 @@ function PartyForm({ profiles }: { profiles: PartyProfile[] }) {
   const pickProfile = (p: PartyProfile) => {
     setProfileId(p.id);
     setChoices(initialChoices(p));
-    setAdults((a) => Math.min(p.maxGuests, Math.max(p.minGuests, a)));
+    setChildren((c) => {
+      const nextC = Math.min(c, p.maxGuests);
+      setAdults((a) => Math.min(p.maxGuests - nextC, Math.max(p.minGuests - nextC, a)));
+      return nextC;
+    });
   };
 
   const guests = adults + children;
@@ -104,11 +108,12 @@ function PartyForm({ profiles }: { profiles: PartyProfile[] }) {
   );
 
   useEffect(() => {
+    const n = ++asked.current;
     if (!input) {
       setQuote(null);
+      setQuoteError(null);
       return;
     }
-    const n = ++asked.current;
     const t = setTimeout(() => {
       api.partyQuote(input).then(
         (r) => {
@@ -123,7 +128,10 @@ function PartyForm({ profiles }: { profiles: PartyProfile[] }) {
         },
       );
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      asked.current++;
+    };
   }, [api, input]);
 
   const toggle = (groupId: string, productId: string, max: number) =>
@@ -147,7 +155,9 @@ function PartyForm({ profiles }: { profiles: PartyProfile[] }) {
       if (report.skipped.length)
         showInfo(
           'party',
-          report.added ? 'Parte da festa foi para a sacola' : 'Nada disso está disponível agora',
+          report.added
+            ? `Parte da festa foi ${vocabulary.toBag}`
+            : 'Nada disso está disponível agora',
           report.skipped.map((s) => errorCopy(s.code).title).join(' · '),
         );
       go(KERNEL_PATHS.cart);

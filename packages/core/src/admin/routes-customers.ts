@@ -262,9 +262,13 @@ export function mountCustomers(d: AdminDeps) {
       if (note === undefined && tags === undefined)
         throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
       const known = await tx`
-        select 1 from orders where tenant_id = ${t.id} and customer_phone = ${phone} limit 1
+        select 1 from orders where tenant_id = ${t.id} and customer_phone = ${phone}
+        union all
+        select 1 from customer_contacts where tenant_id = ${t.id} and phone = ${phone}
+        limit 1
       `;
-      if (!known.length) throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no orders for this phone');
+      if (!known.length)
+        throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'no customer for this phone');
       await tx`
         insert into customer_notes (tenant_id, phone, note, tags, updated_by)
         values (${t.id}, ${phone}, ${note ?? ''}, ${tags ?? []}::text[], ${m.userId})
@@ -501,6 +505,7 @@ export function mountCustomers(d: AdminDeps) {
         summary: `apagou os dados de um cliente a pedido dele (${orders.length} pedidos anonimizados, ${threads.length} conversas apagadas)`,
       });
       await emitAdminTx(tx, t.id, 'order.changed');
+      await emitAdminTx(tx, t.id, 'vendedor');
       return { status: 200, body: { anonymized: orders.length, conversations: threads.length } };
     }),
   );
@@ -509,7 +514,7 @@ export function mountCustomers(d: AdminDeps) {
   // only, so the screen's preview and the import read it the same way
   admin.post('/customers/import/preview', async (c) => {
     need(c, 'manager');
-    const body = await bodyJson(c, IMPORT_BYTES);
+    const body = await bodyJson(c, 512 * 1024);
     const r = parseContacts(text(body.text, 'text', IMPORT_BYTES));
     return c.json({
       contacts: r.contacts.slice(0, 20),

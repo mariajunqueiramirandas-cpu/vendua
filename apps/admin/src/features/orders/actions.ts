@@ -36,6 +36,29 @@ export function useDelay(storeName: string) {
     );
     qc.setQueryData<OrderData>(qk.order(o.id), (d) => (d ? { ...d, order: o } : d));
   };
+  const write = useMutation({
+    mutationFn: (v: { order: Order; minutes: number; idem: string }) =>
+      api.delay(v.order.id, v.minutes, v.idem),
+    onSuccess: ({ order, notified }) => {
+      swap(order);
+      const url = delayWhatsappUrl(order, storeName, tz);
+      if (!notified && url)
+        toast(`O cliente do #${order.number} ainda não sabe do novo horário.`, {
+          tone: 'info',
+          ms: 8000,
+          action: {
+            label: 'avisar',
+            run: () => platform.openExternal(url),
+          },
+        });
+    },
+    onError: (e, { order }) => {
+      void qc.invalidateQueries({ queryKey: qk.order(order.id) });
+      void qc.invalidateQueries({ queryKey: qk.board });
+      haptic.error();
+      toast.error(messageOf(e));
+    },
+  });
   return (order: Order, minutes: number) => {
     const now = Date.now();
     const to0 = Date.parse(order.delivery.promisedTo ?? '');
@@ -58,28 +81,9 @@ export function useDelay(storeName: string) {
       `delay-${order.id}`,
       `#${order.number}: novo horário ${clock(guess.delivery.promisedTo!, tz)}`,
       (keepalive) => {
-        const sent = api.delay(order.id, minutes, idem, { keepalive });
-        if (keepalive) return void sent.catch(() => undefined);
-        sent
-          .then(({ order: o, notified }) => {
-            swap(o);
-            if (!notified)
-              toast(`O cliente do #${o.number} ainda não sabe do novo horário.`, {
-                tone: 'info',
-                ms: 8000,
-                action: {
-                  label: 'avisar',
-                  run: () =>
-                    window.open(delayWhatsappUrl(o, storeName, tz), '_blank', 'noreferrer'),
-                },
-              });
-          })
-          .catch((e) => {
-            void qc.invalidateQueries({ queryKey: qk.order(order.id) });
-            void qc.invalidateQueries({ queryKey: qk.board });
-            haptic.error();
-            toast.error(messageOf(e));
-          });
+        if (keepalive)
+          return void api.delay(order.id, minutes, idem, { keepalive }).catch(() => undefined);
+        write.mutate({ order, minutes, idem });
       },
       () => swap(order),
     );
@@ -196,7 +200,16 @@ export function useMarkPaid() {
               undo: () =>
                 api
                   .markPaid(v.id, 'pending')
-                  .then(() => qc.invalidateQueries({ queryKey: ['orders'] })),
+                  .then(() =>
+                    Promise.all([
+                      qc.invalidateQueries({ queryKey: ['orders'] }),
+                      qc.invalidateQueries({ queryKey: qk.payments }),
+                      qc.invalidateQueries({ queryKey: qk.home }),
+                    ]),
+                  )
+                  .catch((e) => {
+                    toast.error(payError(e));
+                  }),
             }
           : {}),
       });

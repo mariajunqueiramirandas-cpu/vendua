@@ -35,9 +35,9 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
   const count = useCartCount();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { pathname } = useLocation();
-  // the phone menu closes on navigation and on Escape
-  useEffect(() => setMenuOpen(false), [pathname]);
+  const { pathname, hash } = useLocation();
+  // the phone menu closes on navigation (including #hash jumps) and on Escape
+  useEffect(() => setMenuOpen(false), [pathname, hash]);
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false);
@@ -74,20 +74,37 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
           aria-label="Navegação principal"
           data-open={menuOpen || undefined}
         >
-          {(settings.links ?? []).map((l) =>
-            settings.storyAnchor && l.href.endsWith(`#${settings.storyAnchor}`) ? (
-              <AnchorLink
-                key={l.href}
+          {(settings.links ?? []).map((l, i) => {
+            const internal = l.href.startsWith('/') && !l.href.startsWith('//');
+            if (internal && settings.storyAnchor && l.href.endsWith(`#${settings.storyAnchor}`)) {
+              return (
+                <AnchorLink
+                  key={`${l.href}:${i}`}
+                  href={l.href}
+                  anchor={settings.storyAnchor}
+                  label={l.label}
+                />
+              );
+            }
+            if (internal) {
+              return (
+                <NavLink key={`${l.href}:${i}`} to={l.href} end={l.href === '/'}>
+                  {l.label}
+                </NavLink>
+              );
+            }
+            return (
+              <a
+                key={`${l.href}:${i}`}
                 href={l.href}
-                anchor={settings.storyAnchor}
-                label={l.label}
-              />
-            ) : (
-              <NavLink key={l.href} to={l.href} end={l.href === '/'}>
+                {...(/^https?:\/\//i.test(l.href)
+                  ? { target: '_blank', rel: 'noopener noreferrer' }
+                  : {})}
+              >
                 {l.label}
-              </NavLink>
-            ),
-          )}
+              </a>
+            );
+          })}
         </nav>
 
         <div className="header-actions">

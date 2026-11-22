@@ -17,6 +17,7 @@ import { cn } from '../../ui/cn.ts';
 import { Notice } from '../../ui/Notice.tsx';
 import { attemptMeta, PAY_LABEL, PDV_METHOD_LABEL, REVIEW } from '../../ui/PaymentChip.tsx';
 import { Bone } from '../../ui/skeletons.tsx';
+import { paymentTotals, refundable } from './payment-totals.ts';
 import { useMarkPaid } from './actions.ts';
 
 // the PDV's payment flow, only fetched when someone receives an order at the counter
@@ -35,10 +36,6 @@ export function primaryPayment(payments: OrderPayment[] | undefined): OrderPayme
     byNew[0]!
   );
 }
-
-/** What can still go back on this attempt (Core's figure). */
-export const refundable = (p: OrderPayment | null) =>
-  !p || !(p.status === 'approved' || p.status === 'partially_refunded') ? 0 : p.refundableCents;
 
 function methodLabel(o: Order) {
   const split = o.payment.pdv;
@@ -112,7 +109,8 @@ function explain(o: Order): string {
 
 /** The two parts of a sinal order: how much, and when and how each came in. */
 function SinalParts({ order, sinal }: { order: Order; sinal: OrderSinal }) {
-  const share = Math.round((sinal.depositCents / order.totalCents) * 100);
+  const share =
+    order.totalCents > 0 ? Math.round((sinal.depositCents / order.totalCents) * 100) : 0;
   const row = (label: string, cents: number, at: string | null, via: OrderSinal['depositVia']) => (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="min-w-0">
@@ -165,7 +163,8 @@ export function PaymentSection({
   const main = primaryPayment(payments);
   const others = (payments ?? []).filter((x) => x.id !== main?.id);
   const Icon = p.method === 'pix' ? PixLogo : p.method === 'cash' ? Money : CreditCard;
-  const settled = main && SETTLED.includes(main.status);
+  const settled = (payments ?? []).filter((p) => SETTLED.includes(p.status));
+  const totals = paymentTotals(settled);
   const refunds = (payments ?? []).flatMap((x) => x.refunds);
   const reviews = (payments ?? []).filter((x) => x.review && REVIEW[x.review]);
   const pdvOpen = useFeature('pdv');
@@ -217,22 +216,22 @@ export function PaymentSection({
         </div>
       ) : null}
 
-      {main && settled ? (
+      {settled.length > 0 ? (
         <dl className="t-body space-y-1.5 p-4">
           <div className="flex justify-between gap-3 text-muted">
             <dt>Valor pago</dt>
-            <dd className="tnum">{money(main.amountCents)}</dd>
+            <dd className="tnum">{money(totals.amount)}</dd>
           </div>
-          {main.providerFeeCents !== null ? (
+          {totals.fee !== null ? (
             <div className="flex justify-between gap-3 text-muted">
               <dt>Taxa do Mercado Pago</dt>
-              <dd className="tnum">−{money(main.providerFeeCents)}</dd>
+              <dd className="tnum">−{money(totals.fee)}</dd>
             </div>
           ) : null}
-          {main.netCents !== null ? (
+          {totals.net !== null ? (
             <div className="flex justify-between gap-3 font-semibold">
               <dt>Você recebe</dt>
-              <dd className="tnum">{money(main.netCents)}</dd>
+              <dd className="tnum">{money(totals.net)}</dd>
             </div>
           ) : (
             <p className="t-caption text-muted">

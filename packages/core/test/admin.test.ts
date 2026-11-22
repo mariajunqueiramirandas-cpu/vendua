@@ -394,6 +394,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
   });
 
   let productId = '';
+  test('imported customers without orders appear in search and accept notes', async () => {
+    const added = await owner('POST', '/customers/import', {
+      text: 'Nome,Telefone\nDona Cláudia,(22) 99766-5501',
+    });
+    expect(added.status).toBe(201);
+    const found = await owner('GET', '/search?q=claudia');
+    expect(found.body.customers).toContainEqual({
+      phone: '22997665501',
+      name: 'Dona Cláudia',
+      orders: 0,
+    });
+    const saved = await owner('PUT', '/customers/22997665501/notes', {
+      note: 'Prefere buscar na loja.',
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.notes.note).toBe('Prefere buscar na loja.');
+  });
+
   test('Cardápio: create, edit, options, sold out today, bulk, paste import', async () => {
     const p = await owner('POST', '/products', {
       name: 'Pudim de Leite',

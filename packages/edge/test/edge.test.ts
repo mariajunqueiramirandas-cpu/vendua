@@ -124,14 +124,14 @@ describe('storefront', () => {
   });
 
   test('a store Core stops knowing is dropped at the next revalidation', async () => {
-    await live({ routeTtlMs: 20, negativeTtlMs: 20 });
+    await live({ routeTtlMs: 20, negativeTtlMs: 500 });
     expect((await h.get('/')).status).toBe(200);
     h.core.routes.set('loja.test', 'unknown');
     await Bun.sleep(40);
     expect((await h.get('/')).status).toBe(200); // stale while it revalidates
-    await Bun.sleep(10);
+    for (let tries = 0; h.edge.stats().routes && tries < 100; tries++) await Bun.sleep(5);
     expect((await h.get('/')).status).toBe(404);
-    await Bun.sleep(1100); // negative entry and the failure backoff both expire
+    await Bun.sleep(550); // the negative entry expires
     expect((await h.get('/')).status).toBe(404);
     const health = (await (await h.get('/_edge/healthz')).json()) as { routes: number };
     expect(health.routes).toBe(0);

@@ -1,6 +1,7 @@
+import { useCan } from '../../lib/session.ts';
 import { Clock, Fire, Pause, Play, Storefront } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatTime, formatWhen, localNow, todayHours } from '@vendua/kernel/rules';
 import { api, type DemandSpan, type SpecialDay, type StoreView } from '../../lib/api.ts';
 import { dateShort, hhmm, WEEKDAYS_LONG } from '../../lib/format.ts';
@@ -31,7 +32,15 @@ export function StatusSheet({
   const qc = useQueryClient();
   const [span, setSpan] = useState<Span>('1h');
   const [message, setMessage] = useState(store.status.pauseMessage ?? '');
-  const [editHours, setEditHours] = useState(startWith === 'hours');
+  const manager = useCan('manager');
+  const [editing, setEditHours] = useState(startWith === 'hours');
+  const editHours = manager && editing;
+  useEffect(() => {
+    if (!open) return;
+    setSpan('1h');
+    setMessage(store.status.pauseMessage ?? '');
+    setEditHours(startWith === 'hours');
+  }, [open, startWith]);
   const tz = store.hours.timezone;
   const done = (s: StoreView) => {
     qc.setQueryData(qk.store, s);
@@ -104,7 +113,7 @@ export function StatusSheet({
                 : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
       }
       footer={
-        hold || demandOnly ? null : paused ? (
+        hold || demandOnly || editHours ? null : paused ? (
           <Button
             size="lg"
             block
@@ -114,7 +123,7 @@ export function StatusSheet({
           >
             voltar a aceitar pedidos
           </Button>
-        ) : editHours ? null : (
+        ) : (
           <Button
             size="lg"
             block
@@ -132,7 +141,7 @@ export function StatusSheet({
       ) : hold && !editHours ? (
         <div className="space-y-6 pt-2">
           <BillingHoldNotice onNavigate={() => onOpenChange(false)} />
-          <HoursButton store={store} onClick={() => setEditHours(true)} />
+          {manager ? <HoursButton store={store} onClick={() => setEditHours(true)} /> : null}
         </div>
       ) : editHours ? (
         <TodayHours store={store} onDone={() => setEditHours(false)} onSaved={done} />
@@ -180,7 +189,7 @@ export function StatusSheet({
             </>
           ) : null}
           {!paused ? <DemandControl store={store} boxed /> : null}
-          <HoursButton store={store} onClick={() => setEditHours(true)} />
+          {manager ? <HoursButton store={store} onClick={() => setEditHours(true)} /> : null}
         </div>
       )}
     </Sheet>
@@ -376,6 +385,7 @@ function TodayHours({
   });
   const tomorrow = aheadOf(store).find((d) => d.date === addDays(date, 1));
   // what else the merchant set on the days ruling today, which "voltar" leaves alone
+  const invalidHours = !closed && open >= close;
   const lasting = latest().some((d) => covers(d, date) && !onlyOn(d, date));
   return (
     <div className="space-y-5 pt-2">
@@ -400,6 +410,11 @@ function TodayHours({
           <TimeInput label="fecha às" value={close} onCommit={setClose} />
         </div>
       ) : null}
+      {invalidHours ? (
+        <p role="alert" className="t-caption text-danger">
+          O horário de abrir deve vir antes do horário de fechar.
+        </p>
+      ) : null}
       <div className="flex gap-2">
         <Button variant="ghost" onClick={onDone}>
           voltar
@@ -408,6 +423,7 @@ function TodayHours({
           block
           loading={save.isPending}
           icon={<Storefront />}
+          disabled={invalidHours}
           onClick={() =>
             save.mutate({
               days: setDay(

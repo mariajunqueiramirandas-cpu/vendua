@@ -6,7 +6,7 @@ import {
   Trash,
   WarningOctagon,
 } from '@phosphor-icons/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, ApiError, type DnsRecord, type DnsRecordType } from '../../../lib/api.ts';
 import { plural } from '../../../lib/format.ts';
 import { useMutation } from '../../../lib/query.ts';
@@ -167,6 +167,13 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
   const [served, setServed] = useState<Record<number, RowErr>>({});
   const [added, setAdded] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (!dirty) {
+      setRows(d.records.map(rowOf));
+      if (d.records.length) setSearched(true);
+    }
+  }, [d.records, dirty]);
+
   const edit = (key: number, p: Partial<Omit<Row, 'key'>>) => {
     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
     setServed(({ [key]: _, ...rest }) => rest);
@@ -203,8 +210,15 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
           ? /^records\.(\d+)\.(name|value|priority)$/.exec(e.field ?? '')
           : null;
       const row = m ? rows[Number(m[1])] : undefined;
-      if (m && row) setServed({ [row.key]: { [m[2]!]: e instanceof Error ? e.message : '' } });
-      else toast.error(messageOf(e));
+      if (m && row) {
+        const field = m[2] as keyof RowErr;
+        const words = {
+          name: 'Confira o nome do registro.',
+          value: 'Confira o valor do registro.',
+          priority: 'Prioridade de 0 a 65535.',
+        };
+        setServed({ [row.key]: { [field]: words[field] } });
+      } else toast.error(messageOf(e));
     },
   );
   const errs = Object.fromEntries(rows.map((r) => [r.key, check(r, d.host)]));
@@ -220,7 +234,7 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
             const e: RowErr = {
               ...(shown || r.name ? { name: all.name } : {}),
               ...(shown || r.value ? { value: all.value } : {}),
-              priority: all.priority,
+              ...(shown || r.priority !== undefined ? { priority: all.priority } : {}),
               ...served[r.key],
             };
             const n = i + 1;

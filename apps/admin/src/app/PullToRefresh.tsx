@@ -19,9 +19,11 @@ export function PullToRefresh() {
   const pullRef = useRef(0);
 
   useEffect(() => {
+    const desktop = matchMedia('(min-width: 768px)');
     const start = (e: TouchEvent) => {
       const t = e.target as Element;
       if (
+        desktop.matches ||
         scrollY > 0 ||
         e.touches.length !== 1 ||
         t.closest('[role="dialog"], [data-vaul-drawer], [data-no-pull], input, textarea, select')
@@ -31,7 +33,7 @@ export function PullToRefresh() {
     };
     const move = (e: TouchEvent) => {
       const s = g.current;
-      if (!s) return;
+      if (!s || desktop.matches || e.touches.length !== 1) return;
       const dy = e.touches[0]!.clientY - s.y;
       const dx = e.touches[0]!.clientX - s.x;
       if (!s.on) {
@@ -55,7 +57,7 @@ export function PullToRefresh() {
       g.current = null;
       pullRef.current = 0;
       setPull(0);
-      if (!fire) return;
+      if (!fire || desktop.matches) return;
       haptic.commit();
       setBusy(true);
       void qc

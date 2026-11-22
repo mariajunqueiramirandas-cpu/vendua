@@ -31,7 +31,7 @@ export const ACTIVITY_KINDS = {
     'tokens',
   ],
   clientes: ['customer'],
-  marketing: ['coupon', 'loyalty'],
+  marketing: ['coupon', 'loyalty', 'marketing'],
   pagamentos: ['payments'],
   equipe: ['member'],
   conta: ['account', 'invoice', 'custom_domain', 'help'],

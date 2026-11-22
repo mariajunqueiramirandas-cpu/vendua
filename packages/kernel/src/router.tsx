@@ -239,7 +239,14 @@ function PageRoutes() {
   );
   const bg = backgroundOf(location);
   const sheet = bg && location.pathname === KERNEL_PATHS.cart ? bg : null;
-  const taken = new Set<string>([paths.home, paths.catalog, ...Object.values(KERNEL_PATHS)]);
+  const taken = new Set<string>([
+    paths.home,
+    paths.catalog,
+    ...Object.values(KERNEL_PATHS),
+    '/v1',
+    '/storefront',
+    '/control',
+  ]);
   return (
     <>
       {/* first in document order: the open sheet's controls come before the inert page's */}

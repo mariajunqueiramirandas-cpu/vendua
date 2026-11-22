@@ -134,12 +134,13 @@ self.addEventListener('fetch', (e) => {
     // Network first: a cache-first shell pinned a broken version on the phone (a blank screen the
     // page could never ask to update). The cached shell is the offline / slow-network fallback.
     e.respondWith(
-      Promise.race([fetch(e.request), new Promise((_, no) => setTimeout(no, 4000))]).catch(() =>
-        caches
-          .open(SHELL)
-          .then((c) => c.match(INDEX))
-          .then((hit) => hit || fetch(e.request)),
-      ),
+      Promise.race([fetch(e.request), new Promise((_, no) => setTimeout(no, 4000))])
+        .catch(() => null)
+        .then(async (response) => {
+          if (response && response.status < 500) return response;
+          const hit = await (await caches.open(SHELL)).match(INDEX);
+          return hit || response || fetch(e.request);
+        }),
     );
     return;
   }
@@ -167,7 +168,7 @@ self.addEventListener('push', (e) => {
       .showNotification(title, {
         body: data.body || '',
         tag: data.tag,
-        renotify: true,
+        ...(data.tag ? { renotify: true } : {}),
         requireInteraction: true,
         timestamp: Date.now(),
         icon: '/admin/icons/icon-192.png',
@@ -231,7 +232,7 @@ self.addEventListener('notificationclick', (e) => {
   }
   if (e.action === 'accept' && orderId) {
     e.waitUntil(
-      fetch(`/admin/v1/orders/${orderId}/transition`, {
+      fetch(`/admin/v1/orders/${encodeURIComponent(orderId)}/transition`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {

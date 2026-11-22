@@ -459,6 +459,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.subscriptions.size - before).toBe(1);
   });
 
+  test('a failed card invoice accepts a one-off Pix and keeps the subscription on card', async () => {
+    const s = await store('fatura-cartao-pix', 'mirim', 'bia@example.com');
+    await s.owner('POST', '/account/subscription', {
+      planId: 'mirim',
+      method: 'card',
+      payerEmail: 'bia@example.com',
+      payerDocument: '529.982.247-25',
+    });
+    const pre = (await sub(s.id)).provider_subscription_id;
+    await call('POST', `/admin/v1/dev/billing/subscriptions/${pre}/settle`, { status: 'rejected' });
+    const inv = (await invoices(s.id))[0]!;
+    expect(inv).toMatchObject({ method: 'card', status: 'failed' });
+
+    const issued = await s.owner('POST', `/account/invoices/${inv.id}/pix`, {});
+    expect(issued.status).toBe(200);
+    expect(issued.body.invoices[0]).toMatchObject({
+      id: inv.id,
+      method: 'pix',
+      status: 'open',
+      pix: { copyPaste: expect.any(String) },
+    });
+    const rejected = fake.subscriptionPayments.get(inv.provider_payment_id)!;
+    const webhook = () =>
+      handleBillingWebhook({ sql: appSql, provider: fake, notify } as never, {
+        kind: 'subscription_payment',
+        resourceId: rejected.id,
+        providerUserId: null,
+        action: null,
+      });
+    await webhook();
+    expect((await invoices(s.id))[0]).toMatchObject({
+      method: 'pix',
+      status: 'open',
+      pix_attempt: 1,
+    });
+    expect((await payInvoice(inv.id)).status).toBe(200);
+    fake.subscriptionPayments.set(rejected.id, { ...rejected, status: 'approved' });
+    await webhook();
+    expect(await invoices(s.id)).toHaveLength(1);
+    expect(await flagged(s.id)).toContain('Fatura paga por Pix e cartão');
+    expect(await sub(s.id)).toMatchObject({ method: 'card', provider_subscription_id: pre });
+    expect((await invoices(s.id))[0]!.status).toBe('paid');
+  });
+
   test('a pending card plan with no CPF/CNPJ is refused Pix before MP drops the card', async () => {
     const s = await store('troca', 'mirim', 'bia@example.com');
     await s.owner('POST', '/account/subscription', {

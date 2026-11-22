@@ -15,11 +15,11 @@
   /* the blush panels are the brand rose let down into the paper, so they follow the tokens */
   --blush: color-mix(in srgb, var(--rose) 30%, var(--paper));
   --blush-deep: color-mix(in srgb, var(--rose) 48%, var(--paper));
-  --cream-gold: #f5ebd6;
+  --cream-gold: color-mix(in srgb, var(--gold) 18%, var(--paper));
   --gold: #c9a24b;
-  /* gold dark enough to be read on paper (5.8:1); the light gold is only ever a line */
-  --gold-ink: #7a5c1b;
-  --ink-soft: #55293f;
+  /* gold-tinted ink that tracks light and dark tones at AA */
+  --gold-ink: color-mix(in srgb, var(--gold) 28%, var(--ink));
+  --ink-soft: color-mix(in srgb, var(--ink) 84%, var(--paper));
 
   --line: color-mix(in srgb, var(--ink) 12%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 22%, transparent);
@@ -608,6 +608,37 @@ img {
 
 .menu-bar {
   display: contents;
+}
+
+.menu-bar[hidden] {
+  display: none;
+}
+
+.menu-diets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.menu-diet {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--w-strong);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.menu-diet[aria-pressed='true'] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
 }
 
 .menu-search {

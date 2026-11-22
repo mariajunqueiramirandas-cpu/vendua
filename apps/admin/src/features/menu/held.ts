@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { toast } from '../../ui/Toast.tsx';
+import { dismiss, toast } from '../../ui/Toast.tsx';
 
 /** as long as the "desfazer" toast stays up (§2.2.1) */
 export const HOLD_MS = 6000;
@@ -11,7 +11,9 @@ export const HOLD_MS = 6000;
  * "pronto" (features/kitchen/data.ts).
  */
 export function useHeld() {
-  const held = useRef(new Map<string, { timer: number; send: (leaving: boolean) => void }>());
+  const held = useRef(
+    new Map<string, { timer: number; toastId: number; send: (leaving: boolean) => void }>(),
+  );
   const [ids, setIds] = useState<ReadonlySet<string>>(() => new Set());
   const mounted = useRef(true);
   const sync = () => mounted.current && setIds(new Set(held.current.keys()));
@@ -39,24 +41,34 @@ export function useHeld() {
   const hold = (id: string, text: string, send: (leaving: boolean) => void) => {
     if (held.current.has(id)) return;
     const timer = window.setTimeout(() => fire(id, false), HOLD_MS);
-    held.current.set(id, { timer, send });
-    sync();
-    toast(text, {
+    const toastId = toast(text, {
       ms: HOLD_MS,
       undo: () => {
         if (!cancel(id)) toast.error('Não deu para desfazer: já tinha sido apagado.');
       },
     });
+    held.current.set(id, { timer, toastId, send });
+    sync();
   };
 
   useEffect(() => {
     mounted.current = true;
     const flush = () => [...held.current.keys()].forEach((id) => fire(id, true));
+    const discard = () => {
+      for (const h of held.current.values()) {
+        clearTimeout(h.timer);
+        dismiss(h.toastId);
+      }
+      held.current.clear();
+      sync();
+    };
     const hidden = () => document.visibilityState === 'hidden' && flush();
     window.addEventListener('pagehide', flush);
+    window.addEventListener('vendua:signedout', discard);
     document.addEventListener('visibilitychange', hidden);
     return () => {
       window.removeEventListener('pagehide', flush);
+      window.removeEventListener('vendua:signedout', discard);
       document.removeEventListener('visibilitychange', hidden);
       mounted.current = false;
       flush();

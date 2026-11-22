@@ -61,20 +61,44 @@ export default function Hero({ settings: s }: SectionProps<typeof schema>) {
           {s.text ? <p className="hero-sub rise-in rise-in-3">{fill(s.text)}</p> : null}
           <div className="hero-cta rise-in rise-in-4">
             {s.ctaLabel && s.ctaHref ? (
-              <Link to={s.ctaHref} className="btn btn-lg">
-                {s.ctaLabel}
-              </Link>
+              s.ctaHref.startsWith('/') && !s.ctaHref.startsWith('//') ? (
+                <Link to={s.ctaHref} className="btn btn-lg">
+                  {s.ctaLabel}
+                </Link>
+              ) : (
+                <a
+                  href={s.ctaHref}
+                  className="btn btn-lg"
+                  {...(/^https?:\/\//i.test(s.ctaHref)
+                    ? { target: '_blank', rel: 'noopener noreferrer' }
+                    : {})}
+                >
+                  {s.ctaLabel}
+                </a>
+              )
             ) : null}
             {s.secondaryLabel && s.secondaryHref ? (
-              <Link to={s.secondaryHref} className="btn-ghost btn-lg">
-                {s.secondaryLabel}
-              </Link>
+              s.secondaryHref.startsWith('/') && !s.secondaryHref.startsWith('//') ? (
+                <Link to={s.secondaryHref} className="btn-ghost btn-lg">
+                  {s.secondaryLabel}
+                </Link>
+              ) : (
+                <a
+                  href={s.secondaryHref}
+                  className="btn-ghost btn-lg"
+                  {...(/^https?:\/\//i.test(s.secondaryHref)
+                    ? { target: '_blank', rel: 'noopener noreferrer' }
+                    : {})}
+                >
+                  {s.secondaryLabel}
+                </a>
+              )
             ) : null}
           </div>
           {proof.length > 0 ? (
             <ul className="hero-proof rise-in rise-in-4">
-              {proof.map((p) => (
-                <li key={p}>{fill(p)}</li>
+              {proof.map((p, i) => (
+                <li key={`${p}:${i}`}>{fill(p)}</li>
               ))}
             </ul>
           ) : null}

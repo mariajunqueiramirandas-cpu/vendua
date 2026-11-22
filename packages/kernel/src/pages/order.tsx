@@ -116,7 +116,14 @@ function useOnlinePayment(
   const started = useRef<string | null>(null);
   const lastStatus = useRef<string | undefined>(undefined);
   const later = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => () => clearTimeout(later.current), []);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      clearTimeout(later.current);
+    };
+  }, []);
 
   const pay = order?.payment;
   const card = pay?.method === 'card_online';
@@ -163,27 +170,30 @@ function useOnlinePayment(
       // the Pix Core creates here carries Mercado Pago's device fingerprint (anti-fraud), waited
       // for briefly; the card sends its own with the token
       const deviceId = card ? null : await mpDeviceId();
+      if (!alive.current) return;
       const r = await api.payOrder(order.id, { cardForm: true, deviceId });
       invalidateQuery(`order:${order.id}`, r.order);
+      if (!alive.current) return;
       apply(r.next, null);
       if (mode === 'redirect' && r.next.kind === 'redirect') {
         globalThis.location.assign(r.next.url);
         return; // stays "redirecting" until the browser leaves
       }
     } catch (err) {
+      if (!alive.current) return;
       const code = errorCode(err);
       // paid meanwhile (or never online): the order read has the answer
       if (code === 'PAYMENT_NOT_REQUIRED') invalidateQuery(`order:${order.id}`);
       else setFailure(code);
     }
-    setWork(null);
+    if (alive.current) setWork(null);
   };
 
   // MP settles a finished 3DS challenge a few moments after the bank's COMPLETE: show
   // "processing" and ask again, telling Core the challenge was answered so a still-pending one
   // doesn't come back as a fresh card form. Still pending after ~a minute → an ordinary sync.
   const afterChallenge = (i = 0): void => {
-    if (!order) return;
+    if (!order || !alive.current) return;
     if (i === 0) {
       clearTimeout(later.current);
       setCardView(null);
@@ -191,15 +201,18 @@ function useOnlinePayment(
     }
     if (i >= CHALLENGE_POLL_MS.length) return void run('sync');
     later.current = setTimeout(async () => {
+      if (!alive.current) return;
       try {
         const r = await api.payOrder(order.id, { cardForm: true, challengeDone: true });
         invalidateQuery(`order:${order.id}`, r.order);
+        if (!alive.current) return;
         if (r.order.payment?.status !== 'pending' || r.next.kind !== 'none')
           return apply(r.next, null);
       } catch (err) {
+        if (!alive.current) return;
         if (errorCode(err) === 'PAYMENT_NOT_REQUIRED') return invalidateQuery(`order:${order.id}`);
       }
-      afterChallenge(i + 1);
+      if (alive.current) afterChallenge(i + 1);
     }, CHALLENGE_POLL_MS[i]);
   };
 
@@ -209,8 +222,10 @@ function useOnlinePayment(
     try {
       const r = await api.payCard(order.id, input);
       invalidateQuery(`order:${order.id}`, r.order);
+      if (!alive.current) return;
       apply(r.next, cfg);
     } catch (err) {
+      if (!alive.current) return;
       const code = errorCode(err);
       if (code === 'INVALID_PAYMENT') return showForm(cfg, 'card_data');
       setCardView(null);
@@ -416,13 +431,13 @@ function TrackingPay({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const p = order.payment;
+  const expired = usePixTimer(p?.pix?.expiresAt ?? null).expired;
   if (!p || order.state === 'cancelled') return null;
   const card = p.sinal ? (
     <SinalCard sinal={p.sinal} mode={order.delivery.mode} currency={currency} />
   ) : null;
   if (!p.dueCents) return card;
-  const live =
-    p.pix && (!p.pix.expiresAt || Date.parse(p.pix.expiresAt) > Date.now()) ? p.pix : null;
+  const live = p.pix && !expired ? p.pix : null;
   const make = async () => {
     setBusy(true);
     setFailed(null);
@@ -479,6 +494,12 @@ const dueOf = (s: OrderSinal) =>
 
 export function OrderPage() {
   const { id = '' } = useParams();
+  // /pedido/a → /pedido/b reuses the route element: a fresh view keeps A's Pix, card form and
+  // timers from leaking onto B
+  return <OrderView key={id} id={id} />;
+}
+
+function OrderView({ id }: { id: string }) {
   const { search } = useLocation();
   // live: the Kernel holds a long poll open while the tab is visible (Kernel 1.2)
   // Kernel 1.21: opened from the store's WhatsApp link on another device, `tracking` (status only)

@@ -139,17 +139,33 @@ function k18(s: Source): Found[] {
       `card decision re-derived (.needsChoices / .requiresPreorder) — ${CARD}.canQuickAdd / .badge`,
     ],
   ]);
+  const cardVars = new Set<string>();
+  for (const m of s.src.matchAll(
+    /\b(?:const|let|var)\s+([\w$]+)\s*=\s*(?:useCardState|cardState)\s*\(/g,
+  ))
+    cardVars.add(m[1]!);
   s.src.split('\n').forEach((text, i) => {
-    for (const m of text.matchAll(/([\w$]*)\s*\??\s*\.\s*lowStock\b/g))
-      if (!LABEL_BAG.test(m[1]!))
-        out.push({
-          line: i + 1,
-          msg: `stock field read by hand (.lowStock) — ${CARD}.lowStock / .badge`,
-        });
+    for (const m of text.matchAll(/([\w$]*)\s*\??\s*\.\s*lowStock\b/g)) {
+      const owner = m[1]!;
+      if (LABEL_BAG.test(owner) || cardVars.has(owner)) continue;
+      // inline `useCardState(p).lowStock` / `cardState(p).lowStock`
+      const before = text.slice(0, m.index ?? 0);
+      if (/\b(?:useCardState|cardState)\s*\([^)]*\)\s*$/.test(before)) continue;
+      out.push({
+        line: i + 1,
+        msg: `stock field read by hand (.lowStock) — ${CARD}.lowStock / .badge`,
+      });
+    }
   });
   for (const m of s.src.matchAll(/\{[^{}]*\}\s*=(?![=>])\s*([\w$]*)/g)) {
     const name = PRICE_NAMES.exec(m[0]) ?? CARD_NAMES.exec(m[0]);
-    if (!name || (name[1] === 'lowStock' && LABEL_BAG.test(m[1]!))) continue;
+    if (!name) continue;
+    const rhs = m[1]!;
+    if (
+      name[1] === 'lowStock' &&
+      (LABEL_BAG.test(rhs) || cardVars.has(rhs) || rhs === 'useCardState' || rhs === 'cardState')
+    )
+      continue;
     out.push({
       line: lineOf(s.src, m.index + name.index),
       msg: `${name[1]} destructured from a product — ${PRICE_NAMES.test(name[1]!) ? PRICE : CARD}`,

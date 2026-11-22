@@ -29,6 +29,7 @@ import { showError } from './errors.ts';
 import { emit } from './telemetry.ts';
 import type { CatalogProduct, ComboSelection, ProductDetail } from './api.ts';
 import { haptic } from './haptics.ts';
+import { useTableSession } from './table.ts';
 import { backgroundOf } from './transitions.tsx';
 
 /** Headless primitives (02-kernel.md): Kernel owns behavior, the storefront owns visuals via asChild — each stamps its data-vendua hook + ARIA regardless of the delegated child. */
@@ -325,13 +326,16 @@ export function CheckoutButton({ asChild, children, onStart, className }: Checko
   // re-reads the store when it opens, so the button wakes up by itself
   const { status } = useStoreStatus();
   const { cart } = useCart();
+  const atTable = !!useTableSession() && store?.dineIn?.enabled === true;
   const go = useNavigateTo();
   const [pending, setPending] = useState(false);
   const empty = !cart || cart.status !== 'open' || cart.items.length === 0;
   const blocked =
     empty ||
-    (status !== undefined && !takesOrders(status, store, cart.items)) ||
-    (cart.totals.belowEveryMinOrder ?? cart.totals.belowMinOrder);
+    (atTable
+      ? status === 'closed' || status === 'paused'
+      : (status !== undefined && !takesOrders(status, store, cart.items)) ||
+        (cart.totals.belowEveryMinOrder ?? cart.totals.belowMinOrder));
   const disabled = pending || blocked;
   return withChild(
     asChild,

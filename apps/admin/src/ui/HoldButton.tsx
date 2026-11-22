@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { haptic } from '../lib/haptics.ts';
 import { cn } from './cn.ts';
 
@@ -24,11 +24,27 @@ export function HoldButton({
 }) {
   const fill = useRef<HTMLSpanElement>(null);
   const run = useRef<Animation | null>(null);
-  const begin = () => {
-    if (disabled || run.current) return;
-    const el = fill.current!;
+  const input = useRef<string | null>(null);
+  const confirm = useRef(onConfirm);
+  confirm.current = onConfirm;
+  const scale = (el: HTMLElement) => {
+    const transform = getComputedStyle(el).transform;
+    return transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).a;
+  };
+  useEffect(() => {
+    const el = fill.current;
+    return () => {
+      run.current?.cancel();
+      run.current = null;
+      el?.getAnimations?.().forEach((a) => a.cancel());
+    };
+  }, []);
+  const begin = (source: string) => {
+    const el = fill.current;
+    if (disabled || run.current || !el) return;
+    input.current = source;
     // resume from wherever a let-go left the bar
-    const from = new DOMMatrixReadOnly(getComputedStyle(el).transform).a;
+    const from = scale(el);
     el.getAnimations().forEach((a) => a.cancel());
     const a = el.animate([{ transform: `scaleX(${from})` }, { transform: 'scaleX(1)' }], {
       duration: ms * (1 - from),
@@ -37,16 +53,18 @@ export function HoldButton({
     run.current = a;
     a.onfinish = () => {
       run.current = null;
+      input.current = null;
       haptic.commit();
-      onConfirm();
+      confirm.current();
     };
   };
   const end = () => {
+    input.current = null;
     const a = run.current;
     if (!a) return;
     run.current = null;
     const el = fill.current!;
-    const at = new DOMMatrixReadOnly(getComputedStyle(el).transform).a;
+    const at = scale(el);
     a.cancel();
     el.animate([{ transform: `scaleX(${at})` }, { transform: 'scaleX(0)' }], {
       duration: 180,
@@ -57,17 +75,22 @@ export function HoldButton({
     <button
       type="button"
       disabled={disabled}
-      onPointerDown={begin}
+      onPointerDown={(e) => {
+        if (e.button === 0) begin('pointer');
+      }}
       onPointerUp={end}
       onPointerLeave={end}
       onPointerCancel={end}
+      onBlur={end}
       onKeyDown={(e) => {
         if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
           e.preventDefault();
-          begin();
+          begin(e.key);
         }
       }}
-      onKeyUp={end}
+      onKeyUp={(e) => {
+        if (input.current === e.key) end();
+      }}
       onContextMenu={(e) => e.preventDefault()}
       className={cn(
         'press relative isolate h-14 w-full select-none overflow-hidden rounded-lg t-label ring-1 [-webkit-touch-callout:none] disabled:opacity-45',

@@ -10,6 +10,7 @@ import {
   text,
   url,
   useMenu,
+  usePageContext,
   type SectionProps,
 } from '@vendua/kernel';
 import { ProductCard } from './_shared/ProductCard.tsx';
@@ -38,11 +39,14 @@ export const schema = defineSection({
 
 export default function Showcase({ settings: s }: SectionProps<typeof schema>) {
   const { categories, loading } = useMenu();
+  const { params } = usePageContext();
   const pool = s.category
     ? (categories.find((c) => c.slug === s.category)?.products ?? [])
     : categories.flatMap((c) => c.products);
-  // a showcase sells: only what can be bought today
-  const products = pool.filter((p) => !cardState(p, null).soldOut).slice(0, s.limit);
+  // a showcase sells: only what can be bought today, and never the product already open
+  const products = pool
+    .filter((p) => p.slug !== params.slug && !cardState(p, null).soldOut)
+    .slice(0, s.limit);
   if (!loading && products.length === 0) return null;
 
   return (
@@ -54,9 +58,21 @@ export default function Showcase({ settings: s }: SectionProps<typeof schema>) {
           {s.lede ? <p className="lede">{s.lede}</p> : null}
         </div>
         {s.ctaLabel && s.ctaHref ? (
-          <Link to={s.ctaHref} className="link-arrow">
-            {s.ctaLabel} <ArrowRight size={16} aria-hidden="true" />
-          </Link>
+          s.ctaHref.startsWith('/') && !s.ctaHref.startsWith('//') ? (
+            <Link to={s.ctaHref} className="link-arrow">
+              {s.ctaLabel} <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+          ) : (
+            <a
+              href={s.ctaHref}
+              className="link-arrow"
+              {...(/^https?:\/\//i.test(s.ctaHref)
+                ? { target: '_blank', rel: 'noopener noreferrer' }
+                : {})}
+            >
+              {s.ctaLabel} <ArrowRight size={16} aria-hidden="true" />
+            </a>
+          )
         ) : null}
       </Reveal>
       <BlockArea name="before-grid" />

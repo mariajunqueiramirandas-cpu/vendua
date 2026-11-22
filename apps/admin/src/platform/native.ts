@@ -15,6 +15,7 @@ import {
   bundleGood,
   checkForUpdate,
   onUpdate,
+  needsStoreUpdate,
   startUpdates,
   updateOnLaunch,
   updateReady,
@@ -251,6 +252,7 @@ export const platform: Platform = {
     apply: applyUpdate,
     ready: updateReady,
     onReady: onUpdate,
+    needsStoreUpdate,
   },
   install: {
     mode: () => null,

@@ -113,6 +113,7 @@ export function TopBar({
   station,
   counts,
   stats,
+  timezone,
   allDay,
   sound,
   onStation,
@@ -123,6 +124,7 @@ export function TopBar({
   station: string;
   counts: { queue: number; cooking: number; late: number };
   stats: KitchenStats | undefined;
+  timezone: string | undefined;
   allDay: boolean;
   sound: boolean;
   onStation: () => void;
@@ -130,7 +132,13 @@ export function TopBar({
   onSound: () => void;
   onSettings: () => void;
 }) {
-  const hour = new Date().getHours();
+  const hour = Number(
+    new Intl.DateTimeFormat('en-GB', {
+      hour: 'numeric',
+      hourCycle: 'h23',
+      timeZone: timezone,
+    }).format(new Date()),
+  );
   const hourly = stats?.hourly.slice(Math.max(0, hour - 7), hour + 1) ?? [];
   return (
     <header className="chrome sticky top-0 z-30 border-b border-line bg-bg/95 pt-[env(safe-area-inset-top)] backdrop-blur-sm">

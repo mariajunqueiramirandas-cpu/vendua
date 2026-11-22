@@ -47,8 +47,16 @@ export function withRetryScope<T>(owner: object, run: () => T): T {
 // a phone on a weak signal can hang a request for minutes; fail it so retry/offline UI takes over
 const timeoutFor = (mutating: boolean, raw: boolean) => (raw ? 60_000 : mutating ? 30_000 : 20_000);
 
+let sessionEpoch = 0;
+export function advanceSessionEpoch() {
+  sessionEpoch++;
+}
+
 async function req<T>(path: string, init: Init = {}): Promise<T> {
   const { idem, raw, timeoutMs, pix, ...rest } = init;
+  const caller = rest.signal;
+  caller?.throwIfAborted();
+  const epoch = sessionEpoch;
   const method = rest.method ?? 'GET';
   const mutating = method !== 'GET';
   // read before the first await: the scope is only set while the mutationFn starts
@@ -62,6 +70,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
   }
 
   const device = pix ? await mpDeviceReady() : mpDeviceId();
+  caller?.throwIfAborted();
   const ctl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(
@@ -71,8 +80,8 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
     },
     timeoutMs ?? timeoutFor(mutating, !!raw),
   );
-  const caller = rest.signal;
-  caller?.addEventListener('abort', () => ctl.abort(), { once: true });
+  const abort = () => ctl.abort(caller?.reason);
+  caller?.addEventListener('abort', abort, { once: true });
   const lost = () => {
     if (caller?.aborted && !timedOut) return caller.reason as Error;
     return timedOut
@@ -114,6 +123,8 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
       if (
         res.status === 401 &&
         path !== '/session' &&
+        !PUBLIC_AUTH.test(path) &&
+        epoch === sessionEpoch &&
         auth.authorization === platform.http.headers().authorization
       )
         window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
@@ -132,18 +143,23 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
     }
     // the app's sessions come back as a token (ADR 0044 §3): kept by the platform, never cached
     const token = (out as { token?: unknown } | null)?.token;
-    if (SIGN_IN.test(path) && typeof token === 'string') {
-      await platform.session.set(token);
-      delete (out as { token?: unknown }).token;
+    if (SIGN_IN.test(path) && (out as SignInResult | null)?.signedIn === true) {
+      advanceSessionEpoch();
+      if (typeof token === 'string') {
+        await platform.session.set(token);
+        delete (out as { token?: unknown }).token;
+      }
     }
     return out as T;
   } finally {
     clearTimeout(timer);
+    caller?.removeEventListener('abort', abort);
     if (path === '/auth/logout') await platform.session.clear().catch(() => undefined);
   }
 }
 
 /** where a sign-in answers with a session (a cookie on the web, `token` in the app) */
+const PUBLIC_AUTH = /^\/(auth\/(?!logout$)|signup(?:\/|$))/;
 const SIGN_IN = /^\/(auth\/(otp\/verify|email\/verify|select)|session\/switch|signup)$/;
 
 const get = <T>(p: string) => req<T>(p);
@@ -2897,7 +2913,7 @@ export const api = {
       referral?: string;
     }) => sendPix<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
-  session: () => get<Session>('/session'),
+  session: (signal?: AbortSignal) => req<Session>('/session', { signal: signal ?? null }),
   switchStore: (storeId: string) =>
     send<{ signedIn: true }>('POST', '/session/switch', { storeId }),
   updateMe: (patch: {

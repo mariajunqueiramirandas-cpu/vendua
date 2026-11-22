@@ -266,21 +266,36 @@ export function useBumpQueue(commit: (t: KitchenTicket) => void) {
   };
 
   useEffect(() => {
-    const send = (t: KitchenTicket) =>
-      void api
-        .transition(t.id, 'ready', {}, stepKey(t.id, 'ready'), { keepalive: true })
-        .then(() => qc.invalidateQueries({ queryKey: ['orders'] }))
-        .catch(() => undefined);
+    let signedOut = false;
+    const send = async (t: KitchenTicket) => {
+      try {
+        if (t.state === 'confirmed')
+          await api.transition(t.id, 'preparing', {}, stepKey(t.id, 'preparing'), {
+            keepalive: true,
+          });
+        if (!signedOut)
+          await api.transition(t.id, 'ready', {}, stepKey(t.id, 'ready'), { keepalive: true });
+        if (!signedOut) void qc.invalidateQueries({ queryKey: ['orders'] });
+      } catch {
+        // The next kitchen refresh reads Core's state.
+      }
+    };
+    const discard = () => {
+      signedOut = true;
+      for (const id of timers.current.keys()) drop(id);
+    };
     const flush = () =>
       [...timers.current.keys()].forEach((id) => {
         const t = drop(id);
-        if (t) send(t);
+        if (t && !signedOut) void send(t);
       });
     const hidden = () => document.visibilityState === 'hidden' && flush();
     window.addEventListener('pagehide', flush);
+    window.addEventListener('vendua:signedout', discard);
     document.addEventListener('visibilitychange', hidden);
     return () => {
       window.removeEventListener('pagehide', flush);
+      window.removeEventListener('vendua:signedout', discard);
       document.removeEventListener('visibilitychange', hidden);
       flush();
     };
@@ -288,7 +303,7 @@ export function useBumpQueue(commit: (t: KitchenTicket) => void) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { pending, bump, undo };
+  return { pending, bump, undo, waiting: (id: string) => timers.current.has(id) };
 }
 
 /** A per-device choice (this screen is the Chapa; sound on), kept in localStorage. */

@@ -9,6 +9,7 @@ import {
   useMenu,
   type SectionProps,
 } from '@vendua/kernel';
+import { DIETARY_FILTERS, DIETARY_LABEL } from '@vendua/kernel/rules';
 import { ProductCard } from './_shared/ProductCard.tsx';
 import { Skeleton } from './_shared/Skeleton.tsx';
 
@@ -29,6 +30,7 @@ export const schema = defineSection({
     soldOutLabel: text({ max: 30, default: 'Esgotado hoje' }),
     emptyTitle: text({ max: 80, default: 'Nada por aqui ainda' }),
     emptyText: text({ max: 200, default: '' }),
+    errorTitle: text({ max: 80, default: 'Não foi possível carregar o cardápio' }),
     noMatchTitle: text({ max: 80, default: 'Nada encontrado' }),
     resetLabel: text({ max: 40, default: 'Ver tudo' }),
   },
@@ -38,9 +40,20 @@ export const schema = defineSection({
 export default function CatalogBrowser({ settings: s }: SectionProps<typeof schema>) {
   const [category, setCategory] = useState('all');
   const [query, setQuery] = useState('');
+  const [diet, setDiet] = useState<string[]>([]);
   // tabs: every category with something in it; the grid: the Kernel's search over the same menu
   const { categories, loading, error, refetch } = useMenu();
-  const { categories: found } = useMenu({ query });
+  const availableDiets = useMemo(() => {
+    const present = new Set<string>();
+    for (const c of categories)
+      for (const p of c.products) for (const t of p.dietary ?? []) present.add(t);
+    return DIETARY_FILTERS.filter((tag) => present.has(tag));
+  }, [categories]);
+  const chosen = useMemo(
+    () => diet.filter((id) => availableDiets.includes(id)),
+    [diet, availableDiets],
+  );
+  const { categories: found } = useMenu({ query, dietary: chosen });
   const { vocabulary } = useCopy();
   const active = categories.some((c) => c.id === category) ? category : 'all';
   const shown = useMemo(
@@ -51,7 +64,9 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
     [found, active],
   );
 
-  const hasFilters = query.trim() !== '' || active !== 'all';
+  const hasFilters = query.trim() !== '' || active !== 'all' || chosen.length > 0;
+  const toggleDiet = (id: string) =>
+    setDiet((d) => (d.includes(id) ? d.filter((x) => x !== id) : [...d, id]));
 
   return (
     <>
@@ -92,27 +107,45 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
       </section>
 
       <section id="cardapio" className="container catalog-body">
-        <div className="catalog-bar">
-          <nav className="cat-tabs" aria-label="Categorias">
-            {[{ id: 'all', name: s.allLabel }, ...categories].map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className="cat-tab"
-                aria-pressed={active === c.id}
-                data-active={active === c.id || undefined}
-                onClick={() => setCategory(c.id)}
-              >
-                {c.name}
-              </button>
-            ))}
-          </nav>
-          <p role="status" className="catalog-count tnum">
-            {categories.length > 0
-              ? `${shown.length} ${plural(shown.length, s.itemSingular || vocabulary.itemSingular, s.itemPlural || vocabulary.itemPlural)}`
-              : ''}
-          </p>
-        </div>
+        {categories.length > 0 ? (
+          <div className="catalog-bar">
+            <nav className="cat-tabs" aria-label="Categorias">
+              {[{ id: 'all', name: s.allLabel }, ...categories].map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="cat-tab"
+                  aria-pressed={active === c.id}
+                  data-active={active === c.id || undefined}
+                  onClick={() => setCategory(c.id)}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </nav>
+            <p role="status" className="catalog-count tnum">
+              {`${shown.length} ${plural(shown.length, s.itemSingular || vocabulary.itemSingular, s.itemPlural || vocabulary.itemPlural)}`}
+            </p>
+          </div>
+        ) : null}
+        {availableDiets.length > 0 ? (
+          <div className="catalog-diets" role="group" aria-label="Filtros">
+            {availableDiets.map((tag) => {
+              const on = chosen.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  className="catalog-diet"
+                  aria-pressed={on}
+                  onClick={() => toggleDiet(tag)}
+                >
+                  {DIETARY_LABEL[tag]}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <BlockArea name="before-grid" />
 
         <div className="catalog-grid-wrap">
@@ -131,7 +164,7 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
           ) : error && categories.length === 0 ? (
             <div role="alert" className="empty-state">
               <RefreshCw size={20} aria-hidden="true" />
-              <h3>{s.emptyTitle}</h3>
+              <h2>{s.errorTitle}</h2>
               <button type="button" className="btn" onClick={refetch}>
                 Tentar novamente
               </button>
@@ -139,7 +172,7 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
           ) : shown.length === 0 ? (
             <div className="empty-state">
               <SearchX size={20} aria-hidden="true" />
-              <h3>{hasFilters ? s.noMatchTitle : s.emptyTitle}</h3>
+              <h2>{hasFilters ? s.noMatchTitle : s.emptyTitle}</h2>
               {!hasFilters && s.emptyText ? <p>{s.emptyText}</p> : null}
               {hasFilters ? (
                 <button
@@ -148,6 +181,7 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
                   onClick={() => {
                     setQuery('');
                     setCategory('all');
+                    setDiet([]);
                   }}
                 >
                   {s.resetLabel}
@@ -163,6 +197,7 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
                   eyebrow={c.name}
                   cta={s.cardCta}
                   soldOutLabel={s.soldOutLabel}
+                  anchor
                 />
               ))}
             </ol>

@@ -30,8 +30,8 @@ export default function Faq({ settings: s }: SectionProps<typeof schema>) {
         {s.lede ? <p className="lede">{s.lede}</p> : null}
       </Reveal>
       <Reveal className="faq-list">
-        {items.map((it) => (
-          <details key={it.question} className="faq-item">
+        {items.map((it, i) => (
+          <details key={`${it.question}:${i}`} className="faq-item">
             <summary>
               <span>{fill(it.question)}</span>
               <ChevronDown size={20} aria-hidden="true" />

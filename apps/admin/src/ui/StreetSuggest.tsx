@@ -84,7 +84,7 @@ export function useStreetSuggest(onPick: (s: PlaceSuggestion) => void, enabled =
             id={`${listId}-${i}`}
             role="option"
             aria-selected={i === active}
-            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}
             onMouseEnter={() => setActive(i)}
             onClick={() => pick(s)}
             className={cn(

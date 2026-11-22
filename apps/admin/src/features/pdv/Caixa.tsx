@@ -345,7 +345,13 @@ function MovementSheet({
       toast(kind === 'sangria' ? 'Sangria registrada.' : 'Suprimento registrado.');
       onClose();
     },
-    onError: (e) => toast.error(pdvError(e)),
+    onError: (e) => {
+      if (isCode(e, 'CAIXA_CLOSED')) {
+        onClose();
+        void qc.invalidateQueries({ queryKey: ['pdv'] });
+      }
+      toast.error(pdvError(e));
+    },
   });
   const ok = (cents ?? 0) > 0 && reason.trim().length > 0;
   return (
@@ -440,7 +446,13 @@ function CloseSheet({
       onOpenChange(false);
       nav(`/pdv/caixa/${r.report.id}`);
     },
-    onError: (e) => toast.error(pdvError(e)),
+    onError: (e) => {
+      if (isCode(e, 'CAIXA_CLOSED')) {
+        onOpenChange(false);
+        void qc.invalidateQueries({ queryKey: ['pdv'] });
+      }
+      toast.error(pdvError(e));
+    },
   });
   // a method nothing came in by needs no count
   const used = PDV_METHODS.filter(

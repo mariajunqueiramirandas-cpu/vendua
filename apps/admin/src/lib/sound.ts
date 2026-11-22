@@ -6,6 +6,7 @@ let ctx: AudioContext | null = null;
 let volume = 0.8;
 
 export function setVolume(v: number) {
+  if (!Number.isFinite(v)) return;
   volume = Math.max(0, Math.min(1, v));
 }
 

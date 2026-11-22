@@ -149,7 +149,12 @@ function Flow({ ob }: { ob: VendedorOnboarding }) {
     setStarting(how);
     try {
       await settings.mutateAsync(
-        how === 'ensaio' ? { enabled: true, coverage: 'rehearsal' } : { enabled: true },
+        how === 'ensaio'
+          ? { enabled: true, coverage: 'rehearsal' }
+          : {
+              enabled: true,
+              ...(ob.settings.coverage === 'rehearsal' ? { coverage: 'always' } : {}),
+            },
       );
       await progress.mutateAsync({ finished: true, part: 'comecar', step: 'pronto' });
       void qc.invalidateQueries({ queryKey: qk.session });

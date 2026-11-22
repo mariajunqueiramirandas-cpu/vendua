@@ -442,7 +442,7 @@ describe('avise-me when the store opens', () => {
     });
     expect(text('.v-notify label')).toBe('Estamos fechados agora. Quer um aviso quando abrir?');
     expect(text('.v-notify [data-part="when"]')).toContain('Abre');
-    const input = $('#v-notify-phone') as HTMLInputElement;
+    const input = $('.v-notify input[type="tel"]') as HTMLInputElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
         input,

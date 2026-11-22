@@ -338,7 +338,7 @@ export function DiscountSheet({
     setFixed(value?.kind === 'fixed' ? value.value : null);
     setPct(value?.kind === 'percent' ? String(value.value / 100).replace('.', ',') : '');
     setReason(value?.reason ?? '');
-  }, [open, value]);
+  }, [open]);
   const bps = Math.round(Number(pct.replace(',', '.')) * 100);
   const amount = kind === 'fixed' ? (fixed ?? 0) : Number.isFinite(bps) ? bps : 0;
   const ok = amount > 0 && (kind === 'fixed' || amount <= 10000) && reason.trim().length > 0;

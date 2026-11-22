@@ -55,27 +55,34 @@ export async function startRecording(): Promise<Recording> {
   const release = () => stream.getTracks().forEach((t) => t.stop());
   const mimeType = recorderMime();
   let rec: MediaRecorder;
+  const chunks: Blob[] = [];
+  let done: Promise<Blob>;
+  const started = Date.now();
   try {
     rec = new MediaRecorder(stream, {
       ...(mimeType ? { mimeType } : {}),
       audioBitsPerSecond: 32000,
     });
+    rec.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    done = new Promise<Blob>((resolve) => {
+      let settled = false;
+      const finish = (blob: Blob) => {
+        if (settled) return;
+        settled = true;
+        release();
+        resolve(blob);
+      };
+      rec.onstop = () =>
+        finish(new Blob(chunks, { type: rec.mimeType || mimeType || 'audio/webm' }));
+      rec.onerror = () => finish(new Blob([], { type: rec.mimeType || mimeType || 'audio/webm' }));
+    });
+    rec.start();
   } catch {
     release();
     throw new MicError('none');
   }
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
-  const done = new Promise<Blob>((resolve) => {
-    rec.onstop = () => {
-      release();
-      resolve(new Blob(chunks, { type: rec.mimeType || mimeType || 'audio/webm' }));
-    };
-  });
-  const started = Date.now();
-  rec.start();
   return {
     stop: async () => {
       const seconds = (Date.now() - started) / 1000;

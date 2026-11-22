@@ -1,3 +1,4 @@
+import { platform } from '../../platform/index.ts';
 import { X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -179,7 +180,11 @@ function Flow({
     askName: ob.from !== 'signup',
     importable: products.length === 0,
     owner,
-    mp: owner && pay.mercadoPago.available && pay.mercadoPago.status !== 'connected',
+    mp:
+      owner &&
+      platform.canPay &&
+      pay.mercadoPago.available &&
+      pay.mercadoPago.status !== 'connected',
   }));
   const [tokens, setTokens] = useState(savedTokens);
   useEffect(() => setTokens((t) => t ?? savedTokens), [savedTokens]);
@@ -466,7 +471,10 @@ function Flow({
     ob.checklist.some((c) => c.id === 'delivery' && c.done)
       ? [{ id: 'entrega', label: 'Preço da entrega', to: '/bem-vindo?passo=entrega' }]
       : []),
-    ...(owner && pay.mercadoPago.available && pay.mercadoPago.status !== 'connected'
+    ...(owner &&
+    platform.canPay &&
+    pay.mercadoPago.available &&
+    pay.mercadoPago.status !== 'connected'
       ? [
           {
             id: 'mp',
@@ -605,17 +613,19 @@ function Flow({
             : null
         }
         waiting={
-          ps.kind === 'pix' && plan.data ? (
+          platform.canPay && ps.kind === 'pix' && plan.data ? (
             <PlanPix a={plan.data} invoiceId={ps.invoiceId} />
-          ) : ps.kind === 'card' && ps.url ? (
-            <Button onClick={() => window.location.assign(ps.url!)}>
+          ) : platform.canPay && ps.kind === 'card' && ps.url ? (
+            <Button onClick={() => platform.openExternal(ps.url!)}>
               autorizar o cartão no Mercado Pago
             </Button>
           ) : (
             <p className="t-body text-muted">
-              {owner
-                ? 'A equipe da Venduá confirma o pagamento do plano e a loja abre em seguida.'
-                : 'Quem é dono da loja acerta o plano em Conta. A loja abre logo depois.'}
+              {!platform.canPay
+                ? 'A loja abre assim que o pagamento do plano for confirmado.'
+                : owner
+                  ? 'A equipe da Venduá confirma o pagamento do plano e a loja abre em seguida.'
+                  : 'Quem é dono da loja acerta o plano em Conta. A loja abre logo depois.'}
             </p>
           )
         }

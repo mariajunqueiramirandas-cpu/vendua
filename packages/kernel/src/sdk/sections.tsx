@@ -30,6 +30,7 @@ import { useKernel } from '../provider.tsx';
 import { productHref, resolvePaths } from '../config.ts';
 import { ITEM_NOTE_MAX, type CatalogProduct, type ComboSelection } from '../api.ts';
 import { errorCopy, showInfo } from '../errors.ts';
+import { ERROR_COPY } from '../rules/errors.ts';
 import { MAX_LINE_QTY } from '../rules/card.ts';
 import { DIETARY_FILTERS, DIETARY_LABEL, dietaryBadges } from '../rules/dietary.ts';
 import { formatCents, formatDay, mediaSrcSet, plural } from '../rules/format.ts';
@@ -121,9 +122,13 @@ export function Header({ settings }: SectionProps<typeof S.header>) {
                 key={i}
                 href={l.href}
                 aria-current={
-                  l.href !== '/' && (pathname === l.href || pathname.startsWith(`${l.href}/`))
-                    ? 'page'
-                    : undefined
+                  l.href === '/'
+                    ? pathname === '/'
+                      ? 'page'
+                      : undefined
+                    : pathname === l.href || pathname.startsWith(`${l.href}/`)
+                      ? 'page'
+                      : undefined
                 }
               >
                 {l.label}
@@ -632,9 +637,9 @@ function Purchase({ settings, slug }: SectionProps<typeof S.purchasePanel> & { s
                   setCartError(
                     err.code === 'MODIFIER_REQUIRED'
                       ? 'Escolha as opções obrigatórias antes de adicionar.'
-                      : err.code in COPY_CODES
+                      : err.code in ERROR_COPY
                         ? errorCopy(err.code).title
-                        : `Não foi possível adicionar (${err.message}).`,
+                        : 'Não foi possível adicionar. Tente de novo.',
                   )
                 }
               >
@@ -705,17 +710,6 @@ function Purchase({ settings, slug }: SectionProps<typeof S.purchasePanel> & { s
     </section>
   );
 }
-
-// codes whose Kernel copy reads well inline under the add button
-const COPY_CODES: Record<string, true> = {
-  OUT_OF_STOCK: true,
-  COMBO_SLOT_COUNT: true,
-  COMBO_ITEM_LIMIT: true,
-  COMBO_ITEM_SOLD_OUT: true,
-  INVALID_COMBO: true,
-  SOLD_OUT: true,
-  MODIFIER_SOLD_OUT: true,
-};
 
 function ProductGrid({
   products,
@@ -839,15 +833,22 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
   const anchors = jump && !q ? visible.map((c) => categoryAnchor(c.slug)) : [];
   const spied = useScrollSpy(anchors, { rootMargin: SPY_MARGIN });
   const jumping = useRef(false);
+  const jumpCleanup = useRef<(() => void) | null>(null);
   const [tapped, setTapped] = useState<string | null>(null);
   useEffect(() => {
     if (!jumping.current) setTapped(null);
   }, [spied]);
+  useEffect(() => () => jumpCleanup.current?.(), []);
   const lit = tapped ?? spied;
   const strip = useRef<HTMLElement>(null);
   useEffect(() => {
     const el = strip.current;
-    const tab = lit ? el?.querySelector<HTMLElement>(`[href="#${lit}"]`) : null;
+    const target = lit ? `#${lit}` : null;
+    const tab = target
+      ? Array.from(el?.querySelectorAll<HTMLElement>('a[href]') ?? []).find(
+          (a) => a.getAttribute('href') === target,
+        )
+      : null;
     if (!el || !tab || typeof el.scrollTo !== 'function') return;
     el.scrollTo({
       left: tab.offsetLeft - el.clientWidth / 2 + tab.clientWidth / 2,
@@ -855,15 +856,19 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
     });
   }, [lit, still]);
   const goTo = (anchor: string) => {
+    jumpCleanup.current?.();
     setTapped(anchor);
     jumping.current = true;
     const release = () => {
       jumping.current = false;
       window.removeEventListener('scrollend', release);
+      window.clearTimeout(timer);
+      if (jumpCleanup.current === release) jumpCleanup.current = null;
     };
     window.addEventListener('scrollend', release);
     // without scrollend (or a jump that doesn't move) the strip is handed back anyway
-    window.setTimeout(release, 1200);
+    const timer = window.setTimeout(release, 1200);
+    jumpCleanup.current = release;
     document
       .getElementById(anchor)
       ?.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });

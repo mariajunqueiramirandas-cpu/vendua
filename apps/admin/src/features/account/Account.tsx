@@ -1353,15 +1353,28 @@ function InvoiceSheet({
     mutationFn: (x: string) => api.invoicePix(x),
     onSuccess: (n) => qc.setQueryData(qk.account, n),
   });
-  // no CPF/CNPJ yet: Core holds the Pix until the owner gives one, here
+  const [wantPix, setWantPix] = useState(false);
+  const reset = issue.reset;
+  useEffect(() => {
+    reset();
+    setWantPix(false);
+  }, [id, reset]);
+  // Ask for the payer document before generating a Pix from either payment method.
   const gate =
-    needsDocument(a) && inv?.method === 'pix' && inv.status !== 'paid' && inv.status !== 'void';
+    !!inv &&
+    needsDocument(a) &&
+    (inv.method === 'pix' || wantPix) &&
+    (inv.status === 'open' || inv.status === 'failed');
+  const makePix = () => {
+    if (!inv) return;
+    if (needsDocument(a)) setWantPix(true);
+    else issue.mutate(inv.id);
+  };
   useIssuePix(
     inv,
     !!inv &&
-      inv.method === 'pix' &&
-      inv.status !== 'paid' &&
-      inv.status !== 'void' &&
+      (inv.method === 'pix' || wantPix) &&
+      (inv.status === 'open' || inv.status === 'failed') &&
       !gate &&
       !issue.isPending,
     issue.mutate,
@@ -1426,12 +1439,14 @@ function InvoiceSheet({
             Quando o pagamento cair, esta fatura muda sozinha.
           </p>
         </div>
-      ) : inv.method === 'card' && !issue.isPending && !issue.error ? (
+      ) : inv.status === 'void' ? (
+        <p className="t-body text-muted">Esta fatura foi cancelada.</p>
+      ) : inv.method === 'card' && !issue.isPending && !issue.error && !wantPix ? (
         <div className="space-y-4 pt-1">
           <p className="t-body text-muted">
             Essa fatura é cobrada no cartão pelo Mercado Pago. Se preferir, pague agora com Pix.
           </p>
-          <Button block size="lg" icon={<PixLogo />} onClick={() => issue.mutate(inv.id)}>
+          <Button block size="lg" icon={<PixLogo />} onClick={makePix}>
             pagar com Pix
           </Button>
         </div>

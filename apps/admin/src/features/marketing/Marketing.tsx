@@ -1,3 +1,4 @@
+import { copyText } from '../../ui/CopyValue.tsx';
 import {
   CaretRight,
   Copy,
@@ -216,7 +217,9 @@ function Share() {
             variant="secondary"
             icon={<Copy />}
             onClick={() =>
-              void navigator.clipboard.writeText(url).then(() => toast('Link copiado'))
+              void copyText(url).then((ok) =>
+                ok ? toast('Link copiado') : toast.error('Não deu para copiar o link.'),
+              )
             }
           >
             copiar
@@ -673,6 +676,18 @@ function CouponSheet({
   const [once, setOnce] = useState(true);
   const [until, setUntil] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    setCode('');
+    setKind('percent');
+    setPct(10);
+    setFixed(1000);
+    setMin(null);
+    setFirst(false);
+    setOnce(true);
+    setUntil('');
+    setErr(null);
+  }, [open]);
   const create = useMutation({
     mutationFn: () =>
       api.createCoupon({
@@ -703,7 +718,7 @@ function CouponSheet({
           size="lg"
           block
           loading={create.isPending}
-          disabled={code.trim().length < 3}
+          disabled={code.trim().length < 3 || (kind === 'fixed' && !fixed)}
           onClick={() => create.mutate()}
         >
           criar cupom

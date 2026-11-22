@@ -15,7 +15,7 @@ import { moneyInput, parseMoney } from '../../../lib/parse.ts';
 import { qk, useMutation } from '../../../lib/query.ts';
 import { Button } from '../../../ui/Button.tsx';
 import { cn } from '../../../ui/cn.ts';
-import { messageOf } from '../../../ui/feedback.tsx';
+import { messageOf, ValidationError } from '../../../ui/feedback.tsx';
 import { Field, Segmented, TextInput } from '../../../ui/fields.tsx';
 import { HoldButton } from '../../../ui/HoldButton.tsx';
 import { Sheet } from '../../../ui/Sheet.tsx';
@@ -127,15 +127,19 @@ function StockTab({ i, onDone, onBuy }: { i: Insumo; onDone: () => void; onBuy: 
   const [unit, setUnit] = useState<InputUnit>(inputUnitOf(i.stockMilli, i.unit));
   const [paid, setPaid] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  const q = parseQty(amount, unit);
+  const q = parseQty(
+    amount,
+    unit,
+    act === 'contei' ? 'stock' : act === 'comprei' ? 'line' : 'threshold',
+  );
   const paidCents = paid.trim() ? parseMoney(paid) : null;
 
   const run = useMutation({
     mutationFn: async (): Promise<Insumo | null> => {
-      if (q == null && !(act === 'contei' && amount.trim() === '0')) throw new Error('qty');
+      if (q == null) throw new ValidationError('qty');
       const n = q ?? 0;
       if (act === 'comprei') {
-        if (paidCents == null) throw new Error('paid');
+        if (paidCents == null) throw new ValidationError('paid');
         return (await api.purchaseInsumos([{ id: i.id, qtyMilli: n, costCents: paidCents }]))
           .insumos[0]!;
       }
@@ -312,9 +316,9 @@ function PreparoFicha({ i, all }: { i: Insumo; all: Insumo[] }) {
       const l = linesOf(drafts);
       if ('bad' in l) {
         setBad(l.bad);
-        throw new Error('bad');
+        throw new ValidationError('bad');
       }
-      if (y == null) throw new Error('yield');
+      if (y == null) throw new ValidationError('yield');
       return api.setPreparoFicha(i.id, { lines: l.lines, yieldMilli: y });
     },
     onSuccess: (r) => {
@@ -411,23 +415,23 @@ function Cadastro({ i, onDeleted }: { i: Insumo; onDeleted: () => void }) {
         const cents = parseMoney(costS);
         const milli = parseQty(costQ, costU);
         if (cents == null || milli == null)
-          throw new Error('Diga quanto custa e por quanto, como 32,90 por 1 kg.');
+          throw new ValidationError('Diga quanto custa e por quanto, como 32,90 por 1 kg.');
         body.cost = { cents, milli };
       }
-      const opt = (s: string, u: InputUnit, label: string) => {
+      const opt = (s: string, u: InputUnit, label: string, mode: 'line' | 'threshold' = 'line') => {
         if (!s.trim()) return null;
-        const v = parseQty(s, u);
-        if (v == null) throw new Error(`${label}: digite uma quantidade, como 2 ou 0,5.`);
+        const v = parseQty(s, u, mode);
+        if (v == null) throw new ValidationError(`${label}: digite uma quantidade, como 2 ou 0,5.`);
         return v;
       };
-      const low = opt(lowS, lowU, 'Aviso');
-      const par = opt(parS, parU, 'Estoque ideal');
+      const low = opt(lowS, lowU, 'Aviso', 'threshold');
+      const par = opt(parS, parU, 'Estoque ideal', 'threshold');
       const pack = opt(packS, packU, 'Embalagem');
       if (low !== i.lowMilli) body.lowMilli = low;
       if (par !== i.parMilli) body.parMilli = par;
       if (pack !== i.packMilli) body.packMilli = pack;
       if ((packName.trim() || null) !== i.packName) body.packName = packName.trim() || null;
-      if (!Object.keys(body).length) throw new Error('Nada mudou.');
+      if (!Object.keys(body).length) throw new ValidationError('Nada mudou.');
       return api.updateInsumo(i.id, body);
     },
     onSuccess: (r) => {
@@ -820,23 +824,24 @@ export function NewInsumoSheet({
 
   const create = useMutation({
     mutationFn: () => {
-      if (!name.trim()) throw new Error('Dê um nome, como “Queijo muçarela”.');
+      if (!name.trim()) throw new ValidationError('Dê um nome, como “Queijo muçarela”.');
       const body: Record<string, unknown> = { kind, name: name.trim(), unit };
       if (kind === 'insumo' && costS.trim()) {
         const cents = parseMoney(costS);
         const milli = parseQty(costQ, costU);
         if (cents == null || milli == null)
-          throw new Error('Diga quanto custa e por quanto, como 32,90 por 1 kg.');
+          throw new ValidationError('Diga quanto custa e por quanto, como 32,90 por 1 kg.');
         body.cost = { cents, milli };
       }
       if (kind === 'preparo') {
         const y = parseQty(yieldS, yieldU);
-        if (y == null) throw new Error('Diga quanto uma leva rende, como 2 kg.');
+        if (y == null) throw new ValidationError('Diga quanto uma leva rende, como 2 kg.');
         body.yieldMilli = y;
       }
       if (stockS.trim()) {
-        const s = stockS.trim() === '0' ? 0 : parseQty(stockS, stockU);
-        if (s == null) throw new Error('Quanto tem agora: digite uma quantidade, como 2 ou 0,5.');
+        const s = parseQty(stockS, stockU, 'stock');
+        if (s == null)
+          throw new ValidationError('Quanto tem agora: digite uma quantidade, como 2 ou 0,5.');
         body.stockMilli = s;
       }
       return api.createInsumo(body);

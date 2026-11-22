@@ -16,16 +16,34 @@ export function errorCode(err: unknown): string {
 }
 
 let transient: Notice[] = [];
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((fn) => fn());
 /** codes whose server truth changed — surfaces/store refetch so the overlay appears */
-export const STATUS_CODES = new Set(['STORE_PAUSED', 'STORE_CLOSED', 'TENANT_SUSPENDED']);
+export const STATUS_CODES = new Set([
+  'STORE_PAUSED',
+  'STORE_CLOSED',
+  'TENANT_SUSPENDED',
+  'DELIVERY_PAUSED',
+]);
 let onStatusChange: (() => void) | null = null;
 export function setStatusRefresher(fn: (() => void) | null) {
   onStatusChange = fn;
 }
 export function refreshOnStatus(code: string) {
   if (STATUS_CODES.has(code)) onStatusChange?.();
+}
+
+function scheduleDismiss(id: string) {
+  const prev = timers.get(id);
+  if (prev) clearTimeout(prev);
+  timers.set(
+    id,
+    setTimeout(() => {
+      timers.delete(id);
+      dismissError(id);
+    }, 8000),
+  );
 }
 
 export function showError(err: unknown) {
@@ -46,7 +64,7 @@ export function showError(err: unknown) {
     },
   ].slice(-3);
   notify();
-  setTimeout(() => dismissError(id), 8000);
+  scheduleDismiss(id);
   refreshOnStatus(code);
 }
 
@@ -66,10 +84,15 @@ export function showInfo(id: string, title: string, body?: string) {
     },
   ].slice(-3);
   notify();
-  setTimeout(() => dismissError(key), 8000);
+  scheduleDismiss(key);
 }
 
 export function dismissError(id: string) {
+  const prev = timers.get(id);
+  if (prev) {
+    clearTimeout(prev);
+    timers.delete(id);
+  }
   const next = transient.filter((n) => n.id !== id);
   if (next.length !== transient.length) {
     transient = next;

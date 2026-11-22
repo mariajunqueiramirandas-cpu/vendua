@@ -31,14 +31,19 @@ export function ImportCustomersSheet({
     ReturnType<typeof api.customerImportPreview>
   > | null>(null);
 
+  const [previewError, setPreviewError] = useState<string | null>(null);
   useEffect(() => {
+    setPreviewError(null);
+    setPreview(null);
     if (!text.trim()) return setPreview(null);
     // a slow preview for older text must not replace the newer one
     let stale = false;
     const t = setTimeout(() => {
       api.customerImportPreview(text).then(
         (r) => !stale && setPreview(r),
-        () => !stale && setPreview(null),
+        (e) => {
+          if (!stale) setPreviewError(messageOf(e));
+        },
       );
     }, 300);
     return () => {
@@ -129,6 +134,11 @@ export function ImportCustomersSheet({
             placeholder={'Ana Souza; (21) 99999-0000\nBruno Lima; 21 98888-7777'}
           />
         </Field>
+        {previewError ? (
+          <p role="alert" className="t-body text-danger">
+            {previewError}
+          </p>
+        ) : null}
         {preview && total ? (
           <div>
             <p className="t-label mb-2">

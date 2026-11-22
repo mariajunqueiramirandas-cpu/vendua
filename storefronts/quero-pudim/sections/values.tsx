@@ -22,10 +22,10 @@ export default function Values({ settings }: SectionProps<typeof schema>) {
   return (
     <section className="container values">
       <Reveal as="ul" className="values-grid">
-        {items.map((v) => {
+        {items.map((v, i) => {
           const Icon = ICONS[v.icon];
           return (
-            <li key={v.title}>
+            <li key={`${v.title}:${i}`}>
               <span className="value-badge">
                 <Icon size={22} strokeWidth={1.6} aria-hidden="true" />
               </span>

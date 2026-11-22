@@ -10,7 +10,14 @@ import {
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, type Plan, type Session, type StoreRef } from '../../lib/api.ts';
+import {
+  api,
+  ApiError,
+  withRetryScope,
+  type Plan,
+  type Session,
+  type StoreRef,
+} from '../../lib/api.ts';
 import { money, phone as fmtPhone } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { parseDocument } from '../../lib/parse.ts';
@@ -538,7 +545,7 @@ export function CodeStep({
       }
       back={() => go('whatsapp')}
       busy={verify.isPending}
-      disabled={code.length < 6}
+      disabled={!/^\d{6}$/.test(code)}
       label="confirmar"
       focusTitle={false}
       onSubmit={() => verify.mutate(code)}
@@ -581,12 +588,12 @@ export function ExistingStep({ d, go, verified }: FlowProps & { verified: Verifi
   const qc = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
   const enter = useMutation({
-    mutationFn: async (s: StoreRef) => {
+    mutationFn: async (s: StoreRef, ctx) => {
       const sess = qc.getQueryData<Session>(qk.session);
       // already signed in with this phone: switching is enough
       if (sess?.stores.some((x) => x.id === s.id)) {
+        await withRetryScope(ctx, () => api.switchStore(s.id));
         await platform.push.disable().catch(() => undefined);
-        await api.switchStore(s.id);
         await resetClient(qc);
         window.location.assign(appPath('/'));
         return;

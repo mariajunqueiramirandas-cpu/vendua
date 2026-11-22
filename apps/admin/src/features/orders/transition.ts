@@ -105,9 +105,11 @@ export function transitionOptions(): MutationOptions<{ order: Order }, Error, Mo
         !!v.order.payment.online &&
         (v.order.payment.status === 'paid' || v.order.payment.status === 'partially_refunded');
       toast(
-        v.to === 'cancelled' && paidOnline
-          ? `Pedido #${order.number} cancelado. O dinheiro volta para o cliente pelo Mercado Pago.`
-          : (DONE_TOAST[v.to]?.(order) ?? 'Pedido atualizado'),
+        v.to === 'cancelled' && v.order.payment.sinal?.depositPaidAt
+          ? `Pedido #${order.number} cancelado. O sinal fica com a loja.`
+          : v.to === 'cancelled' && paidOnline
+            ? `Pedido #${order.number} cancelado. O dinheiro volta para o cliente pelo Mercado Pago.`
+            : (DONE_TOAST[v.to]?.(order) ?? 'Pedido atualizado'),
       );
     },
     onSettled: () => {
@@ -354,6 +356,11 @@ function forget() {
     dismiss(h.toast);
   }
   held.clear();
+  for (const action of actions.values()) {
+    clearTimeout(action.timer);
+    dismiss(action.toast);
+  }
+  actions.clear();
   sending.clear();
   changed();
   persist();

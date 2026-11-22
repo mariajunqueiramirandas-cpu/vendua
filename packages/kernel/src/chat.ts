@@ -130,6 +130,8 @@ class ChatFeed {
     };
   }
 
+  private seq = 0;
+
   refresh(): Promise<void> {
     if (this.inflight) return this.inflight;
     // no session = nothing said yet (reading would mint nothing: GET needs the Bearer)
@@ -137,11 +139,15 @@ class ChatFeed {
       if (!this.state.loaded) this.set({ loaded: true });
       return Promise.resolve();
     }
+    const mine = ++this.seq;
     this.inflight = this.api
       .chat()
       .then(
-        (view) => this.apply(view),
+        (view) => {
+          if (mine === this.seq) this.apply(view);
+        },
         (err) => {
+          if (mine !== this.seq) return;
           const e = toError(err);
           // a token Core no longer takes is a conversation not started on this cart
           if (e.status === 401) this.set({ loaded: true, view: null, error: undefined });
@@ -232,6 +238,8 @@ class ChatFeed {
     const r = this.retry;
     const key = r && r.kind === out.kind && r.text === text && r.blob === blob ? r.key : idemKey();
     const before = this.api.sessionToken;
+    // invalidate any in-flight GET so it cannot overwrite the post response
+    ++this.seq;
     this.set({ sending: true, sendError: undefined, sendKind: out.kind });
     try {
       const view =
@@ -239,6 +247,7 @@ class ChatFeed {
           ? await this.api.sendChat(out.text, { idempotencyKey: key })
           : await this.api.sendChatMedia(await mediaBody(out), { idempotencyKey: key });
       this.retry = null;
+      ++this.seq;
       // the send started (or rotated) the cart session: the page's cart is a new one
       if (this.api.sessionToken !== before) this.refreshCart();
       this.apply(view);

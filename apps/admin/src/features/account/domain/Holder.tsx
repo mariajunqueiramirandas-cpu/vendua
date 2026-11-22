@@ -9,7 +9,7 @@ import { messageOf } from '../../../ui/feedback.tsx';
 import { DocumentInput, Field, PhoneInput, Select, TextInput } from '../../../ui/fields.tsx';
 import { Notice } from '../../../ui/Notice.tsx';
 import { toast } from '../../../ui/Toast.tsx';
-import { DOCUMENT_ERR, EMAIL_RE } from '../../auth/pending.ts';
+import { DOCUMENT_ERR, PAYER_EMAIL_RE } from '../../auth/pending.ts';
 import { Host, useAccountWrite } from './kit.tsx';
 
 const UFS =
@@ -58,7 +58,7 @@ function problems(f: F): Partial<Record<K, string>> {
   const e: Partial<Record<K, string>> = {};
   if (!parseDocument(f.document)) e.document = DOCUMENT_ERR;
   if (f.name.trim().length < 3) e.name = 'Escreva o nome como está no documento.';
-  if (!EMAIL_RE.test(f.email.trim())) e.email = 'Confira o e-mail.';
+  if (!PAYER_EMAIL_RE.test(f.email.trim())) e.email = 'Confira o e-mail.';
   if (!parsePhone(f.phone)) e.phone = 'Confira o telefone com DDD.';
   if (digits(f.postalCode).length !== 8) e.postalCode = 'O CEP tem 8 números.';
   if (!f.street.trim()) e.street = 'Falta a rua.';
@@ -176,7 +176,7 @@ export function HolderForm({ a, host, onBack }: { a: Account; host: string; onBa
         setFormErr({ text: 'Esse nome não pode ser registrado. Escolha outro.', pickAgain: true });
       else if (e instanceof ApiError && e.code === 'AUTHORIZATION_REQUIRED') setOkErr(true);
       else if (e instanceof ApiError && e.status === 422 && key && KEYS.has(key))
-        setServed({ [key]: e.message });
+        setServed({ [key]: errs[key as K] ?? 'Confira este campo e tente de novo.' });
       else setFormErr({ text: messageOf(e), pickAgain: false });
     },
   );

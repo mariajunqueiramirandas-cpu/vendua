@@ -108,8 +108,8 @@ export function Shell({ children }: { children: ReactNode }) {
   // Duá's onboarding is a journey with its own header, like /bem-vindo, but it keeps
   // the live stream (the interviewer's replies arrive on it)
   const bare = kitchen || loc.pathname === '/vendedor/comecar';
-  const bareRef = useRef(kitchen);
-  bareRef.current = kitchen;
+  const bareRef = useRef(bare);
+  bareRef.current = bare;
   useEffect(() => {
     if (!bare) return;
     document.documentElement.dataset.bare = '';
@@ -363,7 +363,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {placeOf(loc.pathname)?.depth ? (
             <BackButton pathname={loc.pathname} />
           ) : (
-            <StoreAvatar size={40} />
+            <StoreSwitcher mobile />
           )}
           <span className="vt-pill flex min-w-0">
             <StatusPill className="min-w-0" />
@@ -577,10 +577,11 @@ function NavBadge({ n, to, className }: { n: number; to: string; className?: str
   );
 }
 
-function StoreSwitcher() {
+function StoreSwitcher({ mobile = false }: { mobile?: boolean }) {
   const s = useSession();
   const [open, setOpen] = useState(false);
   const multi = s.stores.length > 1;
+  if (mobile && !multi) return <StoreAvatar size={40} />;
   return (
     <>
       <button
@@ -592,7 +593,7 @@ function StoreSwitcher() {
         )}
         aria-label={multi ? `loja: ${s.store.name}. trocar de loja` : s.store.name}
       >
-        <StoreAvatar size={44} />
+        <StoreAvatar size={mobile ? 40 : 44} />
         <span className="hidden min-w-0 flex-1 lg:block">
           <span className="block truncate font-semibold">{s.store.name}</span>
           <span className="t-caption block truncate text-muted">

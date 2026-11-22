@@ -110,26 +110,41 @@ const read = (key: string): PickedLine[] => {
 
 /** What's being rung up, kept on this device (a reload or a trip to the caixa loses nothing). */
 export function useTicket(storageKey: string) {
-  const [lines, setLines] = useState<PickedLine[]>(() => read(storageKey));
-  useEffect(() => setLines(read(storageKey)), [storageKey]);
+  const [ticket, setTicket] = useState(() => ({ key: storageKey, lines: read(storageKey) }));
+  if (ticket.key !== storageKey) setTicket({ key: storageKey, lines: read(storageKey) });
+  const { key: loadedKey, lines } = ticket;
+  const setLines = useCallback(
+    (update: PickedLine[] | ((lines: PickedLine[]) => PickedLine[])) => {
+      setTicket((current) => {
+        if (current.key !== storageKey) return current;
+        const next = typeof update === 'function' ? update(current.lines) : update;
+        return next === current.lines ? current : { ...current, lines: next };
+      });
+    },
+    [storageKey],
+  );
   useEffect(() => {
+    if (loadedKey !== storageKey) return;
     try {
       if (lines.length) localStorage.setItem(storageKey, JSON.stringify(lines));
       else localStorage.removeItem(storageKey);
     } catch {
       /* private mode: the ticket lives in memory only */
     }
-  }, [lines, storageKey]);
+  }, [lines, loadedKey, storageKey]);
 
-  const add = useCallback((l: Omit<PickedLine, 'key'>) => {
-    setLines((ls) => {
-      const i = ls.findIndex((x) => sameChoice(x, l));
-      if (i >= 0)
-        return ls.map((x, j) => (j === i ? { ...x, qty: Math.min(99, x.qty + l.qty) } : x));
-      if (ls.length >= 100) return ls;
-      return [...ls, { ...l, key: crypto.randomUUID() }];
-    });
-  }, []);
+  const add = useCallback(
+    (l: Omit<PickedLine, 'key'>) => {
+      setLines((ls) => {
+        const i = ls.findIndex((x) => sameChoice(x, l));
+        if (i >= 0)
+          return ls.map((x, j) => (j === i ? { ...x, qty: Math.min(99, x.qty + l.qty) } : x));
+        if (ls.length >= 100) return ls;
+        return [...ls, { ...l, key: crypto.randomUUID() }];
+      });
+    },
+    [setLines],
+  );
   const setQty = useCallback(
     (key: string, qty: number) =>
       setLines((ls) =>
@@ -137,19 +152,19 @@ export function useTicket(storageKey: string) {
           ? ls.filter((l) => l.key !== key)
           : ls.map((l) => (l.key === key ? { ...l, qty: Math.min(99, qty) } : l)),
       ),
-    [],
+    [setLines],
   );
   const setNote = useCallback(
     (key: string, note: string) =>
       setLines((ls) => ls.map((l) => (l.key === key ? { ...l, note: note.slice(0, 140) } : l))),
-    [],
+    [setLines],
   );
   const remove = useCallback(
     (key: string) => setLines((ls) => ls.filter((l) => l.key !== key)),
-    [],
+    [setLines],
   );
-  const clear = useCallback(() => setLines([]), []);
-  const restore = useCallback((ls: PickedLine[]) => setLines(ls), []);
+  const clear = useCallback(() => setLines([]), [setLines]);
+  const restore = useCallback((ls: PickedLine[]) => setLines(ls), [setLines]);
   return { lines, add, setQty, setNote, remove, clear, restore };
 }
 export type Ticket = ReturnType<typeof useTicket>;
