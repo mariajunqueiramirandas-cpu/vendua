@@ -480,7 +480,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
       status: 'open',
       pix: { copyPaste: expect.any(String) },
     });
+    const rejected = fake.subscriptionPayments.get(inv.provider_payment_id)!;
+    const webhook = () =>
+      handleBillingWebhook({ sql: appSql, provider: fake, notify } as never, {
+        kind: 'subscription_payment',
+        resourceId: rejected.id,
+        providerUserId: null,
+        action: null,
+      });
+    await webhook();
+    expect((await invoices(s.id))[0]).toMatchObject({
+      method: 'pix',
+      status: 'open',
+      pix_attempt: 1,
+    });
     expect((await payInvoice(inv.id)).status).toBe(200);
+    fake.subscriptionPayments.set(rejected.id, { ...rejected, status: 'approved' });
+    await webhook();
+    expect(await invoices(s.id)).toHaveLength(1);
+    expect(await flagged(s.id)).toContain('Fatura paga por Pix e cartão');
     expect(await sub(s.id)).toMatchObject({ method: 'card', provider_subscription_id: pre });
     expect((await invoices(s.id))[0]!.status).toBe('paid');
   });
