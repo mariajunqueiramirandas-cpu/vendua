@@ -53,6 +53,7 @@ function Guardrails({
 }) {
   const cur = {
     maxOutboundPerLeadPerDay: num(value.maxOutboundPerLeadPerDay, 3),
+    maxUnansweredTouches: num(value.maxUnansweredTouches, 3),
     quietHoursEnabled: value.quietHoursEnabled !== false,
     quietStart: str(value.quietStart, '21:00'),
     quietEnd: str(value.quietEnd, '08:00'),
@@ -73,6 +74,7 @@ function Guardrails({
   const numIn = (
     k:
       | 'maxOutboundPerLeadPerDay'
+      | 'maxUnansweredTouches'
       | 'discoveryContactMinScore'
       | 'inboundReplyDelayMin'
       | 'firstContactDelayMin'
@@ -105,6 +107,13 @@ function Guardrails({
           hint="quantas mensagens seguidas o agente manda (em 24h) sem o lead responder — quando o lead responde, zera; conversa ativa nunca trava; 0 = sem limite"
         >
           {numIn('maxOutboundPerLeadPerDay', 0, 100, 0)}
+        </Field>
+        <Field
+          label="mensagens por sequência"
+          htmlFor="gr-maxUnansweredTouches"
+          hint="limite total sem resposta, mesmo se os envios forem em dias diferentes"
+        >
+          {numIn('maxUnansweredTouches', 1, 20, 1)}
         </Field>
         <Field
           label={
@@ -178,7 +187,7 @@ function Guardrails({
         <Field
           label="1º contato automático (min)"
           htmlFor="gr-firstContactDelayMin"
-          hint="0 = roda na hora, só rascunho (pesquisa + 1º contato pra aprovar); >0 agenda o run esse tempo depois do lead ser criado (modo do lead decide rascunho vs. envio)"
+          hint="0 roda na hora. O modo do agente decide se envia ou prepara um rascunho."
         >
           {numIn('firstContactDelayMin', 0, 10080, 0)}
         </Field>

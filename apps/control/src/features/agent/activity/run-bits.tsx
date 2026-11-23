@@ -14,6 +14,21 @@ export const RUN_STATUS_LABEL: Record<string, string> = {
   canceled: 'cancelado',
 };
 
+export const RUN_OUTCOME_LABEL: Record<string, string> = {
+  parked: 'pausado',
+  triage_complete: 'triagem completa',
+  triage_incomplete: 'triagem incompleta',
+  opted_out: 'descadastrado',
+  handoff: 'encaminhado à equipe',
+  message_queued: 'envio solicitado',
+  draft_ready: 'rascunho pronto',
+  staff_task: 'tarefa criada',
+  closed: 'encerrado',
+  followup_scheduled: 'retorno agendado',
+  lead_updated: 'cadastro atualizado',
+  no_action: 'sem ação',
+};
+
 const STATUS_VARIANT = {
   queued: 'outline',
   running: 'agent',

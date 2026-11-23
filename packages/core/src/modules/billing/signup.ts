@@ -5,6 +5,7 @@ import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost } from '../../platform/store-origin.ts';
 import { phoneVariants } from '../../store-whatsapp/text.ts';
+import { merchantOtpText } from '../../admin/otp-text.ts';
 import { billingLog } from './invoices.ts';
 
 // Self-serve signup's own OTP: codes live in merchant_login_codes with purpose 'signup' (login
@@ -250,11 +251,11 @@ export async function startSignupOtp(
   if (limited) throw new HttpError(429, 'RATE_LIMITED', 'too many codes — try again later');
   try {
     // on the gateway it is an outbox row: answering only once it went out keeps today's 503
-    await notify.whatsapp(
-      phone,
-      `Seu código para criar a loja na Venduá: ${code}\n\nVale por ${CODE_TTL_MIN} minutos.`,
-      { purpose: 'otp', dedupeKey: `otp:signup:${phone}:${crypto.randomUUID()}`, waitMs: 8000 },
-    );
+    await notify.whatsapp(phone, merchantOtpText('signup', code, CODE_TTL_MIN), {
+      purpose: 'otp',
+      dedupeKey: `otp:signup:${phone}:${crypto.randomUUID()}`,
+      waitMs: 8000,
+    });
   } catch (err) {
     billingLog.warn({ err }, 'signup otp delivery failed');
     throw new HttpError(503, 'OTP_UNAVAILABLE', 'could not deliver the code — try again');

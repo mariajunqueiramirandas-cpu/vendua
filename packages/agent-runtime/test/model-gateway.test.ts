@@ -420,6 +420,140 @@ function fakeFetch(json: unknown, status = 200) {
 }
 
 describe('openai-compatible adapter', () => {
+  test('Mistral replays tool results from its own calls and other providers', async () => {
+    const first = fakeFetch({
+      model: 'mistral-small-2603',
+      choices: [
+        {
+          finish_reason: 'tool_calls',
+          message: {
+            content: 'Vou conferir o plano.',
+            tool_calls: [
+              {
+                id: 'M1stral42',
+                type: 'function',
+                function: { name: 'lookup', arguments: '{"plan":"mirim"}' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const second = fakeFetch({
+      choices: [
+        {
+          message: {
+            content: [
+              { type: 'thinking', text: 'internal' },
+              { type: 'text', text: 'Plano Mirim.' },
+            ],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 200, completion_tokens: 25 },
+    });
+    const adapter = openAiCompatibleAdapter({
+      id: 'mistral',
+      baseUrl: 'https://api.mistral.ai/v1',
+      apiKey: 'test-mistral-key',
+      messageFormat: 'mistral',
+      fetch: (url, init) => (first.calls.length ? second : first).fetch(url, init),
+    });
+    const gw = createGateway({
+      adapters: [adapter],
+      routes: resolver([
+        route('mistral', {
+          model: 'mistral-small-2603',
+          zdr: false,
+          pricing: { inputPerMTok: 1, outputPerMTok: 2 },
+        }),
+      ]),
+    });
+    const input = request({
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'Quais são os planos?' }] },
+        {
+          role: 'assistant',
+          text: 'Vou consultar.',
+          toolCalls: [
+            { id: 'call_from_other_provider', name: 'lookup', args: {} },
+            { id: '000000001', name: 'lookup', args: { plan: 'outro' } },
+          ],
+        },
+        {
+          role: 'tool',
+          callId: 'call_from_other_provider',
+          name: 'lookup',
+          content: 'Mirim',
+          isError: false,
+        },
+        { role: 'tool', callId: '000000001', name: 'lookup', content: 'Guaçu', isError: false },
+      ],
+      volatile: null,
+      tools: [{ name: 'lookup', description: 'Consulta o plano', parameters: { type: 'object' } }],
+    });
+    const pending = await gw.generate(input);
+    const call = first.calls[0]!;
+    expect(call.url).toBe('https://api.mistral.ai/v1/chat/completions');
+    expect(new Headers(call.init.headers).get('authorization')).toBe('Bearer test-mistral-key');
+    expect(call.body.model).toBe('mistral-small-2603');
+    expect(call.body.tools[0].function.name).toBe('lookup');
+    expect(call.body.messages.slice(-3)).toEqual([
+      {
+        role: 'assistant',
+        tool_calls: [
+          { id: '000000002', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+          {
+            id: '000000001',
+            type: 'function',
+            function: { name: 'lookup', arguments: '{"plan":"outro"}' },
+          },
+        ],
+      },
+      { role: 'tool', name: 'lookup', tool_call_id: '000000002', content: 'Mirim' },
+      { role: 'tool', name: 'lookup', tool_call_id: '000000001', content: 'Guaçu' },
+    ]);
+    expect(pending.toolCalls).toEqual([
+      { id: 'M1stral42', name: 'lookup', args: { plan: 'mirim' } },
+    ]);
+    expect(pending.finish).toBe('tool_calls');
+
+    const answer = await gw.generate({
+      ...input,
+      messages: [
+        ...input.messages,
+        { role: 'assistant', text: pending.text, toolCalls: pending.toolCalls },
+        {
+          role: 'tool',
+          callId: 'M1stral42',
+          name: 'lookup',
+          content: 'Mirim encontrado',
+          isError: false,
+        },
+      ],
+    });
+    expect(second.calls[0]!.body.messages.slice(-2)).toEqual([
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'M1stral42',
+            type: 'function',
+            function: { name: 'lookup', arguments: '{"plan":"mirim"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'M1stral42', name: 'lookup', content: 'Mirim encontrado' },
+    ]);
+    expect(answer).toMatchObject({
+      text: 'Plano Mirim.',
+      provider: 'mistral',
+      finish: 'stop',
+      usage: { inputTokens: 200, outputTokens: 25 },
+    });
+    expect(answer.usage.costUsd).toBeCloseTo(0.00025, 8);
+  });
+
   test('request shape and parse of tool calls and usage', async () => {
     const { fetch, calls } = fakeFetch({
       model: 'openai/gpt-x',

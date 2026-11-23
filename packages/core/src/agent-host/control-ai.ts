@@ -6,6 +6,8 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { AGENTS } from './agents/index.ts';
 import { createModelCatalog, type ModelCatalog } from './model-catalog.ts';
+import { MISTRAL_PRIMARY_ROUTE } from './mistral.ts';
+import { routesFromEnv } from './models.ts';
 
 // /control/v1/ai (CRM "IA"): which models Duá runs on, how it hears voice notes and what it costs.
 // Routes, media routes and budgets are written through
@@ -17,6 +19,7 @@ const PROVIDERS = [
   { id: 'openrouter', secretName: 'OPENROUTER_API_KEY' },
   { id: 'openai', secretName: 'OPENAI_API_KEY' },
   { id: 'gemini', secretName: 'GEMINI_API_KEY' },
+  { id: 'mistral', secretName: 'MISTRAL_API_KEY' },
 ] as const;
 
 /** what each agent is, in the words the CRM shows */
@@ -37,16 +40,6 @@ const AGENT_COPY: Record<string, { label: string; hint: string }> = {
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
-
-/** AGENT_MODEL_ROUTES as settingRoutes reads it; null when it names no route at all */
-function envRoutes(raw: string | undefined): Record<string, unknown> | null {
-  try {
-    const v = JSON.parse(raw ?? '') as unknown;
-    return isObject(v) && Object.keys(v).length ? v : null;
-  } catch {
-    return null;
-  }
-}
 
 /** the store's daily USD cap for a budget key, as pgSpend reads it */
 function dailyLimit(budgets: Record<string, unknown>, tenantId: string, key: string) {
@@ -79,9 +72,10 @@ export function mountAgentRuntimeAi(o: {
     controlGate(c);
     const rows = await controlTx(sql, settings);
     const routesRow = rows.find((r) => r.key === 'agent_runtime.routes');
-    const fromEnv = routesRow ? null : envRoutes(env.AGENT_MODEL_ROUTES);
+    const fromEnv = routesRow ? null : routesFromEnv(env.AGENT_MODEL_ROUTES);
     return c.json({
       routes: routesRow?.value ?? fromEnv ?? {},
+      primaryRoute: env.MISTRAL_API_KEY ? MISTRAL_PRIMARY_ROUTE : null,
       routesSource: routesRow ? 'settings' : fromEnv ? 'env' : 'none',
       budgets: rows.find((r) => r.key === 'agent_runtime.budgets')?.value ?? {},
       providers: PROVIDERS.map((p) => ({
@@ -121,7 +115,7 @@ export function mountAgentRuntimeAi(o: {
   });
 
   // The CRM's model picker: OpenRouter's tool-capable models with their default and ZDR prices,
-  // and each one's id on Anthropic, OpenAI or Gemini directly (model-catalog.ts).
+  // and each one's id on a direct provider (model-catalog.ts).
   app.get('/control/v1/ai/catalog', async (c) => {
     controlGate(c);
     const view = await catalog.get();

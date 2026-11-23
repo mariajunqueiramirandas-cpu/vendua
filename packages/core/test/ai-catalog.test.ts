@@ -39,6 +39,7 @@ const ZDR = 'https://openrouter.ai/api/v1/endpoints/zdr';
 const ANTHROPIC = 'https://api.anthropic.com/v1/models?limit=1000';
 const OPENAI = 'https://api.openai.com/v1/models';
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000';
+const MISTRAL = 'https://api.mistral.ai/v1/models';
 
 type Reply = () => Response | Promise<Response>;
 /** answers each URL from its own queue (the last reply repeats) and records every call */
@@ -165,7 +166,7 @@ describe('catalogFrom', () => {
 });
 
 describe('direct ids', () => {
-  test('maps the three makers, skips variants and others', () => {
+  test('maps supported makers, skips variants and others', () => {
     expect(directFor('anthropic/claude-haiku-4.5')).toEqual({
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
@@ -180,10 +181,15 @@ describe('direct ids', () => {
       provider: 'gemini',
       model: 'gemini-2.5-pro',
     });
+    expect(directFor('mistralai/mistral-small-2603')).toEqual({
+      provider: 'mistral',
+      model: 'mistral-small-2603',
+    });
     for (const id of [
       'anthropic/claude-3.7-sonnet:thinking',
       'openai/gpt-4o:extended',
       'google/gemini-2.0-flash-exp:free',
+      'mistralai/mistral-medium-3-5:batch',
       'openai/gpt-oss-120b',
       'google/gemma-3-27b-it',
       'meta-llama/llama-3.3-70b-instruct',
@@ -396,6 +402,36 @@ describe('createModelCatalog', () => {
         });
       }
     }
+  });
+
+  test('verifies only active Mistral chat models with function calling', async () => {
+    const ids = ['mistral-small-2603', 'mistral-large-2512', 'mistral-embed'] as const;
+    const capabilities = { completion_chat: true, function_calling: true };
+    const s = stub({
+      ...openrouter(ids.map((id) => model({ id: `mistralai/${id}`, name: id }))),
+      [MISTRAL]: [
+        ok(
+          body([
+            { id: ids[0], capabilities },
+            { id: ids[1], capabilities, archived: true },
+            { id: ids[2], capabilities: { completion_chat: false, function_calling: false } },
+          ]),
+        ),
+      ],
+    });
+    const view = await createModelCatalog({
+      fetch: s.f,
+      env: { MISTRAL_API_KEY: 'test-mistral-key' },
+    }).get();
+    expect(view?.models.flatMap((m) => (m.direct ? [m.direct] : []))).toEqual([
+      { provider: 'mistral', model: ids[0], verified: true },
+    ]);
+    expect(s.calls.filter(({ headers }) => headers.authorization)).toEqual([
+      {
+        url: MISTRAL,
+        headers: { accept: 'application/json', authorization: 'Bearer test-mistral-key' },
+      },
+    ]);
   });
 
   test('a provider list that fails (or is empty) leaves its ids unverified, never the catalog down', async () => {

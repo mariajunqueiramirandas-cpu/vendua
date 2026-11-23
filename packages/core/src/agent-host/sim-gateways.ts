@@ -1,5 +1,5 @@
 import { createGateway, type ModelGateway, type ProviderAdapter } from '@vendua/agent-runtime';
-import { adaptersFromEnv } from './models.ts';
+import { adaptersFromEnv, preferMistralLarge4, routesFromEnv } from './models.ts';
 
 // The model side of the live sims (`sims:vendedor`, `sims:crm`): the agent's gateway and the
 // simulated person's, from env.
@@ -9,15 +9,18 @@ import { adaptersFromEnv } from './models.ts';
 //   plus the provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, …)
 //   SIM_RPM (default 0 = unthrottled) and SIM_MAX_REQUESTS — a free tier's limits (e.g. 15 and 450)
 //
+// Large 4 is first when MISTRAL_API_KEY is set. SIM_USER_ROUTES can pick a comparison model.
 // With only GEMINI_API_KEY and no AGENT_MODEL_ROUTES, both sides use SIM_GEMINI_MODEL. The sims
 // send synthetic fixtures only, which is why a test key outside a zero-data-retention arrangement
 // may serve them; never put such a route in production's agent_runtime.routes.
 
-const routesOf = (json: string | undefined) => {
-  const v = JSON.parse(json ?? '{}') as { default?: Record<string, unknown[]> };
+const routesOf = (setting: ReturnType<typeof routesFromEnv>, mistralFirst = false) => {
   return {
-    routes: async (_t: string, _a: string, tier: 'fast' | 'strong') =>
-      (v.default?.[tier] ?? v.default?.fast ?? []) as never[],
+    routes: async (_t: string, _a: string, tier: 'fast' | 'strong') => {
+      const routes = setting?.default?.[tier] ?? setting?.default?.fast ?? [];
+      const list = Array.isArray(routes) ? routes.filter((r) => r?.provider && r.model) : [];
+      return mistralFirst ? preferMistralLarge4(list) : list;
+    },
   };
 };
 
@@ -49,22 +52,27 @@ export function simGateways(): {
   const adapters = adaptersFromEnv().map((a) =>
     throttled(a, Number(process.env.SIM_RPM ?? 0), Number(process.env.SIM_MAX_REQUESTS ?? 0)),
   );
-  if (!process.env.AGENT_MODEL_ROUTES && process.env.GEMINI_API_KEY) {
+  let setting = routesFromEnv(process.env.AGENT_MODEL_ROUTES);
+  if (!setting && process.env.GEMINI_API_KEY) {
     const route = {
       provider: 'gemini',
       model: process.env.SIM_GEMINI_MODEL ?? 'gemini-3.5-flash-lite',
       zdr: true,
     };
-    process.env.AGENT_MODEL_ROUTES = JSON.stringify({
-      default: { fast: [route], strong: [route] },
-    });
+    setting = { default: { fast: [route], strong: [route] } };
   }
   if (!adapters.length) return null;
+  const agentRoutes = routesOf(
+    setting,
+    adapters.some((a) => a.id === 'mistral'),
+  );
   return {
-    agentGateway: createGateway({ adapters, routes: routesOf(process.env.AGENT_MODEL_ROUTES) }),
+    agentGateway: createGateway({ adapters, routes: agentRoutes }),
     userGateway: createGateway({
       adapters,
-      routes: routesOf(process.env.SIM_USER_ROUTES ?? process.env.AGENT_MODEL_ROUTES),
+      routes: process.env.SIM_USER_ROUTES
+        ? routesOf(routesFromEnv(process.env.SIM_USER_ROUTES))
+        : agentRoutes,
     }),
     models: adapters.map((a) => a.id).join(','),
   };

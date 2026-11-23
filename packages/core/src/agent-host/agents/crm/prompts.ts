@@ -208,6 +208,11 @@ function leadPrompt(
     ...sharedSections(instructions, memory),
     writingSection(),
     negotiationSection(has),
+    ...(env.has('send_signup_link')
+      ? [
+          'PLANOS E CADASTRO: get_sales_offer consulta os planos vigentes. Para cotar um plano use send_signup_link com includePrice; para quem quer começar, use send_signup_link com o plano escolhido. O cadastro confirma telefone, elegibilidade ao teste e pagamento. Se cadastro estiver fechado, encaminhe para a equipe.',
+        ]
+      : []),
     goalSection(goal, opts.bookingUrl ?? null, escalate),
     kind === 'reply'
       ? replySection(env, sender)
@@ -269,7 +274,7 @@ Entenda o interesse e proponha a conversa como o próximo passo natural: curta, 
           : `o link de agendamento NÃO está configurado: ${escalate ?? 'diga que a equipe manda o link'} em vez de inventar um`
       }. Confirmou que agendou → set_state invited + add_note com o horário.`
     : `## OBJETIVO DESTE LEAD: fechar a negociação na própria conversa
-Leve até o sim com um próximo passo real de cada vez, dentro da margem de negociação. Topou começar → se a OFERTA diz como (link de cadastro, condição), mande exatamente isso; se não diz, avise que alguém da equipe continua com ela pra colocar a loja no ar${escalate ? ` e ${escalate} com o handoff` : ''}. Fechou → set_state invited ou live + add_note com o que foi combinado.`;
+Leve até o sim com um próximo passo real de cada vez, dentro da margem de negociação. Topou começar → use a opção de cadastro disponível; se não houver, avise que alguém da equipe continua com ela pra colocar a loja no ar${escalate ? ` e ${escalate} com o handoff` : ''}. Registre o que foi combinado. O cadastro e o provisionamento registram a conversão.`;
 }
 
 function replySection(env: LeadEnv, sender: string | null): string {
@@ -306,7 +311,7 @@ Passo 2. Reconheça a situação e siga a jogada.
       : `DOSSIÊ fraco num outbound e sem pesquisa externa nesta instalação: responda ao que ela disse e pergunte só dor, momento e quem decide${escalate ? `; se não der pra seguir sem saber quem ela é, ${escalate}` : ''}.`
   }
 • "Quem é?", "de onde tiraram meu número?": diga quem é numa linha e, com honestidade, onde achou o contato (a fonte do DOSSIÊ: "vi o Instagram de vocês"). Depois uma frase de por que escreveu, sem pitch.
-• Pergunta de preço ou condição: responda pela OFERTA (ou "confirmo com a equipe") e devolva uma pergunta que amarre ao negócio dela.
+• Pergunta de preço ou condição: consulte os planos vigentes quando a ferramenta estiver disponível, ou siga a OFERTA e confirme condições com a equipe e devolva uma pergunta que amarre ao negócio dela.
 • Objeção ("tá caro", "já tenho site", "não tenho tempo"): rotule, cave a raiz com uma pergunta calibrada, e só então responda. Recusar a oferta não é pedido de parada.
 • Esfriou ("vou pensar", "depois eu vejo"): não empurre. Uma resposta leve que deixa a porta aberta, e registre o retorno com ${later} no prazo que a própria mensagem sugerir.
 • Ela marcou data ("me chama terça", "semana que vem"): confirme na resposta ("fechado, te chamo terça de manhã") e registre com update_lead nextActionAt + nextActionRequested:true${has('schedule') ? ' (ou schedule com requested:true)' : ''}. Datas relativas contam a partir de AGORA.
@@ -321,7 +326,7 @@ ${
     escalate
       ? `• Peça ajuda cedo, não tarde (${escalate}): pediu desconto ou condição fora da OFERTA (decisão comercial, não sua), está irritada ou ameaçando, pediu pra falar com uma pessoa, 3+ objeções respondidas sem o plano andar, ou envolve contrato, jurídico ou sócio. ${
           has('request_human')
-            ? 'Se ela espera resposta, mande antes uma linha avisando que alguém da equipe continua daqui. No reason, escreva o handoff: o que ela quer, o que você já disse, o que falta decidir.'
+            ? 'No reason, escreva o handoff: o que ela quer, o que você já disse, o que falta decidir.'
             : ''
         }`
       : ''
@@ -374,6 +379,8 @@ function outreachSection(env: LeadEnv, sender: string | null): string {
   return `## Sua tarefa: primeiro contato ou retomada
 Leia DOSSIÊ, PLANO, AGENDA, FOCUS e a CONVERSA (se houver) antes de escrever: o FOCUS e a AGENDA dizem por que esta run acordou.
 
+Se houver PEDIDO DE RETORNO DO SITE, a pessoa pediu que você a chamasse: diga que é da Venduá e que está retornando o pedido, responda à dúvida se houver e faça uma pergunta aberta se precisar. Pule a pesquisa fria nesse caso.
+Para contatos frios, siga as regras abaixo.
 ${coldResearch(env, 'Não mande nada: create_task para humano com o que faltou e o que já tentou. Mensagem às cegas queima o lead.')}
 ${has('plan') ? 'Sem PLANO → escreva um com plan antes de redigir.\n' : ''}
 ${COLD_OPENER}
@@ -414,7 +421,7 @@ Como escrever o rascunho: ORIGEM inbound → ela nos procurou, então é uma res
 
 ${COLD_OPENER}
 
-A run termina com os três entregáveis: note (dossiê), task (próximo passo humano) e draft (primeiro contato). Sair sem um deles é triagem incompleta.`;
+A run termina com dossiê, tarefa e rascunho. Se o rascunho não é responsável, use record_triage_blocker com o motivo concreto e mantenha a tarefa para a equipe.`;
 }
 
 function channelPick(chans: readonly string[]): string {
@@ -526,7 +533,7 @@ Reler url já lida (cache), raiz de facebook (login wall; instagram não é), pa
     `## META
 É teto, não obrigação, e conta só lead NOVO: create_lead que volta duplicate:true é confirmação, não entrega. Siga caçando até a META de verdade ou esgote os ângulos.${
       opts.autoContact?.enabled !== false
-        ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp confirmado (link wa.me/api.whatsapp.com; telefone fixo não conta), ou, sem whatsapp, com @instagram quando a DM do instagram está conectada, dispara o primeiro contato sozinho. Dossiê e canais é o que decide isso, então pontue com honestidade.`
+        ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp confirmado (link wa.me/api.whatsapp.com; telefone fixo não conta), ou, sem whatsapp, com @instagram quando a DM do instagram está conectada, dispara o primeiro contato sozinho. O envio automático exige que o contato tenha aparecido no resultado de uma ferramenta de pesquisa ou já esteja verificado no CRM. Sem essa evidência, o primeiro contato fica como rascunho. Pontue com honestidade.`
         : ''
     }`,
     executionSection(null),

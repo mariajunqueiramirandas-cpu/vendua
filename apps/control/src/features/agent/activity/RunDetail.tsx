@@ -13,6 +13,7 @@ import {
   PausedChip,
   RunKind,
   RunStatus,
+  RUN_OUTCOME_LABEL,
   fmtDuration,
   isPausedRun,
   runDuration,
@@ -67,6 +68,9 @@ export function RunDetail({
         </h2>
         <span className="font-mono text-xs text-muted-foreground">run {shortId(run.id)}</span>
         <RunStatus status={run.status} />
+        {run.outcome && RUN_OUTCOME_LABEL[run.outcome] && (
+          <span className="text-xs text-muted-foreground">{RUN_OUTCOME_LABEL[run.outcome]}</span>
+        )}
         {isPausedRun(run) && <PausedChip />}
         <div className="ml-auto flex items-center gap-1">
           {active && (

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   bestValueEndpoint,
   blendedPrice,
+  catalogOptions,
   emptyRoute,
   rankEndpoints,
   routePaths,
@@ -189,4 +190,29 @@ describe('anthropic routes', () => {
     expect(validateRoutes(d)['default.fast.0.effort']).toBeDefined();
     expect(routePaths(d).has('default.fast.0.effort')).toBe(true);
   });
+});
+
+test('Mistral is a direct provider in the model picker and route editor', () => {
+  const model = 'mistral-small-2603';
+  const pricing = { inputPerMTok: 1, outputPerMTok: 2 };
+  const [option] = catalogOptions(
+    [
+      {
+        id: `mistralai/${model}`,
+        name: 'Mistral: Small 4',
+        contextLength: 256_000,
+        direct: { provider: 'mistral', model, verified: true },
+        pricing,
+        zdr: null,
+      },
+    ],
+    'mistral',
+    false,
+  );
+  const d = routesFromView({});
+  d.default.strong = [withOption(withProvider(emptyRoute(), 'mistral'), option)];
+  expect(validateRoutes(d)).toEqual({});
+  expect(routesOut(d).default.strong).toEqual([
+    { provider: 'mistral', model, zdr: false, pricing },
+  ]);
 });

@@ -202,6 +202,8 @@ export const DEFAULT_GUARDRAILS = {
   /** agent sends to one lead in 24h *without an answer*: a lead reply resets the
    *  count, so an active negotiation is never capped; 0 = no cap */
   maxOutboundPerLeadPerDay: 3,
+  /** Total unattended messages in a sequence with no new inbound, even across days. */
+  maxUnansweredTouches: 3,
   /** false = no quiet window at all (quietStart/quietEnd kept for when it's back on) */
   quietHoursEnabled: true,
   quietStart: '21:00',
@@ -214,7 +216,7 @@ export const DEFAULT_GUARDRAILS = {
   /** reply run is queued with run_at = now() + N min; 0 = answer at once */
   inboundReplyDelayMin: 0,
   /** staff-created lead's outreach run is scheduled N min after create;
-   *  0 = fire at once but draft-only */
+   *  0 = fire at once, subject to the workspace send policy */
   firstContactDelayMin: 0,
   /** after an agent send with no reply, book a follow-up N days out on the lead's
    *  agenda unless something is already there; 0 = off */
@@ -244,6 +246,7 @@ export function capCentsOf(g: Partial<Guardrails>): number {
 
 export type Guardrails = {
   maxOutboundPerLeadPerDay: number;
+  maxUnansweredTouches: number;
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
@@ -433,7 +436,7 @@ function validateAnthropicConfig(config: Record<string, unknown>) {
 const RUNTIME_KEY = /^[a-z0-9_-]{1,60}$/;
 // lowercase: spend.ts and models.ts look stores up by the id Postgres prints
 const TENANT_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ROUTE_PROVIDERS = ['anthropic', 'openrouter', 'openai', 'gemini'];
+const ROUTE_PROVIDERS = ['anthropic', 'openrouter', 'openai', 'gemini', 'mistral'];
 const ROUTE_MODEL = /^[A-Za-z0-9._/:@-]{1,200}$/;
 type Bad = (field: string, why: string) => HttpError;
 
@@ -594,6 +597,7 @@ export function validateSetting(key: string, value: unknown): void {
     intField('discoveryContactMinScore', 1, 10);
     intField('inboundReplyDelayMin', 0, 1440);
     intField('firstContactDelayMin', 0, 10080);
+    intField('maxUnansweredTouches', 1, 20);
     intField('followupCadenceDays', 0, 90);
     intField('staleDraftDays', 0, 90);
     intField('briefAutoPauseRuns', 0, 100);

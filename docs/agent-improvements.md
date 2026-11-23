@@ -13,14 +13,27 @@ Since the list was written, run kinds are fixed _jobs_ in `agent/jobs.ts`
 (ADR 0015) and every run is requested through `requestAgentTx` with a
 `source` (ADR 0016) — read "run kind" below with that in mind.
 
+## Autonomous sales
+
+Autopilot is the default. Explicit workspace presets and lead modes remain effective.
+Website callbacks and live inbound go ahead of scheduled outreach. Delivery rechecks
+policy, quiet hours and newer contact, including at the WhatsApp gateway. Follow-up
+limits apply across an unanswered sequence as well as within a day.
+
+The CRM agent reads the current public plans and sends signed self-serve signup links
+when signup is open. A verified signup links the lead and retires pending sales work.
+The provisioner records when the store is live. The activity view displays the sales
+outcome of a turn, and agent metrics include unanswered intake and signup, activation,
+payment and opt-out counts by source.
+
 ## Behavior changes (user-requested)
 
 ### 1. Triage folded into the contact run — shipped
 
 `POST /control/v1/leads` no longer fans out a `triage` run plus a scheduled
 `outreach`: one outreach run does the card's whole job — research → dossier →
-first contact. `firstContactDelayMin` still paces the send; `0` stays the
-approval path (the run fires at once but draft-only). `automation:false`
+first contact. `firstContactDelayMin` still paces the send. Zero runs immediately
+under the current send policy. `automation:false`
 skips agent work entirely, matching CSV-import behavior; the `triage` body
 flag is gone. The `triage` run kind survives for manual re-research via the
 dispatch API.

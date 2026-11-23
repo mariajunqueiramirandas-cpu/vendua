@@ -254,11 +254,50 @@ export async function sendableNowTx(
   };
 }
 
+/** First-contact policy uses live conversations and explicit website callback requests. */
+export async function leadHasContactTx(tx: Sql, leadId: string): Promise<boolean> {
+  const [row] = await tx<{ contacted: boolean }[]>`
+    select exists (
+      select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and t.channel <> 'manual' and not m.historical
+        and (m.direction = 'in' or m.status in ('sent', 'delivered'))
+      union all
+      select 1 from lead_activities
+      where lead_id = ${leadId} and meta->>'type' = 'site_callback'
+    ) as contacted`;
+  return row!.contacted;
+}
+
+/** Count unattended sends since the last live inbound or website callback. */
+export async function unansweredTouchesTx(
+  tx: Sql,
+  leadId: string,
+  excludeMessageId: string | null = null,
+): Promise<{ total: number; today: number }> {
+  const [row] = await tx<{ total: number; today: number }[]>`
+    with boundary as (
+      select greatest(
+        (select max(i.created_at) from lead_messages i join lead_threads t on t.id = i.thread_id
+          where t.lead_id = ${leadId} and i.direction = 'in' and not i.historical),
+        (select max(at) from lead_activities where lead_id = ${leadId} and meta->>'type' = 'site_callback'),
+        '-infinity') as at
+    )
+    select count(*)::int as total,
+      count(*) filter (where m.created_at > now() - interval '1 day')::int as today
+    from lead_messages m join lead_threads t on t.id = m.thread_id cross join boundary b
+    where t.lead_id = ${leadId} and t.channel <> 'manual' and m.direction = 'out'
+      and m.author = 'agent' and m.approved_by is null and not m.is_farewell
+      and m.status in ('queued', 'sending', 'sent', 'delivered')
+      and m.id is distinct from ${excludeMessageId}::uuid and m.created_at >= b.at`;
+  return row!;
+}
+
 export interface SendVerdict {
   ok: boolean;
   /** true → send_message degrades to a draft for the approvals queue. */
   forceDraft: boolean;
   reason?: string;
+  retryAt?: Date;
 }
 
 /** Runs inside the tx holding the lead's advisory lock so concurrent runs
@@ -268,6 +307,7 @@ export async function checkSendAllowedTx(
   g: Guardrails,
   leadId: string,
   channel: Channel,
+  opts: { messageId?: string; farewell?: boolean; skipBudget?: boolean } = {},
 ): Promise<SendVerdict> {
   {
     const lead = (
@@ -283,7 +323,8 @@ export async function checkSendAllowedTx(
     )[0];
     if (!lead) return { ok: false, forceDraft: false, reason: 'lead not found' };
     if (lead.archived_at) return { ok: false, forceDraft: false, reason: 'lead archived' };
-    if (lead.unsubscribed_at) return { ok: false, forceDraft: false, reason: 'lead unsubscribed' };
+    if (lead.unsubscribed_at && !opts.farewell)
+      return { ok: false, forceDraft: false, reason: 'lead unsubscribed' };
     if (lead.agent_paused_at)
       return { ok: false, forceDraft: false, reason: 'agent paused for lead' };
     if (lead.agent_mode === 'off')
@@ -292,66 +333,31 @@ export async function checkSendAllowedTx(
     if (channel === 'email' && lead.email_bounced_at)
       return { ok: false, forceDraft: false, reason: 'email bounced' };
 
-    // a cold first contact (we'd speak first) is human-approved under supervised; a lead
-    // who wrote to us isn't cold. The draft decision runs before the send-only gates so
-    // quiet hours/cap only bind live sends.
-    const priorOut = (
-      await tx<{ n: number }[]>`
-        select count(*)::int as n from lead_messages m
-        join lead_threads t on t.id = m.thread_id
-        where t.lead_id = ${leadId}
-          and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered'))
-      `
-    )[0]!.n;
     const { level } = await agentSettingTx(tx);
     const d = draftDecision({
       level,
-      firstContact: priorOut === 0,
+      firstContact: !(await leadHasContactTx(tx, leadId)),
       leadMode: lead.agent_mode,
     });
     if (d.forceDraft) return { ok: true, forceDraft: true };
 
-    // quiet hours in configured tz; overnight window wraps past midnight
-    if (g.quietHoursEnabled !== false) {
-      const hh = (
-        await tx<{ h: number; m: number }[]>`
-        select extract(hour from now() at time zone ${g.timezone})::int as h,
-               extract(minute from now() at time zone ${g.timezone})::int as m
-      `
-      )[0]!;
-      const cur = hh.h * 60 + hh.m;
-      const [qsH, qsM] = g.quietStart.split(':').map(Number);
-      const [qeH, qeM] = g.quietEnd.split(':').map(Number);
-      const start = (qsH ?? 21) * 60 + (qsM ?? 0);
-      const end = (qeH ?? 8) * 60 + (qeM ?? 0);
-      const quiet = start <= end ? cur >= start && cur < end : cur >= start || cur < end;
-      if (quiet) return { ok: false, forceDraft: false, reason: 'quiet hours' };
-    }
+    const now = new Date();
+    const open = await sendWindowOpenAtTx(tx, g, now);
+    if (open.getTime() > now.getTime())
+      return { ok: false, forceDraft: false, reason: 'quiet hours', retryAt: open };
 
-    // unanswered-send cap per lead (agent-authored, rolling 24h): only sends after the
-    // lead's last message count, so a live back-and-forth is never throttled
-    if (g.maxOutboundPerLeadPerDay > 0) {
-      const unanswered = (
-        await tx<{ n: number }[]>`
-          select count(*)::int as n from lead_messages m
-          join lead_threads t on t.id = m.thread_id
-          where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
-            and m.status in ('queued', 'sending', 'sent', 'delivered')
-            and m.created_at > now() - interval '1 day'
-            and m.created_at > coalesce((
-              select max(i.created_at) from lead_messages i
-              join lead_threads it on it.id = i.thread_id
-              where it.lead_id = ${leadId} and i.direction = 'in'
-            ), '-infinity')
-        `
-      )[0]!.n;
-      if (unanswered >= g.maxOutboundPerLeadPerDay) {
+    // A row already handed to the gateway has already reserved its capacity.
+    if (opts.skipBudget) return { ok: true, forceDraft: false };
+    if (!opts.farewell) {
+      const { total, today } = await unansweredTouchesTx(tx, leadId, opts.messageId ?? null);
+      if (g.maxOutboundPerLeadPerDay > 0 && today >= g.maxOutboundPerLeadPerDay)
         return { ok: false, forceDraft: false, reason: 'unanswered cap reached' };
-      }
+      if (total >= g.maxUnansweredTouches)
+        return { ok: false, forceDraft: false, reason: 'unanswered sequence ended' };
     }
 
     if (channel === 'instagram') {
-      const cold = await instagramColdCapTx(tx, g, leadId);
+      const cold = await instagramColdCapTx(tx, g, leadId, opts.messageId);
       if (cold) return { ok: false, forceDraft: false, reason: cold };
     }
     return { ok: true, forceDraft: false };
@@ -366,6 +372,7 @@ export async function instagramColdCapTx(
   tx: Sql,
   g: Guardrails,
   leadId: string,
+  excludeMessageId: string | null = null,
 ): Promise<string | null> {
   const lead = (
     await tx<{ wrote: number; opened: number }[]>`
@@ -376,6 +383,7 @@ export async function instagramColdCapTx(
       from lead_messages m
       join lead_threads t on t.id = m.thread_id
       where t.lead_id = ${leadId} and t.channel = 'instagram'
+        and m.id is distinct from ${excludeMessageId}::uuid
     `
   )[0]!;
   if (lead.wrote > 0 || lead.opened > 0) return null;
@@ -390,6 +398,7 @@ export async function instagramColdCapTx(
         from lead_messages m
         join lead_threads t on t.id = m.thread_id
         where t.channel = 'instagram' and m.direction = 'out'
+          and m.id is distinct from ${excludeMessageId}::uuid
           and m.status in ('queued', 'sending', 'sent', 'delivered')
         group by t.id
       ) o

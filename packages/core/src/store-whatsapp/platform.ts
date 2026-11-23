@@ -1,3 +1,4 @@
+import { prepareCrmGatewayTx } from '../crm/delivery-policy.ts';
 import { AUDIO_NOT_FETCHED } from '../platform-whatsapp/dua-text.ts';
 import { hostname } from 'node:os';
 import type { Logger } from 'pino';
@@ -644,7 +645,7 @@ export class PlatformGateway {
     gapOpen: boolean,
   ): Promise<'sent' | 'settled' | 'none' | 'closed'> {
     const { sql } = this.o;
-    const row = await controlTx(sql, async (tx): Promise<Claimed | null> => {
+    const row = await controlTx(sql, async (tx): Promise<Claimed | 'settled' | null> => {
       const held = await tx<{ wanted: boolean }[]>`
         select wanted from platform_wa_sessions
         where name = ${name} and owner = ${this.id} and lease_epoch = ${o.fence.epoch}
@@ -652,8 +653,8 @@ export class PlatformGateway {
       if (!held.length) throw new LeaseLost(`platform:${name}`);
       if (!held[0]!.wanted) return null;
       const next = (
-        await tx<{ id: string; wa_id: string | null }[]>`
-          select id, wa_id from platform_wa_outbox
+        await tx<{ id: string; wa_id: string | null; purpose: string; ref: string | null }[]>`
+          select id, wa_id, purpose, ref from platform_wa_outbox
           where session = ${name}
             and ((status = 'pending' and next_attempt_at <= now())
               or (status = 'sending' and lease_until < now()))
@@ -663,6 +664,7 @@ export class PlatformGateway {
           for update skip locked`
       )[0];
       if (!next) return null;
+      if ((await prepareCrmGatewayTx(tx, next)) !== 'ready') return 'settled';
       const r = (
         await tx<Claimed[]>`
           update platform_wa_outbox set status = 'sending', attempts = attempts + 1,
@@ -677,6 +679,7 @@ export class PlatformGateway {
       return r;
     });
     if (!row) return 'none';
+    if (row === 'settled') return 'settled';
     if (row.expired) return 'settled';
     const settle = (
       status: 'sent' | 'failed' | 'pending',

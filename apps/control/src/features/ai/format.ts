@@ -15,6 +15,7 @@ export const PROVIDER_LABEL: Record<ModelProviderId, string> = {
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
   gemini: 'Gemini',
+  mistral: 'Mistral',
 };
 export const providerLabel = (id: string) => PROVIDER_LABEL[id as ModelProviderId] ?? id;
 

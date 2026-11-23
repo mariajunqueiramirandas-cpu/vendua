@@ -3,6 +3,7 @@ import { emitControlEvent } from '../modules/control-events.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { dispatchMessage } from './send.ts';
+import { salesDeliveryFailedTx } from './delivery-policy.ts';
 
 // Delivers the lead messages the CRM agents queue (ADR 0030 decision 4): a tool writes the row
 // `queued` in its step's transaction and notifies; once that commits, this loop hands it to
@@ -20,9 +21,8 @@ const SENDING_LEASE_MIN = 10;
 /** One pass: fail what a dead worker stranded mid-send, then deliver up to a batch. */
 export async function deliverQueued(sql: Sql, opts: { graceMs?: number } = {}): Promise<number> {
   // at-most-once: the provider may already have accepted it, so it fails visibly
-  const interrupted = await controlTx(
-    sql,
-    (tx) => tx<{ thread_id: string }[]>`
+  const interrupted = await controlTx(sql, async (tx) => {
+    const rows = await tx<{ id: string; thread_id: string }[]>`
       update lead_messages set status = 'failed', error = 'dispatch-interrupted', updated_at = now()
       where status = 'sending' and updated_at < now() - make_interval(mins => ${SENDING_LEASE_MIN})
         -- on the platform gateway the send is an outbox row, settled when it goes out
@@ -30,8 +30,10 @@ export async function deliverQueued(sql: Sql, opts: { graceMs?: number } = {}): 
           select 1 from platform_wa_outbox o
           where o.purpose = 'crm' and o.ref = lead_messages.id::text and o.settled_at is null
             and o.expires_at > now())
-      returning thread_id`,
-  );
+      returning id, thread_id`;
+    for (const row of rows) await salesDeliveryFailedTx(tx, row.id);
+    return rows;
+  });
   for (const m of interrupted) emitControlEvent('thread.message', m.thread_id);
   // staff rows get a grace so the request's own inline dispatch wins; an agent's row is
   // committed by its step and waits for no one
@@ -40,7 +42,7 @@ export async function deliverQueued(sql: Sql, opts: { graceMs?: number } = {}): 
     sql,
     (tx) => tx<{ id: string }[]>`
       select id from lead_messages
-      where status = 'queued'
+      where status = 'queued' and (send_after is null or send_after <= now())
         and (author = 'agent' and approved_by is null
              or created_at < now() - ${grace} * interval '1 millisecond')
       order by created_at limit ${BATCH}`,

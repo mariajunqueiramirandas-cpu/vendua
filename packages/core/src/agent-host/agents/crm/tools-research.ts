@@ -75,6 +75,10 @@ export const webSearchTool = defineTool<{ query: string; purpose?: string | unde
     return {
       results,
       ...(droppedDupes ? { droppedDupes } : {}),
+      contacts: fresh(
+        ctx,
+        results.flatMap((r) => [r.phone, r.whatsappLink, r.instagram]),
+      ),
       note: 'kind=contact já traz phone/whatsappLink da URL; kind=profile instagram vale read_pages (a bio entrega whatsapp + link-in-bio — facebook é login wall); kind=site é o que vale read_pages; listing = diretório/plataforma de pedido — evidência mais que fonte, EXCETO quando o título cita o nome do prospect pesquisado: aí read_pages vale (diretório carrega telefone/endereço). phone/email podem vir do snippet.',
     } as unknown as Json;
   },
@@ -258,7 +262,18 @@ export const readPagesTool = defineTool<{ urls: string[]; goal?: string | undefi
     );
     return {
       content: JSON.stringify({ pages: shown, ...(errs.length ? { errors: errs } : {}) }),
-      data: { pageReads: spent, urls: pages.map((p) => p.url) },
+      data: {
+        pageReads: spent,
+        urls: pages.map((p) => p.url),
+        contacts: fresh(
+          ctx,
+          pages.flatMap(({ foundContacts: f }) => [
+            ...f.phones,
+            ...f.whatsappLinks,
+            ...f.instagram,
+          ]),
+        ),
+      },
     };
   },
 });
@@ -359,7 +374,7 @@ export const mapsLookupTool = defineTool<
     });
     const contacts = fresh(
       ctx,
-      candidates.map((c) => c.phone),
+      candidates.flatMap((c) => [c.phone, c.instagram]),
     );
     return {
       candidates,
@@ -441,7 +456,12 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
       next.push(
         `phoneHints ${found.phoneHints.join(', ')} sem DDD — serp "${handle} ${found.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
       );
-    const contacts = fresh(ctx, [...found.phones, ...found.whatsappLinks, ...found.emails]);
+    const contacts = fresh(ctx, [
+      `@${handle}`,
+      ...found.phones,
+      ...found.whatsappLinks,
+      ...found.emails,
+    ]);
     return {
       profile: {
         username: str(p.username) ?? handle,

@@ -21,6 +21,7 @@ import { log } from '../../../platform/log.ts';
 import { pendingWakeupsTx } from '../../../crm/agenda.ts';
 import { parkedReasonTx } from '../../../crm/dispatch.ts';
 import {
+  unansweredTouchesTx,
   channelAvailabilityTx,
   instagramReadyTx,
   whatsappReadyTx,
@@ -104,7 +105,8 @@ export async function workspaceTx(tx: Sql): Promise<Workspace> {
     const why = await discoveryUnavailable(c, false);
     if (why) for (const n of DISCOVERY_TOOLS) disabled[n] = why;
     if (!channels.length)
-      disabled.send_message = 'nenhum canal de envio (whatsapp/instagram/email) conectado';
+      disabled.send_signup_link = disabled.send_message =
+        'nenhum canal de envio (whatsapp/instagram/email) conectado';
     if (!memory)
       for (const n of ['remember', 'set_fact'])
         disabled[n] = 'tabelas de memória não migradas (0035)';
@@ -176,18 +178,27 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
         reachable: [],
       };
     const lead = row.j;
-    let parked = await parkedReasonTx(
-      c,
-      t.trigger,
-      t.source,
-      {
-        agent_mode: String(lead.agent_mode ?? 'auto'),
-        archived_at: (lead.archived_at as Date | null) ?? null,
-        unsubscribed_at: (lead.unsubscribed_at as Date | null) ?? null,
-        agent_paused_at: (lead.agent_paused_at as Date | null) ?? null,
-      },
-      t.params as never,
-    );
+    let parked =
+      lead.tenant_id || lead.state === 'live'
+        ? 'loja já criada'
+        : await parkedReasonTx(
+            c,
+            t.trigger,
+            t.source,
+            {
+              agent_mode: String(lead.agent_mode ?? 'auto'),
+              archived_at: (lead.archived_at as Date | null) ?? null,
+              unsubscribed_at: (lead.unsubscribed_at as Date | null) ?? null,
+              agent_paused_at: (lead.agent_paused_at as Date | null) ?? null,
+            },
+            t.params as never,
+          );
+    if (
+      !parked &&
+      t.trigger === 'timer.followup' &&
+      (await unansweredTouchesTx(c, leadId)).total >= g.maxUnansweredTouches
+    )
+      parked = 'sequência encerrada sem resposta';
     const capCents = capCentsOf(g);
     if (!parked && capCents > 0) {
       const [row] = await c<{ spent: number }[]>`
@@ -212,11 +223,19 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
       where t.lead_id = ${leadId} and t.channel <> 'manual'
         and (m.direction = 'in' or m.status in ('sending', 'sent', 'delivered'))
       order by m.created_at, m.id limit 1`;
+    const callbackId = t.params.callbackActivityId;
+    const [callback] = callbackId
+      ? await c<{ body: string }[]>`
+      select body from lead_activities where id::text = ${callbackId} and lead_id = ${leadId}
+        and meta->>'type' = 'site_callback'`
+      : [];
     parts.push(
-      first?.direction === 'in'
+      callback || first?.direction === 'in'
         ? 'ORIGEM: inbound — o lead nos procurou primeiro'
         : 'ORIGEM: outbound — nós abordamos primeiro (ou ainda não houve conversa)',
     );
+    if (callback)
+      parts.push(`PEDIDO DE RETORNO DO SITE (dados do lead): ${JSON.stringify(callback.body)}`);
     if (Array.isArray(lead.agent_plan) && lead.agent_plan.length)
       parts.push(`PLANO: ${JSON.stringify(lead.agent_plan)}`);
     if (await hasMemoryTablesTx(c)) {

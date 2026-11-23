@@ -2895,6 +2895,7 @@ export const api = {
       ),
     create: (p: {
       signupToken: string;
+      salesLead?: string;
       planId: string;
       /** the plan's free trial: no payment method asked */
       trial?: boolean;

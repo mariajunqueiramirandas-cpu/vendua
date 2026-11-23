@@ -46,20 +46,27 @@ const SOURCE: Record<
 
 function IntroPanel({ view }: { view: AiModelsView }) {
   const src = SOURCE[view.routesSource];
+  const primary = view.primaryRoute;
   return (
     <Panel title="como funciona">
       <div className="flex flex-col gap-3">
-        <p className="max-w-prose text-[13px] leading-relaxed">
-          Aqui você escolhe em quais modelos de IA o Duá roda. Cada nível tem uma lista de rotas
-          (provedor e modelo), tentadas em ordem: se uma falha, o Duá passa para a seguinte. As
-          mudanças valem em até um minuto depois de salvar.
-        </p>
+        {primary ? (
+          <p className="max-w-prose text-[13px] leading-relaxed">
+            O modelo principal é <strong>{primary.model}</strong> nos dois níveis. As rotas abaixo
+            entram em ordem se o modelo principal falhar.
+          </p>
+        ) : (
+          <p className="max-w-prose text-[13px] leading-relaxed">
+            Cada nível tem uma lista de rotas tentadas em ordem. As mudanças valem em até um minuto
+            depois de salvar.
+          </p>
+        )}
         <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
           Cada rota escolhe se usa retenção zero de dados, e o recomendado é usar: nada do que o Duá
           envia fica guardado com o provedor. Pela OpenRouter, a chamada só vai a provedores que
           garantem isso; num provedor direto, vale o que o contrato da conta diz.
         </p>
-        {view.routesSource === 'none' && (
+        {view.routesSource === 'none' && !primary && (
           <Notice tone="bad">
             Nenhuma rota configurada: o Duá não responde até haver uma. Adicione uma rota no nível
             rápido e salve.
@@ -67,13 +74,15 @@ function IntroPanel({ view }: { view: AiModelsView }) {
         )}
         {view.routesSource === 'env' && (
           <Notice>
-            As rotas abaixo vêm da variável AGENT_MODEL_ROUTES do servidor. Ao salvar aqui, esta
-            tela passa a valer no lugar dela.
+            As listas abaixo vêm da variável AGENT_MODEL_ROUTES do servidor. Ao salvar, as listas
+            desta tela passam a valer.
           </Notice>
         )}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t pt-3 text-[13px]">
           <span className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">rotas</span>
+            <span className="text-xs text-muted-foreground">
+              {primary ? 'alternativas' : 'rotas'}
+            </span>
             <Badge variant={src.variant}>{src.label}</Badge>
           </span>
           <ul
@@ -283,7 +292,7 @@ export default function ModelsPage() {
           <div className="mx-auto flex max-w-4xl flex-col gap-4">
             <IntroPanel view={view} />
             <HintPanel
-              title="modelos do Duá"
+              title={view.primaryRoute ? 'modelos alternativos' : 'modelos do Duá'}
               hint="valem em todas as lojas, salvo exceções em avançado"
             >
               <TiersEditor
@@ -292,9 +301,11 @@ export default function ModelsPage() {
                 keys={keys}
                 onChange={(v) => edit.routes({ ...routes.draft!, default: v })}
                 emptyHint={(tier) =>
-                  tier === 'fast'
-                    ? 'Sem rota rápida, o Duá não responde (salvo exceções em avançado).'
-                    : 'Sem rota forte, quando uma trava bloqueia uma resposta o Duá não refaz.'
+                  view.primaryRoute
+                    ? 'Nenhuma alternativa neste nível.'
+                    : tier === 'fast'
+                      ? 'Sem rota rápida, o Duá não responde (salvo exceções em avançado).'
+                      : 'Sem rota forte, quando uma trava bloqueia uma resposta o Duá não refaz.'
                 }
               />
               <FieldMsg>{shown.routes.default}</FieldMsg>

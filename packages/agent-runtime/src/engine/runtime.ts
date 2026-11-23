@@ -310,7 +310,12 @@ export class Runtime<H = unknown> {
         const until = Math.min(newest + quiet.minMs, oldest + quiet.maxMs);
         if (until > now.getTime()) return { kind: 'wait', until: new Date(until) };
       }
-      batch = conversational;
+      const selected = def.mailbox?.batch?.(conversational);
+      if (selected?.length) {
+        const ids = new Set(selected.map((m) => m.id));
+        batch = conversational.filter((m) => ids.has(m.id));
+      } else batch = conversational;
+      if (!batch.length) throw new Error('mailbox batch selected no due rows');
     } else {
       maintenance = due[0]!.kind;
       batch = due.filter((m) => m.kind === maintenance);

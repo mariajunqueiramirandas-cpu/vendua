@@ -4,6 +4,8 @@ import { Hono } from 'hono';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { mountAgentRuntimeAi } from '../src/agent-host/control-ai.ts';
+import { MISTRAL_PRIMARY_ROUTE } from '../src/agent-host/mistral.ts';
+import { settingRoutes } from '../src/agent-host/models.ts';
 import { aiAllowanceTx } from '../src/modules/billing/ai-allowance.ts';
 import { validateSetting } from '../src/modules/integrations.ts';
 import { migrate, withTenant } from '../src/platform/db.ts';
@@ -62,7 +64,7 @@ describe('validateSetting: agent_runtime.routes and agent_runtime.budgets', () =
       // an empty list would shadow the levels below and leave the agent with no model
       [{ default: { fast: [] } }, 'default.fast'],
       [{ tenants: { [T1]: { strong: [] } } }, `tenants.${T1}.strong`],
-      [{ default: { fast: [route({ provider: 'mistral' })] } }, 'default.fast.0.provider'],
+      [{ default: { fast: [route({ provider: 'unsupported' })] } }, 'default.fast.0.provider'],
       [{ default: { fast: [route({ model: '' })] } }, 'default.fast.0.model'],
       [{ default: { fast: [route({ model: 'a b' })] } }, 'default.fast.0.model'],
       [{ default: { fast: [route({ model: 'x'.repeat(201) })] } }, 'default.fast.0.model'],
@@ -655,24 +657,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     await sql`delete from control_settings where key = 'agent_runtime.routes'`;
     const env = {
       ANTHROPIC_API_KEY: 'sk-secret-value',
+      MISTRAL_API_KEY: 'mistral-secret-value',
       AGENT_MODEL_ROUTES: JSON.stringify({ default: { fast: [route()] } }),
     };
-    const get = async (e = env) => {
+    const get = async (e: Record<string, string> = env) => {
       const h = new Hono();
       mountAgentRuntimeAi({ app: h, sql: appSql, controlGate: () => {}, env: e });
       const res = await h.request('http://core.localhost/control/v1/ai/models');
       const text = await res.text();
       expect(text).not.toContain('sk-secret-value');
+      expect(text).not.toContain('mistral-secret-value');
       return JSON.parse(text);
     };
     const fromEnv = await get();
     expect(fromEnv.routesSource).toBe('env');
     expect(fromEnv.routes).toEqual({ default: { fast: [route()] } });
+    expect(fromEnv.primaryRoute).toEqual(MISTRAL_PRIMARY_ROUTE);
+    const envRoutes = settingRoutes(appSql, env);
+    expect(await envRoutes.routes(T1, 'vendedor', 'fast')).toEqual([
+      MISTRAL_PRIMARY_ROUTE,
+      route(),
+    ]);
+    expect(await envRoutes.routes(T1, 'crm', 'strong')).toEqual([MISTRAL_PRIMARY_ROUTE]);
     expect(fromEnv.providers).toEqual([
       { id: 'anthropic', configured: true, secretName: 'ANTHROPIC_API_KEY' },
       { id: 'openrouter', configured: false, secretName: 'OPENROUTER_API_KEY' },
       { id: 'openai', configured: false, secretName: 'OPENAI_API_KEY' },
       { id: 'gemini', configured: false, secretName: 'GEMINI_API_KEY' },
+      { id: 'mistral', configured: true, secretName: 'MISTRAL_API_KEY' },
     ]);
     expect(fromEnv.agents).toContainEqual({
       id: 'vendedor',
@@ -691,10 +703,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     expect(
       (await get({ ANTHROPIC_API_KEY: 'sk-secret-value', AGENT_MODEL_ROUTES: '{' })).routesSource,
     ).toBe('none');
-    expect((await get({} as typeof env)).routes).toEqual({});
+    expect(await get({})).toMatchObject({ routes: {}, routesSource: 'none', primaryRoute: null });
+    expect(await get({ MISTRAL_API_KEY: env.MISTRAL_API_KEY })).toMatchObject({
+      routes: {},
+      primaryRoute: MISTRAL_PRIMARY_ROUTE,
+    });
 
     const value = {
       default: { strong: [route({ provider: 'anthropic', model: 'claude-haiku-5-5' })] },
+      agents: {
+        crm: { strong: [route({ provider: 'mistral', model: 'mistral-small-2603', zdr: false })] },
+      },
+      tenants: { [T1]: { fast: [route({ provider: 'openai', model: 'gpt-5-mini', zdr: false })] } },
     };
     const saved = await call('PUT', '/control/v1/settings/agent_runtime.routes', { value });
     expect(saved.status).toBe(200);
@@ -705,6 +725,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     const fromSettings = await get();
     expect(fromSettings.routesSource).toBe('settings');
     expect(fromSettings.routes).toEqual(value);
+    expect(fromSettings.primaryRoute).toEqual(MISTRAL_PRIMARY_ROUTE);
+    const routes = settingRoutes(appSql, env);
+    expect(await routes.routes(T1, 'crm', 'strong')).toEqual([
+      MISTRAL_PRIMARY_ROUTE,
+      ...value.agents.crm.strong,
+    ]);
+    expect(await routes.routes(T1, 'copilot', 'fast')).toEqual([
+      MISTRAL_PRIMARY_ROUTE,
+      ...value.tenants[T1].fast,
+    ]);
+    expect(await routes.routes(T1, 'menu-import', 'strong')).toEqual([
+      MISTRAL_PRIMARY_ROUTE,
+      { ...value.default.strong[0]!, pricing: { inputPerMTok: 0.1, outputPerMTok: 0.5 } },
+    ]);
+    expect(await settingRoutes(appSql, {}).routes(T1, 'crm', 'strong')).toEqual(
+      value.agents.crm.strong,
+    );
     const viaApp = await call('GET', '/control/v1/ai/models');
     expect(viaApp.status).toBe(200);
     expect(viaApp.body.routesSource).toBe('settings');

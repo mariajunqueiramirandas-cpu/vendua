@@ -151,6 +151,12 @@ export default function Signup({ signedIn = false }: { signedIn?: boolean }) {
   // the plan chosen on the site (?plano=) wins; otherwise the one with the trial (said above the
   // cards), then the recommended one: one less tap
   const fromSite = useRef(new URLSearchParams(window.location.search).get('plano'));
+  const salesLead = useRef(new URLSearchParams(window.location.search).get('lead'));
+  useEffect(() => {
+    const token = salesLead.current;
+    salesLead.current = null;
+    if (token && token.length <= 120 && !cur.current.created) patch({ salesLead: token });
+  }, [patch]);
   // a coupon in the link (?cupom=, from a flyer or a message): the last step shows it applied
   const couponLink = useRef(new URLSearchParams(window.location.search).get('cupom'));
   // a referral link (?indica= a store's address, ?parceiro= a partner's code): kept in the draft

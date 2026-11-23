@@ -1,3 +1,4 @@
+import { prepareCrmGatewayTx } from '../crm/delivery-policy.ts';
 import { sendWhatsApp } from '../crm/channels/whatsapp.ts';
 import { controlTx } from '../modules/control.ts';
 import { getIntegration } from '../modules/integrations.ts';
@@ -22,22 +23,26 @@ export async function pumpSocketOnce(sql: Sql, limit = 20): Promise<number> {
   if (!wa) return 0;
   let n = 0;
   for (; n < limit; n++) {
-    const [row] = await controlTx(sql, async (tx) => {
+    const row = await controlTx(sql, async (tx) => {
       await tx`
         update platform_wa_outbox set status = 'expired'
         where status in ('pending', 'sending') and (expires_at <= now()
           or (status = 'sending' and lease_until < now()))`;
-      return tx<Row[]>`
+      const [next] = await tx<{ id: string; purpose: string; ref: string | null }[]>`
+        select id, purpose, ref from platform_wa_outbox
+        where status = 'pending' and next_attempt_at <= now()
+        order by array_position(array['otp', 'dua', 'notice', 'crm'], purpose), created_at
+        limit 1 for update skip locked`;
+      if (!next) return null;
+      if ((await prepareCrmGatewayTx(tx, next)) !== 'ready') return 'settled' as const;
+      const [claimed] = await tx<Row[]>`
         update platform_wa_outbox set status = 'sending', attempts = attempts + 1,
           lease_until = now() + interval '2 minutes'
-        where id = (
-          select id from platform_wa_outbox
-          where status = 'pending' and next_attempt_at <= now()
-          order by array_position(array['otp', 'dua', 'notice', 'crm'], purpose), created_at
-          limit 1 for update skip locked)
-        returning id, to_jid, body`;
+        where id = ${next.id} returning id, to_jid, body`;
+      return claimed;
     });
     if (!row) break;
+    if (row === 'settled') continue;
     let waId: string | null = null;
     let error: string | null = null;
     try {

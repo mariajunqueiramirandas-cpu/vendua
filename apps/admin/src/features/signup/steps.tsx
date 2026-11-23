@@ -829,6 +829,7 @@ export function PayStep({
     mutationFn: () =>
       api.signup.create({
         signupToken: verified.token,
+        ...(d.salesLead ? { salesLead: d.salesLead } : {}),
         planId: d.planId!,
         ...(freeDays ? {} : trial ? { trial: true } : { method: d.method }),
         ...(applied ? { coupon: d.coupon! } : {}),

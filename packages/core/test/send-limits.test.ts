@@ -77,7 +77,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('send limits (db)', () => {
 
   test('only sends after the lead’s last message count toward the cap', async () => {
     const { id, thread } = await mkLead();
-    const g = { ...neverQuiet, maxOutboundPerLeadPerDay: 3 };
+    const g = { ...neverQuiet, maxOutboundPerLeadPerDay: 3, maxUnansweredTouches: 5 };
     await agentSends(thread, 5, '4 hours'); // before the lead answered — negotiation, free
     expect(await check(g, id)).toMatchObject({ ok: true });
     await agentSends(thread, 3, '1 hour'); // three unanswered since
@@ -86,6 +86,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('send limits (db)', () => {
     await sql`insert into lead_messages (thread_id, direction, author, body, status)
       values (${thread}, 'in', 'lead', 'e o preço?', 'received')`;
     expect(await check(g, id)).toMatchObject({ ok: true });
+  });
+
+  test('the sequence cap stays in force after the rolling daily count resets', async () => {
+    const { id, thread } = await mkLead();
+    await sql`update lead_messages set created_at = now() - interval '15 days' where thread_id = ${thread}`;
+    await agentSends(thread, 3, '2 days');
+    expect(await check({ ...neverQuiet, maxOutboundPerLeadPerDay: 0 }, id)).toMatchObject({
+      ok: false,
+      reason: 'unanswered sequence ended',
+    });
   });
 
   test('team whatsapps block the lead like the retired ignore list did', async () => {
