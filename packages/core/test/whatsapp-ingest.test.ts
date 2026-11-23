@@ -811,9 +811,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
   });
 
   test('a requested callback survives the inbound reply and fires as a promise', async () => {
-    // 60-min quiet period on the reply: it is filed, not answered, within this test
+    // 60-min quiet period on the reply: it is filed, not answered, within this test. Quiet hours
+    // are off so the callback keeps its requested time whatever the hour the suite runs at.
     await sql`
-      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60, quietHoursEnabled: false } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     const lead = await controlTx(sql, (tx) =>
