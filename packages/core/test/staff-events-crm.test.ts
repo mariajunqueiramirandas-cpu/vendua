@@ -234,6 +234,8 @@ describe.skipIf(!OWNER_URL)('staff events: CRM + sales agent (db)', () => {
   });
 
   test('draft.resolved superseded: an expired draft regenerates, a lead reply retires it', async () => {
+    // the first contact is drafted for approval only under supervised (the default is autopilot)
+    await b.settings('supervised');
     const leadId = await mkLead({ name: `Expira ${uniq}`, agent_mode: 'auto' });
     const old = await draft(leadId, 'oi, tudo certo por aí?');
     await sql`update lead_messages set created_at = now() - interval '30 days' where id = ${old.messageId}`;
