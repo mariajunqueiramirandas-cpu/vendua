@@ -17,6 +17,7 @@ import { copilotView } from '../src/copilot/view.ts';
 import { copilotTransport } from '../src/copilot/view.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
 import { addDays, localDateOf } from '../src/platform/tz.ts';
+import { merchantOtpText, type MerchantOtpPurpose } from '../src/admin/otp-text.ts';
 import { routeToDua, type InboxRow } from '../src/platform-whatsapp/dua.ts';
 import {
   AUDIO_NOT_FETCHED,
@@ -105,6 +106,7 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
   const nonce = crypto.randomUUID().slice(0, 8);
   const stamp = String(Date.now()).slice(-6);
   const tenants: string[] = [];
+  const otpPhones = new Set<string>();
   let heard: { text: string; confidence: number | null } | null = null;
   let seen: string | null = null;
   const deps = {
@@ -171,11 +173,22 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
   }
 
   /** A message to Venduá's number, as the gateway writes it, then consumed. */
-  async function inbound(ph: string, body: string, extra: { media_id?: string } = {}) {
+  async function inbound(
+    ph: string,
+    body: string,
+    extra: {
+      media_id?: string;
+      kind?: 'history' | 'message';
+      fromMe?: boolean;
+      sentAt?: Date;
+    } = {},
+  ) {
     const [row] = await sql<{ id: string }[]>`
-      insert into platform_wa_inbox (session, kind, from_jid, phone, push_name, body, provider_id, media_id)
-      values ('vendua', 'message', ${`55${ph}@s.whatsapp.net`}, ${`55${ph}`}, 'Rita', ${body},
-              ${`p-${crypto.randomUUID()}`}, ${extra.media_id ?? null})
+      insert into platform_wa_inbox (session, kind, from_jid, phone, push_name, body, provider_id,
+                                     media_id, from_me, sent_at)
+      values ('vendua', ${extra.kind ?? 'message'}, ${`55${ph}@s.whatsapp.net`}, ${`55${ph}`}, 'Rita', ${body},
+              ${`p-${crypto.randomUUID()}`}, ${extra.media_id ?? null}, ${extra.fromMe ?? false},
+              ${extra.sentAt ?? new Date()})
       returning id`;
     const [r] = await sql<InboxRow[]>`
       update platform_wa_inbox set attempts = attempts + 1 where id = ${row!.id}
@@ -192,8 +205,25 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       order by created_at, id`;
   const lastSent = async (ph: string) => (await sent(ph)).at(-1)?.body;
   const inboxRow = (id: string) =>
-    sql<{ status: string; next_attempt_at: Date }[]>`
-      select status, next_attempt_at from platform_wa_inbox where id = ${id}`.then((r) => r[0]!);
+    sql<{ status: string; next_attempt_at: Date; body: string | null }[]>`
+      select status, next_attempt_at, body from platform_wa_inbox where id = ${id}`.then(
+      (r) => r[0]!,
+    );
+  const crmCopies = async (id: string): Promise<{ body: string; historical: boolean }[]> =>
+    sql<{ body: string; historical: boolean }[]>`
+      select m.body, m.historical from lead_messages m join platform_wa_inbox i
+        on m.provider_message_id = 'whatsapp:' || i.provider_id
+      where i.id = ${id}`;
+  async function otp(
+    ph: string,
+    purpose: MerchantOtpPurpose,
+    issuedAt = new Date(Date.now() - 5_000),
+  ) {
+    otpPhones.add(ph);
+    await sql`
+      insert into merchant_login_codes (phone, code_hash, created_at, expires_at, purpose)
+      values (${ph}, 'test-only', ${issuedAt}, ${new Date(issuedAt.getTime() + 600_000)}, ${purpose})`;
+  }
   const mailbox = (tenantId: string) =>
     sql<{ source: string; dedupe_key: string; payload: any }[]>`
       select source, dedupe_key, payload from agent_mailbox
@@ -255,11 +285,120 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
 
   afterAll(async () => {
     for (const t of tenants) await sql`delete from tenants where id = ${t}`;
+    if (otpPhones.size)
+      await sql`delete from merchant_login_codes where phone in ${sql([...otpPhones])}`;
+    await sql`delete from agent_actors where subject_id in (select id::text from leads where whatsapp like ${`+55219${stamp}%`})`;
+    await sql`delete from leads where whatsapp like ${`+55219${stamp}%`}`;
     await sql`delete from platform_wa_dua_senders where phone like ${`219${stamp}%`}`;
     await sql`delete from platform_wa_outbox where to_jid like ${`55219${stamp}%`}`;
     await sql`delete from platform_wa_inbox where phone like ${`55219${stamp}%`}`;
     await (appSql as unknown as { end: () => Promise<void> }).end();
     await sql.end();
+  });
+
+  test('a recent signup request consumes code receipts and scrubs pasted codes before CRM', async () => {
+    const ph = phone();
+    await otp(ph, 'signup');
+    const receipt = await inbound(ph, 'Valeu! 🙌');
+    const code = await inbound(ph, '123 456');
+    const labeled = await inbound(ph, 'Meu código é 123456 e não funcionou.');
+    for (const id of [receipt, code, labeled]) {
+      expect((await inboxRow(id)).status).toBe('done');
+      expect(await crmCopies(id)).toHaveLength(0);
+    }
+    expect((await inboxRow(code)).body).toBeNull();
+    expect((await inboxRow(labeled)).body).toBeNull();
+    expect(await sent(ph)).toHaveLength(0);
+    expect(await crmCopies(await inbound(ph, 'Oi!'))).toEqual([{ body: 'Oi!', historical: false }]);
+    const pitch = 'Valeu! Quanto custa para minha confeitaria?';
+    expect(await crmCopies(await inbound(ph, pitch))).toEqual([{ body: pitch, historical: false }]);
+  });
+
+  test('bare receipts without a recent request stay in CRM, even if another code is requested later', async () => {
+    const ph = phone();
+    const at = new Date();
+    await otp(ph, 'signup', new Date(at.getTime() - 30 * 60_000));
+    await otp(ph, 'signup', new Date(at.getTime() + 60_000));
+    const id = await inbound(ph, 'Valeu', { sentAt: at });
+    expect(await crmCopies(id)).toEqual([{ body: 'Valeu', historical: false }]);
+  });
+
+  test('shared-number account help sends a fixed official link and no sales message', async () => {
+    const ph = phone();
+    await otp(ph, 'login', new Date(Date.now() - 30_000));
+    await otp(ph, 'signup');
+    for (const body of ['Não recebi o código', 'Não chegou']) {
+      const id = await inbound(ph, body);
+      expect((await inboxRow(id)).status).toBe('done');
+      expect(await crmCopies(id)).toHaveLength(0);
+    }
+    const [notice] = await sent(ph);
+    expect(await sent(ph)).toHaveLength(1);
+    expect(notice?.purpose).toBe('notice');
+    expect(notice?.body).toContain('https://painel.test/admin/comecar');
+    expect(notice?.body).toContain('Digite o código só nessa tela.');
+
+    const login = phone();
+    await inbound(
+      login,
+      'Não consigo entrar no painel. O site falso https://exemplo.test me pediu a senha.',
+    );
+    expect(await lastSent(login)).toContain('https://painel.test/admin/entrar');
+    expect(await lastSent(login)).not.toContain('exemplo.test');
+
+    const customer = phone();
+    expect(
+      await crmCopies(await inbound(customer, 'Já sou cliente e preciso de suporte.')),
+    ).toHaveLength(0);
+    expect(await lastSent(customer)).toContain('https://painel.test/admin/ajuda');
+  });
+
+  test('clear spam and declared auto-replies stay out of CRM and genuine conversations reach it', async () => {
+    const ph = phone();
+    for (const body of [
+      'Renda garantida todo dia! Entre no grupo em https://exemplo.test.',
+      'Obrigada pelo contato! Esta é uma mensagem automática. Retornamos amanhã.',
+    ]) {
+      const id = await inbound(ph, body);
+      expect((await inboxRow(id)).status).toBe('done');
+      expect(await crmCopies(id)).toHaveLength(0);
+    }
+    expect(await sent(ph)).toHaveLength(0);
+
+    for (const body of [
+      'Meu cardápio está em https://exemplo.test. Vocês integram?',
+      'Um cliente recebeu um golpe de renda garantida com Pix em https://exemplo.test. Vocês ajudam?',
+      'Já sou cliente do iFood e preciso de ajuda pra migrar.',
+      'Ainda não sou cliente e preciso de ajuda pra começar.',
+      'STOP',
+    ]) {
+      expect(await crmCopies(await inbound(ph, body))).toEqual([{ body, historical: false }]);
+    }
+  });
+
+  test('a verified merchant gets Duá for operational problems in the dashboard', async () => {
+    const s = await store();
+    const body = 'Meu painel está com erro no pagamento dos pedidos.';
+    const id = await inbound(s.phone, body);
+    expect((await inboxRow(id)).status).toBe('done');
+    expect(await crmCopies(id)).toHaveLength(0);
+    expect(await sent(s.phone)).toHaveLength(0);
+    const [message] = await sql<{ body: string }[]>`
+      select body from copilot_messages where tenant_id = ${s.tenantId} and author = 'merchant'`;
+    expect(message?.body).toBe(body);
+  });
+
+  test('history never imports our OTP template or a reply to a recent code', async () => {
+    const ph = phone();
+    await otp(ph, 'signup');
+    const code = merchantOtpText('signup', '123456', 10);
+    const out = await inbound(ph, code, { kind: 'history', fromMe: true });
+    const receipt = await inbound(ph, 'Já recebi', { kind: 'history' });
+    expect(await crmCopies(out)).toHaveLength(0);
+    expect(await crmCopies(receipt)).toHaveLength(0);
+    expect(await sent(ph)).toHaveLength(0);
+    const real = await inbound(ph, 'Quero ver os planos.', { kind: 'history' });
+    expect(await crmCopies(real)).toEqual([{ body: 'Quero ver os planos.', historical: true }]);
   });
 
   test('someone who is not a merchant stays the CRM’s', async () => {
@@ -630,6 +769,31 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
         providerId: `z-${nonce}`,
       }),
     ).toBe(false);
+  });
+
+  test('Core’s socket sends code replies to intake using the phone alias and provider timestamp', async () => {
+    const ph = phone();
+    const jid = `55${ph}@s.whatsapp.net`;
+    const providerId = `otp-${nonce}`;
+    const sentAt = new Date(Date.now() - 60 * 60_000);
+    await otp(ph, 'signup', new Date(sentAt.getTime() - 10_000));
+    expect(
+      await socketMessageToInbox(appSql, {
+        jid: '12345678@lid',
+        altJid: jid,
+        text: '123456',
+        providerId,
+        sentAt,
+      }),
+    ).toBe(true);
+    const [row] = await sql<
+      InboxRow[]
+    >`select * from platform_wa_inbox where provider_id = ${providerId}`;
+    expect(row?.sent_at).toEqual(sentAt);
+    await consumeRow(deps, row!);
+    expect((await inboxRow(row!.id)).body).toBeNull();
+    expect(await crmCopies(row!.id)).toHaveLength(0);
+    expect(await sent(ph)).toHaveLength(0);
   });
 
   test('Core’s socket fetches a merchant’s voice note and photo, never a lead’s', async () => {

@@ -614,7 +614,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     expect(row.log.map((e) => e.note).join(' | ')).toContain(
       'convite enviado por whatsapp e email',
     );
-    // the lead moves after the provisioning commits (whichever advance got there first)
+    // the lead move commits with verified provisioning
     await waitFor(async () =>
       Boolean((await sql`select 1 from leads where id = ${lead} and state = 'live'`)[0]),
     );
@@ -718,6 +718,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
       `
     )[0]!;
     expect(row).toEqual({ state: 'live', lead_id: lead });
+    expect(
+      await sql`select id from lead_activities where lead_id = ${lead}
+      and meta->>'type' = 'sales_activation'`,
+    ).toHaveLength(1);
     expect(sent.length).toBe(before);
     const l = (await sql<{ state: string }[]>`select state from leads where id = ${lead}`)[0]!;
     expect(l.state).toBe('live');

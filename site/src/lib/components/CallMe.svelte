@@ -30,6 +30,7 @@
   let whatsapp = $state('');
   let segment = $state('');
   let website = $state('');
+  let message = $state('');
   onMount(() => (ready = true));
 
   const digits = $derived(whatsapp.replace(/\D/g, ''));
@@ -44,7 +45,13 @@
       const r = await fetch('/site/v1/leads', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, whatsapp, segment: segment || undefined, website }),
+        body: JSON.stringify({
+          name,
+          whatsapp,
+          segment: segment || undefined,
+          message: message.trim() || undefined,
+          website,
+        }),
       });
       if (r.status === 202) phase = 'sent';
       else {
@@ -100,6 +107,14 @@
           <select bind:value={segment}>
             {#each SEGMENTS as [v, l] (v)}<option value={v}>{l}</option>{/each}
           </select>
+        </label>
+        <label class="field">
+          <span class="sr-only">Sua dúvida (opcional)</span>
+          <textarea
+            bind:value={message}
+            maxlength="500"
+            rows="2"
+            placeholder="Sua dúvida (opcional)"></textarea>
         </label>
         <!-- people never see this one; bots fill it -->
         <label class="trap" aria-hidden="true">
@@ -190,7 +205,8 @@
     color: var(--after-muted);
   }
   input,
-  select {
+  select,
+  textarea {
     min-width: 0;
     min-height: 48px;
     padding: 0 14px;
@@ -202,16 +218,22 @@
     font-size: 16px;
   }
   .after input,
-  .after select {
+  .after select,
+  .after textarea {
     border-color: var(--after-line);
     background: rgb(0 0 0 / 0.18);
     color: var(--after-ink);
+  }
+  textarea {
+    padding-block: 10px;
+    resize: vertical;
   }
   .after select option {
     color: #0a100d;
   }
   input:focus-visible,
-  select:focus-visible {
+  select:focus-visible,
+  textarea:focus-visible {
     outline: 2px solid var(--spark);
     outline-offset: 1px;
   }

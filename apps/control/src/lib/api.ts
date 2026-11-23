@@ -297,6 +297,7 @@ export interface AgentRun {
   tokens_in: number;
   tokens_out: number;
   cost_cents: number;
+  outcome?: string | null;
   error: string | null;
   created_at: string;
   started_at: string | null;
@@ -448,6 +449,20 @@ export interface AgentMetrics {
   }[];
   outbound: { sent: number; drafted: number; approved: number; rejected: number };
   replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
+  sales?: {
+    bySource: {
+      source: string;
+      leads: number;
+      signups: number;
+      activated: number;
+      paid: number;
+      optedOut: number;
+    }[];
+    inboundRequests: number;
+    awaitingReply: number;
+    medianResponseSeconds: number | null;
+    handoffs: number;
+  };
   /** null until the agent_wakeups migration deploys */
   wakeups: { pending: number; fired: number } | null;
 }
@@ -1700,7 +1715,7 @@ export interface CustomerDetail {
 }
 
 export type ModelTier = 'fast' | 'strong';
-export type ModelProviderId = 'anthropic' | 'openrouter' | 'openai' | 'gemini';
+export type ModelProviderId = 'anthropic' | 'openrouter' | 'openai' | 'gemini' | 'mistral';
 export type ModelEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export interface ModelRouteSetting {
   provider: ModelProviderId;
@@ -1735,7 +1750,9 @@ export interface AiBudgetsSetting {
 }
 export interface AiModelsView {
   routes: ModelRoutesSetting;
-  /** settings: control_settings row; env: AGENT_MODEL_ROUTES fallback; none: Duá can't answer */
+  /** The server's primary model for both tiers, when its key is configured. */
+  primaryRoute?: ModelRouteSetting | null;
+  /** Where the editable route lists came from. */
   routesSource: 'settings' | 'env' | 'none';
   budgets: AiBudgetsSetting;
   providers: { id: ModelProviderId; configured: boolean; secretName: string }[];

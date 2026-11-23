@@ -12,6 +12,8 @@ import { addInboundMessage, type Channel, type InboundResult } from '../modules/
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 import { isMerchantPhone } from '../admin/phones.ts';
+import { containsMerchantOtp } from '../admin/otp-text.ts';
+import { inspectWhatsAppIntake } from '../platform-whatsapp/intake.ts';
 import { reserveParkedFollowupsTx, retireWakeupsOnInboundTx } from './agenda.ts';
 import { CRM_AGENT_ID, LEAD_SUBJECT, requestLeadTx } from './dispatch.ts';
 
@@ -53,6 +55,9 @@ export async function ingestInbound(
     unverifiedSender?: boolean;
   },
 ): Promise<IngestResult> {
+  if (input.channel === 'whatsapp' && containsMerchantOtp(input.body)) {
+    return { ignored: 'código de acesso do whatsapp' };
+  }
   const { inboundReplyDelayMin } = await getGuardrails(sql);
   // Team numbers drop before a lead is ever minted — the agent
   // must never see them as leads, in either direction.
@@ -78,49 +83,52 @@ export async function ingestInbound(
   ) {
     return { ignored: `histórico com mais de ${history.maxAgeDays} dias` };
   }
-  const res = await addInboundMessage(sql, {
-    channel: input.channel,
-    from: input.from,
-    ...(input.fromAlias ? { fromAlias: input.fromAlias } : {}),
-    ...(input.fromName ? { fromName: input.fromName } : {}),
-    ...(input.subject ? { subject: input.subject } : {}),
-    body: input.body,
-    ...(input.providerMessageId ? { providerMessageId: input.providerMessageId } : {}),
-    ...(input.externalThreadId ? { externalThreadId: input.externalThreadId } : {}),
-    ...(input.direction ? { direction: input.direction } : {}),
-    ...(input.sentAt ? { sentAt: input.sentAt } : {}),
-    ...(input.historical ? { historical: input.historical } : {}),
-    ...(input.unverifiedSender ? { unverifiedSender: true } : {}),
-    ...(history
-      ? {
-          createLead: history.mode === 'leads',
-          ...(history.leadMode !== 'inbound' ? { newLeadAgentMode: history.leadMode } : {}),
-        }
-      : {}),
-  });
-  if (!res) return { ignored: 'histórico de contato sem lead' };
-
-  // history imports and own-account echoes are context only — never answered
-  if (input.historical || input.direction === 'out') return res;
-  if (!res.alreadySeen) {
-    emitControlEvent('thread.message', res.threadId);
-    if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
+  if (history && input.direction !== 'out') {
+    const intake = await inspectWhatsAppIntake(sql, {
+      body: input.body,
+      from: input.from,
+      ...(input.fromAlias ? { fromAlias: input.fromAlias } : {}),
+      receivedAt: input.sentAt ?? null,
+    });
+    if (intake !== 'conversation') return { ignored: 'mensagem fora da triagem comercial' };
   }
-  // gate check + mailbox row in one tx: `for update of l, t` serializes with the suppression
-  // writers so a suppression committed mid-flight is seen here
   const supersededThreads: string[] = [];
-  const dedupeKey = `crm:inbound:${res.messageId}`;
-  await controlTx(sql, async (tx) => {
-    const gateRows = await tx<ReplyGate[]>`
+  const record = () =>
+    controlTx(sql, async (tx) => {
+      const result = await addInboundMessage(tx, {
+        channel: input.channel,
+        from: input.from,
+        ...(input.fromAlias ? { fromAlias: input.fromAlias } : {}),
+        ...(input.fromName ? { fromName: input.fromName } : {}),
+        ...(input.subject ? { subject: input.subject } : {}),
+        body: input.body,
+        ...(input.providerMessageId ? { providerMessageId: input.providerMessageId } : {}),
+        ...(input.externalThreadId ? { externalThreadId: input.externalThreadId } : {}),
+        ...(input.direction ? { direction: input.direction } : {}),
+        ...(input.sentAt ? { sentAt: input.sentAt } : {}),
+        ...(input.historical ? { historical: input.historical } : {}),
+        ...(input.unverifiedSender ? { unverifiedSender: true } : {}),
+        ...(history
+          ? {
+              createLead: history.mode === 'leads',
+              ...(history.leadMode !== 'inbound' ? { newLeadAgentMode: history.leadMode } : {}),
+            }
+          : {}),
+      });
+      if (!result || input.historical || input.direction === 'out') return result;
+      const res = result;
+      const dedupeKey = `crm:inbound:${res.messageId}`;
+      // Record the message and its reply request in the same transaction.
+      const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
       where t.id = ${res.threadId}
       for update of l, t
     `;
-    // A provider retry of a recorded message has no side effects again — unless the attempt
-    // that recorded it died before this tx: its mailbox row is missing and nothing came after it.
-    if (res.alreadySeen) {
-      const lost = await tx`
+      // A provider retry of a recorded message has no side effects again — unless the attempt
+      // that recorded it died before this tx: its mailbox row is missing and nothing came after it.
+      if (res.alreadySeen) {
+        const lost = await tx`
         select 1 from lead_messages m
         where m.id = ${res.messageId} and m.direction = 'in' and not m.historical
           and m.created_at > now() - interval '1 day'
@@ -130,11 +138,11 @@ export async function ingestInbound(
           )
           and not exists (select 1 from agent_mailbox b where b.dedupe_key = ${dedupeKey})
       `;
-      if (!lost.length) return;
-    }
-    // retire the agent's own unanswered outreach drafts — obsolete once the lead writes; drafts
-    // of promises and staff asks survive (a turn's batch says what it answered)
-    const drafts = await tx<{ id: string; thread_id: string }[]>`
+        if (!lost.length) return res;
+      }
+      // retire the agent's own unanswered outreach drafts — obsolete once the lead writes; drafts
+      // of promises and staff asks survive (a turn's batch says what it answered)
+      const drafts = await tx<{ id: string; thread_id: string }[]>`
       update lead_messages m
       set status = 'rejected', error = 'lead respondeu', updated_at = now()
       where m.status = 'draft' and m.author = 'agent' and m.agent_run_id is not null
@@ -147,50 +155,67 @@ export async function ingestInbound(
             and b.kind <> all(${OWN_OUTREACH_KINDS}))
       returning m.id, m.thread_id
     `;
-    supersededThreads.push(...drafts.map((d) => d.thread_id));
-    for (const d of drafts) {
-      await recordStaffEventTx(tx, 'draft.resolved', {
-        messageId: d.id,
-        outcome: 'superseded',
-        by: null,
-      });
-    }
-    // a pending first contact can't serve the mail and would fire a "reopening"
-    await tx`
+      supersededThreads.push(...drafts.map((d) => d.thread_id));
+      for (const d of drafts) {
+        await recordStaffEventTx(tx, 'draft.resolved', {
+          messageId: d.id,
+          outcome: 'superseded',
+          by: null,
+        });
+      }
+      // a pending first contact can't serve the mail and would fire a "reopening"
+      await tx`
       delete from agent_mailbox m using agent_actors a
       where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
         and a.subject_id = ${res.leadId} and m.kind = 'lead.first_contact'
         and m.consumed_by_turn is null
     `;
-    await retireWakeupsOnInboundTx(tx, res.leadId);
-    const gate = gateRows[0];
-    if (
-      !gate ||
-      !gate.agent_enabled ||
-      gate.agent_mode === 'off' ||
-      gate.unsubscribed_at ||
-      gate.archived_at
-    )
-      return;
-    // a preset/job switched off or a paused agent files nothing now: the message is served when
-    // the agent is back (reserveUnansweredTx); quiet hours move the
-    // answer to the window's end when it would go out live; a burst coalesces in the actor's
-    // quiet window and a turn already running is preempted at its next step
-    await requestLeadTx(tx, {
-      leadId: res.leadId,
-      kind: 'message.inbound',
-      source: input.channel,
-      dedupeKey,
-      payload: {
-        messageId: res.messageId,
-        threadId: res.threadId,
-        channel: input.channel,
-      },
-      ...(inboundReplyDelayMin > 0
-        ? { at: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-        : {}),
+      await retireWakeupsOnInboundTx(tx, res.leadId);
+      const gate = gateRows[0];
+      if (
+        !gate ||
+        !gate.agent_enabled ||
+        gate.agent_mode === 'off' ||
+        gate.unsubscribed_at ||
+        gate.archived_at
+      )
+        return res;
+      // a preset/job switched off or a paused agent files nothing now: the message is served when
+      // the agent is back (reserveUnansweredTx); quiet hours move the
+      // answer to the window's end when it would go out live; a burst coalesces in the actor's
+      // quiet window and a turn already running is preempted at its next step
+      await requestLeadTx(tx, {
+        leadId: res.leadId,
+        kind: 'message.inbound',
+        source: input.channel,
+        dedupeKey,
+        payload: {
+          messageId: res.messageId,
+          threadId: res.threadId,
+          channel: input.channel,
+        },
+        ...(inboundReplyDelayMin > 0
+          ? { at: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
+          : {}),
+      });
+      return res;
     });
-  });
+  let res: InboundResult | null;
+  try {
+    res = await record();
+  } catch (e) {
+    // Mailbox writes and fenced tools can contend for the same lead and actor.
+    const code = (e as { code?: string }).code;
+    if (code !== '40P01' && code !== '40001') throw e;
+    supersededThreads.length = 0;
+    res = await record();
+  }
+  if (!res) return { ignored: 'histórico de contato sem lead' };
+  if (input.historical || input.direction === 'out') return res;
+  if (!res.alreadySeen) {
+    emitControlEvent('thread.message', res.threadId);
+    if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
+  }
   for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
   emitControlEvent('run.update', res.leadId);
   return res;
@@ -214,7 +239,8 @@ export async function reserveUnansweredTx(tx: Sql, leadId: string | null): Promi
       and l.unsubscribed_at is null and l.archived_at is null
       and not exists (
         select 1 from lead_messages o join lead_threads o2 on o2.id = o.thread_id
-        where o2.lead_id = t.lead_id and o.direction = 'out' and o.created_at > m.created_at)
+        where o2.lead_id = t.lead_id and o.direction = 'out' and o.created_at > m.created_at
+          and o.status in ('draft', 'queued', 'sending', 'sent', 'delivered'))
     order by t.lead_id, m.created_at desc
     limit 200`;
   let n = 0;

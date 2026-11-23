@@ -140,7 +140,7 @@ export function computeReadiness({
   const staff = obj(settings.staff);
   const staffCount = Array.isArray(staff.members) ? staff.members.length : 0;
   // 'off' parks the agent; 'copilot' silently backs up the draft queue — both worth flagging
-  const autoLevel = str(autonomy.level, 'supervised');
+  const autoLevel = str(autonomy.level, 'autopilot');
   const routine: Check[] = setErr
     ? (
         [

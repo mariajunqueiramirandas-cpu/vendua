@@ -14,6 +14,8 @@ import {
   type SendChannel,
 } from '../../../modules/threads.ts';
 import { dropLeadMailTx } from '../../../crm/agenda.ts';
+import { crmOfferTx, crmSignupLink } from '../../../crm/signup.ts';
+import { workspaceOf } from './availability.ts';
 import { CRM_OUTBOX_CHANNEL } from '../../../crm/outbox.ts';
 import {
   agentPausedForChannelTx,
@@ -112,78 +114,157 @@ export const sendMessageTool = defineTool<
     body: MESSAGE_BODY,
     subject: MESSAGE_SUBJECT,
   }),
-  run: (ctx: Ctx, input) =>
-    refusals(async () => {
-      const leadId = leadOf(ctx);
-      const t = turn(ctx.state);
-      const draftOnly = t.params.draftOnly === true;
-      const body = normalizeMessageBody(input.body);
-      const bounced = styleBounce(ctx, body, input.channel ?? override(ctx));
-      if (bounced) return bounced;
-      const out = await crm(ctx, async (tx) => {
-        // serializes concurrent sends so the unanswered cap sees the winner's row
-        await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
-        const [already] = await tx`
+  run: (ctx: Ctx, input) => {
+    const offer = workspaceOf(ctx.state.context.tenant)?.pitch.offer ?? '';
+    const subject = ctx.state.context.subject as { bookingUrl?: string | null } | null;
+    const approvedLinks: readonly string[] = offer.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
+    const urls = input.body.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
+    if (
+      urls.some((url) => {
+        const clean = url.replace(/[.,!?;]+$/, '');
+        return clean !== subject?.bookingUrl && !approvedLinks.includes(clean);
+      })
+    )
+      return { error: 'Use send_signup_link para enviar um link de cadastro oficial.' };
+    if (
+      /R\$|\bBRL\b|\b\d+(?:[.,]\d+)?\s*(?:reais|%)|\b(?:sem|zero) (?:taxa|comiss[aã]o)\b/i.test(
+        input.body,
+      )
+    )
+      return {
+        error: 'Use send_signup_link com includePrice para enviar preços e taxas vigentes.',
+      };
+    return composeAgentSend(ctx, input);
+  },
+});
+
+export const getSalesOfferTool = defineTool<Record<string, never>, Sql>({
+  name: 'get_sales_offer',
+  description:
+    'Read current public plans, monthly prices in cents, rates in basis points, trial days, features and whether online signup is open. Trial eligibility is confirmed during signup.',
+  effect: 'read',
+  input: s.object({}),
+  run: async (ctx) => (await crm(ctx, crmOfferTx)) as unknown as Json,
+});
+
+export const sendSignupLinkTool = defineTool<
+  { planId: string; includePrice?: boolean | undefined; includeLink?: boolean | undefined },
+  Sql
+>({
+  name: 'send_signup_link',
+  description:
+    'Send the official signup link for an available plan when the lead wants to start. Use includePrice when quoting a plan, and includeLink=false for a price-only answer. Core renders the approved current price, fee and signup link.',
+  effect: 'send',
+  input: s.object({
+    planId: s.string({ min: 2, max: 30 }),
+    includePrice: s.boolean().optional(),
+    includeLink: s.boolean().optional(),
+  }),
+  run: async (ctx, input) => {
+    const offer = await crm(ctx, crmOfferTx);
+    const plan = offer.plans.find((p) => p.id === input.planId);
+    const link = plan && offer.signupOpen ? crmSignupLink(leadOf(ctx), plan.id) : null;
+    const wantsLink = input.includeLink !== false;
+    if (
+      !plan ||
+      (wantsLink && !link) ||
+      (!wantsLink && (!input.includePrice || plan.priceCents === null))
+    )
+      return {
+        error:
+          'Cadastro indisponível para esse plano. Consulte get_sales_offer ou encaminhe para a equipe.',
+      };
+    const price =
+      input.includePrice && plan.priceCents !== null
+        ? `O plano ${plan.name} custa ${(plan.priceCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por mês. A taxa por pedido é de ${(plan.feeBps / 100).toLocaleString('pt-BR')}%. `
+        : '';
+    const trial =
+      plan.trialDays > 0
+        ? `No cadastro você confirma se pode usar os ${plan.trialDays} dias de teste. `
+        : '';
+    return composeAgentSend(ctx, {
+      body: `${price}${trial}${wantsLink ? `Você pode criar sua loja no plano ${plan.name} por aqui: ${link}` : ''}`.trim(),
+    });
+  },
+});
+
+function composeAgentSend(
+  ctx: Ctx,
+  input: { channel?: string | undefined; body: string; subject?: string | undefined },
+): Promise<Json> {
+  return refusals(async () => {
+    const leadId = leadOf(ctx);
+    const t = turn(ctx.state);
+    const draftOnly = t.params.draftOnly === true;
+    const body = normalizeMessageBody(input.body);
+    const bounced = styleBounce(ctx, body, input.channel ?? override(ctx));
+    if (bounced) return bounced;
+    const out = await crm(ctx, async (tx) => {
+      // serializes concurrent sends so the unanswered cap sees the winner's row
+      await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+      const [already] = await tx`
           select 1 from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where t.lead_id = ${leadId} and m.agent_run_id = ${ctx.turnId}
-            and m.status in ('queued', 'sending', 'sent', 'delivered')
+            and m.status in ('draft', 'queued', 'sending', 'sent', 'delivered')
           limit 1`;
-        if (already) return { blocked: true, reason: 'already dispatched by this turn' };
-        const pick = await resolveChannelTx(tx, leadId, {
-          requested: input.channel ? channel(input.channel) : null,
-          override: override(ctx),
-          threadId: t.params.threadId ?? null,
-        });
-        if (!pick.ok) return { blocked: true, reason: pick.reason, use: pick.available[0] ?? null };
-        // pause applies per (lead, channel) — a lead-wide handoff survives a channel hop
-        if (await agentPausedForChannelTx(tx, leadId, pick.channel))
-          return { blocked: true, reason: 'thread paused for agent' };
-        // draft-only turns skip the verdict — a draft never leaves anyway
-        const verdict = draftOnly
-          ? ({ ok: true, forceDraft: false } as const)
-          : await checkSendAllowedTx(
-              tx,
-              {
-                ...DEFAULT_GUARDRAILS,
-                ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),
-              },
-              leadId,
-              pick.channel,
-            );
-        if (!verdict.ok) {
-          // durable signal for the channel-health rollup — blocks otherwise leave no record
-          await recordBlockedSendTx(tx, leadId, pick.channel, verdict.reason ?? 'guardrail');
-          return { blocked: true, reason: verdict.reason };
-        }
-        const drafted = verdict.forceDraft || draftOnly;
-        const composed = await composeMessageTx(tx, {
-          leadId,
-          channel: pick.channel,
-          body,
-          ...(input.subject ? { subject: input.subject } : {}),
-          author: 'agent',
-          status: drafted ? 'draft' : 'queued',
-          agentRunId: ctx.turnId,
-        });
-        if (!drafted) await notifyOutbox(tx);
-        return {
-          ...composed.body,
-          draftFallback: drafted,
-          channel: pick.channel,
-          via: pick.via,
-          ...(pick.prevChannel && pick.prevChannel !== pick.channel
-            ? { switchedFrom: pick.prevChannel }
-            : {}),
-        };
+      if (already) return { blocked: true, reason: 'already dispatched by this turn' };
+      const pick = await resolveChannelTx(tx, leadId, {
+        requested: input.channel ? channel(input.channel) : null,
+        override: override(ctx),
+        threadId: t.params.threadId ?? null,
       });
-      if (!('blocked' in out)) {
-        emitAfter(ctx, 'thread.message', out.thread.id);
-        if (out.draftFallback) emitAfter(ctx, 'draft.change', out.thread.id);
+      if (!pick.ok) return { blocked: true, reason: pick.reason, use: pick.available[0] ?? null };
+      // pause applies per (lead, channel) — a lead-wide handoff survives a channel hop
+      if (await agentPausedForChannelTx(tx, leadId, pick.channel))
+        return { blocked: true, reason: 'thread paused for agent' };
+      // draft-only turns skip the verdict — a draft never leaves anyway
+      const verdict = draftOnly
+        ? ({ ok: true, forceDraft: false, retryAt: undefined } as const)
+        : await checkSendAllowedTx(
+            tx,
+            {
+              ...DEFAULT_GUARDRAILS,
+              ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),
+            },
+            leadId,
+            pick.channel,
+          );
+      if (!verdict.ok && !verdict.retryAt) {
+        // durable signal for the channel-health rollup — blocks otherwise leave no record
+        await recordBlockedSendTx(tx, leadId, pick.channel, verdict.reason ?? 'guardrail');
+        return { blocked: true, reason: verdict.reason };
       }
-      return out as unknown as Json;
-    }),
-});
+      const drafted = verdict.forceDraft || draftOnly;
+      const composed = await composeMessageTx(tx, {
+        leadId,
+        channel: pick.channel,
+        body,
+        ...(input.subject ? { subject: input.subject } : {}),
+        author: 'agent',
+        status: drafted ? 'draft' : 'queued',
+        agentRunId: ctx.turnId,
+        ...(verdict.retryAt ? { sendAfter: verdict.retryAt } : {}),
+      });
+      if (!drafted) await notifyOutbox(tx);
+      return {
+        ...composed.body,
+        draftFallback: drafted,
+        ...(verdict.retryAt ? { retryAt: verdict.retryAt.toISOString() } : {}),
+        channel: pick.channel,
+        via: pick.via,
+        ...(pick.prevChannel && pick.prevChannel !== pick.channel
+          ? { switchedFrom: pick.prevChannel }
+          : {}),
+      };
+    });
+    if (!('blocked' in out)) {
+      emitAfter(ctx, 'thread.message', out.thread.id);
+      if (out.draftFallback) emitAfter(ctx, 'draft.change', out.thread.id);
+    }
+    return out as unknown as Json;
+  });
+}
 
 export const unsubscribeTool = defineTool<
   { reason?: string | undefined; reply?: string | undefined },

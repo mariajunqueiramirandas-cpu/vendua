@@ -1,12 +1,16 @@
 import type { Hono } from 'hono';
-import { requestLeadTx } from '../crm/dispatch.ts';
+import { retireWakeupsOnInboundTx } from '../crm/agenda.ts';
+import { salesAttentionTx } from '../crm/delivery-policy.ts';
+import { CRM_AGENT_ID, requestLeadTx } from '../crm/dispatch.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { controlTx } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
-import { getSettingTx, newLeadModesOf } from './integrations.ts';
+import { getSettingTx, newLeadModesOf, phoneIsIgnored } from './integrations.ts';
 import { e164Phone, insertLeadTx } from './leads.ts';
+import { contactDigits } from './threads.ts';
+import { blockedPhonesTx } from './staff.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 
 // "Quer ajuda para começar?" on the marketing site: a shop owner leaves a name and a WhatsApp and
@@ -71,55 +75,79 @@ export function mountSiteLeads(o: {
     const note = `Pediu contato pelo site${message ? `: “${message}”` : '.'}`;
 
     const leadId = await controlTx(o.sql, async (tx) => {
-      // one WhatsApp, one lead: a repeat (or a lead the team already has) gets a note
-      const known = (
-        await tx<{ id: string }[]>`select id from leads where whatsapp = ${whatsapp} limit 1`
-      )[0];
-      if (known) {
-        await tx`
-          insert into lead_activities (lead_id, kind, body, created_by)
-          values (${known.id}, 'system', ${note}, 'system')
-        `;
-        return known.id;
-      }
+      if (phoneIsIgnored(await blockedPhonesTx(tx), whatsapp)) return null;
+      const variants = contactDigits(whatsapp).sort();
+      const lock = variants[0] ?? whatsapp.replace(/\D/g, '');
+      await tx`select pg_advisory_xact_lock(hashtext(${`lead-contact:whatsapp:${lock}`}))`;
+      const [known] = await tx<{ id: string }[]>`
+        select id from leads
+        where whatsapp = ${whatsapp} or phone = ${whatsapp}
+          or exists (select 1 from unnest(${variants}::text[]) v
+            where right(regexp_replace(coalesce(whatsapp, ''), '[^0-9]', '', 'g'), length(v)) = v
+               or right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), length(v)) = v)
+        order by (whatsapp is not distinct from ${whatsapp}) desc, updated_at desc limit 1`;
       const mode = newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).inbound;
-      const created = await insertLeadTx(tx, {
-        name,
-        business_name: business,
-        whatsapp,
-        segment,
-        source: 'site',
-        discovered_via: 'site',
-        agent_mode: mode,
-      });
-      const lead = created.body.lead;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, created_by)
-        values (${lead.id}, 'system', ${note}, 'system')
-      `;
-      await recordStaffEventTx(tx, 'lead.created', {
-        leadId: lead.id,
-        leadName: name,
-        business,
-        channel: 'site',
-        excerpt: message ?? 'pediu contato pelo site',
-      });
-      // a draft-mode lead gets the agent's draft for staff to send; auto sends live. The
-      // producer files it only while the policy allows outreach; what the visitor wrote is in
-      // the note above, which the agent reads as data
-      await requestLeadTx(tx, {
-        leadId: lead.id,
+      const id =
+        known?.id ??
+        (
+          await insertLeadTx(tx, {
+            name,
+            business_name: business,
+            whatsapp,
+            segment,
+            source: 'site',
+            discovered_via: 'site',
+            agent_mode: mode,
+          })
+        ).body.lead.id;
+      // Preserve verified contacts. A known phone lead with no WhatsApp can receive
+      // the callback on the same number just supplied through the form.
+      if (known)
+        await tx`update leads set whatsapp = ${whatsapp}, updated_at = now()
+        where id = ${id} and (whatsapp is null or whatsapp = '')`;
+      // Repeated submissions are visible, but identical callbacks inside the retry window share work.
+      const [recent] = await tx`select 1 from lead_activities where lead_id = ${id}
+        and meta->>'type' = 'site_callback' and body = ${note}
+        and at > now() - interval '5 minutes'`;
+      const [activity] = await tx<{ id: string }[]>`
+        insert into lead_activities (lead_id, kind, body, meta, created_by, at)
+        values (${id}, 'system', ${note}, ${tx.json({ type: recent ? 'site_callback_repeat' : 'site_callback' })},
+          'system', clock_timestamp()) returning id`;
+      if (!known)
+        await recordStaffEventTx(tx, 'lead.created', {
+          leadId: id,
+          leadName: name,
+          business,
+          channel: 'site',
+          excerpt: message ?? 'pediu contato pelo site',
+        });
+      if (recent) return id;
+      await retireWakeupsOnInboundTx(tx, id);
+      // Replace outstanding callbacks for this lead so the turn reads the most recent request.
+      await tx`delete from agent_mailbox m using agent_actors a
+        where m.actor_id = a.id and a.agent_id = ${CRM_AGENT_ID} and a.subject_id = ${id}
+          and m.kind = 'lead.first_contact' and m.source = 'site' and m.consumed_by_turn is null`;
+      const requested = await requestLeadTx(tx, {
+        leadId: id,
         kind: 'lead.first_contact',
         source: 'site',
-        dedupeKey: `crm:first_contact:${lead.id}`,
+        dedupeKey: `crm:site:${activity!.id}`,
         payload: {
-          focus:
-            'a pessoa pediu pelo site para ser chamada no WhatsApp: apresente-se, responda ao que ela escreveu e ajude a criar a loja',
+          channel: 'whatsapp',
+          focus: 'retorno pedido pelo site',
+          callbackActivityId: activity!.id,
         },
       });
-      return lead.id;
+      if (!requested.mailboxId)
+        await salesAttentionTx(
+          tx,
+          id,
+          `site:${activity!.id}`,
+          'retorno solicitado no site — chame pelo WhatsApp',
+        );
+      return id;
     });
-    emitControlEvent('lead.change', leadId);
+    if (leadId) emitControlEvent('lead.change', leadId);
     return c.json({ received: true }, 202);
   });
 }

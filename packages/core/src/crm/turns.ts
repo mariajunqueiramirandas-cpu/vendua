@@ -1,5 +1,12 @@
 import type { FencedTx, Json, TurnEnd, TurnFailure } from '@vendua/agent-runtime';
-import { turn, turnOf, type TurnInfo } from '../agent-host/agents/crm/shared.ts';
+import {
+  triageMissing,
+  RESPONSE_ACTIONS,
+  waitsForResponse,
+  turn,
+  turnOf,
+  type TurnInfo,
+} from '../agent-host/agents/crm/shared.ts';
 import { appendDebriefTx, hasMemoryTablesTx } from '../modules/agent-memory.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -15,6 +22,7 @@ import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { CRM_AGENT_ID, CRM_DISCOVERY_ID, CRM_STRATEGIST_ID, LEAD_SUBJECT } from './dispatch.ts';
 import { syncNextActionTx } from './agenda.ts';
 import { TRIGGER_OF } from './jobs.ts';
+import { salesAttentionTx } from './delivery-policy.ts';
 
 // What the CRM keeps of a finished turn (ADR 0030 steps 2–4): one crm_turns row, written by the
 // host's turn hooks in the transaction that ends the turn. It is what the activity list, the cost
@@ -60,6 +68,7 @@ async function projectTx(
   info: TurnInfo,
   status: 'done' | 'failed',
   error: string | null,
+  outcome: string | null = null,
 ): Promise<{ leadId: string | null; costCents: number }> {
   const totals = await totalsTx(tx, t.actorId, t.turnId);
   const costCents = Math.round((totals.cost_usd + info.monidUsd) * 100);
@@ -77,13 +86,13 @@ async function projectTx(
     tx,
     (c) => c`
     insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, brief_id, status,
-      started_at, steps, acted, leads_created, tokens_in, tokens_out, cost_cents, error, params)
+      started_at, steps, acted, leads_created, tokens_in, tokens_out, cost_cents, error, params, outcome)
     values (${t.turnId}, ${t.actorId}, ${t.agentId}, ${info.kind}, ${TRIGGER_OF[info.trigger] ?? (info.source.slice(0, 120) || 'agent')},
       (select id from leads where id = ${leadId}),
       (select id from discovery_briefs where id = ${briefId}),
       ${status}, ${totals.started_at ?? new Date()}, ${totals.steps}, ${info.acted},
       ${info.leadsCreated}, ${totals.tokens_in}, ${totals.tokens_out}, ${costCents},
-      ${error ? error.slice(0, 1000) : null}, ${c.json(params as never)})
+      ${error ? error.slice(0, 1000) : null}, ${c.json(params as never)}, ${outcome})
     on conflict (turn_id) do nothing`,
   );
   return { leadId, costCents };
@@ -177,6 +186,45 @@ async function debriefTx(tx: Sql, turnId: string, actorId: string, info: TurnInf
   });
 }
 
+async function leadTurnOutcomeTx(
+  tx: Sql,
+  leadId: string,
+  info: TurnInfo,
+  parked: string | null,
+): Promise<string> {
+  if (parked) return 'parked';
+  const has = (action: string) => info.actions.includes(action);
+  if (info.kind === 'triage') {
+    if (!triageMissing(info).length) return 'triage_complete';
+    if (!has('create_task'))
+      await salesAttentionTx(
+        tx,
+        leadId,
+        `triage:${info.id}`,
+        'triagem incompleta — confira o dossiê e prepare o próximo passo',
+      );
+    return 'triage_incomplete';
+  }
+  if (has('unsubscribe')) return 'opted_out';
+  if (has('request_human')) return 'handoff';
+  if (has('send_message')) return 'message_queued';
+  if (has('draft_message')) return 'draft_ready';
+  if (has('create_task')) return 'staff_task';
+  if (waitsForResponse(info) && !RESPONSE_ACTIONS.some(has)) {
+    const handedOff = await salesAttentionTx(
+      tx,
+      leadId,
+      `reply:${info.params.messageId ?? info.params.callbackActivityId ?? info.id}`,
+      'o agente não conseguiu responder — confira a conversa e responda',
+      info.params.threadId ?? null,
+      true,
+    );
+    return handedOff ? 'handoff' : 'closed';
+  }
+  if (has('schedule')) return 'followup_scheduled';
+  return info.acted ? 'lead_updated' : 'no_action';
+}
+
 export async function crmTurnEnded(tx: FencedTx<Sql>, end: TurnEnd): Promise<void> {
   if (!isCrmTurn(end)) return;
   const info = turn(end.state);
@@ -197,7 +245,13 @@ export async function crmTurnEnded(tx: FencedTx<Sql>, end: TurnEnd): Promise<voi
   }
   // a parked subject (cost cap, paused lead) finished without a model call: say why
   const parked = (end.state.context.subject as { parked?: string | null } | null)?.parked ?? null;
-  const { leadId, costCents } = await projectTx(sql, end, info, 'done', parked);
+  const outcome =
+    end.subject.kind === LEAD_SUBJECT && UUID.test(end.subject.id)
+      ? await controlTx(sql, (c) => leadTurnOutcomeTx(c, end.subject.id, info, parked))
+      : parked
+        ? 'parked'
+        : null;
+  const { leadId } = await projectTx(sql, end, info, 'done', parked, outcome);
   // a lowered cap parks the lead without spending: the flag still goes up
   if (leadId) {
     await leadOverCostCapTx(sql, leadId);
@@ -219,7 +273,7 @@ export async function crmTurnFailed(tx: FencedTx<Sql>, f: TurnFailure): Promise<
     ? (totals.batch as unknown as { kind: string; source: string; payload: Json }[])
     : [];
   const info = turnOf(batch, f.turnId);
-  const { leadId } = await projectTx(sql, f, info, 'failed', f.error);
+  const { leadId } = await projectTx(sql, f, info, 'failed', f.error, 'failed');
   await controlTx(sql, async (c) => {
     const [lead] = leadId
       ? await c<{ name: string }[]>`select name from leads where id = ${leadId}`
@@ -238,13 +292,21 @@ export async function crmTurnFailed(tx: FencedTx<Sql>, f: TurnFailure): Promise<
       { dedupeKey: `run:${f.turnId}:failed` },
     );
     if (leadId) await syncNextActionTx(c, leadId);
-    // a lead who wrote is waiting on an answer nobody will send: a person picks it up
-    if (leadId && info.kind === 'reply')
-      await c`
-        insert into lead_tasks (lead_id, title, due_at, created_by)
-        values (${leadId},
-                ${`[humano] ${lead?.name ?? 'lead'}: o agente falhou ao responder — responda pela conversa`.slice(0, 300)},
-                now(), 'agent')`;
+    if (leadId && (waitsForResponse(info) || info.kind === 'triage')) {
+      const [sent] = await c`select 1 from lead_messages where agent_run_id = ${f.turnId}
+        and status in ('draft', 'queued', 'sending', 'sent', 'delivered')`;
+      if (!sent)
+        await salesAttentionTx(
+          c,
+          leadId,
+          `reply:${info.params.messageId ?? info.params.callbackActivityId ?? f.turnId}`,
+          info.kind === 'triage'
+            ? 'a triagem do agente falhou'
+            : 'o agente falhou ao responder — responda pela conversa',
+          info.params.threadId ?? null,
+          info.kind !== 'triage',
+        );
+    }
   });
   afterCommit(sql, () => {
     emitControlEvent('run.update', f.turnId);

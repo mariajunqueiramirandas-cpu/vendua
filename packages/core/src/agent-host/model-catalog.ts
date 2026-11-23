@@ -1,7 +1,7 @@
 import { log } from '../platform/log.ts';
 
 // The CRM's model picker: OpenRouter's model list (default routing prices), its zero-data-retention
-// endpoints folded per model, and the same model's id on Anthropic, OpenAI or Gemini directly —
+// endpoints folded per model, and the same model's id on its direct provider —
 // checked against that provider's own list when Core has its key. ZDR prices are the highest
 // across a model's ZDR endpoints: OpenRouter may send a call to any of them, and the route price
 // feeds the pre-call budget estimate.
@@ -9,7 +9,7 @@ import { log } from '../platform/log.ts';
 export const MODELS_URL = 'https://openrouter.ai/api/v1/models';
 export const ZDR_ENDPOINTS_URL = 'https://openrouter.ai/api/v1/endpoints/zdr';
 
-export type DirectProvider = 'anthropic' | 'openai' | 'gemini';
+export type DirectProvider = 'anthropic' | 'openai' | 'gemini' | 'mistral';
 
 /** each provider's own model list, and the env key that unlocks it (as adaptersFromEnv) */
 const PROVIDER_LISTS: Record<
@@ -36,6 +36,13 @@ const PROVIDER_LISTS: Record<
     request: (key) => ({
       url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
       headers: { 'x-goog-api-key': key },
+    }),
+  },
+  mistral: {
+    secretName: 'MISTRAL_API_KEY',
+    request: (key) => ({
+      url: 'https://api.mistral.ai/v1/models',
+      headers: { authorization: `Bearer ${key}` },
     }),
   },
 };
@@ -224,6 +231,7 @@ export function directFor(id: string): { provider: DirectProvider; model: string
   if (!validId(model) || model.includes('/')) return null;
   if (maker === 'openai') return model.startsWith('gpt-oss') ? null : { provider: 'openai', model };
   if (maker === 'google') return model.startsWith('gemini-') ? { provider: 'gemini', model } : null;
+  if (maker === 'mistralai') return { provider: 'mistral', model };
   if (maker === 'anthropic' && model.startsWith('claude-'))
     // OpenRouter writes versions with dots (claude-haiku-4.5), Anthropic with dashes
     return { provider: 'anthropic', model: model.replace(/(\d)\.(\d)/g, '$1-$2') };
@@ -323,6 +331,14 @@ export function providerIds(provider: DirectProvider, body: unknown): Set<string
   const ids = new Set<string>();
   for (const r of rows.slice(0, MAX_ENDPOINTS)) {
     if (!isObject(r)) continue;
+    if (
+      provider === 'mistral' &&
+      (r.archived === true ||
+        !isObject(r.capabilities) ||
+        r.capabilities.completion_chat !== true ||
+        r.capabilities.function_calling !== true)
+    )
+      continue;
     const raw = provider === 'gemini' ? r.name : r.id;
     const id =
       typeof raw === 'string' && provider === 'gemini' ? raw.replace(/^models\//, '') : raw;
@@ -376,9 +392,11 @@ export function createModelCatalog(
     if (!key) return;
     try {
       const { url, headers } = spec.request(key);
-      const ids = providerIds(provider, await getJson(url, headers, provider));
-      // an empty list is a broken answer, not "the provider has no models"
-      if (!ids.size) throw new Error(`${provider} model list empty`);
+      const body = await getJson(url, headers, provider);
+      const ids = providerIds(provider, body);
+      // A Mistral account may have models but no chat models with function calling.
+      const filtered = provider === 'mistral' && isObject(body) && Array.isArray(body.data);
+      if (!ids.size && !filtered) throw new Error(`${provider} model list empty`);
       lists[provider] = ids;
     } catch (e) {
       log.warn(

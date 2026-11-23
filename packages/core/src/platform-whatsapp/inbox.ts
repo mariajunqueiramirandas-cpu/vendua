@@ -1,5 +1,7 @@
 import { ingestInbound } from '../crm/inbound.ts';
+import { phoneIsIgnored } from '../modules/integrations.ts';
 import { controlTx } from '../modules/control.ts';
+import { blockedPhonesTx } from '../modules/staff.ts';
 import { adoptLidMappings } from '../modules/threads.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
@@ -9,17 +11,19 @@ import { VENDUA_SESSION } from './transport.ts';
 import type { InboundMedia } from '../crm/channels/whatsapp.ts';
 import { MAX_AUDIO_SECONDS, MAX_IMAGE_BYTES, MAX_MEDIA_BYTES } from '../store-whatsapp/content.ts';
 import { AUDIO_NOT_FETCHED } from './dua-text.ts';
+import { inspectWhatsAppIntake, intakeHelpText, type WhatsAppIntake } from './intake.ts';
+import { enqueuePlatformWaTx } from './outbox.ts';
+import { phoneForJid, phoneVariants, userJid } from '../store-whatsapp/text.ts';
 
-// Core's side of platform_wa_inbox: what reaches Venduá's number, from the gateway (or, before the
-// cutover, merchant messages from Core's own socket). One number serves everyone, so each message
-// is routed by its sender: merchant phones to Duá, everyone else (and all history) to the CRM's
-// ingestInbound, unchanged — still the only path into requestLeadTx for the CRM agent.
+// Venduá's shared number receives account replies, merchant conversations and sales inquiries.
+// Run intake before handing a live message to Duá or the CRM.
 
 const inboxLog = log.child({ mod: 'platform-wa-inbox' });
 
 const MAX_ATTEMPTS = 5;
 const LEASE_MS = 2 * 60_000;
 const TICK_MS = 5_000;
+const HELP_WINDOW_MS = 30 * 60_000;
 const waBody = (text: string) => (text.length > 8000 ? text.slice(0, 8000) : text);
 
 export interface InboxDeps extends DuaDeps {
@@ -50,7 +54,9 @@ export async function claimInboxRow(sql: Sql, session?: string): Promise<InboxRo
         order by i.created_at, i.id limit 1
         for update skip locked)
       returning id, session, kind, from_jid, alt_jid, phone, push_name, body, media_id,
-                provider_id, from_me, sent_at, pairs, attempts`,
+                provider_id, from_me,
+                case when kind = 'message' then coalesce(sent_at, created_at) else sent_at end as sent_at,
+                pairs, attempts`,
   );
   return row ?? null;
 }
@@ -89,10 +95,59 @@ async function toCrm(d: InboxDeps, row: InboxRow) {
   else await ingestInbound(d.jobsSql, common);
 }
 
+async function consumeIntake(
+  d: InboxDeps,
+  row: InboxRow,
+  route: Exclude<WhatsAppIntake, 'conversation'>,
+) {
+  await controlTx(d.sql, async (tx) => {
+    const consumed = await tx`
+      update platform_wa_inbox
+      set status = 'done', consumed_at = now(), error = null,
+          body = case when ${route === 'code'} then null else body end
+      where id = ${row.id} and status = 'pending' returning id`;
+    if (!consumed.length) return;
+    if (route === 'code' || route === 'receipt' || route === 'spam' || route === 'automated-reply')
+      return;
+
+    const from = userJid(row.from_jid);
+    const alias = userJid(row.alt_jid);
+    const to = from?.endsWith('@s.whatsapp.net') ? from : (alias ?? from);
+    if (!to || to.length < 10) return;
+    if (phoneIsIgnored(await blockedPhonesTx(tx), row.from_jid, row.alt_jid)) return;
+
+    const phone = phoneForJid(to) ?? phoneForJid(row.alt_jid);
+    const sender = phone ? phoneVariants(phone).sort()[0] : to;
+    const window = Math.floor(Date.now() / HELP_WINDOW_MS);
+    await enqueuePlatformWaTx(tx, {
+      to,
+      session: row.session,
+      body: intakeHelpText(route, d.origin),
+      purpose: 'notice',
+      dedupeKey: `wa-intake:${row.session}:${sender}:${route}:${window}`,
+      ttlMs: HELP_WINDOW_MS,
+    });
+  });
+}
+
 /** One message, end to end. Errors leave it pending for a later attempt, then failed. */
 export async function consumeRow(d: InboxDeps, row: InboxRow): Promise<void> {
   try {
-    if (row.kind === 'message' && !row.from_me) {
+    if (row.kind === 'message' && row.from_me) {
+      await finish(d.sql, row.id);
+      return;
+    }
+    if (row.kind === 'message') {
+      const intake = await inspectWhatsAppIntake(d.sql, {
+        body: row.body ?? '',
+        from: row.from_jid ?? '',
+        fromAlias: row.alt_jid,
+        receivedAt: row.sent_at ?? new Date(),
+      });
+      if (intake !== 'conversation' && intake !== 'customer-help') {
+        await consumeIntake(d, row, intake);
+        return;
+      }
       const out = await routeToDua(d, row);
       if (out.route === 'done') return;
       if (out.route === 'defer') {
@@ -102,6 +157,10 @@ export async function consumeRow(d: InboxDeps, row: InboxRow): Promise<void> {
             update platform_wa_inbox set next_attempt_at = ${out.until}, attempts = attempts - 1
             where id = ${row.id} and status = 'pending'`,
         );
+        return;
+      }
+      if (intake === 'customer-help') {
+        await consumeIntake(d, row, intake);
         return;
       }
     }
@@ -175,8 +234,8 @@ export function startPlatformInbox(d: InboxDeps, o: { tickMs?: number } = {}) {
 }
 
 /**
- * Before the cutover, Core's own socket hands over merchant messages here instead of dropping
- * them (crm/inbound.ts still drops any that reach it). False: not a merchant, the CRM's.
+ * Core's socket hands account replies and merchant messages to the shared inbox.
+ * False means the caller should deliver the conversation to CRM.
  */
 export async function socketMessageToInbox(
   sql: Sql,
@@ -187,11 +246,21 @@ export async function socketMessageToInbox(
     pushName?: string;
     altJid?: string;
     media?: InboundMedia;
+    sentAt?: Date;
   },
 ): Promise<boolean> {
-  const phone = m.jid.endsWith('@s.whatsapp.net') ? m.jid.split('@')[0]!.split(':')[0]! : null;
-  if (!phone || !/^\d{10,15}$/.test(phone)) return false;
-  if (!(await membershipsOf(sql, phone)).length) return false;
+  const national = phoneForJid(m.jid) ?? phoneForJid(m.altJid);
+  const phone = national ? `55${national}` : null;
+  const sentAt = m.sentAt ?? new Date();
+  const intake = await inspectWhatsAppIntake(sql, {
+    body: m.text,
+    from: m.jid,
+    ...(m.altJid ? { fromAlias: m.altJid } : {}),
+    receivedAt: sentAt,
+  });
+  const forDua = intake === 'conversation' || intake === 'customer-help';
+  const merchant = forDua && phone && (await membershipsOf(sql, phone)).length > 0;
+  if (!merchant && intake === 'conversation') return false;
   // Duá hears voice notes and reads photos (the gateway's caps): fetched only for the store's
   // people, never for a lead's media
   let file: { mime: string; bytes: Uint8Array; seconds: number | null } | null = null;
@@ -200,7 +269,7 @@ export async function socketMessageToInbox(
   const cap = f?.type === 'image' ? MAX_IMAGE_BYTES : MAX_MEDIA_BYTES;
   const fits =
     !!f && (f.type === 'image' || (f.seconds ?? 0) <= MAX_AUDIO_SECONDS) && (f.size ?? 0) <= cap;
-  if (f && fits && !(await inboxHasProvider(sql, m.providerId))) {
+  if (merchant && f && fits && !(await inboxHasProvider(sql, m.providerId))) {
     // past the minute's room a note within the caps asks to be sent again, never "too long"
     if (!mediaAllowed(phone)) {
       if (f.type === 'audio') body = AUDIO_NOT_FETCHED;
@@ -230,7 +299,7 @@ export async function socketMessageToInbox(
                                      media_id, provider_id, sent_at)
       values (${VENDUA_SESSION}, 'message', ${m.jid.slice(0, 120)}, ${m.altJid?.slice(0, 120) ?? null},
               ${phone}, ${m.pushName?.slice(0, 100) ?? null}, ${waBody(body)}, ${mediaId},
-              ${m.providerId?.slice(0, 128) ?? null}, now())
+              ${m.providerId?.slice(0, 128) ?? null}, ${sentAt})
       on conflict (session, kind, provider_id) where provider_id is not null do nothing
       returning id`;
     if (!inserted.length && mediaId) await tx`delete from platform_wa_media where id = ${mediaId}`;

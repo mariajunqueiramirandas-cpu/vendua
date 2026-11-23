@@ -71,6 +71,11 @@ export async function updateLeadAs(
   leadId: string,
   input: Record<string, unknown>,
 ): Promise<Json> {
+  if (
+    (turn(ctx.state).kind === 'triage' || turn(ctx.state).params.draftOnly === true) &&
+    input.nextActionAt != null
+  )
+    return { error: 'Triagem só registra um próximo passo humano com create_task.' };
   const rest: Record<string, unknown> = { ...input };
   // staff-set autonomy knobs are refused: archived:false would un-suppress
   if (rest.archived === false) delete rest.archived;
@@ -115,7 +120,7 @@ export const setStateTool = defineTool<{ state: string }, Sql>({
   name: 'set_state',
   description: 'Move a lead along the pipeline (writes state history).',
   effect: 'write',
-  input: s.object({ state: s.enum(['lead', 'contacted', 'invited', 'live']) }),
+  input: s.object({ state: s.enum(['lead', 'contacted', 'invited']) }),
   run: (ctx: Ctx, input) =>
     refusals(async () => {
       const res = await updateLead(
@@ -222,6 +227,8 @@ export const scheduleTool = defineTool<
   }),
   run: (ctx: Ctx, input) =>
     refusals(async () => {
+      if (turn(ctx.state).params.draftOnly === true)
+        return { error: 'Uma sugestão para aprovação não pode agendar envios.' };
       const at = parseWakeupAt(input.at, ctx.now.getTime());
       if (typeof at === 'string') return { error: at };
       const leadId = leadOf(ctx);
@@ -332,6 +339,27 @@ export const planTool = defineTool<{ items: PlanItem[] }, Sql>({
     }),
 });
 
+export const recordTriageBlockerTool = defineTool<{ reason: string }, Sql>({
+  name: 'record_triage_blocker',
+  description:
+    'Record why triage could not prepare a responsible first-contact draft. Still create the dossier and staff task.',
+  effect: 'write',
+  input: s.object({ reason: s.string({ min: 5, max: 500 }) }),
+  run: async (ctx, input) => {
+    const leadId = leadOf(ctx);
+    const reason = input.reason.trim();
+    if (reason.length < 5) return { error: 'Descreva a condição que impede o rascunho.' };
+    await crm(
+      ctx,
+      (tx) => tx`insert into lead_activities (lead_id, kind, body, meta, created_by)
+      values (${leadId}, 'system', ${`Triagem sem rascunho: ${reason}`},
+        ${tx.json({ type: 'triage_blocker', turnId: ctx.turnId })}, 'agent')`,
+    );
+    emitAfter(ctx, 'lead.change', leadId);
+    return { recorded: true };
+  },
+});
+
 export const requestHumanTool = defineTool<{ reason: string }, Sql>({
   name: 'request_human',
   description:
@@ -352,25 +380,16 @@ export const requestHumanTool = defineTool<{ reason: string }, Sql>({
         const [lead] = await tx<{ name: string; business_name: string | null }[]>`
           select name, business_name from leads where id = ${leadId}`;
         if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-        let thread: { id: string; channel: string } | null = null;
-        if (threadId) {
-          // the pause holds this thread only: a date the agent booked would wake a turn that
-          // writes on another channel mid-handoff — staff owns the next touch
-          await cancelAgentWakeupsTx(tx, leadId);
-          const [row] = await tx<{ id: string; channel: string }[]>`
-            update lead_threads set agent_enabled = false
-            where id = ${threadId} and lead_id = ${leadId}
-            returning id, channel`;
-          thread = row ?? null;
-        }
-        if (!thread)
-          // no thread of its own: a lead-wide pause, lifted by staff
-          await tx`
-            update leads set agent_paused_at = now(), updated_at = now()
-            where id = ${leadId} and agent_paused_at is null`;
+        await cancelAgentWakeupsTx(tx, leadId);
+        await tx`update leads set agent_paused_at = coalesce(agent_paused_at, now()), updated_at = now()
+          where id = ${leadId}`;
+        const [thread] = threadId
+          ? await tx<{ id: string; channel: string }[]>`
+          select id, channel from lead_threads where id = ${threadId} and lead_id = ${leadId}`
+          : [];
         const [task] = await tx<{ id: string }[]>`
           insert into lead_tasks (lead_id, title, due_at, created_by)
-          values (${leadId}, ${`[humano] ${input.reason.slice(0, 200)}`}, null, 'agent')
+          values (${leadId}, ${`[humano] ${input.reason.slice(0, 200)}`}, now(), 'agent')
           returning id`;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)

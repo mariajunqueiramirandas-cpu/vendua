@@ -28,12 +28,12 @@ const RUNS = `
   select t.turn_id as id, t.kind, t.status, t.lead_id, t.params->>'threadId' as thread_id,
     t.tokens_in, t.tokens_out, t.cost_cents, t.error, t.started_at as created_at,
     t.started_at, t.finished_at, null::timestamptz as run_at, t.source, false as promised,
-    t.params
+    t.params, t.outcome
   from crm_turns t
   union all
   select distinct on (m.consumed_by_turn) m.consumed_by_turn, ${KIND_OF}, 'running', ${LEAD_OF},
     m.payload->>'threadId', 0, 0, 0, null, m.created_at, m.deliver_at, null, null, ${TRIGGER},
-    false, m.payload
+    false, m.payload, null::text
   from agent_mailbox m join agent_actors a on a.id = m.actor_id
   where ${CRM_MAIL} and m.consumed_by_turn is not null
     and m.deliver_at > now() - interval '1 day'
@@ -42,7 +42,7 @@ const RUNS = `
   select m.id, ${KIND_OF}, 'queued', ${LEAD_OF}, m.payload->>'threadId', 0, 0, 0, null,
     m.created_at, null, null, case when m.deliver_at > now() then m.deliver_at end, ${TRIGGER},
     -- a promise to the lead or a staff ask: the preset never holds it back
-    m.kind in ('timer.callback', 'staff.request', 'staff.regenerate'), m.payload
+    m.kind in ('timer.callback', 'staff.request', 'staff.regenerate'), m.payload, null::text
   from agent_mailbox m join agent_actors a on a.id = m.actor_id
   where ${CRM_MAIL} and m.consumed_by_turn is null`;
 
@@ -129,7 +129,7 @@ export async function listRuns(
     tx.unsafe(
       `select r.id, r.kind, r.status, r.lead_id, ${THREAD} as thread_id, r.tokens_in,
               r.tokens_out, r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at,
-              r.run_at, r.source, r.promised,
+              r.run_at, r.source, r.promised, r.outcome,
               r.created_at::text as created_at_ts, r.run_at::text as run_at_ts,
               l.name as lead_name, th.agent_enabled as thread_agent_enabled
        from (${RUNS}) r

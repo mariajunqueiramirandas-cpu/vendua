@@ -64,7 +64,7 @@ export function NewLeadSheet({
   sources: string[];
 }) {
   const [f, setF] = useState<Form>(EMPTY_FORM);
-  const [mode, setMode] = useState<'off' | 'draft' | 'auto'>('draft');
+  const [mode, setMode] = useState<'off' | 'draft' | 'auto'>('auto');
   const [goal, setGoal] = useState<'negotiation' | 'meeting'>('negotiation');
   const [err, setErr] = useState('');
   const [createdMsg, setCreatedMsg] = useState('');
@@ -75,7 +75,7 @@ export function NewLeadSheet({
   useEffect(() => {
     if (!open) return;
     setF(EMPTY_FORM);
-    setMode('draft');
+    setMode('auto');
     setGoal('negotiation');
     setErr('');
     setCreatedMsg('');

@@ -567,6 +567,7 @@ export async function composeMessage(
     /** the run that produced this message — send_message sets it so a
      *  reclaimed-and-replayed run recognizes its earlier send. */
     agentRunId?: string;
+    sendAfter?: Date;
     /** the meeting this message belongs to — dispatch suppresses the send
      *  once that meeting is no longer 'scheduled'. */
     meetingId?: string;
@@ -604,6 +605,7 @@ export async function composeMessageTx(
      *  one already exists (plain `subject` only fills an empty one). */
     subjectOverride?: string;
     agentRunId?: string;
+    sendAfter?: Date;
     /** the meeting this message belongs to — dispatch suppresses the send
      *  once that meeting is no longer 'scheduled'. */
     meetingId?: string;
@@ -642,8 +644,8 @@ export async function composeMessageTx(
   const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell, send_after)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false}, ${input.sendAfter ?? null})
       returning *
     `
   )[0]!;
@@ -957,7 +959,7 @@ export async function markMessageFailed(tx: Sql, messageId: string, reason: stri
  *  knows a number by one form while a lead may have been typed with the other. Unlike
  *  store-whatsapp's `phoneVariants` it is symmetric: 9 + 2–5 is no mobile's old form but a
  *  landline's number. A LID is no phone. */
-function contactDigits(addr: string): string[] {
+export function contactDigits(addr: string): string[] {
   const d = addr.split('@')[0]!.split(':')[0]!.replace(/\D/g, '');
   if (!d) return [];
   if (addr.endsWith('@lid')) return [d];

@@ -161,7 +161,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       }
     });
 
-    test('default — one first-contact mail, draft-only approval path', async () => {
+    test('supervised mode files one first-contact mail and leaves policy to delivery', async () => {
       await setup();
       // pin supervised so an ambient agent preset can't flip the verdict
       const prior = (
@@ -176,10 +176,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         );
         expect(res.status).toBe(201);
         const { lead, runId } = (await res.json()) as {
-          lead: { id: string };
+          lead: { id: string; agentMode: string };
           runId?: string;
         };
         expect(runId).toBeTruthy();
+        expect(lead.agentMode).toBe('auto');
         const filed = await mailFor(lead.id);
         expect(filed.map((m) => [m.kind, m.source])).toEqual([
           ['lead.first_contact', 'first_contact'],
@@ -224,6 +225,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('agent send stamps next_action_at ≈ +followupCadenceDays', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       const leadId = await mkLead();
       const messageId = await compose(leadId, 'agent', 'queued');
       const res = await dispatchMessage(sql, messageId);
@@ -238,6 +240,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('an existing next_action_at is never clobbered', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       const preset = new Date(Date.now() + 10 * 86_400_000);
       const leadId = await mkLead({ next_action_at: preset });
       const messageId = await compose(leadId, 'agent', 'queued');
@@ -247,6 +250,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('staff sends never stamp the floor', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       const leadId = await mkLead();
       const messageId = await compose(leadId, 'staff', 'queued');
       expect((await dispatchMessage(sql, messageId)).ok).toBe(true);
@@ -255,9 +259,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('suppressed leads get no stamp — off/archived leads are not queued again', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       const off = await mkLead({ agent_mode: 'off' });
       const m1 = await compose(off, 'agent', 'queued');
-      expect((await dispatchMessage(sql, m1)).ok).toBe(true);
+      expect((await dispatchMessage(sql, m1)).ok).toBe(false);
       expect(await nextAction(off)).toBeNull();
 
       const dead = await mkLead({ archived_at: new Date() });
@@ -269,7 +274,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('followupCadenceDays: 0 disables the floor', async () => {
       await setup();
-      await setGuardrails({ followupCadenceDays: 0 });
+      await setGuardrails({ quietHoursEnabled: false });
+      await setGuardrails({ quietHoursEnabled: false, followupCadenceDays: 0 });
       try {
         const leadId = await mkLead();
         const messageId = await compose(leadId, 'agent', 'queued');
@@ -280,8 +286,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       }
     });
 
-    test('a live inbound past the send boundary suppresses the floor', async () => {
+    test('a newer live inbound cancels the queued send and suppresses the floor', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       const leadId = await mkLead();
       const messageId = await compose(leadId, 'agent', 'queued');
       const [msg] = await sql<{ thread_id: string }[]>`
@@ -292,12 +299,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, received_at)
         values (${msg!.thread_id}, 'in', 'lead', 'quero', 'received',
                 now(), now() + interval '1 minute')`;
-      expect((await dispatchMessage(sql, messageId)).ok).toBe(true);
+      expect((await dispatchMessage(sql, messageId)).ok).toBe(false);
       expect(await nextAction(leadId)).toBeNull();
     });
 
     test('a history import past the send boundary never suppresses the floor', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       const leadId = await mkLead();
       const messageId = await compose(leadId, 'agent', 'queued');
       const [msg] = await sql<{ thread_id: string }[]>`
@@ -804,6 +812,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('a sent outbound promotes lead → contacted and writes the transition trail', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       await waLogDriver();
       const leadId = await mkLead({ whatsapp: '5511955551234' });
       expect((await dispatchMessage(sql, await compose(leadId, 'agent', 'whatsapp'))).ok).toBe(
@@ -827,6 +836,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('the transition is forward-only — an invited lead is never demoted', async () => {
       await setup();
+      await setGuardrails({ quietHoursEnabled: false });
       await waLogDriver();
       const leadId = await mkLead({ whatsapp: '5511955551234' });
       await sql`update leads set state = 'invited' where id = ${leadId}`;

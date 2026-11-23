@@ -4,7 +4,7 @@ import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/in
 import { isSendChannel, SEND_CHANNELS } from '../modules/threads.ts';
 import type { Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
-import { channelAvailabilityTx, sendWindowOpenAtTx } from './guardrails.ts';
+import { channelAvailabilityTx, leadHasContactTx, sendWindowOpenAtTx } from './guardrails.ts';
 import {
   CRM_AGENT_ID,
   CRM_DISCOVERY_ID,
@@ -52,7 +52,6 @@ interface LeadGate {
   archived_at: Date | null;
   unsubscribed_at: Date | null;
   agent_paused_at: Date | null;
-  prior_out: number;
 }
 
 /** Why automation may not file this work now, or null. */
@@ -90,7 +89,7 @@ async function smartStartTx(
   const { level } = await agentSettingTx(tx);
   if (level !== 'supervised' && level !== 'autopilot') return at;
   if (lead.agent_mode === 'draft') return at;
-  if (level === 'supervised' && lead.prior_out === 0) return at;
+  if (level === 'supervised' && !(await leadHasContactTx(tx, leadId))) return at;
   const ch = await channelAvailabilityTx(tx, leadId);
   const pin = payload.channel;
   const deliverable = isSendChannel(pin) ? ch[pin].ok : SEND_CHANNELS.some((c) => ch[c].ok);
@@ -128,10 +127,7 @@ export interface Requested {
 export async function requestLeadTx(tx: Sql, req: LeadRequest): Promise<Requested> {
   const payload = req.payload ?? {};
   const [lead] = await tx<LeadGate[]>`
-    select l.agent_mode, l.archived_at, l.unsubscribed_at, l.agent_paused_at,
-      (select count(*) from lead_messages m join lead_threads t on t.id = m.thread_id
-        where t.lead_id = l.id and m.direction = 'out'
-          and m.status in ('queued', 'sending', 'sent', 'delivered'))::int as prior_out
+    select l.agent_mode, l.archived_at, l.unsubscribed_at, l.agent_paused_at
     from leads l where l.id = ${req.leadId}`;
   if (!lead) return { mailboxId: null, deliverAt: null, parked: 'lead não encontrado' };
   const parked = await parkedReasonTx(tx, req.kind, req.source, lead, payload);

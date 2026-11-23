@@ -1,11 +1,11 @@
-import type { Json, ModelResponse, Part, ToolCall } from '../../types.ts';
+import type { ChatMessage, Json, ModelResponse, Part, ToolCall } from '../../types.ts';
 import { ProviderError, postJson, withTimeout, type FetchLike } from '../gateway.ts';
 import type { ProviderAdapter, ProviderRequest } from '../types.ts';
 
 /**
  * Chat Completions with function calling: OpenAI (`https://api.openai.com/v1`), OpenRouter
- * (`https://openrouter.ai/api/v1`) and Gemini's compatible endpoint
- * (`https://generativelanguage.googleapis.com/v1beta/openai`).
+ * (`https://openrouter.ai/api/v1`), Gemini's compatible endpoint
+ * (`https://generativelanguage.googleapis.com/v1beta/openai`) and Mistral's native Chat API.
  *
  * OpenRouter only routes to zero-data-retention endpoints when the request asks for it: pass
  * `zdrBody: { provider: { zdr: true, data_collection: 'deny' } }` and it is merged into requests
@@ -17,7 +17,7 @@ export interface OpenAiCompatibleOpts {
   apiKey: string;
   headers?: Record<string, string>;
   /** Merged into the top level of every request body. */
-  extraBody?: Record<string, unknown>;
+  extraBody?: Record<string, unknown> | ((req: ProviderRequest) => Record<string, unknown>);
   /** Merged after `extraBody` into requests whose route has `zdr: true`. */
   zdrBody?: Record<string, unknown>;
   /** Merged last into requests whose route pins an `endpoint` (OpenRouter: provider order). */
@@ -26,8 +26,12 @@ export interface OpenAiCompatibleOpts {
   timeoutMs?: number;
   /** Newer OpenAI models take `max_completion_tokens`. */
   maxTokensField?: 'max_tokens' | 'max_completion_tokens';
+  /** Total output allowance when the model also reasons inside the API's token limit. */
+  outputTokens?: NonNullable<ProviderAdapter['outputTokens']>;
   /** Send system blocks as parts with `cache_control` (OpenRouter → Anthropic models). */
   cacheMarkers?: boolean;
+  /** Use the native Mistral format for tool history and response chunks. */
+  messageFormat?: 'mistral';
 }
 
 interface OaToolCall {
@@ -85,16 +89,37 @@ function parseArgs(raw: string | undefined): Json {
 
 const MAX_EXTRA = 1000;
 
+/** Mistral requires nine alphanumeric characters, including for calls made by a fallback. */
+function mistralCallIds(messages: ChatMessage[]): Map<string, string> {
+  const ids = new Set(
+    messages.flatMap((m) => {
+      if (m.role === 'assistant') return m.toolCalls.map((c) => c.id);
+      return m.role === 'tool' ? [m.callId] : [];
+    }),
+  );
+  const remapped = new Map<string, string>();
+  let next = 0;
+  for (const id of ids) {
+    if (/^[a-z0-9]{9}$/i.test(id)) continue;
+    let candidate: string;
+    do candidate = String(++next).padStart(9, '0');
+    while (ids.has(candidate));
+    remapped.set(id, candidate);
+  }
+  return remapped;
+}
+
 export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAdapter {
   const fetchFn: FetchLike = opts.fetch ?? ((url, init) => globalThis.fetch(url, init));
   const baseUrl = opts.baseUrl.replace(/\/$/, '');
+  const mistral = opts.messageFormat === 'mistral';
   // provider-specific tool-call fields to echo back on the next step, by call id
   const extras = new Map<string, unknown>();
 
   // `provider` objects merge, so a pinned endpoint keeps the retention rules of extraBody/zdrBody
   function routing(req: ProviderRequest): { [k: string]: unknown } {
     const parts = [
-      opts.extraBody,
+      typeof opts.extraBody === 'function' ? opts.extraBody(req) : opts.extraBody,
       req.zdr === true ? opts.zdrBody : undefined,
       req.endpoint && opts.endpointBody ? opts.endpointBody(req.endpoint) : undefined,
     ];
@@ -110,6 +135,7 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
 
   function body(req: ProviderRequest): { [k: string]: unknown } {
     const messages: { [k: string]: unknown }[] = [];
+    const callIds = mistral ? mistralCallIds(req.messages) : null;
     const system = req.system.filter((b) => b.text);
     if (system.length) {
       if (opts.cacheMarkers) {
@@ -139,19 +165,21 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
       } else if (m.role === 'tool') {
         messages.push({
           role: 'tool',
-          tool_call_id: m.callId,
+          tool_call_id: callIds?.get(m.callId) ?? m.callId,
+          ...(mistral && m.name ? { name: m.name } : {}),
           content: m.isError ? `Error: ${m.content}` : m.content,
         });
       } else {
         messages.push({
           role: 'assistant',
-          content: m.text || null,
+          // Mistral's tool-call messages cannot also carry a text preamble.
+          ...(mistral && m.toolCalls.length ? {} : { content: m.text || null }),
           ...(m.toolCalls.length
             ? {
                 tool_calls: m.toolCalls.map((c) => {
                   const extra = extras.get(c.id);
                   return {
-                    id: c.id,
+                    id: callIds?.get(c.id) ?? c.id,
                     type: 'function',
                     function: { name: c.name, arguments: JSON.stringify(c.args) },
                     ...(extra === undefined ? {} : { extra_content: extra }),
@@ -167,7 +195,7 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
     return {
       model: req.model,
       messages,
-      [opts.maxTokensField ?? 'max_tokens']: req.maxTokens,
+      [opts.maxTokensField ?? 'max_tokens']: opts.outputTokens?.(req) ?? req.maxTokens,
       ...(req.temperature === undefined ? {} : { temperature: req.temperature }),
       ...(req.tools.length
         ? {
@@ -183,6 +211,7 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
 
   return {
     id: opts.id,
+    ...(opts.outputTokens ? { outputTokens: opts.outputTokens } : {}),
     async generate(req, signal): Promise<ModelResponse> {
       const t0 = Date.now();
       const data = (await postJson(
@@ -213,7 +242,7 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
         typeof msg.content === 'string'
           ? msg.content
           : Array.isArray(msg.content)
-            ? msg.content.map((c) => c.text ?? '').join('')
+            ? msg.content.map((c) => (!mistral || c.type === 'text' ? (c.text ?? '') : '')).join('')
             : '';
       const u = data.usage ?? {};
       const cacheRead = u.prompt_tokens_details?.cached_tokens ?? 0;

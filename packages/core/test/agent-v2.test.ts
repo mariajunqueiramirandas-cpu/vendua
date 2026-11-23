@@ -36,7 +36,7 @@ describe('agent v2 — pure', () => {
   test('the agent setting normalizes to safe defaults; job defs stay in code', () => {
     const d = normalizeAgent(undefined);
     expect(d).toEqual({
-      level: 'supervised',
+      level: 'autopilot',
       jobs: { reply: true, outreach: true, discovery: true, strategist: true },
       instructions: DEFAULT_INSTRUCTIONS,
       weeklyDiscoveryUsd: 0,

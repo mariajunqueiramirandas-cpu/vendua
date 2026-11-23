@@ -99,7 +99,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('send_message on Runtime v3 (db)
       b.key(),
     );
 
-  test('send_message under quiet hours writes a blocked activity', async () => {
+  test('send_message under quiet hours defers the send to the window end', async () => {
     await emailLive();
     // autopilot: first contact isn't draft-forced, so quiet hours decide
     await b.settings('autopilot', { quietHoursEnabled: true, ...quietWindow() });
@@ -108,13 +108,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('send_message on Runtime v3 (db)
       leadId: lead.id,
       kind: 'reply',
     });
-    const out = dataOf<{ blocked: boolean; reason?: string }>(outcomes[0]);
-    expect(out.blocked).toBe(true);
-    expect(out.reason).toBe('quiet hours');
-    const acts = await sql<{ kind: string; meta: { channel: string; reason: string } }[]>`
-      select kind, meta from lead_activities where lead_id = ${lead.id} and kind = 'blocked'`;
-    expect(acts.length).toBe(1);
-    expect(acts[0]!.meta).toEqual({ channel: 'email', reason: 'quiet hours' });
+    // quiet hours defer the send (retryAt) instead of blocking it
+    const out = dataOf<{ blocked?: boolean; retryAt?: string }>(outcomes[0]);
+    expect(out.blocked).toBeUndefined();
+    expect(new Date(out.retryAt!).getTime()).toBeGreaterThan(Date.now());
+    const [msg] = await sql<{ status: string; send_after: Date }[]>`
+      select m.status, m.send_after from lead_messages m join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${lead.id} and m.direction = 'out'`;
+    expect(msg!.status).toBe('queued');
+    expect(msg!.send_after.getTime()).toBe(new Date(out.retryAt!).getTime());
+    const acts = await sql<{ kind: string }[]>`
+      select kind from lead_activities where lead_id = ${lead.id} and kind = 'blocked'`;
+    expect(acts.length).toBe(0);
   });
 
   test('send_message with draftOnly composes a draft even under quiet hours', async () => {

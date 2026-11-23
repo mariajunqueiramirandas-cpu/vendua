@@ -31,6 +31,7 @@ export interface TurnInfo {
   params: Params;
   /** a lead-facing action landed since the turn's input */
   acted: boolean;
+  actions: string[];
   /** the act-or-escalate nudge already went out this turn */
   nudged: boolean;
   /** leads this turn created or merged into (discovery may only touch these) */
@@ -76,6 +77,7 @@ export interface Params {
   monidCapUsd?: number;
   /** the inbound message this turn answers */
   messageId?: string;
+  callbackActivityId?: string;
   threadId?: string;
   by?: string;
 }
@@ -87,6 +89,7 @@ export const EMPTY_TURN: TurnInfo = {
   trigger: 'timer.followup',
   params: {},
   acted: false,
+  actions: [],
   nudged: false,
   leads: [],
   leadsCreated: 0,
@@ -132,6 +135,7 @@ const PARAM_KEYS = [
   'briefName',
   'monidCapUsd',
   'messageId',
+  'callbackActivityId',
   'threadId',
   'by',
 ] as const;
@@ -145,7 +149,9 @@ export function turnOf(
 ): TurnInfo {
   const rows = batch.filter((b) => b.kind in RANK);
   if (!rows.length) return { ...EMPTY_TURN, id };
-  const top = [...rows].sort((a, b) => RANK[a.kind]! - RANK[b.kind]!)[0]!;
+  const top =
+    rows.filter((row) => row.kind === 'message.inbound').at(-1) ??
+    [...rows].sort((a, b) => RANK[a.kind]! - RANK[b.kind]!)[0]!;
   const params: Record<string, Json> = {};
   for (const r of [...rows.filter((r) => r !== top), top]) {
     const p = obj(r.payload);
@@ -170,6 +176,7 @@ export const ACTION_TOOLS = new Set([
   'create_task',
   'draft_message',
   'send_message',
+  'send_signup_link',
   'request_human',
   'unsubscribe',
 ]);
@@ -183,6 +190,22 @@ export function landed(p: JsonObject): boolean {
 
 /** Output guards that push back once per turn before the model may stop. */
 export const NUDGES = ['must_act', 'book_settled'];
+
+export function triageMissing(t: TurnInfo): string[] {
+  const missing = ['add_note', 'create_task'].filter((action) => !t.actions.includes(action));
+  if (!t.actions.includes('draft_message') && !t.actions.includes('record_triage_blocker'))
+    missing.push('draft_message ou record_triage_blocker');
+  return missing;
+}
+export const RESPONSE_ACTIONS = [
+  'send_message',
+  'draft_message',
+  'create_task',
+  'request_human',
+  'unsubscribe',
+];
+export const waitsForResponse = (t: TurnInfo) =>
+  t.trigger === 'message.inbound' || t.source === 'site';
 
 export function applyCrm(prev: Json, e: AgentEvent): Json {
   const c: CrmCustom = { turn: { ...EMPTY_TURN, ...(obj(prev).turn as unknown as TurnInfo) } };
@@ -200,8 +223,18 @@ export function applyCrm(prev: Json, e: AgentEvent): Json {
     }
     case 'tool.returned': {
       const name = String(p.name ?? '');
-      if (ACTION_TOOLS.has(name) && landed(p)) c.turn.acted = true;
-      if (name === 'unsubscribe' && landed(p)) c.turn.closed = true;
+      if (landed(p)) {
+        if (ACTION_TOOLS.has(name)) c.turn.acted = true;
+        const data = obj(p.data);
+        const action =
+          name === 'send_message' || name === 'send_signup_link'
+            ? data.draftFallback === true
+              ? 'draft_message'
+              : 'send_message'
+            : name;
+        if (!c.turn.actions.includes(action)) c.turn.actions = [...c.turn.actions, action];
+      }
+      if ((name === 'unsubscribe' || name === 'request_human') && landed(p)) c.turn.closed = true;
       if (p.ok !== true) break;
       const d = obj(p.data);
       if (typeof d.pageReads === 'number') c.turn.pageReads += d.pageReads;

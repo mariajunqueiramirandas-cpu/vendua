@@ -9,6 +9,8 @@ import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { AdminVars, Merchant, Role } from './context.ts';
+import { merchantOtpText, type MerchantOtpPurpose } from './otp-text.ts';
+import { phoneVariants } from '../store-whatsapp/text.ts';
 
 // Merchant identity (ADR 0020): phone OTP → a session bound to ONE tenant. The
 // cookie is `<tenantId>.<sessionId>.<secret>`; only sha256(secret) is stored, and
@@ -70,6 +72,24 @@ function authTx<T>(sql: Sql, work: (tx: Sql) => Promise<T>): Promise<T> {
     await tx`select set_config('vendua.merchant_auth', '1', true)`;
     return work(tx);
   }) as Promise<T>;
+}
+
+/** WhatsApp intake reads only the latest request's purpose, never the code or its hash. */
+export async function recentMerchantOtpPurpose(
+  sql: Sql,
+  phone: string,
+  receivedAt: Date,
+): Promise<MerchantOtpPurpose | null> {
+  const [row] = await authTx(
+    sql,
+    (tx) => tx<{ purpose: MerchantOtpPurpose }[]>`
+      select purpose from merchant_login_codes
+      where phone in ${tx(phoneVariants(phone))}
+        and created_at > ${receivedAt}::timestamptz - interval '20 minutes'
+        and created_at < ${receivedAt}::timestamptz + interval '1 second'
+      order by created_at desc, id desc limit 1`,
+  );
+  return row?.purpose ?? null;
 }
 
 export interface Membership {
@@ -205,10 +225,7 @@ export async function startOtp(
   // not awaited: a known phone must answer as fast as an unknown one (no enumeration by
   // timing); a failed delivery only shows in the log — the person asks for a new code
   if (known)
-    detach(
-      () => send(phone, `Seu código Venduá: ${code}\n\nVale por ${CODE_TTL_MIN} minutos.`),
-      'otp delivery failed',
-    );
+    detach(() => send(phone, merchantOtpText('login', code, CODE_TTL_MIN)), 'otp delivery failed');
   return {
     sent: true,
     expiresAt: expiresAt.toISOString(),

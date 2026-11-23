@@ -9,6 +9,7 @@ import type {
   ContextTier,
   Json,
   Lane,
+  MailboxMessage,
   SubjectRef,
   Tier,
 } from '../types.ts';
@@ -93,6 +94,8 @@ export interface AgentDefinition<H = any> {
     preempt?: boolean;
     /** Mailbox kinds that count as new input. Default `message.inbound`. */
     inputKinds?: readonly string[];
+    /** Select which due conversational rows belong to the next turn. */
+    batch?: (due: readonly MailboxMessage[]) => readonly MailboxMessage[];
   };
   budgets?: {
     stepsPerTurn?: number;
@@ -225,7 +228,12 @@ function manifestOf(def: AgentDefinition, chart: Statechart): Json {
         when: src(g.when),
       })),
     },
-    mailbox: (def.mailbox ?? null) as Json,
+    mailbox: def.mailbox
+      ? ({
+          ...def.mailbox,
+          ...(def.mailbox.batch ? { batch: src(def.mailbox.batch) } : {}),
+        } as Json)
+      : null,
     budgets: (def.budgets ?? null) as Json,
     finish: src(def.finish),
     toInput: src(def.toInput),

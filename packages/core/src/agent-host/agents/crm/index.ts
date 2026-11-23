@@ -14,19 +14,35 @@ import { CRM_AGENT_ID, LEAD_SUBJECT } from '../../../crm/jobs.ts';
 import { leadSubjectTx, workspaceTx, type LeadSubject, type Workspace } from './context.ts';
 import { available, offers, workspaceOf as workspace } from './availability.ts';
 import { buildSystemPrompt } from './prompts.ts';
-import { applyCrm, EMPTY_TURN, turn, turnOf, type TurnInfo } from './shared.ts';
+import {
+  applyCrm,
+  EMPTY_TURN,
+  RESPONSE_ACTIONS,
+  triageMissing,
+  waitsForResponse,
+  turn,
+  turnOf,
+  type TurnInfo,
+} from './shared.ts';
 import {
   addNoteTool,
   createTaskTool,
   getLeadTool,
   planTool,
   requestHumanTool,
+  recordTriageBlockerTool,
   scheduleTool,
   setFactTool,
   setStateTool,
   updateLeadTool,
 } from './tools-lead.ts';
-import { draftMessageTool, sendMessageTool, unsubscribeTool } from './tools-message.ts';
+import {
+  draftMessageTool,
+  getSalesOfferTool,
+  sendMessageTool,
+  sendSignupLinkTool,
+  unsubscribeTool,
+} from './tools-message.ts';
 import {
   instagramProfileTool,
   mapsLookupTool,
@@ -44,6 +60,7 @@ export { CRM_AGENT_ID } from '../../../crm/jobs.ts';
 
 const LEAD_TOOLS = [
   'get_lead',
+  'get_sales_offer',
   'update_lead',
   'set_state',
   'set_fact',
@@ -60,10 +77,22 @@ const LEAD_TOOLS = [
 /** What each job may call: the old TOOL_META, per statechart state. */
 export const CRM_STATES: Record<'triage' | 'reply' | 'outreach', string[]> = {
   // triage drafts the first contact; nothing leaves without staff
-  triage: [...LEAD_TOOLS, 'maps_lookup', 'instagram_profile'],
+  triage: [
+    ...LEAD_TOOLS.filter((name) => name !== 'schedule'),
+    'record_triage_blocker',
+    'maps_lookup',
+    'instagram_profile',
+  ],
   // a live conversation: no paid enrichment, and the lead may ask to leave
-  reply: [...LEAD_TOOLS, 'send_message', 'request_human', 'unsubscribe'],
-  outreach: [...LEAD_TOOLS, 'maps_lookup', 'instagram_profile', 'send_message', 'request_human'],
+  reply: [...LEAD_TOOLS, 'send_message', 'send_signup_link', 'request_human', 'unsubscribe'],
+  outreach: [
+    ...LEAD_TOOLS,
+    'maps_lookup',
+    'instagram_profile',
+    'send_message',
+    'send_signup_link',
+    'request_human',
+  ],
 };
 
 const leadCtx = (ctxSubject: Json) => ctxSubject as unknown as LeadSubject | null;
@@ -80,7 +109,22 @@ export const mustAct: OutputGuard = {
   stage: 'output',
   run(_text, { state }) {
     const t = turn(state);
-    if (t.acted || t.nudged || (t.kind !== 'reply' && t.kind !== 'outreach')) return pass;
+    if (t.nudged) return pass;
+    if (t.kind === 'triage') {
+      const missing = triageMissing(t);
+      return missing.length
+        ? block(
+            'triage_incomplete',
+            `Triagem incompleta. Registre: ${missing.join(', ')}. Se não há base para o rascunho, explique o bloqueio na tarefa.`,
+          )
+        : pass;
+    }
+    if (
+      waitsForResponse(t)
+        ? RESPONSE_ACTIONS.some((action) => t.actions.includes(action))
+        : t.acted || t.actions.includes('schedule')
+    )
+      return pass;
     return block(
       'no_action',
       'Ação pendente: a run ainda não fez nada que a pessoa ou a equipe veja (mensagem, rascunho, tarefa, mudança de estado ou request_human). Se ela está esperando resposta, responda agora (send_message ou draft_message). Se não há o que dizer, registre o próximo passo (schedule ou create_task). Se um guardrail ou canal morto trava a resposta, request_human é a saída.',
@@ -196,8 +240,11 @@ export const crmAgent = defineAgent<Sql>({
     scheduleTool,
     planTool,
     requestHumanTool,
+    recordTriageBlockerTool,
     draftMessageTool,
     sendMessageTool,
+    getSalesOfferTool,
+    sendSignupLinkTool,
     unsubscribeTool,
     webSearchTool,
     readPagesTool,
@@ -208,7 +255,16 @@ export const crmAgent = defineAgent<Sql>({
   statechart: crmChart,
   guards: { tool: [available], output: [mustAct] },
   // a lead's new message stops the turn before it sends a stale answer
-  mailbox: { quiet: { minMs: 2_000, maxMs: 20_000 }, preempt: true },
+  mailbox: {
+    quiet: { minMs: 2_000, maxMs: 20_000 },
+    preempt: true,
+    batch: (due) => {
+      const inbound = due.filter((m) => m.kind === 'message.inbound');
+      if (inbound.length) return inbound;
+      const next = due.find((m) => m.source === 'site') ?? due[0];
+      return next ? [next] : [];
+    },
+  },
   budgets: { stepsPerTurn: 14, tokensPerTurn: 800_000, costPerTurnUsd: 1, tenantDaily: 'crm' },
   // a parked lead (automation off, suppressed, cost cap) gets no model call; an opt-out ends it
   finish: (s) =>

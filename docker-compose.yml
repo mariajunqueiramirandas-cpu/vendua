@@ -127,6 +127,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       # Svix signing secret for the inbound email webhook; unset = inbound events rejected.
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}

@@ -11,13 +11,15 @@ import { controlTx } from '../modules/control.ts';
 import { ANTHROPIC_MODEL, ANTHROPIC_PRICING, isEffort } from '../platform/anthropic.ts';
 import type { Sql } from '../platform/db.ts';
 import { anthropicAdapter } from './anthropic.ts';
+import { isMistralLarge4, mistralAdapter, MISTRAL_PRIMARY_ROUTE } from './mistral.ts';
 
 /**
  * Model routes, set by staff in `control_settings` key `agent_runtime.routes`:
  *   { "default": { "fast": [route…], "strong": [route…] },
  *     "agents":  { "<agentId>": { "fast": […] } },
  *     "tenants": { "<tenantId>": { "strong": […] } } }
- * a route is { provider, model, zdr, endpoint?, effort?, pricing?, timeoutMs? }. The most specific list wins. `zdr`
+ * Mistral Large 4 leads both tiers when its key is configured. The most specific list supplies the fallbacks.
+ * A route is { provider, model, zdr, endpoint?, effort?, pricing?, timeoutMs? }. `zdr`
  * (zero data retention) is staff's per-route choice since 2026-10-05 (default on in the CRM):
  * OpenRouter enforces it per request when on; on a direct provider it's the account's contract.
  * With no setting, `AGENT_MODEL_ROUTES` (same JSON) is the fallback.
@@ -37,12 +39,11 @@ export function routesFrom(
   agentId: string,
   tier: Tier,
 ): ModelRoute[] {
-  return (
+  const list =
     setting.tenants?.[tenantId]?.[tier] ??
     setting.agents?.[agentId]?.[tier] ??
-    setting.default?.[tier] ??
-    []
-  )
+    setting.default?.[tier];
+  return (Array.isArray(list) ? list : [])
     .filter(
       (r) =>
         r &&
@@ -66,15 +67,35 @@ export function routesFrom(
     });
 }
 
-export function settingRoutes(sql: Sql): RouteResolver {
+export function routesFromEnv(raw: string | undefined): RoutesSetting | null {
+  try {
+    const value = JSON.parse(raw ?? '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length
+      ? (value as RoutesSetting)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function preferMistralLarge4(routes: ModelRoute[]): ModelRoute[] {
+  const isPrimary = (r: ModelRoute) => r.provider === 'mistral' && isMistralLarge4(r.model);
+  const existing = routes.find(isPrimary);
+  return [
+    {
+      ...MISTRAL_PRIMARY_ROUTE,
+      ...existing,
+      pricing: existing?.pricing ?? MISTRAL_PRIMARY_ROUTE.pricing,
+    },
+    ...routes.filter((r) => !isPrimary(r)),
+  ];
+}
+
+export function settingRoutes(
+  sql: Sql,
+  env: Record<string, string | undefined> = process.env,
+): RouteResolver {
   let cached: { at: number; value: RoutesSetting } | null = null;
-  const envFallback = (): RoutesSetting => {
-    try {
-      return JSON.parse(process.env.AGENT_MODEL_ROUTES ?? '{}') as RoutesSetting;
-    } catch {
-      return {};
-    }
-  };
   return {
     async routes(tenantId, agentId, tier) {
       if (!cached || Date.now() - cached.at > CACHE_MS) {
@@ -83,9 +104,13 @@ export function settingRoutes(sql: Sql): RouteResolver {
           (tx) => tx<{ value: RoutesSetting }[]>`
           select value from control_settings where key = 'agent_runtime.routes'`,
         );
-        cached = { at: Date.now(), value: rows[0]?.value ?? envFallback() };
+        cached = {
+          at: Date.now(),
+          value: rows[0]?.value ?? routesFromEnv(env.AGENT_MODEL_ROUTES) ?? {},
+        };
       }
-      return routesFrom(cached.value, tenantId, agentId, tier);
+      const routes = routesFrom(cached.value, tenantId, agentId, tier);
+      return env.MISTRAL_API_KEY ? preferMistralLarge4(routes) : routes;
     },
   };
 }
@@ -128,6 +153,7 @@ export function adaptersFromEnv(
         apiKey: env.GEMINI_API_KEY,
       }),
     );
+  if (env.MISTRAL_API_KEY) out.push(mistralAdapter(env.MISTRAL_API_KEY));
   return out;
 }
 

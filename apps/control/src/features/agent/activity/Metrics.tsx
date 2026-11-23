@@ -6,6 +6,7 @@ import { RUN_KIND_LABEL } from '@/lib/labels.ts';
 import { qk } from '@/lib/query.ts';
 import { ErrorState, KpiStrip, type Kpi } from '@/components/common.tsx';
 import { Skeleton } from '@/components/ui/controls.tsx';
+import { fmtDuration } from './run-bits.tsx';
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
@@ -35,7 +36,7 @@ export function MetricsStrip({ days }: { days: 7 | 30 }) {
   if (!q.data) return <Skeleton className="h-[58px]" />;
   const m = q.data;
   const t = totals(m);
-  if (t.empty)
+  if (t.empty && !m.sales?.inboundRequests && !m.sales?.bySource.length)
     return (
       <p className={cn('rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground')}>
         nenhum run nos últimos {days}d — o agente ainda não trabalhou
@@ -68,7 +69,64 @@ export function MetricsStrip({ days }: { days: 7 | 30 }) {
         ]
       : []),
   ];
-  return <KpiStrip items={items} />;
+  const sales = m.sales;
+  return (
+    <div className="grid gap-3">
+      <KpiStrip items={items} />
+      {sales && (
+        <KpiStrip
+          items={[
+            {
+              label: 'aguardam resposta',
+              value: sales.awaitingReply,
+              hint: `${sales.inboundRequests} pedidos`,
+            },
+            {
+              label: 'tempo até resposta',
+              value: fmtDuration(
+                sales.medianResponseSeconds === null ? null : sales.medianResponseSeconds * 1000,
+              ),
+              hint: 'mediana',
+            },
+            { label: 'encaminhamentos', value: sales.handoffs },
+          ]}
+        />
+      )}
+      {sales && sales.bySource.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border bg-card">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-xs text-muted-foreground">
+                {['Origem', 'Leads', 'Cadastros', 'Lojas no ar', 'Pagantes', 'Descadastros'].map(
+                  (label) => (
+                    <th key={label} scope="col" className="px-3 py-2 text-left font-medium">
+                      {label}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {sales.bySource.map((row) => (
+                <tr key={row.source} className="border-b last:border-b-0">
+                  <th scope="row" className="px-3 py-2 text-left font-medium">
+                    {row.source}
+                  </th>
+                  {[row.leads, row.signups, row.activated, row.paid, row.optedOut].map(
+                    (value, index) => (
+                      <td key={index} className="px-3 py-2 tabular-nums">
+                        {value}
+                      </td>
+                    ),
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ByKindTable({ days }: { days: 7 | 30 }) {

@@ -1,11 +1,10 @@
-import type { Sql } from '../../platform/db.ts';
+import { afterCommit, type Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
-import { phoneVariants } from '../../store-whatsapp/text.ts';
+import { linkCrmSignupTx } from '../../crm/signup.ts';
 import { controlTx } from '../control.ts';
 import { emitControlEvent } from '../control-events.ts';
-import { addActivity } from '../activities.ts';
-import { updateLead } from '../leads.ts';
+import { updateLeadTx } from '../leads.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import type { FleetDeps } from './deps.ts';
 import { lockOpsTx, pendingTx, reconcileTx } from './deploy.ts';
@@ -92,24 +91,10 @@ async function factsTx(tx: Sql, d: FleetDeps, tenantId: string): Promise<StoreFa
  *  proved it with a code, while its email is whatever was typed (anyone's lead could be taken). */
 async function linkLeadTx(tx: Sql, p: ProvisioningRow, f: StoreFacts): Promise<string | null> {
   if (p.lead_id || !f.owner) return p.lead_id;
-  const digits = f.owner.phone.replace(/\D/g, '');
-  if (digits.length < 10) return null;
-  // either 9th-digit spelling, against the lead's phone or its WhatsApp (stored +55…)
-  const lead = (
-    await tx<{ id: string }[]>`
-      select id from leads l
-      where tenant_id is null and archived_at is null and exists (
-        select 1 from unnest(${phoneVariants(digits)}::text[]) v
-        where right(regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'), length(v)) = v
-           or right(regexp_replace(coalesce(l.whatsapp, ''), '\\D', '', 'g'), length(v)) = v)
-      order by updated_at desc limit 1
-    `
-  )[0];
-  if (!lead) return null;
-  await tx`update leads set tenant_id = ${p.tenant_id}, updated_at = now() where id = ${lead.id}`;
-  await tx`update provisionings set lead_id = ${lead.id} where id = ${p.id}`;
+  const leadId = await linkCrmSignupTx(tx, p.tenant_id, f.owner.phone, null);
+  if (!leadId) return null;
   await logTx(tx, p.id, p.state, 'o cadastro é de um lead do pipeline: ligado a ele');
-  return lead.id;
+  return leadId;
 }
 
 type Step =
@@ -194,7 +179,6 @@ interface Pass {
   row: ProvisioningRow | null;
   facts: StoreFacts | null;
   send: boolean;
-  leadMoves: { leadId: string; state: 'invited' | 'live'; note?: string }[];
 }
 
 /** One transaction of steps; stops when the owner's invite has to go out (`send`). */
@@ -203,7 +187,6 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
     row: null,
     facts: null,
     send: false,
-    leadMoves: [],
   };
   out.row = await controlTx(d.sql, async (tx) => {
     let p = (
@@ -245,7 +228,7 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
           `
         )[0]!;
         if (leadId && p.source === 'invite' && step.next === 'live')
-          out.leadMoves.push({ leadId, state: 'invited' });
+          await moveLeadTx(tx, leadId, 'invited');
         if (step.next === 'live') {
           await recordStaffEventTx(
             tx,
@@ -259,7 +242,7 @@ async function pass(d: FleetDeps, id: string, invite: Invite | null): Promise<Pa
             { step: 'live' },
             { tenantId: p.tenant_id, dedupeKey: `onboarding:${p.tenant_id}:live` },
           );
-          if (leadId) out.leadMoves.push({ leadId, state: 'live', note: facts.origin });
+          if (leadId) await moveLeadTx(tx, leadId, 'live', facts.origin);
           await resolveIncidentTx(tx, 'provisioning_stuck', p.id, 'a loja ficou no ar');
         }
         continue;
@@ -297,45 +280,21 @@ export async function advance(d: FleetDeps, id: string): Promise<ProvisioningRow
   if (passes[0]!.send && passes[0]!.row && passes[0]!.facts)
     passes.push(await pass(d, id, await sendInvite(d, passes[0]!.row, passes[0]!.facts)));
   const row = passes.at(-1)!.row;
-  for (const p of passes) {
-    for (const m of p.leadMoves) await moveLead(d, id, m.leadId, m.state, m.note);
-  }
   if (row) emitControlEvent('fleet.change', row.tenant_id);
   return row;
 }
 
 /** invited when the invite goes out, live when the store is — never backwards. */
-async function moveLead(
-  d: FleetDeps,
-  provisioningId: string,
-  leadId: string,
-  to: 'invited' | 'live',
-  storeUrl?: string,
-) {
-  const ORDER = ['lead', 'contacted', 'invited', 'live'];
-  try {
-    const cur = await controlTx(
-      d.sql,
-      (tx) => tx<{ state: string }[]>`select state from leads where id = ${leadId}`,
-    );
-    if (!cur[0] || ORDER.indexOf(cur[0].state) >= ORDER.indexOf(to)) return;
-    await updateLead(
-      d.sql,
-      leadId,
-      { state: to },
-      `fleet:provision:${provisioningId}:${to}`,
-      'system',
-    );
-    if (to === 'live' && storeUrl)
-      await addActivity(
-        d.sql,
-        leadId,
-        { kind: 'system', body: `loja no ar: ${storeUrl}`, createdBy: 'system' },
-        `fleet:provision:${provisioningId}:activity`,
-      );
-  } catch (err) {
-    fleetLog.warn({ err, leadId }, 'lead move failed');
-  }
+async function moveLeadTx(tx: Sql, leadId: string, to: 'invited' | 'live', storeUrl?: string) {
+  const order = ['lead', 'contacted', 'invited', 'live'];
+  const [cur] = await tx<{ state: string }[]>`select state from leads where id = ${leadId}`;
+  if (!cur || order.indexOf(cur.state) >= order.indexOf(to)) return;
+  await updateLeadTx(tx, leadId, { state: to }, 'system');
+  if (storeUrl)
+    await tx`insert into lead_activities (lead_id, kind, body, created_by, meta)
+    values (${leadId}, 'system', ${`loja no ar: ${storeUrl}`}, 'system',
+      ${tx.json({ type: 'sales_activation' })})`;
+  afterCommit(tx, () => emitControlEvent('lead.change', leadId));
 }
 
 /** One pass: every provisioning that is due, under a lease so replicas don't double-step. */

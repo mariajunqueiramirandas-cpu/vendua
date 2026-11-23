@@ -1,3 +1,4 @@
+import { linkCrmSignupTx } from '../../crm/signup.ts';
 import type { Context, Hono } from 'hono';
 import { audit } from '../../admin/audit.ts';
 import {
@@ -9,7 +10,7 @@ import {
   type Membership,
 } from '../../admin/auth.ts';
 import { text, type AdminApp, type AdminDeps, type Merchant } from '../../admin/context.ts';
-import { withTenant, type Sql } from '../../platform/db.ts';
+import { beginTracked, withTenant, type Sql } from '../../platform/db.ts';
 import { HttpError, bodyJson, clientIp, windowCounter } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
 import { platformHost, storeOrigin } from '../../platform/store-origin.ts';
@@ -291,8 +292,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
         throw new HttpError(409, 'SLUG_TAKEN', 'this address is taken', { field: 'slug' });
       try {
         // count + create under one per-phone lock, so parallel signups can't all pass the cap
-        await sql.begin(async (t) => {
-          const tx = t as unknown as Sql;
+        await beginTracked(sql, async (tx) => {
           // both 9th-digit spellings are one WhatsApp: one lock, one count
           await tx`select pg_advisory_xact_lock(hashtextextended(${`signup:${phoneLockKey(phone)}`}, 0))`;
           const recent = (
@@ -387,6 +387,13 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               },
             );
           }
+          const leadId = await linkCrmSignupTx(
+            tx,
+            tenantId,
+            phone,
+            body.salesLead,
+            d.sessionSecret,
+          );
           await recordStaffEventTx(
             tx,
             'store.created',
@@ -395,7 +402,7 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
               slug,
               source: manual ? 'access_code' : 'signup',
               owner: ownerName,
-              leadId: null,
+              leadId,
               plan: plan.name,
               segment,
               trialEndsAt,

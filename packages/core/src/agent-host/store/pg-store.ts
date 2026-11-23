@@ -157,7 +157,12 @@ export class PgActorStore implements ActorStore<Sql> {
             from agent_actors a
             cross join lateral (
               -- the cast only runs on a uuid: seeds and tests use other ids for this kind
-              select case when a.subject_kind = 'shopper_thread' and pg_input_is_valid(a.subject_id, 'uuid')
+              select case when a.agent_id = 'crm' then case when exists (
+                select 1 from agent_mailbox m where m.actor_id = a.id and m.consumed_by_turn is null
+                  and m.deliver_at <= now() and (m.kind = 'message.inbound'
+                    or (m.kind = 'lead.first_contact' and m.source = 'site'))
+              ) then 0 else 1 end
+              when a.subject_kind = 'shopper_thread' and pg_input_is_valid(a.subject_id, 'uuid')
                 then coalesce(
                   (select case t.test_kind when 'cliente_oculto' then 2 when 'owner' then 1 else 0 end
                    from shopper_threads t where t.tenant_id = a.tenant_id and t.id = a.subject_id::uuid), 0)

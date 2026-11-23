@@ -466,7 +466,7 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
     expect(filled.intent_score).toBe(4);
   });
 
-  test('C4: dup-merge promotes agent_mode only when the outreach run is admitted', async () => {
+  test('C4: discovery preserves draft mode even when the outreach run is admitted', async () => {
     // the autocontact gate needs a live whatsapp driver — the bench's log driver counts
     const seedDup = async (name: string, whatsapp: string) =>
       (
@@ -534,16 +534,17 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
     expect(await agentMode(capped.id)).toBe('draft');
     expect(await firstContacts(capped.id)).toHaveLength(0);
 
-    // a lead under the job's switch still promotes — first contact admitted, mode follows
+    // a lead under the job's switch gets a drafting turn and keeps the explicit mode
     await b.settings('supervised', {}, { jobs: { outreach: true } });
     const admitted = await createDup(`Open Merge ${uniq}`, openWa);
     expect(admitted.duplicate).toBe(true);
-    expect(admitted.merged).toContain('agent_mode');
+    expect(admitted.merged).not.toContain('agent_mode');
     expect(admitted.firstContactQueued).toBe(true);
-    expect(await agentMode(open.id)).toBe('auto');
+    expect(await agentMode(open.id)).toBe('draft');
     expect(await firstContacts(open.id)).toHaveLength(1);
 
-    // fresh path, same invariant: 'auto' lands only with the first contact filed behind it
+    // newly discovered leads also preserve their configured default mode
+    await b.settings('autopilot', {}, { newLeadMode: { discovery: 'draft' } });
     const freshWa = `55119${String(Date.now()).slice(-7)}03`;
     const fresh = await b.runTools(
       [
@@ -566,8 +567,8 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
       lead: { agentMode?: string };
     }>(fresh.outcomes[0]);
     expect(freshOut.firstContactQueued).toBe(true);
-    expect(freshOut.lead.agentMode).toBe('auto');
-    expect(await agentMode(freshOut.leadId)).toBe('auto');
+    expect(freshOut.lead.agentMode).toBe('draft');
+    expect(await agentMode(freshOut.leadId)).toBe('draft');
 
     // one busy lead: a reply already waits in its mailbox, and the first contact files behind it
     const busyWa = `55119${String(Date.now()).slice(-7)}05`;

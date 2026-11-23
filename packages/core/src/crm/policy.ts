@@ -10,7 +10,7 @@ import {
   phoneIsIgnored,
   type Guardrails,
 } from '../modules/integrations.ts';
-import { channelAvailabilityTx } from './guardrails.ts';
+import { channelAvailabilityTx, leadHasContactTx } from './guardrails.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 
 // The one agent setting (`agent`): autonomy preset × automatic jobs × staff instructions,
@@ -70,7 +70,9 @@ export function normalizeAgent(v: unknown): AgentSetting {
   return {
     level: AUTONOMY_LEVELS.includes(o.level as AutonomyLevel)
       ? (o.level as AutonomyLevel)
-      : 'supervised',
+      : o.level === undefined
+        ? 'autopilot'
+        : 'supervised',
     jobs: Object.fromEntries(AGENT_JOBS.map((k) => [k, j[k] !== false])) as Record<
       AgentJob,
       boolean
@@ -159,16 +161,12 @@ export async function explainAutonomyTx(
         email: string | null;
         email_bounced_at: string | null;
         spent: number;
-        prior_out: number;
         wa_thread: number;
       }[]
     >`
       select l.agent_mode, l.archived_at, l.unsubscribed_at, l.agent_paused_at,
         l.whatsapp, l.phone, l.email, l.email_bounced_at,
         coalesce((select sum(r.cost_cents) from crm_turns r where r.lead_id = l.id), 0)::int as spent,
-        (select count(*) from lead_messages m join lead_threads t on t.id = m.thread_id
-          where t.lead_id = l.id
-            and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered')))::int as prior_out,
         (select count(*) from lead_threads t
           where t.lead_id = l.id and t.channel = 'whatsapp' and t.external_id is not null)::int as wa_thread
       from leads l where l.id = ${leadId}
@@ -216,7 +214,7 @@ export async function explainAutonomyTx(
   } else {
     const d = draftDecision({
       level,
-      firstContact: lead.prior_out === 0,
+      firstContact: !(await leadHasContactTx(tx, leadId)),
       leadMode: lead.agent_mode,
     });
     sendMode = d.forceDraft ? 'draft' : 'auto';

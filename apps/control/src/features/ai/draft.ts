@@ -20,8 +20,9 @@ export const PROVIDERS: readonly ModelProviderId[] = [
   'openrouter',
   'openai',
   'gemini',
+  'mistral',
 ];
-export const DIRECT: readonly DirectProviderId[] = ['anthropic', 'openai', 'gemini'];
+export const DIRECT: readonly DirectProviderId[] = ['anthropic', 'openai', 'gemini', 'mistral'];
 /** Core runs every Anthropic route on this model, at its list price; effort is the choice */
 export const ANTHROPIC_MODEL = 'claude-haiku-5-5';
 export const EFFORTS: readonly ModelEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];

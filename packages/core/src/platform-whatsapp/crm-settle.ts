@@ -1,3 +1,4 @@
+import { salesDeliveryFailedTx } from '../crm/delivery-policy.ts';
 import { finalizeSentTx } from '../crm/send.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -118,6 +119,8 @@ async function settleOne(sql: Sql, id: string): Promise<boolean> {
         msg.id,
         row.status === 'expired' ? 'whatsapp send expired' : (row.error ?? 'whatsapp send failed'),
       );
+      if (!['superseded by newer contact', 'store already created'].includes(row.error ?? ''))
+        await salesDeliveryFailedTx(tx, msg.id);
     }
     return true;
   });

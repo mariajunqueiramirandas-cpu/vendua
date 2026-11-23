@@ -25,6 +25,12 @@ import { platformTransport } from '../platform-whatsapp/transport.ts';
 import { isMerchantPhone } from '../admin/phones.ts';
 import { e164Phone } from '../modules/leads.ts';
 import { log } from '../platform/log.ts';
+import {
+  returnAgentMessageToDraftTx,
+  salesDeliveryFailedTx,
+  unattendedDeliveryTx,
+} from './delivery-policy.ts';
+import { unansweredTouchesTx } from './guardrails.ts';
 
 const sendLog = log.child({ mod: 'agent' });
 
@@ -59,8 +65,10 @@ export async function dispatchMessage(
           author: string;
           is_farewell: boolean;
           meeting_id: string | null;
+          send_after: Date | null;
+          approved_by: string | null;
         }[]
-      >`select id, thread_id, body, status, author, subject, is_farewell, meeting_id from lead_messages where id = ${messageId} for update`
+      >`select id, thread_id, body, status, author, subject, is_farewell, meeting_id, send_after, approved_by from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
     // terminal/in-flight states are honest outcomes — a replayed approve
@@ -73,6 +81,8 @@ export async function dispatchMessage(
       return { fail: 'previously failed' as const };
     }
     if (msg.status !== 'queued') return { fail: `status ${msg.status}` as const };
+
+    if (msg.send_after && msg.send_after > new Date()) return { defer: true as const };
 
     const thread = (
       await tx<
@@ -205,6 +215,23 @@ export async function dispatchMessage(
       return { fail: refused };
     }
 
+    const policy = await unattendedDeliveryTx(tx, messageId);
+    if (policy?.retryAt) {
+      await tx`update lead_messages set send_after = ${policy.retryAt} where id = ${messageId}`;
+      return { defer: true as const };
+    }
+    if (policy) {
+      if (policy.draft) {
+        await returnAgentMessageToDraftTx(tx, messageId);
+        return { draft: msg.thread_id };
+      }
+      await markMessageFailed(tx, messageId, policy.reason);
+      if (!['superseded by newer contact', 'store already created'].includes(policy.reason))
+        await salesDeliveryFailedTx(tx, messageId);
+      wroteTid = msg.thread_id;
+      return { fail: policy.reason };
+    }
+
     const viaGateway =
       thread.channel === 'whatsapp' &&
       integration!.driver === 'baileys' &&
@@ -235,7 +262,7 @@ export async function dispatchMessage(
         to: to!,
         body: msg.body,
         purpose: 'crm',
-        dedupeKey: `crm:${messageId}`,
+        dedupeKey: `crm:${messageId}${msg.approved_by ? ':approved' : ''}`,
         ref: messageId,
       });
       return { fail: null, queued: true as const };
@@ -260,11 +287,18 @@ export async function dispatchMessage(
   });
 
   if (wroteTid) emitControlEvent('thread.message', wroteTid);
+  if ('defer' in job) return { ok: true, reason: 'deferred' };
+  if ('draft' in job && job.draft) {
+    emitControlEvent('thread.message', job.draft);
+    emitControlEvent('draft.change', job.draft);
+    return { ok: true, reason: 'draft' };
+  }
   if ('alreadySent' in job) return { ok: true, reason: 'already sent' };
   if ('inFlight' in job) return { ok: true, reason: 'dispatch in flight' };
   if ('queued' in job) return { ok: true, reason: 'queued' };
   if ('fail' in job && job.fail != null) return { ok: false, reason: job.fail };
   const { send } = job;
+  if (!send) return { ok: false, reason: 'message was not claimed' };
 
   let providerMessageId: string | null = null;
   let igFbid: string | null = null;
@@ -298,6 +332,7 @@ export async function dispatchMessage(
   const out = await controlTx(sql, async (tx) => {
     if (sendError) {
       await markMessageFailed(tx, messageId, sendError);
+      await salesDeliveryFailedTx(tx, messageId);
       return { ok: false, reason: sendError };
     }
     await finalizeSentTx(
@@ -372,7 +407,12 @@ export async function finalizeSentTx(
           )
       `
     ).length;
-    if (days > 0 && eligible) {
+    if (
+      days > 0 &&
+      eligible &&
+      (await unansweredTouchesTx(tx, f.leadId)).total <
+        (g.maxUnansweredTouches ?? DEFAULT_GUARDRAILS.maxUnansweredTouches)
+    ) {
       const { scheduleCadenceTx } = await import('./agenda.ts');
       await scheduleCadenceTx(tx, f.leadId, days);
     }

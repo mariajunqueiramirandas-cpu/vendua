@@ -240,7 +240,14 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         const at = parseWakeupAt(row.next_action_at, ctx.now.getTime());
         if (typeof at === 'string') throw new ToolError(`nextActionAt: ${at}`);
       }
-      row.whatsapp_verified = Boolean(row.whatsapp) && !whatsappDerived;
+      const observed = (value: unknown) => {
+        if (typeof value !== 'string' || !value) return false;
+        if (value.startsWith('@'))
+          return t.seen.some((contact) => contact.toLowerCase() === value.toLowerCase());
+        const phone = digits(value);
+        return phone !== null && t.seen.some((contact) => digits(contact) === phone);
+      };
+      row.whatsapp_verified = Boolean(row.whatsapp) && !whatsappDerived && observed(row.whatsapp);
 
       const out = await crm(ctx, async (tx) => {
         const g = {
@@ -254,6 +261,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         const score = typeof row.fit_score === 'number' ? row.fit_score : null;
         if (
           whatsappDerived &&
+          observed(row.whatsapp) &&
           g.discoveryAutoContact &&
           waReady &&
           score !== null &&
@@ -295,6 +303,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           leadId: string,
           sc: number | null,
           chan: 'whatsapp' | 'instagram',
+          evidence: boolean,
         ) => {
           if (await outreachActive(leadId)) return false;
           const r = await requestLeadTx(tx, {
@@ -304,6 +313,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
             dedupeKey: `crm:first_contact:${leadId}`,
             payload: {
               channel: chan,
+              ...(!evidence ? { draftOnly: true } : {}),
               focus: `primeiro contato — lead descoberto (fitScore ${String(sc)}). O dossiê de pesquisa está na timeline do lead.`,
             },
           });
@@ -365,10 +375,10 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
               set[col] = row[col];
               merged.push(col);
             }
-          if ('whatsapp' in set) set.whatsapp_verified = !whatsappDerived;
-          // an explicit whatsapp matching a stored unverified one confirms it
+          if ('whatsapp' in set) set.whatsapp_verified = row.whatsapp_verified === true;
+          // A newly observed WhatsApp can confirm a matching stored contact.
           if (
-            !whatsappDerived &&
+            row.whatsapp_verified === true &&
             row.whatsapp &&
             dup.whatsapp &&
             dup.whatsapp_verified !== true &&
@@ -378,22 +388,23 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
             if (!merged.includes('whatsapp_verified')) merged.push('whatsapp_verified');
           }
           const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
+          const waEvidence = dup.whatsapp_verified === true || set.whatsapp_verified === true;
           const dupWa =
-            (dup.whatsapp_verified === true || set.whatsapp_verified === true
-              ? String(dup.whatsapp ?? '').trim()
-              : '') || (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
+            (waEvidence ? String(dup.whatsapp ?? '').trim() : '') ||
+            (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
           const dupChan = gateFires(dupScore, dupWa, set.instagram ?? dup.instagram);
           if (merged.length)
             await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dupId}`;
           // an enriched dup clears the gate only while untouched and not vetoed by staff
           const contacted =
             dupChan && dup.state === 'lead' && dup.agent_mode !== 'off'
-              ? await firstContact(dupId, dupScore, dupChan)
+              ? await firstContact(
+                  dupId,
+                  dupScore,
+                  dupChan,
+                  dupChan === 'whatsapp' ? waEvidence : observed(set.instagram ?? dup.instagram),
+                )
               : false;
-          if (contacted && dup.agent_mode !== 'auto') {
-            await tx`update leads set agent_mode = 'auto', updated_at = now() where id = ${dupId}`;
-            merged.push('agent_mode');
-          }
           await writeFindings(dupId, { merged });
           return {
             id: dupId,
@@ -423,11 +434,14 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         );
         const lead = created.body.lead;
         await writeFindings(lead.id);
-        const contacted = autoContact ? await firstContact(lead.id, score, autoContact) : false;
-        if (contacted && lead.agentMode !== 'auto') {
-          await tx`update leads set agent_mode = 'auto', updated_at = now() where id = ${lead.id}`;
-          lead.agentMode = 'auto';
-        }
+        const contacted = autoContact
+          ? await firstContact(
+              lead.id,
+              score,
+              autoContact,
+              autoContact === 'whatsapp' ? row.whatsapp_verified === true : observed(row.instagram),
+            )
+          : false;
         const { id: _id, ...visible } = lead;
         return {
           id: lead.id,

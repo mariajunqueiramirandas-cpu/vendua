@@ -64,6 +64,7 @@ interface BaileysSocket {
             fromMe?: boolean;
           };
           message?: unknown;
+          messageTimestamp?: number | string | { toNumber(): number };
           pushName?: string;
         }[];
       }) => void,
@@ -226,6 +227,7 @@ type MessageHandler = (
   /** sender's complementary address (LID↔PN) so persistence converges a contact first seen under the other alias */
   altJid?: string,
   media?: InboundMedia,
+  sentAt?: Date,
 ) => Promise<void>;
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -610,7 +612,15 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           for (const fn of handlers) {
             void (async () => {
               try {
-                await fn(dm.jid, text, id, m.pushName, dm.alias, media);
+                await fn(
+                  dm.jid,
+                  text,
+                  id,
+                  m.pushName,
+                  dm.alias,
+                  media,
+                  messageTs(m.messageTimestamp),
+                );
               } catch (e) {
                 waLog.warn({ err: e, id }, 'inbound message ingest failed');
               }

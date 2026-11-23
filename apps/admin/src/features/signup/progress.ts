@@ -38,6 +38,7 @@ export interface Draft {
   coupon: string | null;
   /** a referral link's code (?indica= a store's address, ?parceiro= a partner's code) */
   referral?: string | null;
+  salesLead?: string | null;
   /** after POST /signup: the store exists and this device is signed in to it */
   created: {
     store: StoreRef;
@@ -64,6 +65,7 @@ export const EMPTY: Draft = {
   byCode: false,
   coupon: null,
   referral: null,
+  salesLead: null,
   created: null,
 };
 

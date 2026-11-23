@@ -1573,7 +1573,10 @@ export function createApp({
       requireIdemKey(c),
       async (tx) => {
         // Lead + first contact share one claim — a retry replays instead of duplicating.
-        const created = await insertLeadTx(tx, leadInsert(body));
+        const created = await insertLeadTx(tx, {
+          agent_mode: body.automation === false ? 'draft' : 'auto',
+          ...leadInsert(body),
+        });
         if (created.body.lead.agentMode !== 'off' && body.automation !== false) {
           // Send policy is read live at send time, not stamped here — a change between create and the turn must take effect.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});

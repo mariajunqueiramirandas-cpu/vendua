@@ -1,3 +1,6 @@
+import { crmSignupToken } from '../src/crm/signup.ts';
+import { controlTx } from '../src/modules/control.ts';
+import { requestLeadTx } from '../src/crm/dispatch.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -225,6 +228,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
     if (appSql !== sql) await appSql.end();
     await sql.end();
+  });
+
+  test('a verified CRM signup links its lead, stops sales work, and records attribution once', async () => {
+    const phone = mkPhone();
+    const salesApp = createApp(deps);
+    const [lead] = await sql<{ id: string }[]>`
+      insert into leads (name, source, agent_mode) values ('Lead do CRM', 'instagram', 'auto')
+      returning id`;
+    try {
+      await controlTx(appSql, (tx) =>
+        requestLeadTx(tx, {
+          leadId: lead!.id,
+          kind: 'timer.followup',
+          source: 'agent',
+          dedupeKey: `signup-test:${lead!.id}`,
+          keepParked: true,
+        }),
+      );
+      const { signupToken } = await verified(phone, salesApp);
+      const slug = `signup-${nonce}-sales`;
+      const payload = { trial: true, salesLead: crmSignupToken(lead!.id, deps.sessionSecret) };
+      const created = await signup(signupToken, slug, payload, salesApp);
+      expect(created.status).toBe(201);
+      expect((await signup(signupToken, slug, payload, salesApp)).status).toBe(201);
+      const [linked] = await sql`select tenant_id, agent_mode from leads where id = ${lead!.id}`;
+      expect(linked).toMatchObject({ tenant_id: created.body.store.id, agent_mode: 'off' });
+      const [provisioning] =
+        await sql`select lead_id from provisionings where tenant_id = ${created.body.store.id}`;
+      expect(provisioning?.lead_id).toBe(lead!.id);
+      expect(
+        await sql`select id from lead_activities where lead_id = ${lead!.id}
+        and meta->>'type' = 'sales_signup' and meta->>'fromLink' = 'true'`,
+      ).toHaveLength(1);
+      expect(
+        await sql`select m.id from agent_mailbox m join agent_actors a on a.id = m.actor_id
+        where a.subject_id = ${lead!.id} and m.consumed_by_turn is null`,
+      ).toHaveLength(0);
+    } finally {
+      await sql`delete from leads where id = ${lead!.id}`;
+    }
   });
 
   test('plans and slug check', async () => {
