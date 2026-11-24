@@ -534,12 +534,17 @@ export interface IgAccount {
   igid?: string;
   fbid?: string;
 }
-/** one screen of the instagram login wizard; 'wait' = approve elsewhere, then submit {} */
+export interface IgCaptcha {
+  iframeURL: string;
+  instance: string;
+}
+
 export interface IgStep {
-  type: 'input' | 'wait' | 'complete';
+  type: 'input' | 'wait' | 'captcha' | 'complete';
   stepId: string;
   instructions: string;
   fields?: { id: string; name: string; type: string; options?: string[] }[];
+  captcha?: IgCaptcha;
   account?: IgAccount;
 }
 export interface IgStatus {

@@ -44,10 +44,11 @@ export interface IgField {
   options?: string[];
 }
 export interface IgStep {
-  type: 'input' | 'wait' | 'complete';
+  type: 'input' | 'wait' | 'captcha' | 'complete';
   stepId: string;
   instructions: string;
   fields?: IgField[];
+  captcha?: { iframeURL: string; instance: string };
   account?: IgAccount;
 }
 export interface IgStatus {
@@ -77,7 +78,8 @@ function setStatus(sql: Sql, next: IgStatus) {
     next.state !== last.state ||
     next.error?.code !== last.error?.code ||
     next.account?.username !== last.account?.username ||
-    next.login?.stepId !== last.login?.stepId;
+    next.login?.stepId !== last.login?.stepId ||
+    next.login?.captcha?.instance !== last.login?.captcha?.instance;
   last = next;
   if (changed) emitControlEvent('channel.health', 'instagram');
   watchOutage(sql, prev, next);
