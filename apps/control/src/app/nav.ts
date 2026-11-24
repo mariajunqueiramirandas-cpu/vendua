@@ -75,12 +75,16 @@ export const DESTINATIONS: { to: string; label: string; group: string }[] = [
   { to: '/pipeline/analytics?p=lojas', label: 'Analytics das lojas (funil)', group: 'Pipeline' },
   { to: '/inbox', label: 'Inbox', group: 'Inbox' },
   { to: '/inbox?f=rascunhos', label: 'Rascunhos para aprovar', group: 'Inbox' },
-  { to: '/agenda', label: 'Agenda', group: 'Agenda' },
-  { to: '/agente/atividade', label: 'Atividade do agente', group: 'Agente' },
-  { to: '/agente/planos', label: 'Planos do agente', group: 'Agente' },
-  { to: '/agente/descoberta', label: 'Descoberta', group: 'Agente' },
-  { to: '/agente/estudio', label: 'Estúdio', group: 'Agente' },
+  { to: '/agenda', label: 'Agenda (calls)', group: 'Agenda' },
+  { to: '/agente/operacao', label: 'Fila e próximos disparos do agente', group: 'Agente' },
+  { to: '/agente/operacao?v=execucoes', label: 'Execuções do agente', group: 'Agente' },
+  { to: '/agente/operacao?v=planos', label: 'Planos dos leads', group: 'Agente' },
+  { to: '/agente/descoberta', label: 'Descoberta de leads', group: 'Agente' },
+  { to: '/agente/configurar', label: 'Configurar agente', group: 'Agente' },
+  { to: '/agente/configurar?s=limites', label: 'Limites e ritmo do agente', group: 'Agente' },
+  { to: '/agente/configurar?s=memoria', label: 'Memória do agente', group: 'Agente' },
   { to: '/config', label: 'Config', group: 'Config' },
+  { to: '/config?a=reunioes', label: 'Reuniões e disponibilidade', group: 'Config' },
 ];
 
 export const SHORTCUTS: [string, string][] = [

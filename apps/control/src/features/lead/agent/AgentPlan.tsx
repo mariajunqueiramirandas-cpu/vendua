@@ -3,15 +3,15 @@ import type { LeadListItem } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { AGENT_GOAL_LABEL } from '@/lib/labels.ts';
 import { Badge } from '@/components/ui/badge.tsx';
+import { planProgress } from '@/features/agent/queue.ts';
 import { Hint, Section } from '../Section.tsx';
-import { planProgress } from '@/features/agent/plans/queries.ts';
 
 export function AgentPlan({ lead }: { lead: LeadListItem }) {
   const plan = lead.agentPlan;
   const { total: active, resolved: done, ratio } = planProgress(lead);
   return (
     <Section
-      title="plano"
+      title="plano do agente"
       actions={
         active > 0 && (
           <span className="text-xs text-muted-foreground tnum">
@@ -65,7 +65,7 @@ export function AgentPlan({ lead }: { lead: LeadListItem }) {
           </ol>
         </>
       ) : (
-        <Hint>sem plano — o agente monta um quando o objetivo está claro</Hint>
+        <Hint>sem plano ativo — o agente cria etapas quando a conversa avança</Hint>
       )}
     </Section>
   );

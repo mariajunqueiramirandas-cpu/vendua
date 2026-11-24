@@ -5,15 +5,15 @@ import { obj, str, type SettingsMap } from './queries.ts';
 export const AREAS = [
   { key: 'visao', label: 'visão geral' },
   { key: 'conexoes', label: 'conexões' },
-  { key: 'agenda', label: 'agenda' },
+  { key: 'reunioes', label: 'reuniões' },
   { key: 'equipe', label: 'equipe' },
   { key: 'telegram', label: 'telegram' },
   { key: 'relatorios', label: 'relatórios' },
 ] as const;
 export type AreaKey = (typeof AREAS)[number]['key'];
 
-/** The agent itself (autonomia, voz, regras) lives in the Estúdio. */
-export const STUDIO = '/agente/estudio';
+/** The agent itself (autonomia, voz, limites, memória) lives in Agente → Configurar. */
+export const STUDIO = '/agente/configurar';
 
 export type Check = {
   key: string;
@@ -23,7 +23,7 @@ export type Check = {
   to?: AreaKey;
   /** anchor inside the target area (provider card id) */
   p?: string;
-  /** cross-view jump — agent rows open the Estúdio, not an area here */
+  /** cross-view jump — agent rows open Configurar, not an area here */
   route?: string;
 };
 
@@ -96,11 +96,11 @@ export function computeReadiness({
   };
 
   const agenda = (state: string, tone: ProvTone): Check => ({
-    key: 'agenda',
-    label: 'agenda',
+    key: 'reunioes',
+    label: 'reuniões',
     state,
     tone,
-    to: 'agenda',
+    to: 'reunioes',
   });
   const weekDays =
     mStatus && mStatus !== 'err'
@@ -139,13 +139,12 @@ export function computeReadiness({
   const autonomy = obj(settings.agent);
   const staff = obj(settings.staff);
   const staffCount = Array.isArray(staff.members) ? staff.members.length : 0;
-  // 'off' parks the agent; 'copilot' silently backs up the draft queue — both worth flagging
   const autoLevel = str(autonomy.level, 'autopilot');
   const routine: Check[] = setErr
     ? (
         [
           { key: 'autonomia', label: 'autonomia', route: STUDIO },
-          { key: 'voz', label: 'voz do agente', route: STUDIO },
+          { key: 'voz', label: 'voz do agente', route: `${STUDIO}?s=voz` },
           { key: 'regras', label: 'limites', route: `${STUDIO}?s=limites` },
           { key: 'equipe', label: 'equipe', to: 'equipe' },
         ] as const
@@ -160,9 +159,9 @@ export function computeReadiness({
               : autoLevel === 'copilot'
                 ? 'copiloto — tudo vira rascunho'
                 : autoLevel === 'autopilot'
-                  ? 'piloto automático — envia direto'
-                  : 'supervisionado',
-          tone: autoLevel === 'off' ? 'off' : autoLevel === 'copilot' ? 'warn' : 'live',
+                  ? 'piloto automático — envia tudo direto sem aprovação'
+                  : 'supervisionado — respostas saem, 1º contato espera aprovação',
+          tone: autoLevel === 'off' ? 'off' : autoLevel === 'supervised' ? 'live' : 'warn',
           route: STUDIO,
         },
         {
@@ -170,7 +169,7 @@ export function computeReadiness({
           label: 'voz do agente',
           state: str(pitch.product, '') ? 'definida' : 'vazia — o agente improvisa',
           tone: str(pitch.product, '') ? 'live' : 'off',
-          route: STUDIO,
+          route: `${STUDIO}?s=voz`,
         },
         {
           key: 'regras',

@@ -83,14 +83,14 @@ export function Onboarding() {
       label: 'dê voz ao agente',
       hint: product ? 'definida' : 'o que você vende e para quem',
       done: Boolean(product),
-      to: '/agente/estudio',
+      to: '/agente/configurar?s=voz',
     },
     {
       key: 'agenda',
-      label: 'abra horários na agenda',
+      label: 'abra horários para calls',
       hint: weekDays ? `${weekDays}d/semana abertos` : 'para o agente marcar calls',
       done: weekDays > 0,
-      to: '/config?a=agenda',
+      to: '/config?a=reunioes',
     },
   ];
   const done = steps.filter((s) => s.done).length;

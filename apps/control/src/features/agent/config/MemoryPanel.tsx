@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type MemoryItem, type MemoryScope } from '@/lib/api.ts';
@@ -6,122 +6,37 @@ import { errorMessage, qk } from '@/lib/query.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { Input, Select } from '@/components/ui/input.tsx';
-import { AreaIntro, EndpointState, ListEditor } from './bits.tsx';
+import { EndpointState } from './bits.tsx';
 import { MemoryRow } from './MemoryRow.tsx';
-import type { SettingsMap, SettingWrite } from './settings.ts';
 
 const SCOPES: { key: MemoryScope; label: string }[] = [
-  { key: 'workspace', label: 'workspace — vale pra todo run' },
+  { key: 'workspace', label: 'workspace — vale pra toda execução' },
   { key: 'segment', label: 'por segmento — nicho do lead' },
-  { key: 'debrief', label: 'debriefs — saem dos runs' },
+  { key: 'debrief', label: 'debriefs — aprendizados das caçadas' },
 ];
 
 const byPin = (a: MemoryItem, b: MemoryItem) => Number(b.pinned) - Number(a.pinned);
 
-export function MemoryArea({
-  map,
-  gate,
-  save,
-  active,
-}: {
-  /** undefined until /settings is read — only the v1 list depends on it */
-  map: SettingsMap | undefined;
-  /** what shows in place of the v1 list while settings are unreadable */
-  gate: ReactNode;
-  save: (key: string, v: SettingWrite) => Promise<boolean>;
-  active: boolean;
-}) {
-  // dormant until the area opens
-  const qs = useQueries({
-    queries: SCOPES.map(({ key }) => ({
-      queryKey: qk.memory({ scope: key }),
-      queryFn: () => api.memory({ scope: key }),
-      enabled: active,
-    })),
-  });
-  const error = qs.find((q) => q.error)?.error ?? null;
-  const ready = qs.every((q) => q.data);
-  const memoryV1 = (map?.agent_memory ?? { facts: [] }) as { facts?: string[] };
-  const facts = memoryV1.facts ?? [];
-
-  // three-way merge inside the save queue — rapid clicks accumulate against the freshest value
-  const saveFacts = (next: string[]) => {
-    const base = facts;
-    void save('agent_memory', (cur: unknown) => {
-      const curObj = (cur ?? {}) as { facts?: string[] };
-      const curFacts = curObj.facts ?? [];
-      const added = next.filter((f) => !base.includes(f));
-      const removed = new Set(base.filter((f) => !next.includes(f)));
-      return {
-        ...curObj,
-        facts: [
-          ...curFacts.filter((f) => !removed.has(f)),
-          ...added.filter((a) => !curFacts.includes(a)),
-        ],
-      };
-    });
-  };
-
-  return (
-    <>
-      <AreaIntro>
-        o que o agente carrega no contexto — workspace vale pra tudo, segmento por nicho, debrief
-        sai de cada run
-      </AreaIntro>
-      <div className="flex flex-col gap-3">
-        {!ready || error ? (
-          <EndpointState
-            title="memória v2"
-            error={error}
-            missing="GET/POST /agent/memory ainda não chegou neste servidor — quando chegar, os itens ficam agrupados por escopo e dá pra fixar o que importa sempre. Por ora a memória clássica abaixo segue valendo."
-            onRetry={() => qs.forEach((q) => void q.refetch())}
-          />
-        ) : (
-          <MemoryV2
-            data={{
-              workspace: qs[0]!.data!.items,
-              segment: qs[1]!.data!.items,
-              debrief: qs[2]!.data!.items,
-            }}
-          />
-        )}
-        {!map ? (
-          gate
-        ) : (
-          <Panel
-            title="memória clássica (v1)"
-            aside="fatos guardados via tool `remember` — a v2 absorve"
-          >
-            <ListEditor
-              items={facts}
-              placeholder="grave um fato — ex.: a Lia sempre indica leads quentes"
-              addLabel="lembrar"
-              max={100}
-              maxLen={500}
-              onChange={saveFacts}
-            />
-            <p className="mt-2 text-xs text-muted-foreground">
-              {facts.length} fato{facts.length === 1 ? '' : 's'} — o agente edita esta lista com a
-              tool `remember` (guarda até 100); remover aqui apaga da memória dele.
-            </p>
-          </Panel>
-        )}
-      </div>
-    </>
-  );
-}
-
-function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
+/** Active agent memory (v2 — agent_memory_items); legacy v1 settings panel removed. */
+export function MemoryPanel() {
   const qc = useQueryClient();
   const [scope, setScope] = useState<MemoryScope>('workspace');
   const [segment, setSegment] = useState('');
   const [draft, setDraft] = useState('');
 
+  const qs = useQueries({
+    queries: SCOPES.map(({ key }) => ({
+      queryKey: qk.memory({ scope: key }),
+      queryFn: () => api.memory({ scope: key }),
+    })),
+  });
+  const error = qs.find((q) => q.error)?.error ?? null;
+  const ready = qs.every((q) => q.data);
+
   const onError = (e: unknown) => toast.error(`memória: ${errorMessage(e)}`);
   const refresh = () => void qc.invalidateQueries({ queryKey: qk.memory() });
   const create = useMutation({
     mutationFn: api.createMemory,
-    // a failed save never discards typed text
     onSuccess: () => {
       setDraft('');
       refresh();
@@ -132,7 +47,6 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
   const blocked = !draft.trim() || (scope === 'segment' && !segment.trim()) || create.isPending;
   const add = () => {
     const content = draft.trim();
-    // same gate as the button's disabled state — covers the Enter path
     if (blocked) return;
     create.mutate({
       scope,
@@ -141,6 +55,22 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
     });
   };
 
+  if (!ready || error) {
+    return (
+      <EndpointState
+        title="memória"
+        error={error}
+        missing="GET/POST /agent/memory ainda não está disponível neste servidor."
+        onRetry={() => qs.forEach((q) => void q.refetch())}
+      />
+    );
+  }
+
+  const data: Record<MemoryScope, MemoryItem[]> = {
+    workspace: qs[0]!.data!.items,
+    segment: qs[1]!.data!.items,
+    debrief: qs[2]!.data!.items,
+  };
   const total = SCOPES.reduce((n, s) => n + data[s.key].length, 0);
   const segGroups = new Map<string, MemoryItem[]>();
   for (const m of data.segment) {
@@ -149,8 +79,15 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
   }
 
   return (
-    <>
-      <Panel>
+    <div className="flex flex-col gap-3">
+      <Panel
+        title="memória do agente"
+        aside={`${total} ite${total === 1 ? 'm' : 'ns'} · fixados entram sempre no contexto`}
+      >
+        <p className="mb-2.5 text-xs text-muted-foreground">
+          aprendizados acumulados pelo agente e pela equipe (diferente das instruções fixas acima).
+          Alterações aqui salvam na hora.
+        </p>
         <div className="flex flex-col gap-2 md:flex-row">
           <div className="flex gap-2">
             <Select
@@ -167,10 +104,10 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
               <Input
                 aria-label="segmento"
                 value={segment}
-                placeholder="nome do segmento — ex.: pizzarias"
+                placeholder="ex.: pizzarias"
                 maxLength={80}
                 onChange={(e) => setSegment(e.target.value)}
-                className="md:w-56"
+                className="md:w-48"
               />
             )}
           </div>
@@ -178,7 +115,7 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
             <Input
               aria-label="nova memória"
               value={draft}
-              placeholder="grave algo que vale pra todo run — ex.: 'a Lia sempre indica leads quentes'"
+              placeholder="grave um aprendizado — ex.: 'padarias respondem melhor após 14h'"
               maxLength={500}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && add()}
@@ -188,11 +125,8 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
             </Button>
           </div>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          <span className="tnum">{total}</span> ite{total === 1 ? 'm' : 'ns'} — fixados entram
-          sempre no contexto do agente
-        </p>
       </Panel>
+
       <div className="grid items-start gap-3 lg:grid-cols-2 min-[90rem]:grid-cols-3">
         {SCOPES.map((g) => (
           <Panel
@@ -227,6 +161,6 @@ function MemoryV2({ data }: { data: Record<MemoryScope, MemoryItem[]> }) {
           </Panel>
         ))}
       </div>
-    </>
+    </div>
   );
 }

@@ -13,7 +13,16 @@ const THEME = process.env.THEME === 'dark' ? 'dark' : 'light';
 const AUTH = process.env.AUTH_STATE ?? '/tmp/vendua-control-auth.json';
 const routes = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ['/', '/pipeline', '/pipeline?v=board', '/inbox', '/agenda', '/agente/atividade', '/config'];
+  : [
+      '/',
+      '/pipeline',
+      '/pipeline?v=board',
+      '/inbox',
+      '/agenda',
+      '/agente/operacao',
+      '/agente/configurar',
+      '/config',
+    ];
 const VIEWPORTS = [
   { name: 'phone', width: 375, height: 812, mobile: true },
   { name: 'tablet', width: 820, height: 1180, mobile: true },

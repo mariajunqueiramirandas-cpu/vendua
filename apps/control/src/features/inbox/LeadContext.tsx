@@ -1,11 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowUpRight, Bot, Pause } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, Bot, Pause, PlayCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import { api, type ThreadView } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { fmtDateTime, fmtMoney, relDue, isLate } from '@/lib/format.ts';
 import { AGENT_GOAL_LABEL, AGENT_MODE_LABEL } from '@/lib/labels.ts';
-import { qk } from '@/lib/query.ts';
+import { errorMessage, qk } from '@/lib/query.ts';
 import { Avatar, Fact, StateChip } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -13,8 +14,8 @@ import { Skeleton } from '@/components/ui/controls.tsx';
 import { CH_ICON, CH_LABEL } from './channel.ts';
 
 const SEND_MODE_LABEL: Record<string, string> = {
-  auto: 'envia sozinho',
-  draft: 'só rascunhos',
+  auto: 'envia direto',
+  draft: 'vira rascunho',
   blocked: 'bloqueado',
 };
 
@@ -27,6 +28,7 @@ export function LeadContext({
   className?: string | undefined;
 }) {
   const { lead, thread } = view;
+  const client = useQueryClient();
   const facts = useQuery({
     queryKey: qk.leadFacts(lead.id),
     queryFn: () => api.leadFacts(lead.id),
@@ -38,6 +40,18 @@ export function LeadContext({
   const threads = useQuery({
     queryKey: qk.leadThreads(lead.id),
     queryFn: () => api.leadThreads(lead.id),
+  });
+  const resume = useMutation({
+    mutationFn: () => api.patchLead(lead.id, { agentPaused: false }),
+    onSuccess: () => toast.success('agente retomado neste lead'),
+    onError: (e) => toast.error(errorMessage(e)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: qk.thread(thread.id) });
+      void client.invalidateQueries({ queryKey: qk.lead(lead.id) });
+      void client.invalidateQueries({ queryKey: qk.leadAutonomy(lead.id) });
+      void client.invalidateQueries({ queryKey: ['threads'] });
+      void client.invalidateQueries({ queryKey: ['leads'] });
+    },
   });
   const others = (threads.data?.threads ?? []).filter((t) => t.id !== thread.id);
   const sub = lead.businessName && lead.businessName !== lead.name ? lead.businessName : null;
@@ -68,7 +82,7 @@ export function LeadContext({
         <Fact label="valor">
           <span className="tnum">{fmtMoney(lead.dealValueCents)}</span>
         </Fact>
-        <Fact label="próxima ação">
+        <Fact label="próximo disparo">
           <span className={cn('tnum', isLate(lead.nextActionAt) && 'text-warning-foreground')}>
             {lead.nextActionAt ? relDue(lead.nextActionAt) : '—'}
           </span>
@@ -96,7 +110,7 @@ export function LeadContext({
       </div>
 
       <Section title="agente">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-1">
             <Badge variant={lead.agentMode === 'off' ? 'default' : 'agent-soft'}>
               <Bot /> {AGENT_MODE_LABEL[lead.agentMode] ?? lead.agentMode}
@@ -109,48 +123,64 @@ export function LeadContext({
             )}
           </div>
           {lead.agentPausedAt && (
-            <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
-              <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-              pausado (handoff) desde {fmtDateTime(lead.agentPausedAt)} — reative o agente na
-              conversa para retomar
-            </p>
+            <div className="flex flex-col gap-1.5 rounded-md border border-warning/30 bg-warning-soft p-2">
+              <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                pausado (handoff) desde {fmtDateTime(lead.agentPausedAt)}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={resume.isPending}
+                onClick={() => resume.mutate()}
+                className="w-full"
+              >
+                <PlayCircle /> {resume.isPending ? 'retomando…' : 'retomar agente'}
+              </Button>
+            </div>
           )}
           {autonomy.isPending ? (
             <Skeleton className="h-4 w-3/4" />
-          ) : autonomy.data ? (
+          ) : autonomy.data && !lead.agentPausedAt ? (
             <p className="text-xs text-muted-foreground">
               {SEND_MODE_LABEL[autonomy.data.sendMode] ?? autonomy.data.sendMode}
               {autonomy.data.reasons[0] && ` · ${autonomy.data.reasons[0].message}`}
             </p>
           ) : null}
           {lead.agentPlan.length > 0 && (
-            <ol className="mt-1 flex flex-col gap-0.5 text-xs">
-              {lead.agentPlan.slice(0, 5).map((s, i) => (
-                <li
-                  key={i}
-                  className={cn(
-                    'flex gap-1.5',
-                    s.status !== 'todo' && 'text-muted-foreground line-through',
-                  )}
-                >
-                  <span className="tnum text-muted-foreground">{i + 1}.</span>
-                  <span className="min-w-0">{s.step}</span>
-                </li>
-              ))}
-            </ol>
+            <div className="mt-0.5 flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-muted-foreground">plano do agente</span>
+              <ol className="flex flex-col gap-0.5 text-xs">
+                {lead.agentPlan.slice(0, 5).map((s, i) => (
+                  <li
+                    key={s.key ?? i}
+                    className={cn(
+                      'flex gap-1.5',
+                      s.status !== 'todo' && 'text-muted-foreground line-through',
+                    )}
+                  >
+                    <span className="tnum text-muted-foreground">{i + 1}.</span>
+                    <span className="min-w-0">{s.step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
         </div>
       </Section>
 
-      <Section title="fatos">
+      <Section title="fatos do lead">
         {facts.isPending ? (
           <Skeleton className="h-10 w-full" />
         ) : facts.data?.facts.length ? (
           <dl className="flex flex-col gap-1.5">
             {facts.data.facts.slice(0, 10).map((f) => (
               <div key={f.key} className="flex min-w-0 flex-col">
-                <dt className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                  {f.key}
+                <dt
+                  className="flex items-center gap-1 text-[11px] text-muted-foreground"
+                  title={f.key}
+                >
+                  {f.key.replace(/_/g, ' ')}
                   {f.source === 'agent' && <Bot className="size-3" aria-label="do agente" />}
                 </dt>
                 <dd className="text-[13px] break-words">{f.value}</dd>

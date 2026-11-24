@@ -977,7 +977,7 @@ export async function agenteView(c: CommandCtx): Promise<TelegramMessage> {
         actionButton('📋 regras', 'ag:m'),
         actionButton('🔎 revisar funil', 'ag:s'),
       ),
-      ...row(linkButton('abrir estúdio no CRM', crm(c, '/agente/estudio'))),
+      ...row(linkButton('configurar agente no CRM', crm(c, '/agente/configurar'))),
     ],
   };
 }
@@ -1100,7 +1100,7 @@ export function ajudaView(c: Pick<CommandCtx, 'ctx'>): TelegramMessage {
       `${mono('/frota')} · ${mono('/resumo')} · ${mono('/silenciar')} · ${mono('/nova')} · ${mono('/bot')}`,
     ].join('\n'),
     buttons: row(
-      linkButton('Estúdio do agente', crm(c, '/agente/estudio')),
+      linkButton('Configurar agente', crm(c, '/agente/configurar')),
       linkButton('Config → Telegram', crm(c, '/config?a=telegram')),
     ),
   };

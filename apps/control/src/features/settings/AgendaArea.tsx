@@ -262,7 +262,7 @@ function MeetingForm({
           disabled={!dirty || invalid || saving}
           onClick={() => onSave({ ...value, ...edit })}
         >
-          salvar agenda
+          salvar reuniões
         </Button>
         {dirty && (
           <Button

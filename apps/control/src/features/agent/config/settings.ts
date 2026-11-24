@@ -7,6 +7,12 @@ import { errorMessage, qk } from '@/lib/query.ts';
 type SettingsRes = { settings: { key: string; value: unknown }[] };
 export type SettingsMap = Record<string, unknown>;
 
+const SETTING_LABEL: Record<string, string> = {
+  agent: 'agente',
+  pitch: 'voz',
+  guardrails: 'limites',
+};
+
 // the cache keeps the raw GET shape — qk.settings() is shared with the config screen
 const toMap = (r: SettingsRes): SettingsMap =>
   Object.fromEntries(r.settings.map((s) => [s.key, s.value]));
@@ -45,12 +51,14 @@ export function useSaveSetting() {
             : [...rows, { key, value: v }],
         };
       });
-      toast.success(`${key} salvo`);
+      const label = SETTING_LABEL[key] ?? key;
+      toast.success(`${label} salvo`);
       for (const queryKey of [qk.settings(), qk.agentConfig(), qk.memory()])
         void qc.invalidateQueries({ queryKey });
     },
     onError: (e, { key }) => {
-      toast.error(`${key}: ${errorMessage(e)}`);
+      const label = SETTING_LABEL[key] ?? key;
+      toast.error(`${label}: ${errorMessage(e)}`);
       // resync — the local picture may be stale
       void qc.invalidateQueries({ queryKey: qk.settings() });
     },

@@ -55,7 +55,7 @@ export function RunDetail({
 
   if (isPending) return <LoadingRows className="p-3" />;
   if (missing)
-    return <EmptyState icon={SearchX} title="run não encontrado" hint={`id ${shortId(id)}`} />;
+    return <EmptyState icon={SearchX} title="execução não encontrada" hint={`id ${shortId(id)}`} />;
   if (!run) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
   // a turn already running finishes; only waiting work cancels
@@ -66,7 +66,7 @@ export function RunDetail({
         <h2 className="text-sm font-semibold">
           <RunKind kind={run.kind} source={run.source} className="text-sm text-foreground" />
         </h2>
-        <span className="font-mono text-xs text-muted-foreground">run {shortId(run.id)}</span>
+        <span className="font-mono text-xs text-muted-foreground">#{shortId(run.id)}</span>
         <RunStatus status={run.status} />
         {run.outcome && RUN_OUTCOME_LABEL[run.outcome] && (
           <span className="text-xs text-muted-foreground">{RUN_OUTCOME_LABEL[run.outcome]}</span>

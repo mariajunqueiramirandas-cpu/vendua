@@ -829,7 +829,7 @@ function runFailed(ev: Ev<'agent.run_failed'>, ctx: RenderCtx): Rendered {
         code(d.error, 900),
       ],
       buttons: row(
-        linkButton('ver run', ctx.crm(`/agente/atividade/${d.runId}`)),
+        linkButton('ver execução', ctx.crm(`/agente/operacao/${d.runId}`)),
         d.leadId ? linkButton('abrir lead', ctx.crm(`/pipeline/${d.leadId}`)) : null,
       ),
     }),
@@ -996,7 +996,7 @@ function job(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
           ? `✅ voltou (${ts(back.created_at, 't')})${failing ? ` · falhou por ${duration(isoOf(failing.created_at), new Date(back.created_at))}` : ''}`
           : null,
       ],
-      buttons: row(linkButton('rotinas no CRM', ctx.crm('/agente/atividade'))),
+      buttons: row(linkButton('rotinas no CRM', ctx.crm('/config'))),
     },
   );
   return {

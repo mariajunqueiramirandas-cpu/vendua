@@ -69,11 +69,11 @@ export function RunList({
 
   const cancelBtn = (r: AgentRun) =>
     canCancel(r) ? (
-      <Tooltip content="cancelar run">
+      <Tooltip content="cancelar execução">
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label="cancelar run"
+          aria-label="cancelar execução"
           disabled={cancel.isPending && cancel.variables === r.id}
           onClick={(e) => {
             e.stopPropagation();
@@ -157,11 +157,11 @@ export function RunList({
         rowClassName={(r) => cn(r.id === selectedId && 'bg-agent-soft hover:bg-agent-soft')}
         empty={
           <EmptyState
-            title="nenhum run"
+            title="nenhuma execução"
             hint={
-              view === 'scheduled'
-                ? 'nada agendado — contatos adiados e follow-ups aparecem aqui'
-                : 'runs aparecem quando o agente tria, responde ou descobre'
+              view
+                ? 'nenhuma execução com esse filtro'
+                : 'execuções aparecem quando o agente tria, responde, aborda ou descobre'
             }
           />
         }

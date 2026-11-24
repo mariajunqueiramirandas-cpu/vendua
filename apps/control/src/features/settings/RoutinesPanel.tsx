@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { api, type Routine } from '@/lib/api.ts';
+import { ApiError, api, type Routine } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { fmtDateTime, rel, relDue } from '@/lib/format.ts';
 import { qk } from '@/lib/query.ts';
+import { ErrorState, LoadingRows } from '@/components/common.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Panel } from '@/components/ui/card.tsx';
-import { EndpointState } from './bits.tsx';
+import { SectionHead } from './bits.tsx';
 
 type Health = 'ok' | 'failing' | 'off' | 'idle';
 
@@ -28,36 +29,46 @@ export function RoutinesPanel({ active }: { active: boolean }) {
     enabled: active,
     refetchInterval: active ? 30_000 : false,
   });
-  if (!q.data) {
-    return (
-      <EndpointState
-        title="rotinas"
-        error={q.error}
-        missing="GET /agent/routines ainda não chegou neste servidor."
-        onRetry={() => void q.refetch()}
-      />
-    );
-  }
-  const failing = q.data.filter((r) => health(r) === 'failing').length;
+  const failing = q.data?.filter((r) => health(r) === 'failing').length ?? 0;
+  const notHere = q.error instanceof ApiError && q.error.status === 404;
+
+  const statusBadge = q.data ? (
+    failing ? (
+      <Badge variant="bad">{failing} falhando</Badge>
+    ) : (
+      <Badge variant="agent">tudo em dia</Badge>
+    )
+  ) : q.error ? (
+    <Badge variant={notHere ? 'outline' : 'warn'}>
+      {notHere ? 'indisponível' : 'falha ao ler'}
+    </Badge>
+  ) : undefined;
+
   return (
-    <Panel
-      title="rotinas"
-      aside="o que roda sozinho e quando"
-      actions={
-        failing ? (
-          <Badge variant="bad">{failing} falhando</Badge>
+    <section>
+      <SectionHead
+        title="rotinas automáticas"
+        sub="jobs do agendador — Telegram, reuniões, foto do funil e descoberta"
+        aside={statusBadge}
+      />
+      <Panel flush>
+        {q.data ? (
+          <ul className="divide-y">
+            {q.data.map((r) => (
+              <RoutineRow key={r.name} r={r} />
+            ))}
+          </ul>
+        ) : !q.error ? (
+          <LoadingRows rows={4} className="p-3" />
+        ) : notHere ? (
+          <p className="p-3 text-xs text-muted-foreground">
+            GET /agent/routines ainda não chegou neste servidor.
+          </p>
         ) : (
-          <Badge variant="agent">tudo em dia</Badge>
-        )
-      }
-      flush
-    >
-      <ul className="divide-y">
-        {q.data.map((r) => (
-          <RoutineRow key={r.name} r={r} />
-        ))}
-      </ul>
-    </Panel>
+          <ErrorState error={q.error} onRetry={() => void q.refetch()} className="py-4" />
+        )}
+      </Panel>
+    </section>
   );
 }
 

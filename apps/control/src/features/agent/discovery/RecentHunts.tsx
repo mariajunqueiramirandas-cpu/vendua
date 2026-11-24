@@ -54,7 +54,7 @@ export function RecentHunts({
       cell: (r) => (
         <span className="flex min-w-0 flex-col leading-tight">
           {queryOf(r) && <span className="truncate">{queryOf(r)}</span>}
-          <span className="font-mono text-[11px] text-muted-foreground">run {shortId(r.id)}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">#{shortId(r.id)}</span>
         </span>
       ),
     },
@@ -107,7 +107,7 @@ export function RecentHunts({
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex items-baseline gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                  {queryOf(r) || `run ${shortId(r.id)}`}
+                  {queryOf(r) || `caçada #${shortId(r.id)}`}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground tnum">
                   {rel(r.created_at)}

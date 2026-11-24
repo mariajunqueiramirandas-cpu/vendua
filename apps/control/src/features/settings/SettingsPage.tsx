@@ -48,13 +48,13 @@ export default function SettingsPage() {
   const tQ = useTelegram();
   const saveSetting = useSaveSetting();
 
-  // pre-redesign links used ?s=; the agent sections moved to the Estúdio, Discord moved to Telegram
+  // pre-redesign links used ?s=; agent sections moved to Agente → Configurar, Discord → Telegram, agenda → reunioes
   const legacy = params.get('s');
-  const legacyDiscord = params.get('a') === 'discord';
+  const legacyArea = params.get('a');
   useEffect(() => {
-    if (legacyDiscord) {
+    if (legacyArea === 'discord' || legacyArea === 'agenda') {
       const next = new URLSearchParams(params);
-      next.set('a', 'telegram');
+      next.set('a', legacyArea === 'discord' ? 'telegram' : 'reunioes');
       setParams(next, { replace: true });
       return;
     }
@@ -63,9 +63,10 @@ export default function SettingsPage() {
     if (legacy === 'regras') return nav(`${STUDIO}?s=limites`, { replace: true });
     const next = new URLSearchParams(params);
     next.delete('s');
-    if (AREAS.some((a) => a.key === legacy) && legacy !== 'visao') next.set('a', legacy);
+    const mapped = legacy === 'agenda' ? 'reunioes' : legacy;
+    if (AREAS.some((a) => a.key === mapped) && mapped !== 'visao') next.set('a', mapped);
     setParams(next, { replace: true });
-  }, [legacy, legacyDiscord, params, nav, setParams]);
+  }, [legacy, legacyArea, params, nav, setParams]);
 
   const area: AreaKey = AREAS.find((a) => a.key === params.get('a'))?.key ?? 'visao';
   const anchor = params.get('p');
@@ -97,7 +98,7 @@ export default function SettingsPage() {
     telegram: tQ.isError ? 'err' : (tQ.data ?? null),
   });
   const marks: Partial<Record<AreaKey, ProvTone>> = {};
-  if (mStatus && r.agendaCheck.tone !== 'live') marks.agenda = r.agendaCheck.tone;
+  if (mStatus && r.agendaCheck.tone !== 'live') marks.reunioes = r.agendaCheck.tone;
   const telegramTone = r.routine.find((c) => c.key === 'telegram')?.tone;
   if (telegramTone === 'warn') marks.telegram = 'warn';
 
@@ -166,7 +167,7 @@ export default function SettingsPage() {
           className={cn(tabTriggerClass, 'ml-auto')}
           title="autonomia, voz, instruções, limites e memória do agente"
         >
-          estúdio do agente <ArrowUpRight />
+          configurar agente <ArrowUpRight />
         </Link>
       </nav>
 
@@ -180,7 +181,7 @@ export default function SettingsPage() {
           )}
           {/* areas stay mounted — switching hides, not unmounts, so unsaved edits survive */}
           <div hidden={area !== 'visao'}>
-            <OverviewArea r={r} loading={loading} onGo={go} />
+            <OverviewArea r={r} loading={loading} active={area === 'visao'} onGo={go} />
           </div>
           <div hidden={area !== 'conexoes'}>
             <ConnectionsArea
@@ -194,7 +195,7 @@ export default function SettingsPage() {
               savingHistory={savingKey === 'whatsapp_history'}
             />
           </div>
-          <div hidden={area !== 'agenda'}>
+          <div hidden={area !== 'reunioes'}>
             <AgendaArea
               value={obj(settings.meeting)}
               status={mStatus === 'err' ? null : mStatus}

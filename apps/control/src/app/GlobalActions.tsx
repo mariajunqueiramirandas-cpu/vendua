@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import {
+  Bot,
   Download,
   Keyboard,
   LogOut,
@@ -46,7 +47,14 @@ export function GlobalActions() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-56">
-          <DropdownMenuLabel>agente · {shell.llmDriver || '…'}</DropdownMenuLabel>
+          <DropdownMenuLabel>agente · {shell.agentStatus.label || '…'}</DropdownMenuLabel>
+          <DropdownMenuItem
+            onSelect={() =>
+              nav(shell.agentStatus.modelsMissing ? '/ia/modelos' : '/agente/configurar')
+            }
+          >
+            <Bot /> {shell.agentStatus.modelsMissing ? 'Configurar modelo' : 'Configurar agente'}
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => nav('/config')}>
             <Settings /> Config
           </DropdownMenuItem>

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Page } from '@/components/Page.tsx';
+import { AgentStatusPill } from '../AgentStatusPill.tsx';
 import { isActive } from '../activity/queries.ts';
 import { AGENT_TABS } from '../tabs.ts';
 import { Briefs } from './Briefs.tsx';
+import { DiscoveryAutomationStrip } from './DiscoveryAutomationStrip.tsx';
 import { HuntForm } from './HuntForm.tsx';
 import { LiveStage } from './LiveStage.tsx';
 import { useDiscoveryRuns, useSegments } from './queries.ts';
@@ -33,8 +35,9 @@ export default function DiscoveryPage() {
     });
 
   return (
-    <Page title="Agente" tabs={AGENT_TABS}>
+    <Page title="Agente" tabs={AGENT_TABS} actions={<AgentStatusPill />}>
       <div className="flex flex-col gap-3">
+        <DiscoveryAutomationStrip />
         {runId ? (
           <LiveStage key={runId} runId={runId} fallbackTarget={target} onReset={reset} />
         ) : (

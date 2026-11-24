@@ -78,7 +78,7 @@ export const isPausedRun = (r: AgentRun) => isActive(r.status) && r.thread_agent
 
 export function PausedChip() {
   return (
-    <Tooltip content="a conversa está pausada — o run fica na fila até o agente ser reativado nela">
+    <Tooltip content="a conversa está pausada — a execução fica na fila até o agente ser reativado nela">
       <span className="inline-flex">
         <Badge variant="warn">
           <PauseCircle /> pausado
