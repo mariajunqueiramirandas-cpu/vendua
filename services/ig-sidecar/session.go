@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"regexp"
 	"slices"
 	"strconv"
@@ -81,8 +80,8 @@ type Manager struct {
 	lastInboundMS int64
 	groups        map[string]bool
 
-	sendMu   sync.Mutex
-	lastSend time.Time
+	sendPace   pacer
+	followPace pacer
 
 	// loginMu serializes wizard calls (held across Instagram round trips);
 	// loginView/loginAt sit under mu so /v1/status never waits on one
@@ -93,7 +92,11 @@ type Manager struct {
 }
 
 func newManager(cfg config, log zerolog.Logger, sink *eventSink) *Manager {
-	return &Manager{cfg: cfg, log: log, sink: sink, state: stateOff, groups: map[string]bool{}}
+	return &Manager{
+		cfg: cfg, log: log, sink: sink, state: stateOff, groups: map[string]bool{},
+		sendPace:   pacer{gap: cfg.MinSendGap},
+		followPace: pacer{gap: cfg.MinFollowGap},
+	}
 }
 
 func (m *Manager) newClient(c *cookies.Cookies, device *types.InstagramLoginDevice, onDevice func(types.InstagramLoginDevice)) (*instameow.Client, error) {
@@ -547,12 +550,18 @@ func (m *Manager) catchUp(ctx context.Context, gen uint64, cli *instameow.Client
 }
 
 func (m *Manager) liveClient() (*instameow.Client, error) {
+	cli, _, _, err := m.liveSession()
+	return cli, err
+}
+
+// liveSession is liveClient plus its generation (to fail it) and the account's own fbid.
+func (m *Manager) liveSession() (*instameow.Client, uint64, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.client == nil || m.state == stateError || m.state == stateOff {
-		return nil, errNotConnected
+		return nil, 0, 0, errNotConnected
 	}
-	return m.client, nil
+	return m.client, m.gen, m.ownFBID, nil
 }
 
 type Resolved struct {
@@ -627,37 +636,30 @@ func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendR
 	}
 	id, err := strconv.ParseInt(fbid, 10, 64)
 	if err != nil || id <= 0 {
-		return nil, errors.New("fbid inválido")
+		return nil, errBadFBID
 	}
 
-	m.sendMu.Lock()
-	defer m.sendMu.Unlock()
-	if gap := m.cfg.MinSendGap; gap > 0 {
-		wait := gap + rand.N(gap/2+1) - time.Since(m.lastSend)
-		if wait > 0 && !sleepCtx(ctx, wait) {
-			// Core gave up waiting — not sending keeps its 'failed' record true
-			return nil, ctx.Err()
-		}
-	}
-	defer func() { m.lastSend = time.Now() }()
-
-	req := &slidetypes.SendTextRequest{
-		OfflineThreadingID: strconv.FormatInt(methods.GenerateEpochID(), 10),
-		Text:               slidetypes.SensitiveString{Value: text},
-		SendAttribution:    ptr.Ptr("igd_web_chat_tab:in_thread"),
-	}
 	res := &SendResult{FBID: fbid}
-	ids, err := cli.FetchThreadID(ctx, id)
-	switch {
-	case errors.Is(err, instameow.ErrThreadNotFound):
-		req.RecipientIGIDs = []string{fbid}
-	case err != nil:
-		return nil, fmt.Errorf("thread lookup failed: %w", err)
-	default:
-		req.IGThreadIGID = &ids.ShortID
-		res.ThreadID = ids.ShortID
-	}
-	resp, err := cli.SendMessage(ctx, req)
+	var resp *slidetypes.SendTextResponse
+	err = m.sendPace.do(ctx, func() error {
+		req := &slidetypes.SendTextRequest{
+			OfflineThreadingID: strconv.FormatInt(methods.GenerateEpochID(), 10),
+			Text:               slidetypes.SensitiveString{Value: text},
+			SendAttribution:    ptr.Ptr("igd_web_chat_tab:in_thread"),
+		}
+		ids, err := cli.FetchThreadID(ctx, id)
+		switch {
+		case errors.Is(err, instameow.ErrThreadNotFound):
+			req.RecipientIGIDs = []string{fbid}
+		case err != nil:
+			return fmt.Errorf("thread lookup failed: %w", err)
+		default:
+			req.IGThreadIGID = &ids.ShortID
+			res.ThreadID = ids.ShortID
+		}
+		resp, err = cli.SendMessage(ctx, req)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

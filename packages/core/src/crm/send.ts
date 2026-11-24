@@ -19,6 +19,7 @@ import { blockedPhonesTx } from '../modules/staff.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
 import { sendInstagram } from './channels/instagram.ts';
+import { followBeforeDm } from './ig-follows.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 import { enqueuePlatformWaTx } from '../platform-whatsapp/outbox.ts';
 import { platformTransport } from '../platform-whatsapp/transport.ts';
@@ -313,6 +314,13 @@ export async function dispatchMessage(
     } else if (send.channel === 'whatsapp') {
       providerMessageId = await sendWhatsApp(sql, send.integration!, send.to!, send.body);
     } else if (send.channel === 'instagram') {
+      // follow first (best effort, bounded): a DM from an account that follows them reads less
+      // like spam, and the follow notification gets it opened
+      await followBeforeDm(sql, send.integration!, {
+        leadId: send.leadId,
+        handle: send.to,
+        fbid: send.igFbid,
+      });
       const r = await sendInstagram(
         send.integration!,
         { fbid: send.igFbid, handle: send.to },

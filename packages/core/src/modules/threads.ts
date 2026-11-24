@@ -483,6 +483,12 @@ export async function addInboundMessage(
       }
     }
 
+    // someone who writes to the account on instagram gets followed back
+    if (igHandle && direction === 'in') {
+      const { queueIgFollowTx } = await import('../crm/ig-follows.ts');
+      await queueIgFollowTx(tx, leadId, igHandle);
+    }
+
     const thread = await ensureThread(tx, leadId, input.channel, {
       subject: input.subject ?? null,
       externalId: input.externalThreadId ?? null,

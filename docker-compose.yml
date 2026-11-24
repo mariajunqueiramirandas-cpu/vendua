@@ -368,6 +368,7 @@ services:
       # static residential proxy (http:// or socks5://) — Instagram flags datacenter IPs
       IG_PROXY: ${IG_PROXY:-}
       IG_MIN_SEND_GAP_SECONDS: ${IG_MIN_SEND_GAP_SECONDS:-20}
+      IG_MIN_FOLLOW_GAP_SECONDS: ${IG_MIN_FOLLOW_GAP_SECONDS:-60}
       LOG_LEVEL: ${IG_SIDECAR_LOG_LEVEL:-info}
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8790/healthz || exit 1']
