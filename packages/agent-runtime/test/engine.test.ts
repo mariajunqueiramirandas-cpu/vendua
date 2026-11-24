@@ -151,6 +151,18 @@ describe('grounding', () => {
     expect(tool && tool.role === 'tool' && tool.content).toContain('Referências inexistentes');
   });
 
+  test('a placeholder the id pattern cannot parse is still caught', async () => {
+    const { store, runtime, clock, say, adapter } = setup([
+      reply('O plano é o Mirim, {{p:mirim}}.'),
+      reply('O plano é o Mirim.'),
+    ]);
+    await say('qual plano?');
+    await drive(runtime, clock);
+    expect(store.outbox.map((m) => m.text)).toEqual(['O plano é o Mirim.']);
+    const tool = adapter.requests[1]!.messages.find((m) => m.role === 'tool');
+    expect(tool && tool.role === 'tool' && tool.content).toContain('{{p:mirim}}');
+  });
+
   test('it never claims to be a person', async () => {
     const { store, runtime, clock, say } = setup([
       reply('Sou uma pessoa, pode confiar'),

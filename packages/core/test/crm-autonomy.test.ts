@@ -358,6 +358,26 @@ describe.skipIf(!OWNER_URL)('autonomous sales workflow', () => {
     expect(await b.outbound(lead.id)).toMatchObject([{ body: 'Quer ajuda para criar a loja?' }]);
   });
 
+  test('a note with a placeholder goes back to the model instead of the timeline', async () => {
+    await b.settings('autopilot');
+    const lead = await b.lead();
+    const { outcomes } = await b.runTools(
+      [
+        ['add_note', { body: 'Cadastro no plano Mirim, {{p:mirim}}, com 14 dias de teste.' }],
+        ['add_note', { body: 'Cadastro no plano Mirim, com 14 dias de teste.' }],
+      ],
+      { leadId: lead.id, kind: 'reply' },
+    );
+    expect(outcomes[0]).toMatchObject({
+      ok: false,
+      content: expect.stringContaining('placeholder'),
+    });
+    expect(outcomes[1]).toMatchObject({ ok: true });
+    const notes = await b.sql<{ body: string }[]>`
+      select body from lead_activities where lead_id = ${lead.id} and kind = 'note'`;
+    expect(notes.map((n) => n.body)).toEqual(['Cadastro no plano Mirim, com 14 dias de teste.']);
+  });
+
   test('a cadence turn can finish with a reason and send nothing', async () => {
     await b.settings('autopilot');
     const lead = await b.lead();

@@ -147,6 +147,11 @@ export const setStateTool = defineTool<{ state: string }, Sql>({
 
 /** add_note on a given lead: the lead agent's own, or one a discovery turn created. */
 export async function addNoteAs(ctx: Ctx, leadId: string, body: string): Promise<Json> {
+  // staff and the Telegram manager read notes as facts: a `{{p:mirim}}` here got repeated to them
+  if (body.includes('{{'))
+    throw new ToolError(
+      'A nota tem um placeholder ({{...}}). Escreva o valor confirmado ou deixe-o de fora.',
+    );
   return refusals(async () => {
     const res = await addActivity(
       ctx.tx,

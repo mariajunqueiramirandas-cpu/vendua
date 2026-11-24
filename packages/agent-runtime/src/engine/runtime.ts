@@ -885,7 +885,7 @@ export class Runtime<H = unknown> {
       return void (await blocked(
         'references',
         `unknown:${rendered.unknown.join(',')}`,
-        `Referências inexistentes: ${rendered.unknown.map((u) => `{{${u}}}`).join(', ')}. Use só as do REGISTRO.`,
+        `Referências inexistentes: ${rendered.unknown.map((u) => `{{${u}}}`).join(', ')}. Use só as do REGISTRO; sem um valor confirmado, escreva a frase sem a referência.`,
       ));
     const gctx: OutputGuardCtx = {
       state: run.state,
