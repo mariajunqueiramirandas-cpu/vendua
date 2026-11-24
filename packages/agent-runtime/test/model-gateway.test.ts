@@ -554,6 +554,107 @@ describe('openai-compatible adapter', () => {
     expect(answer.usage.costUsd).toBeCloseTo(0.00025, 8);
   });
 
+  test('Mistral never sends user after tool or consecutive user messages (volatile + multi-turn)', async () => {
+    const mock = fakeFetch({
+      choices: [{ message: { content: 'Tudo certo.' } }],
+      usage: { prompt_tokens: 100, completion_tokens: 10 },
+    });
+    const adapter = openAiCompatibleAdapter({
+      id: 'mistral',
+      baseUrl: 'https://api.mistral.ai/v1',
+      apiKey: 'test-mistral-key',
+      messageFormat: 'mistral',
+      fetch: mock.fetch,
+    });
+    const gw = createGateway({
+      adapters: [adapter],
+      routes: resolver([route('mistral', { model: 'mistral-large-4', zdr: false })]),
+    });
+
+    // 1) Step 0: user + volatile merges into a single user message
+    await gw.generate(
+      request({
+        messages: [{ role: 'user', parts: [{ type: 'text', text: 'Oi!' }] }],
+        volatile: 'AGORA: seg 23:15',
+      }),
+    );
+    expect(mock.calls[0]!.body.messages).toEqual([
+      { role: 'system', content: 'Você é a atendente.' },
+      { role: 'user', content: 'Oi!\n\nAGORA: seg 23:15' },
+    ]);
+
+    // 2) Step 1 (after tool call): volatile appends onto the trailing tool message (never user after tool)
+    await gw.generate(
+      request({
+        messages: [
+          { role: 'user', parts: [{ type: 'text', text: 'Como foi esse lead?' }] },
+          {
+            role: 'assistant',
+            text: '',
+            toolCalls: [{ id: 'M1stral01', name: 'get_lead_details', args: {} }],
+          },
+          {
+            role: 'tool',
+            callId: 'M1stral01',
+            name: 'get_lead_details',
+            content: '{"ok":true}',
+            isError: false,
+          },
+        ],
+        volatile: 'AGORA: seg 23:15',
+      }),
+    );
+    expect(mock.calls[1]!.body.messages).toEqual([
+      { role: 'system', content: 'Você é a atendente.' },
+      { role: 'user', content: 'Como foi esse lead?' },
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'M1stral01',
+            type: 'function',
+            function: { name: 'get_lead_details', arguments: '{}' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'M1stral01',
+        name: 'get_lead_details',
+        content: '{"ok":true}\n\nAGORA: seg 23:15',
+      },
+    ]);
+
+    // 3) Turn 2 after Turn 1 ended via reply tool: bridges tool -> assistant -> user cleanly
+    await gw.generate(
+      request({
+        messages: [
+          { role: 'user', parts: [{ type: 'text', text: 'Oi' }] },
+          {
+            role: 'assistant',
+            text: '',
+            toolCalls: [{ id: 'M1stral02', name: 'reply', args: { text: 'Olá!' } }],
+          },
+          { role: 'tool', callId: 'M1stral02', name: 'reply', content: 'Enviada.', isError: false },
+          { role: 'user', parts: [{ type: 'text', text: 'E aí, o que mais tu pode fazer?' }] },
+        ],
+        volatile: 'AGORA: seg 23:16',
+      }),
+    );
+    expect(mock.calls[2]!.body.messages.map((m: { role: string }) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'user',
+    ]);
+    expect(mock.calls[2]!.body.messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'E aí, o que mais tu pode fazer?\n\nAGORA: seg 23:16',
+    });
+  });
+
   test('request shape and parse of tool calls and usage', async () => {
     const { fetch, calls } = fakeFetch({
       model: 'openai/gpt-x',

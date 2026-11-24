@@ -472,7 +472,7 @@ export async function handleUpdate(
   } catch (e) {
     wlog.error({ err: e, chatId }, 'telegram crm-manager dispatch failed');
     await sendCard(client, chatId, {
-      text: '⚠️ não consegui acionar o gerente de vendas agora — tente `/agente` ou `/hoje`.',
+      text: `⚠️ não consegui acionar o gerente de vendas agora — tente ${mono('/agente')} ou ${mono('/hoje')}.`,
     }).catch(() => {});
   }
 }

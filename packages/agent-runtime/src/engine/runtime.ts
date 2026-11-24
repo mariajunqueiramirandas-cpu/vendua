@@ -121,6 +121,7 @@ export class Runtime<H = unknown> {
   private readonly current = new Map<string, Agent<H>>();
   private readonly byVersion = new Map<string, Agent<H>>();
   private readonly transports = new Map<string, Transport<H>>();
+  private readonly lastErrors = new Map<string, string>();
 
   constructor(private readonly o: RuntimeOptions<H>) {
     this.clock = o.clock ?? systemClock;
@@ -240,7 +241,12 @@ export class Runtime<H = unknown> {
     });
     try {
       if (run.actor.attempts > (run.agent.def.maxAttempts ?? 3)) {
-        await this.fail(run, `gave up after ${run.actor.attempts - 1} attempts`);
+        const last = this.lastErrors.get(run.actor.id);
+        this.lastErrors.delete(run.actor.id);
+        await this.fail(
+          run,
+          `gave up after ${run.actor.attempts - 1} attempts${last ? `: ${last}` : ''}`,
+        );
         run.span.end();
         return { lease: run.lease, outcome: { kind: 'failed' } };
       }
@@ -249,6 +255,7 @@ export class Runtime<H = unknown> {
       else if (maintenance === 'runtime.consolidate') await this.consolidate(run);
       else await this.steps(run);
       await this.end(run);
+      this.lastErrors.delete(run.actor.id);
       run.span.end();
       return { lease: run.lease, outcome: { kind: 'ended' } };
     } catch (e) {
@@ -256,9 +263,12 @@ export class Runtime<H = unknown> {
       if (e instanceof SupersededSignal)
         return { lease: run.lease, outcome: { kind: 'superseded' } };
       if (e instanceof BudgetExceededError) {
+        this.lastErrors.delete(run.actor.id);
         await this.fail(run, `budget: ${e.message}`);
         return { lease: run.lease, outcome: { kind: 'failed' } };
       }
+      if (this.lastErrors.size >= 500) this.lastErrors.delete(this.lastErrors.keys().next().value!);
+      this.lastErrors.set(run.actor.id, errText(e));
       throw e;
     }
   }
