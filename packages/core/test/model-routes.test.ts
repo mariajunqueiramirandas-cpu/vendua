@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createGateway, ProviderError, type ModelRequest } from '@vendua/agent-runtime';
 import { mistralAdapter, MISTRAL_PRIMARY_ROUTE } from '../src/agent-host/mistral.ts';
-import { adaptersFromEnv, preferMistralLarge4, routesFrom } from '../src/agent-host/models.ts';
+import { adaptersFromEnv, preferMistralPrimary, routesFrom } from '../src/agent-host/models.ts';
 
 test('registers a direct Mistral adapter only with a Mistral key', () => {
   expect(adaptersFromEnv({})).toHaveLength(0);
@@ -10,15 +10,19 @@ test('registers a direct Mistral adapter only with a Mistral key', () => {
   ]);
 });
 
-test('promotes a configured Large 4 once and keeps the chosen route options and fallback order', () => {
+test('promotes the Mistral primary once, keeps its chosen options and fallback order, and leaves Large 4 as a fallback', () => {
   const fallback = { provider: 'openrouter', model: 'mistralai/mistral-large-4-0', zdr: true };
-  const chosen = { provider: 'mistral', model: 'mistral-large-4-0', zdr: true, timeoutMs: 30_000 };
+  const chosen = {
+    provider: 'mistral',
+    model: MISTRAL_PRIMARY_ROUTE.model,
+    zdr: true,
+    timeoutMs: 30_000,
+  };
+  const largeFour = { provider: 'mistral', model: 'mistral-large-4-0', zdr: true };
   const claude = { provider: 'anthropic', model: 'claude-haiku-5-5', zdr: true };
-  expect(preferMistralLarge4([fallback, chosen, MISTRAL_PRIMARY_ROUTE, claude])).toEqual([
-    { ...MISTRAL_PRIMARY_ROUTE, ...chosen },
-    fallback,
-    claude,
-  ]);
+  expect(
+    preferMistralPrimary([fallback, largeFour, chosen, MISTRAL_PRIMARY_ROUTE, claude]),
+  ).toEqual([{ ...MISTRAL_PRIMARY_ROUTE, ...chosen }, fallback, largeFour, claude]);
 });
 
 const shortRequest: ModelRequest = {
@@ -31,7 +35,7 @@ const shortRequest: ModelRequest = {
   maxTokens: 30,
 };
 
-test('adds Large 4 reasoning tokens to both the API request and the gateway budget estimate', async () => {
+test('adds reasoning tokens to the Mistral primary budget, without a reasoning_effort it does not document', async () => {
   const requests: unknown[] = [];
   const estimates: number[] = [];
   const adapter = mistralAdapter('test', async (_url, init) => {
@@ -59,12 +63,32 @@ test('adds Large 4 reasoning tokens to both the API request and the gateway budg
   await gateway.generate({ ...shortRequest, maxTokens: 1200 }, { meter });
   await gateway.generate({ ...shortRequest, tier: 'strong', maxTokens: 4000 }, { meter });
   expect(requests).toMatchObject([
-    { model: MISTRAL_PRIMARY_ROUTE.model, max_tokens: 8222, reasoning_effort: 'low' },
-    { model: MISTRAL_PRIMARY_ROUTE.model, max_tokens: 17584, reasoning_effort: 'medium' },
-    { model: MISTRAL_PRIMARY_ROUTE.model, max_tokens: 36768, reasoning_effort: 'high' },
+    { model: MISTRAL_PRIMARY_ROUTE.model, max_tokens: 8222 },
+    { model: MISTRAL_PRIMARY_ROUTE.model, max_tokens: 17584 },
+    { model: MISTRAL_PRIMARY_ROUTE.model, max_tokens: 36768 },
   ]);
+  for (const body of requests) expect(body).not.toHaveProperty('reasoning_effort');
   expect(estimates).toEqual([8222, 17584, 36768]);
-  expect(result.usage.costUsd).toBeCloseTo(0.000287, 9);
+  // 100 uncached input at 0.3, 100 cached at 0.007, 100 output at 1.2 (per million)
+  expect(result.usage.costUsd).toBeCloseTo(0.0001507, 9);
+});
+
+test('Large 4, if staff still route to it, keeps its reasoning_effort and headroom', async () => {
+  const requests: Record<string, unknown>[] = [];
+  const adapter = mistralAdapter('test', async (_url, init) => {
+    requests.push(JSON.parse(init.body as string));
+    return Response.json({ choices: [{ message: { content: 'Yes' } }] });
+  });
+  const gateway = createGateway({
+    adapters: [adapter],
+    routes: {
+      routes: async () => [{ provider: 'mistral', model: 'mistral-large-4-0', zdr: true }],
+    },
+  });
+  await gateway.generate({ ...shortRequest, maxTokens: 1200 });
+  expect(requests).toMatchObject([
+    { model: 'mistral-large-4-0', max_tokens: 17584, reasoning_effort: 'medium' },
+  ]);
 });
 
 test('counts the bill for a reasoning-only response and lets the gateway fall back', async () => {
@@ -115,7 +139,8 @@ test('counts the bill for a reasoning-only response and lets the gateway fall ba
   });
   const result = await gateway.generate(shortRequest);
   expect(result).toMatchObject({ provider: 'fallback', text: 'Yes' });
-  expect(result.usage.costUsd).toBeCloseTo(0.0174062, 9);
+  // the failed call's bill: 200 input at 0.3 + 8,222 output at 1.2, per million
+  expect(result.usage.costUsd).toBeCloseTo(0.0099264, 9);
 });
 
 describe('routesFrom', () => {
