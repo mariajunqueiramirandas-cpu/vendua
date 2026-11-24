@@ -24,6 +24,7 @@ import { insertLeadTx } from '../src/modules/leads.ts';
 import { recordStaffEventTx } from '../src/modules/staff-events.ts';
 import { deliverStaffEvents, resetDeliveryClock } from '../src/modules/telegram/deliver.ts';
 import { markdownToTelegramHtml } from '../src/modules/telegram/format.ts';
+import { triggerBoardRun } from '../src/modules/telegram/manager-ops.ts';
 import { resetRateLimits, type TelegramFetch } from '../src/modules/telegram/rest.ts';
 import { migrate, withTenant, type Sql } from '../src/platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../src/platform/tenancy.ts';
@@ -133,8 +134,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('telegram sales-agent manager (d
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   }
 
+  let lastAdapter: ReturnType<typeof scriptedAdapter> | null = null;
   function managerRuntime(script: ScriptedOutput[]) {
     const adapter = scriptedAdapter(script);
+    lastAdapter = adapter;
     const gateway: ModelGateway = createGateway({
       adapters: [adapter],
       routes: { routes: async () => [{ provider: 'scripted', model: 't', zdr: true }] },
@@ -678,6 +681,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('telegram sales-agent manager (d
     });
     const replayToast = calls.find((c) => c.method === 'answerCallbackQuery');
     expect(String(replayToast?.body.text)).toContain('já foi aplicada');
+
+    // The next turn sees the tap (the history only has its own "confirme no botão") and a hunt
+    // that hasn't finished: crm_turns only records finished runs
+    await triggerBoardRun(appSql, {
+      kind: 'discovery',
+      query: 'doceiras em Araruama',
+      by: 'Ana',
+      idemKey: `hunt-${Date.now()}`,
+    });
+    await webhook({
+      update_id: 1024,
+      message: {
+        message_id: 824,
+        from: { id: Number(ANA_ID), first_name: 'Ana' },
+        chat: { id: Number(ANA_ID), type: 'private' },
+        text: 'e aí, já mudou?',
+      },
+    });
+    await pumpManager(managerRuntime([reply('Já está em piloto automático.')]));
+    const seen = JSON.stringify(lastAdapter!.requests.at(-1));
+    expect(seen).toContain('CARTÕES DE CONFIRMAÇÃO');
+    expect(seen).toMatch(/mudar configuração do agente[^"]*JÁ CONFIRMADO por Ana/);
+    expect(seen).toContain('Venduá Mirim (mirim): R$\u00a069,90/mês');
+    expect(seen).toContain('descoberta: na fila');
+    expect(seen).toContain('doceiras em Araruama');
 
     // /nova resets the crm-manager actor's conversation history cleanly
     calls = [];
