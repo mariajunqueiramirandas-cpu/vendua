@@ -1,4 +1,6 @@
+import { Link } from 'react-router-dom';
 import type { IgStatus, Integration } from '@/lib/api.ts';
+import { Card } from '@/components/ui/card.tsx';
 import { Skeleton } from '@/components/ui/controls.tsx';
 import { SectionHead } from './bits.tsx';
 import { KINDS, WA_IDLE, type WaState } from './providers.ts';
@@ -34,6 +36,19 @@ export function ConnectionsArea({
         title="provedores"
         sub={`um driver ativo por tipo — ${provLive}/${KINDS.length} prontos`}
       />
+      <Card className="mb-3 flex flex-col gap-2 p-4">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-medium">modelo</span>
+          <span className="text-sm text-muted-foreground">o cérebro do agente</span>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Os modelos do agente se escolhem na aba IA, nas rotas e orçamentos. O Mistral aparece lá
+          como provedor direto.
+        </p>
+        <Link to="/ia/modelos" className="w-fit text-sm font-medium underline underline-offset-4">
+          abrir modelos da IA
+        </Link>
+      </Card>
       <div className="grid gap-3 lg:grid-cols-2 [&>*]:min-w-0">
         {loading && !integrations.length
           ? KINDS.map((k) => <Skeleton key={k.key} className="h-56 rounded-lg" />)

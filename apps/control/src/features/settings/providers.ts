@@ -32,77 +32,9 @@ export function configOut(drv: Driver | undefined, config: Record<string, string
 
 export type Kind = { key: string; label: string; sub: string; drivers: Driver[] };
 
+// 'modelo' is not a provider kind any more: the agent's models are routes in the IA hub
+// (/ia/modelos), so it has no card here and no readiness check.
 export const KINDS: Kind[] = [
-  {
-    key: 'llm',
-    label: 'modelo',
-    sub: 'o cérebro do agente',
-    drivers: [
-      {
-        d: 'gemini',
-        label: 'gemini',
-        hint: 'google ai studio — acesso direto',
-        secret: true,
-        secretName: 'GEMINI_API_KEY',
-        fields: [
-          { key: 'model', label: 'modelo', placeholder: 'gemini-3.5-flash-lite' },
-          {
-            key: 'rpm',
-            label: 'req/min',
-            placeholder: '14',
-            number: true,
-            hint: 'teto de chamadas por minuto — tier gratuito ≤15',
-          },
-        ],
-      },
-      {
-        d: 'openrouter',
-        label: 'openrouter',
-        hint: 'um endpoint, qualquer modelo — o campo modelo escolhe qual',
-        secret: true,
-        secretName: 'OPENROUTER_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'liquid/lfm-2.5-2.6b:free' }],
-      },
-      {
-        d: 'anthropic',
-        label: 'anthropic',
-        hint: 'direto na API da Anthropic',
-        secret: true,
-        secretName: 'ANTHROPIC_API_KEY',
-        fields: [
-          {
-            key: 'model',
-            label: 'modelo',
-            placeholder: 'claude-haiku-5-5',
-            locked: true,
-            hint: 'fixo: toda chamada direta à Anthropic usa este modelo',
-          },
-          {
-            key: 'effort',
-            label: 'esforço',
-            placeholder: 'medium',
-            options: [
-              ['low', 'baixo'],
-              ['medium', 'médio'],
-              ['high', 'alto'],
-              ['xhigh', 'extra'],
-              ['max', 'máximo'],
-            ],
-            hint: 'quanto o modelo pensa antes de responder: mais esforço, mais tokens e mais demora',
-          },
-        ],
-      },
-      {
-        d: 'openai',
-        label: 'openai',
-        hint: 'direto na API da OpenAI',
-        secret: true,
-        secretName: 'OPENAI_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'gpt-4o-mini' }],
-      },
-      { d: 'mock', label: 'mock', hint: 'respostas roteirizadas — dev e testes' },
-    ],
-  },
   {
     key: 'email',
     label: 'email',
