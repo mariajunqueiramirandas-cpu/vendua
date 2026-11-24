@@ -110,39 +110,170 @@ export const draftMessageTool = defineTool<
     }),
 });
 
+const URL_RE = /https?:\/\/[^\s<>()]+/gi;
+const BRL_RE = /R\$\s*(\d+(?:\.\d{3})*(?:,\d{1,2})?)|\bBRL\s*(\d+(?:[.,]\d{1,2})?)/gi;
+const REAIS_RE = /\b(\d+(?:\.\d{3})*(?:,\d{1,2})?)\s*reais\b/gi;
+const PCT_RE = /(\d+(?:[.,]\d+)?)\s*%/g;
+const TRIAL_DAYS_RE = /\b(\d+)\s*dias\s+(?:gr[áa]tis|de\s+teste)\b/gi;
+const ZERO_FEE_RE = /\b(?:sem|zero)\s+(?:taxa|comiss[aã]o)\b/i;
+
+function parseBrCents(raw: string): number | null {
+  const clean = raw.includes(',')
+    ? raw.replaceAll('.', '').replace(',', '.')
+    : raw.replace(/\.(?=\d{3}\b)/g, '');
+  const n = Number(clean);
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
+}
+
+function extractCents(text: string): number[] {
+  const out: number[] = [];
+  for (const re of [BRL_RE, REAIS_RE]) {
+    re.lastIndex = 0;
+    for (const m of text.matchAll(re)) {
+      const c = parseBrCents(m[1] ?? m[2] ?? '');
+      if (c !== null) out.push(c);
+    }
+  }
+  return out;
+}
+
+function extractBps(text: string): number[] {
+  PCT_RE.lastIndex = 0;
+  const out: number[] = [];
+  for (const m of text.matchAll(PCT_RE)) {
+    const n = Number((m[1] ?? '').replace(',', '.'));
+    if (Number.isFinite(n)) out.push(Math.round(n * 100));
+  }
+  return out;
+}
+
+function extractTrialDays(text: string): number[] {
+  TRIAL_DAYS_RE.lastIndex = 0;
+  return [...text.matchAll(TRIAL_DAYS_RE)].map((m) => Number(m[1])).filter(Number.isFinite);
+}
+
+/** Pulls only lines the lead wrote from the rendered subject context so the agent can echo numbers the lead brought up (e.g. "27% no iFood"). */
+function leadSpokenText(subjectText: string): string {
+  return subjectText
+    .split('\n')
+    .filter(
+      (line) => /^\[[^\]]+\]\s+LEAD\b/.test(line) || line.startsWith('PEDIDO DE RETORNO DO SITE'),
+    )
+    .join('\n');
+}
+
+export interface CommercialCheckInput {
+  body: string;
+  offerText: string;
+  bookingUrl: string | null;
+  leadText: string;
+  checkedCatalog: boolean;
+  plans?: readonly { priceCents: number | null; feeBps: number; trialDays: number }[];
+}
+
+/**
+ * Verifies links, prices, fees and trial days in outbound agent copy against the live catalog,
+ * approved OFERTA and numbers the lead themselves stated — blocking invented claims while letting
+ * the model write natural, conversational Portuguese.
+ */
+export function checkCommercialMessage(c: CommercialCheckInput): string | null {
+  const approvedLinks: readonly string[] = (c.offerText.match(URL_RE) ?? []).map((u) =>
+    u.replace(/[.,!?;:)]+$/, ''),
+  );
+  const urls = c.body.match(URL_RE) ?? [];
+  if (
+    urls.some((url) => {
+      const clean = url.replace(/[.,!?;:)]+$/, '');
+      return clean !== c.bookingUrl && !approvedLinks.includes(clean);
+    })
+  ) {
+    return 'Use send_signup_link para enviar um link de cadastro oficial.';
+  }
+
+  const cents = extractCents(c.body);
+  const hasMoneyToken = cents.length > 0 || /R\$|\bBRL\b|\breais\b/i.test(c.body);
+  const bps = extractBps(c.body);
+  const zeroFee = ZERO_FEE_RE.test(c.body);
+  const trials = extractTrialDays(c.body);
+
+  if (!hasMoneyToken && !bps.length && !zeroFee && !trials.length) return null;
+
+  const offerCents = new Set(extractCents(c.offerText));
+  const offerBps = new Set(extractBps(c.offerText));
+  const offerTrials = new Set(extractTrialDays(c.offerText));
+  const leadBps = new Set(extractBps(c.leadText).filter((b) => b > 0));
+
+  // Empathizing with a non-zero percentage the lead brought up (e.g. "27% no iFood") needs no catalog call;
+  // 0% claims always verify against the live catalog.
+  if (
+    !hasMoneyToken &&
+    !zeroFee &&
+    !trials.length &&
+    bps.every((b) => (b > 0 && leadBps.has(b)) || offerBps.has(b))
+  ) {
+    return null;
+  }
+
+  if (!c.checkedCatalog) {
+    return 'Consulte get_sales_offer antes de informar preços, taxas ou dias de teste (ou use send_signup_link com includePrice para enviar preços e taxas vigentes).';
+  }
+
+  const plans = c.plans ?? [];
+  const allowedCents = new Set([
+    ...plans.map((p) => p.priceCents).filter((v): v is number => v !== null),
+    ...offerCents,
+  ]);
+  const allowedBps = new Set([...plans.map((p) => p.feeBps), ...offerBps, ...leadBps]);
+  const allowedTrials = new Set([
+    ...plans.map((p) => p.trialDays).filter((d) => d > 0),
+    ...offerTrials,
+  ]);
+
+  if (hasMoneyToken && (cents.length === 0 || cents.some((v) => !allowedCents.has(v)))) {
+    return 'Preço não confere com o catálogo vigente. Use apenas valores retornados por get_sales_offer (ou use send_signup_link com includePrice).';
+  }
+  if (bps.some((b) => !allowedBps.has(b))) {
+    return 'Percentual não confere com o catálogo vigente. Use apenas taxas retornadas por get_sales_offer.';
+  }
+  if (zeroFee && !plans.some((p) => p.feeBps === 0)) {
+    return 'Os planos vigentes não têm taxa zero por pedido. Confira get_sales_offer.';
+  }
+  if (trials.some((d) => !allowedTrials.has(d))) {
+    return 'Dias de teste não conferem com o catálogo vigente. Use apenas o prazo retornado por get_sales_offer.';
+  }
+  return null;
+}
+
 export const sendMessageTool = defineTool<
   { channel?: string | undefined; body: string; subject?: string | undefined },
   Sql
 >({
   name: 'send_message',
   description:
-    "Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft. Omit channel to auto-pick the reachable one; a dead channel returns {blocked, reason, use} — retry on `use`. Instagram DMs max 1000 chars; a cold instagram DM lands in the lead's message requests, so open with who you are.",
+    'Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft. Omit channel to auto-pick the reachable one; a dead channel returns {blocked, reason, use} — retry on `use`. Official signup URLs must never be written here. Prices, fees and trial days are verified against the live catalog. Instagram DMs max 1000 chars.',
   effect: 'send',
   input: s.object({
     channel: s.enum(['email', 'whatsapp', 'instagram']).optional(),
     body: MESSAGE_BODY,
     subject: MESSAGE_SUBJECT,
   }),
-  run: (ctx: Ctx, input) => {
-    const offer = workspaceOf(ctx.state.context.tenant)?.pitch.offer ?? '';
-    const subject = ctx.state.context.subject as { bookingUrl?: string | null } | null;
-    const approvedLinks: readonly string[] = offer.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
-    const urls = input.body.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
-    if (
-      urls.some((url) => {
-        const clean = url.replace(/[.,!?;]+$/, '');
-        return clean !== subject?.bookingUrl && !approvedLinks.includes(clean);
-      })
-    )
-      return { error: 'Use send_signup_link para enviar um link de cadastro oficial.' };
-    if (
-      /R\$|\bBRL\b|\b\d+(?:[.,]\d+)?\s*(?:reais|%)|\b(?:sem|zero) (?:taxa|comiss[aã]o)\b/i.test(
-        input.body,
-      )
-    )
-      return {
-        error: 'Use send_signup_link com includePrice para enviar preços e taxas vigentes.',
-      };
+  run: async (ctx: Ctx, input) => {
+    const offerText = workspaceOf(ctx.state.context.tenant)?.pitch.offer ?? '';
+    const subject = ctx.state.context.subject as {
+      bookingUrl?: string | null;
+      text?: string;
+    } | null;
+    const checkedCatalog = turn(ctx.state).actions.includes('get_sales_offer');
+    const plans = checkedCatalog ? (await crm(ctx, crmOfferTx)).plans : undefined;
+    const issue = checkCommercialMessage({
+      body: input.body,
+      offerText,
+      bookingUrl: subject?.bookingUrl ?? null,
+      leadText: leadSpokenText(subject?.text ?? ''),
+      checkedCatalog,
+      ...(plans ? { plans } : {}),
+    });
+    if (issue) return { error: issue };
     return composeAgentSend(ctx, input);
   },
 });
@@ -157,17 +288,33 @@ export const getSalesOfferTool = defineTool<Record<string, never>, Sql>({
 });
 
 export const sendSignupLinkTool = defineTool<
-  { planId: string; includePrice?: boolean | undefined; includeLink?: boolean | undefined },
+  {
+    planId: string;
+    includePrice?: boolean | undefined;
+    includeLink?: boolean | undefined;
+    intro?: string | undefined;
+    outro?: string | undefined;
+  },
   Sql
 >({
   name: 'send_signup_link',
   description:
-    'Send the official signup link for an available plan when the lead wants to start. Use includePrice when quoting a plan, and includeLink=false for a price-only answer. Core renders the approved current price, fee and signup link.',
+    'Send the official signup link for an available plan when the lead truly wants to start (never on a brief curiosity reply like "sim"). Add a short, natural `intro` (and optional `outro`) tailored to the lead so it reads like a real human conversation. Core inserts the approved current price, fee, trial note and signed link. Use includeLink=false only for a price-only quote.',
   effect: 'send',
   input: s.object({
     planId: s.string({ min: 2, max: 30 }),
     includePrice: s.boolean().optional(),
     includeLink: s.boolean().optional(),
+    intro: s
+      .string({ max: 600 })
+      .describe(
+        'short natural opening before the price/link, answering the lead and tying the plan to their shop (no URLs; skip repeating the price when includePrice=true)',
+      )
+      .optional(),
+    outro: s
+      .string({ max: 300 })
+      .describe('short warm closing or one light follow-up question after the price/link')
+      .optional(),
   }),
   run: async (ctx, input) => {
     const offer = await crm(ctx, crmOfferTx);
@@ -182,7 +329,7 @@ export const sendSignupLinkTool = defineTool<
     if (!plan) {
       return {
         code: 'plan_unavailable',
-        error: 'Esse plano está indisponível. Consulte get_sales_offer para ver opções vigentes.',
+        error: 'Esse plano está indisponível. Consulte o catálogo vigente para ver opções abertas.',
       };
     }
     if (!wantsLink && (!input.includePrice || plan.priceCents === null)) {
@@ -195,18 +342,52 @@ export const sendSignupLinkTool = defineTool<
     if (wantsLink && !link) {
       return { code: 'link_unavailable', error: 'O link oficial não pôde ser criado.' };
     }
-    const price =
-      input.includePrice && plan.priceCents !== null
-        ? `O plano ${plan.name} custa ${(plan.priceCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por mês. A taxa da Venduá por pedido é de ${(plan.feeBps / 100).toLocaleString('pt-BR')}%.`
-        : '';
-    const trial =
+
+    const intro = input.intro ? normalizeMessageBody(input.intro) : '';
+    const outro = input.outro ? normalizeMessageBody(input.outro) : '';
+    if (hasUnresolvedTemplate(intro) || hasUnresolvedTemplate(outro)) return TEMPLATE_FAILURE;
+    if (intro || outro) {
+      const offerText = workspaceOf(ctx.state.context.tenant)?.pitch.offer ?? '';
+      const subject = ctx.state.context.subject as {
+        bookingUrl?: string | null;
+        text?: string;
+      } | null;
+      const issue = checkCommercialMessage({
+        body: [intro, outro].filter(Boolean).join('\n'),
+        offerText,
+        bookingUrl: subject?.bookingUrl ?? null,
+        leadText: leadSpokenText(subject?.text ?? ''),
+        checkedCatalog: true,
+        plans: offer.plans,
+      });
+      if (issue) return { error: issue };
+    }
+
+    const formattedPrice =
+      plan.priceCents !== null
+        ? (plan.priceCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+        : null;
+    const formattedFee = (plan.feeBps / 100).toLocaleString('pt-BR');
+    const trialSuffix =
       plan.trialDays > 0
-        ? `O cadastro confirma se você pode usar os ${plan.trialDays} dias de teste.`
+        ? ` e ${plan.trialDays} dias de teste grátis (confirmados no cadastro)`
         : '';
+    const priceLine =
+      input.includePrice && formattedPrice
+        ? `O ${plan.name} fica ${formattedPrice}/mês, com ${formattedFee}% de taxa da Venduá por pedido${trialSuffix}.`
+        : '';
+    const standaloneTrial =
+      !priceLine && plan.trialDays > 0 && !/\bteste\b/i.test(`${intro} ${outro}`)
+        ? `Os ${plan.trialDays} dias de teste grátis são confirmados no cadastro.`
+        : '';
+    const linkLine = link
+      ? intro && /\b(?:link|por aqui|cadastro)\b/i.test(intro)
+        ? link
+        : `Por aqui você cria sua loja no ${plan.name}:\n${link}`
+      : '';
+    const coreBlock = [priceLine, linkLine, standaloneTrial].filter(Boolean).join('\n');
     return composeAgentSend(ctx, {
-      body: [price, trial, link && `Crie sua loja no plano ${plan.name}\n${link}`]
-        .filter(Boolean)
-        .join('\n'),
+      body: [intro, coreBlock, outro].filter(Boolean).join('\n\n'),
     });
   },
 });

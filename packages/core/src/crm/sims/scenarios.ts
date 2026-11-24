@@ -211,6 +211,57 @@ export const SIM_SCENARIOS: SimScenario[] = [
       'O assistente acolhe a saudação, separa previsão de vendas reais e mostra o caminho WhatsApp, loja e app. Respeita o sentido do "pode ser" e envia o link oficial quando aceito e disponível. Penalize volume presumido, repetição de perguntas, reunião por padrão, teste garantido e placeholder no chat.',
     maxTurns: 8,
   },
+  {
+    name: 'confeitaria-sim-curto',
+    description:
+      'confeitaria que responde só "Sim" à abordagem fria — testa se o agente conversa em vez de despejar preço e link',
+    lead: {
+      name: 'Bia',
+      businessName: 'Doce Brisa',
+      whatsapp: `${SP}0010010`,
+      instagram: '@docebrisa.exemplo',
+      city: 'Belo Horizonte',
+      segment: 'confeitaria',
+      fitScore: 9,
+      fitReason: 'confeitaria artesanal com encomendas pelo WhatsApp e delivery próprio',
+      agentGoal: 'negotiation',
+    },
+    dossier: [
+      'Doce Brisa (@docebrisa.exemplo), Belo Horizonte. Perfil público mostra tortas artesanais, caixas de doces e bolos de festa sob encomenda pelo WhatsApp, além de vendas em aplicativo de delivery.',
+    ],
+    persona:
+      'Você é Bia, 31 anos, confeiteira e dona da Doce Brisa. Você responde mensagens entre uma fornada e outra. Na sua PRIMEIRA resposta à abordagem fria, responda curto: só "Sim" (ou "No WhatsApp mesmo", conforme o que perguntarem). Se o vendedor logo em seguida despejar preço, aviso de teste ou link de cadastro na sua cara, você acha que é spam de robô e responde FIM na hora (some). Se ele conversar como gente de verdade — explicando rapidinho como funcionaria pras tortas e encomendas e perguntando sobre sua rotina — você se abre, conta que fica até tarde respondendo tabela de sabores e se enrolando com as datas de sábado, pergunta quanto custa e, se curtir os planos, pede o link pra começar.',
+    hidden:
+      'Você faz cerca de 20 encomendas por semana e passa quase duas horas por noite passando sabores e preços no WhatsApp. Quer um link bonito com encomenda por data marcada e opções de sabor/recheio calculadas sozinhas, sem comissão por pedido. Só pede o link depois de entender como funciona e saber o valor.',
+    success:
+      'Na abordagem fria, o agente cita apenas 1 detalhe natural (sem despejar todo o cardápio nem usar "Uma ideia: ... Faz sentido pra vocês?"). Quando Bia responde curto ("Sim"), o agente NÃO despeja preço nem link: explica brevemente como funcionam encomendas no link/app e faz 1 pergunta sobre a rotina dela. Só informa preços quando ela perguntar e só envia o link oficial (com abertura natural) quando ela demonstrar que quer começar.',
+    maxTurns: 8,
+  },
+  {
+    name: 'marmitaria-frio-preco',
+    description:
+      'marmitaria abordada a frio que pergunta "como funciona?" e "quanto custa?" antes de decidir começar',
+    lead: {
+      name: 'Marcos',
+      businessName: 'Marmita da Vila',
+      whatsapp: `${SP}0010011`,
+      city: 'Curitiba',
+      segment: 'marmitaria',
+      fitScore: 8,
+      fitReason: 'marmitaria com cardápio diário enviado por foto/texto no WhatsApp',
+      agentGoal: 'negotiation',
+    },
+    dossier: [
+      'Marmita da Vila, Curitiba. Publica cardápio diário de almoço no status e recebe pedidos direto pelo WhatsApp; costuma avisar nos stories quando acaba algum prato.',
+    ],
+    persona:
+      'Você é Marcos, 38 anos, dono da Marmita da Vila. Responde curto entre o preparo do almoço. Na primeira resposta à abordagem fria, responda "Como funciona?". Depois que o vendedor explicar, pergunte "Quanto custa e qual a diferença dos planos?" sem pedir link ainda. Se ele empurrar o link antes de você pedir, você desconfia e diz que vai pensar. Se ele explicar os planos de forma natural e mostrar como esgotar prato do dia em um toque, você curte e pede o link do Mirim pra testar.',
+    hidden:
+      'Você vende cerca de 60 marmitas por dia no almoço e perde tempo avisando no WhatsApp quando acaba a opção de carne. Quer começar simples no plano de entrada, sem automação extra no começo.',
+    success:
+      'Abertura fria natural citando apenas 1 detalhe do cardápio diário. Em "Como funciona?", explica de forma prática em 2 linhas e faz 1 pergunta leve. Em "Quanto custa?", consulta o catálogo vigente e compara Mirim e Bandeira naturalmente sem empurrar o link. Envia o link oficial com abertura natural só quando Marcos pedir.',
+    maxTurns: 8,
+  },
 ];
 
 export function getScenario(name: string): SimScenario | null {

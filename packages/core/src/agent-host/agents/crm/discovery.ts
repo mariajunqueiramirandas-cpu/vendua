@@ -87,6 +87,7 @@ export const crmDiscovery = defineAgent<Sql>({
   lane: 'background',
   transport: 'crm-log',
   replies: false,
+  ledger: false,
   offers,
   models: { default: 'strong', maxTokens: 4000, temperature: 0.3 },
   instructions: [

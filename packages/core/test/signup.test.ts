@@ -112,6 +112,28 @@ describe('signup units', () => {
       readSignupToken('s', signupToken('s', '21999990000', Date.now() - 31 * 60_000)),
     ).toBeNull();
   });
+
+  test('CRM signup tokens are compact, verified, expire, and remain backward-compatible with legacy links', async () => {
+    const { verifyCrmSignupToken } = await import('../src/crm/signup.ts');
+    const { createHmac } = await import('node:crypto');
+    const leadId = '4ebdd7f3-abea-4b56-9e94-6b67a5790ed1';
+    const token = crmSignupToken(leadId, 'sec');
+    expect(token).toHaveLength(38);
+    expect(verifyCrmSignupToken(token, 'sec')).toBe(leadId);
+    expect(verifyCrmSignupToken(token, 'wrong')).toBeNull();
+    expect(
+      verifyCrmSignupToken(`${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`, 'sec'),
+    ).toBeNull();
+    expect(
+      verifyCrmSignupToken(crmSignupToken(leadId, 'sec', Date.now() - 31 * 86_400_000), 'sec'),
+    ).toBeNull();
+
+    // legacy `<uuid>.<expiry>.<mac>` tokens already sent to leads still verify
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const data = `${leadId}.${exp}`;
+    const mac = createHmac('sha256', 'sec').update(`crm-signup:${data}`).digest('base64url');
+    expect(verifyCrmSignupToken(`${data}.${mac}`, 'sec')).toBe(leadId);
+  });
 });
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => {

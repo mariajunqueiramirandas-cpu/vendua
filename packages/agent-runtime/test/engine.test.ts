@@ -522,4 +522,29 @@ describe('versions', () => {
     expect(store.log(actorId)[0]!.version).toBe(old.version);
     expect(adapter.requests[0]!.system.some((b) => b.text === 'Você vende pizza.')).toBe(true);
   });
+
+  test('agents with ledger: false or replies: false omit contradictory REGISTRO and reply rules', async () => {
+    const plain = setup([reply('oi')], { ledger: false });
+    await plain.say('oi');
+    await drive(plain.runtime, plain.clock);
+    const plainRuntimeBlock = plain.adapter.requests[0]!.system.find(
+      (b) => b.id === 'runtime',
+    )!.text;
+    expect(plainRuntimeBlock).toContain('ferramenta reply');
+    expect(plainRuntimeBlock).not.toContain('REGISTRO');
+    expect(plainRuntimeBlock).not.toContain('{{id}}');
+    const replySpec = plain.adapter.requests[0]!.tools.find((t) => t.name === 'reply')!;
+    expect(replySpec.description).not.toContain('REGISTRO');
+
+    const toolOnly = setup([{ text: 'feito' }], { replies: false, ledger: false });
+    await toolOnly.say('oi');
+    await drive(toolOnly.runtime, toolOnly.clock);
+    const toolOnlyRuntime = toolOnly.adapter.requests[0]!.system.find(
+      (b) => b.id === 'runtime',
+    )!.text;
+    expect(toolOnlyRuntime).not.toContain('ferramenta reply');
+    expect(toolOnlyRuntime).not.toContain('REGISTRO');
+    expect(toolOnlyRuntime).not.toContain('{{id}}');
+    expect(toolOnly.adapter.requests[0]!.tools.some((t) => t.name === 'reply')).toBe(false);
+  });
 });

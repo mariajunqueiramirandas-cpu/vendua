@@ -1,8 +1,15 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { planHas } from './modules/billing/plans.ts';
 import { signupReadiness, type SignupReadiness } from './modules/billing/signup-gate.ts';
-import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './crm/policy.ts';
-import { JOB_KINDS } from './crm/policy.ts';
+import {
+  agentSettingTx,
+  automationAllowedTx,
+  explainAutonomyTx,
+  JOB_KINDS,
+  RESET_INSTRUCTION_SCOPES,
+  resetAgentInstructions,
+  type ResetInstructionsScope,
+} from './crm/policy.ts';
 import type { JsonObject } from '@vendua/agent-runtime';
 import {
   CRM_DISCOVERY_ID,
@@ -2463,6 +2470,31 @@ export function createApp({
   app.get('/control/v1/agent/config', async (c) => {
     controlGate(c);
     return c.json(await controlTx(sql, (tx) => agentSettingTx(tx)));
+  });
+
+  app.post('/control/v1/agent/reset-instructions', async (c) => {
+    controlGate(c);
+    const raw = (await boundedText(c)).trim();
+    const body = raw ? parseJsonObject(raw) : {};
+    const rawScope = body.scope ?? 'all';
+    if (
+      typeof rawScope !== 'string' ||
+      !(RESET_INSTRUCTION_SCOPES as readonly string[]).includes(rawScope)
+    ) {
+      throw new HttpError(
+        422,
+        'BAD_REQUEST',
+        `scope must be ${RESET_INSTRUCTION_SCOPES.join(' | ')}`,
+        { field: 'scope' },
+      );
+    }
+    const res = await resetAgentInstructions(
+      sql,
+      rawScope as ResetInstructionsScope,
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
   });
 
   app.get('/control/v1/leads/:id/autonomy', async (c) => {

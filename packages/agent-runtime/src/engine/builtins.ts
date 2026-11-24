@@ -14,6 +14,21 @@ export const replyTool = defineTool({
   },
 });
 
+const plainReplyTool = defineTool({
+  name: 'reply',
+  description: 'Envia uma resposta.',
+  effect: 'send',
+  input: s.object({ text: s.string({ min: 1, max: 1500 }) }),
+  run: () => {
+    throw new Error('reply is handled by the engine');
+  },
+});
+
+export function replyToolFor(agent: Agent): ToolDefinition | null {
+  if (agent.def.replies === false) return null;
+  return agent.def.ledger === false ? plainReplyTool : replyTool;
+}
+
 export function loadSkillTool(agent: Agent): ToolDefinition | null {
   const skills = agent.def.skills ?? [];
   if (skills.length === 0) return null;

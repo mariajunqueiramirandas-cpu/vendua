@@ -70,6 +70,11 @@ export interface AgentDefinition<H = any> {
    * text goes to the transport as a note (an agent whose transport delivers nothing).
    */
   replies?: false;
+  /**
+   * false: this agent does not populate the runtime's REGISTRO figure ledger, so the compiler
+   * omits `{{id}}` reference rules and uses a plain reply tool description.
+   */
+  ledger?: false;
   /** Narrows the state's tools for one step (a tool whose provider this tenant lacks). */
   offers?: (tool: string, state: ConversationState) => boolean;
   models: {
@@ -194,6 +199,8 @@ function manifestOf(def: AgentDefinition, chart: Statechart): Json {
     subject: def.subject,
     lane: def.lane,
     transport: def.transport,
+    ...(def.replies === false ? { replies: false } : {}),
+    ...(def.ledger === false ? { ledger: false } : {}),
     models: {
       default: def.models.default,
       escalate: (def.models.escalate ?? []).map((e) => ({ to: e.to, when: src(e.when) })),

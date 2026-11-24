@@ -274,13 +274,20 @@ describe.skipIf(!OWNER_URL)('autonomous sales workflow', () => {
       const { rt, adapter } = b.runtime([
         call('send_message', { body: 'Fica R$ 1,00 por mês.' }),
         call('get_sales_offer'),
-        call('send_signup_link', { planId: 'mirim', includePrice: true }),
+        call('send_signup_link', {
+          planId: 'mirim',
+          includePrice: true,
+          intro: 'Boa! Pra começar com o cardápio online, o Mirim resolve super bem.',
+          outro: 'Se travar em algum passo, pode me chamar aqui.',
+        }),
         say('ok'),
       ]);
       await b.settle(rt);
       expect(JSON.stringify(adapter.requests[1])).toContain('com includePrice');
       const [queued] = await b.outbound(lead.id);
+      expect(queued?.body).toContain('Boa! Pra começar com o cardápio online');
       expect(queued?.body).toContain('https://admin.example.test/admin/comecar?plano=mirim&lead=');
+      expect(queued?.body).toContain('Se travar em algum passo, pode me chamar aqui.');
       const [plan] = await b.sql<
         { price_cents: number }[]
       >`select price_cents from plans where id = 'mirim'`;
@@ -318,7 +325,7 @@ describe.skipIf(!OWNER_URL)('autonomous sales workflow', () => {
       );
       expect(closed.outcomes[0]).toMatchObject({ data: { code: 'signup_closed' } });
       const [quote] = await b.outbound(lead.id);
-      expect(quote?.body).toContain('A taxa da Venduá por pedido');
+      expect(quote?.body).toContain('taxa da Venduá por pedido');
       expect(quote?.body).not.toContain('https://');
 
       await setSignup(true);
@@ -429,5 +436,61 @@ describe.skipIf(!OWNER_URL)('autonomous sales workflow', () => {
       'draft',
       'failed',
     ]);
+  });
+
+  test('send_message allows natural catalog-verified plan comparison after get_sales_offer and still refuses invented prices', async () => {
+    await b.settings('autopilot');
+    const lead = await b.lead();
+    const plans = await b.sql<{ id: string; price_cents: number }[]>`
+      select id, price_cents from plans where id in ('mirim', 'bandeira')`;
+    const fmt = (cents: number) =>
+      (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const mirim = fmt(plans.find((p) => p.id === 'mirim')!.price_cents);
+    const bandeira = fmt(plans.find((p) => p.id === 'bandeira')!.price_cents);
+    const { outcomes } = await b.runTools(
+      [
+        ['get_sales_offer', {}],
+        ['send_message', { body: 'O Mirim fica R$ 19,90 por mês.' }],
+        [
+          'send_message',
+          {
+            body: `O Mirim fica ${mirim}/mês pra loja e painel, e o Bandeira fica ${bandeira}/mês com a Duá atendendo no WhatsApp e fidelidade. Nos dois a taxa da Venduá por pedido é 0% e tem 14 dias de teste grátis confirmados no cadastro.`,
+          },
+        ],
+      ],
+      { leadId: lead.id, kind: 'reply' },
+    );
+    expect(outcomes[0]).toMatchObject({ name: 'get_sales_offer', ok: true });
+    expect(JSON.stringify(outcomes[1])).toContain('Preço não confere');
+    expect(outcomes[2]).toMatchObject({ name: 'send_message', ok: true });
+    const [queued] = await b.outbound(lead.id);
+    expect(queued?.body).toContain(mirim);
+    expect(queued?.body).toContain(bandeira);
+  });
+
+  test('outbound first reply injects MOMENTO stage-2 guidance into context', async () => {
+    await b.settings('autopilot');
+    const lead = await b.lead({ name: 'Doce Brisa' });
+    const opener = await controlTx(b.appSql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: lead.id,
+        channel: 'whatsapp',
+        body: 'Oi Bia! Vi as tortas sob encomenda da Doce Brisa — você já trabalha com link próprio pro pessoal pedir no WhatsApp?',
+        author: 'agent',
+        status: 'queued',
+      }),
+    );
+    expect((await dispatchMessage(b.appSql, opener.body.message.id)).ok).toBe(true);
+    await b.inbound(lead.whatsapp!, 'Sim');
+    const { rt, adapter } = b.runtime([
+      call('send_message', {
+        body: 'Boa! Com a Venduá você monta um link seu com sabores, preços e encomendas marcadas. Hoje você passa o cardápio por foto ou PDF no WhatsApp?',
+      }),
+      say('ok'),
+    ]);
+    await b.settle(rt);
+    const promptSent = JSON.stringify(adapter.requests[0]);
+    expect(promptSent).toContain('ORIGEM: outbound');
+    expect(promptSent).toContain('MOMENTO: primeira resposta do lead à nossa abordagem fria');
   });
 });

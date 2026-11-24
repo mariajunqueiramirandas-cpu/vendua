@@ -1,14 +1,17 @@
 import type { Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
+import { claimControl, type ClaimResult } from '../modules/control.ts';
 import {
   DEFAULT_GUARDRAILS,
   DEFAULT_AGENT_RULES,
   capCentsOf,
   newLeadModesOf,
   type NewLeadModes,
+  getPitchTx,
   getSettingTx,
   phoneIsIgnored,
   type Guardrails,
+  type Pitch,
 } from '../modules/integrations.ts';
 import { channelAvailabilityTx, leadHasContactTx } from './guardrails.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
@@ -93,6 +96,41 @@ export function normalizeAgent(v: unknown): AgentSetting {
 
 export async function agentSettingTx(tx: Sql): Promise<AgentSetting> {
   return normalizeAgent(await getSettingTx<unknown>(tx, 'agent', {}));
+}
+
+export const RESET_INSTRUCTION_SCOPES = ['all', 'instructions', 'pitch'] as const;
+export type ResetInstructionsScope = (typeof RESET_INSTRUCTION_SCOPES)[number];
+
+/**
+ * Drops custom `agent.instructions` and/or `pitch` overrides so the sales agent falls back to the
+ * built-in defaults (`DEFAULT_INSTRUCTIONS` / `DEFAULT_PITCH`). Leaves autonomy, jobs, schedule,
+ * guardrails, agent memory, and leads untouched.
+ */
+export async function resetAgentInstructions(
+  sql: Sql,
+  scope: ResetInstructionsScope,
+  idemKey: string,
+): Promise<ClaimResult<{ scope: ResetInstructionsScope; config: AgentSetting; pitch: Pitch }>> {
+  return claimControl(sql, idemKey, async (tx) => {
+    if (scope === 'all' || scope === 'instructions') {
+      await tx`
+        update control_settings
+        set value = value - 'instructions'
+        where key = 'agent' and value ? 'instructions'
+      `;
+    }
+    if (scope === 'all' || scope === 'pitch') {
+      await tx`delete from control_settings where key = 'pitch'`;
+    }
+    return {
+      status: 200,
+      body: {
+        scope,
+        config: await agentSettingTx(tx),
+        pitch: await getPitchTx(tx),
+      },
+    };
+  });
 }
 
 export type AutomationVerdict = { ok: true } | { ok: false; code: string; reason: string };

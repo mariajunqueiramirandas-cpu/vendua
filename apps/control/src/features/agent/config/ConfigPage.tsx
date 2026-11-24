@@ -12,6 +12,7 @@ import {
   obj,
   str,
   tzValid,
+  useResetAgentInstructions,
   useSaveSetting,
   useSettingsMap,
   type SettingsMap,
@@ -145,6 +146,7 @@ function ConfigForm({
   save: (key: string, v: SettingWrite) => Promise<boolean>;
   pending: boolean;
 }) {
+  const { resetInstructions, resetting } = useResetAgentInstructions();
   const rawPitch = obj(map.pitch);
   const rawGuardrails = obj(map.guardrails);
 
@@ -186,6 +188,14 @@ function ConfigForm({
     limits.reset();
   };
 
+  const resetCustomInstructions = async () => {
+    const res = await resetInstructions('all');
+    if (!res) return;
+    // Clear unsaved local edits to voice/instructions even when server values were already default.
+    voice.setEdit({ ...res.pitch });
+    setAgent({ instructions: res.config.instructions });
+  };
+
   return (
     <>
       <section id="sec-autonomia" className="scroll-mt-4">
@@ -198,6 +208,9 @@ function ConfigForm({
           onVoice={voice.setEdit}
           instructions={agent.edit.instructions}
           onInstructions={(instructions) => setAgent({ instructions })}
+          onReset={() => void resetCustomInstructions()}
+          resetting={resetting}
+          busy={pending}
         />
       </section>
 
