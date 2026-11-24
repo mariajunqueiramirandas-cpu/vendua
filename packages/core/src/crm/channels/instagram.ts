@@ -534,6 +534,53 @@ export async function sendInstagram(
   }
 }
 
+export interface IgFollow {
+  fbid: string;
+  igid: string;
+  username?: string;
+  following: boolean;
+  /** a private account: the request waits for their approval */
+  requested: boolean;
+  /** the account already followed them: nothing was sent */
+  already: boolean;
+}
+
+/** Follow one account unless the connected one already does (the sidecar checks first). Fails
+ *  with a SidecarError whose code is the sidecar's: action_blocked, user_not_found, … */
+export async function followInstagram(
+  integration: IntegrationRow,
+  to: { fbid?: string | null; handle?: string | null },
+  timeoutMs: number,
+): Promise<IgFollow> {
+  const username = instagramHandle(to.handle);
+  if (!to.fbid && !username) throw new SidecarError(422, 'no_recipient', 'lead has no instagram');
+  if (integration.driver === 'log') {
+    igLog.info({ to: username ?? to.fbid }, 'log-driver follow');
+    return {
+      fbid: to.fbid ?? '',
+      igid: '',
+      ...(username ? { username } : {}),
+      following: true,
+      requested: false,
+      already: false,
+    };
+  }
+  if (integration.driver !== 'sidecar') {
+    throw new SidecarError(
+      422,
+      'unknown_driver',
+      `unknown instagram driver: ${integration.driver}`,
+    );
+  }
+  return call<IgFollow>(
+    integration,
+    'POST',
+    '/v1/follow',
+    { fbid: to.fbid ?? '', username: username ?? '' },
+    timeoutMs,
+  );
+}
+
 /** Constant-time check of the sidecar's HMAC over "<ts>.<body>". */
 export function igEventSignatureOk(
   secret: string,

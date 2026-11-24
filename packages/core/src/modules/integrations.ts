@@ -243,6 +243,9 @@ export const DEFAULT_GUARDRAILS = {
   /** account-wide cap on agent cold DMs (instagram threads the lead never wrote
    *  in) per rolling 24h — new accounts get restricted above a few dozen */
   instagramColdDmsPerDay: 15,
+  /** account-wide cap on follows the instagram account sends per rolling 24h (the leads found
+   *  there and everyone it DMs; ones it already followed don't count); 0 = no follows */
+  instagramFollowsPerDay: 30,
   /** retired: team numbers now come from the `staff` setting (blockedPhonesTx);
    *  entries still stored here keep being honored */
   ignoredPhones: [] as string[],
@@ -273,6 +276,7 @@ export type Guardrails = {
   staleDraftDays: number;
   briefAutoPauseRuns: number;
   instagramColdDmsPerDay: number;
+  instagramFollowsPerDay: number;
   ignoredPhones: string[];
   leadLifetimeCostCapUsd: number;
 };
@@ -619,6 +623,7 @@ export function validateSetting(key: string, value: unknown): void {
     intField('staleDraftDays', 0, 90);
     intField('briefAutoPauseRuns', 0, 100);
     intField('instagramColdDmsPerDay', 0, 200);
+    intField('instagramFollowsPerDay', 0, 200);
     const numField = (k: keyof Guardrails, min: number, max: number) => {
       if (v[k] === undefined) return;
       const n = v[k];

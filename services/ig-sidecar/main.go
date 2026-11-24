@@ -21,26 +21,38 @@ type config struct {
 	Secret    string
 	EventsURL string
 	// http(s):// or socks5:// — Instagram flags logins from datacenter IPs
-	Proxy      string
-	MinSendGap time.Duration
+	Proxy        string
+	MinSendGap   time.Duration
+	MinFollowGap time.Duration
 }
 
 func loadConfig() (config, error) {
 	cfg := config{
-		Addr:       envOr("IG_SIDECAR_ADDR", ":8790"),
-		Secret:     os.Getenv("IG_SIDECAR_SECRET"),
-		EventsURL:  os.Getenv("CORE_EVENTS_URL"),
-		Proxy:      os.Getenv("IG_PROXY"),
-		MinSendGap: 20 * time.Second,
+		Addr:      envOr("IG_SIDECAR_ADDR", ":8790"),
+		Secret:    os.Getenv("IG_SIDECAR_SECRET"),
+		EventsURL: os.Getenv("CORE_EVENTS_URL"),
+		Proxy:     os.Getenv("IG_PROXY"),
 	}
-	if v := os.Getenv("IG_MIN_SEND_GAP_SECONDS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return cfg, errors.New("IG_MIN_SEND_GAP_SECONDS must be a non-negative integer")
-		}
-		cfg.MinSendGap = time.Duration(n) * time.Second
+	var err error
+	if cfg.MinSendGap, err = envSeconds("IG_MIN_SEND_GAP_SECONDS", 20); err != nil {
+		return cfg, err
+	}
+	// follow bursts are what Instagram's Action Blocked watches for most
+	if cfg.MinFollowGap, err = envSeconds("IG_MIN_FOLLOW_GAP_SECONDS", 60); err != nil {
+		return cfg, err
 	}
 	return cfg, nil
+}
+
+func envSeconds(key string, def int) (time.Duration, error) {
+	n := def
+	if v := os.Getenv(key); v != "" {
+		var err error
+		if n, err = strconv.Atoi(v); err != nil || n < 0 {
+			return 0, errors.New(key + " must be a non-negative integer")
+		}
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 func envOr(key, def string) string {

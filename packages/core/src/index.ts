@@ -33,6 +33,7 @@ import { startCrmSettle } from './platform-whatsapp/crm-settle.ts';
 import { startSocketPump } from './platform-whatsapp/socket-pump.ts';
 import { platformTransport } from './platform-whatsapp/transport.ts';
 import { startInstagramReconcile } from './crm/channels/instagram.ts';
+import { startInstagramFollows } from './crm/ig-follows.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
 import { platformNotify } from './admin/notify.ts';
@@ -257,6 +258,8 @@ const stopCrmSettle = startCrmSettle(jobsSql);
 const stopCrmOutbox = startCrmOutbox(jobsSql);
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
 const stopInstagramReconcile = startInstagramReconcile(jobsSql);
+// the instagram account follows the leads found there (and everyone it DMs)
+const stopInstagramFollows = startInstagramFollows(jobsSql);
 
 // a 500 and a boot reach the team (ADR 0023): system.error is throttled per route
 onUnhandledError(unhandledErrorReporter(sql));
@@ -322,6 +325,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopWebAnalyticsJobs();
     stopStoreWhatsappWatch();
     stopInstagramReconcile();
+    void stopInstagramFollows();
     void platformInbox.stop();
     void socketPump?.stop();
     void stopCrmSettle();

@@ -66,6 +66,7 @@ function Guardrails({
     staleDraftDays: num(value.staleDraftDays, 3),
     briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
     instagramColdDmsPerDay: num(value.instagramColdDmsPerDay, 15),
+    instagramFollowsPerDay: num(value.instagramFollowsPerDay, 30),
   };
   const { edit, setEdit, dirty, reset } = useDraft(cur);
   const quietWrap = edit.quietStart > edit.quietEnd;
@@ -81,7 +82,8 @@ function Guardrails({
       | 'followupCadenceDays'
       | 'staleDraftDays'
       | 'briefAutoPauseRuns'
-      | 'instagramColdDmsPerDay',
+      | 'instagramColdDmsPerDay'
+      | 'instagramFollowsPerDay',
     min: number,
     max: number,
     floor: number,
@@ -218,6 +220,13 @@ function Guardrails({
           hint="teto da conta inteira pra conversas que o agente abre com quem nunca escreveu (24h corridas) — rascunho do agente aprovado também conta; respostas e follow-ups não; 0 = sem DM fria"
         >
           {numIn('instagramColdDmsPerDay', 0, 200, 0)}
+        </Field>
+        <Field
+          label="seguir no instagram / dia"
+          htmlFor="gr-instagramFollowsPerDay"
+          hint="teto da conta inteira pra follows (24h corridas): a conta segue todo lead que acha no instagram e todo mundo pra quem manda DM; quem ela já segue não conta; 0 = não segue ninguém"
+        >
+          {numIn('instagramFollowsPerDay', 0, 200, 0)}
         </Field>
       </div>
       <SaveBar

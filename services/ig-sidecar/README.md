@@ -27,20 +27,27 @@ Core ◀─HMAC events── ig-sidecar   (inbound DMs, connection state, rotate
   threads. Core dedupes by message id.
 - Sends are paced account-wide: `IG_MIN_SEND_GAP_SECONDS` (default 20) plus up to 50%
   jitter. A cold DM (no thread yet) is sent by recipient id.
+- Follows (`/v1/follow`) are paced the same way but on their own gap,
+  `IG_MIN_FOLLOW_GAP_SECONDS` (default 60). The friendship is checked first: an account
+  already followed returns `already: true` and sends nothing. instameow has no follow call,
+  so it posts the web profile's Follow button (`/api/v1/friendships/create/<id>/`).
+  Instagram's Action Blocked comes back as `429 action_blocked`. Core's queue, daily cap and
+  pause live in `packages/core/src/crm/ig-follows.ts`.
 
 ## API (all under `Authorization: Bearer $IG_SIDECAR_SECRET`)
 
-| Route                    | Body                        | Returns                                    |
-| ------------------------ | --------------------------- | ------------------------------------------ |
-| `GET /v1/status`         |                             | `{state, error?, account?, login?}`        |
-| `PUT /v1/session`        | `{session, sinceMs}`        | status — resumes a stored session          |
-| `DELETE /v1/session`     |                             | status — forget the session                |
-| `POST /v1/login/start`   | `{device?}`                 | step                                       |
-| `POST /v1/login/submit`  | `{input: {fieldId: value}}` | step (`complete` carries `session`)        |
-| `POST /v1/login/cookies` | `{cookies, device?}`        | step — JSON, cookie export, cURL or header |
-| `POST /v1/login/cancel`  |                             | `{ok}`                                     |
-| `POST /v1/resolve`       | `{username}`                | `{fbid, igid, username, name}`             |
-| `POST /v1/send`          | `{fbid? , username?, text}` | `{messageId, threadId?, fbid}`             |
+| Route                    | Body                        | Returns                                                  |
+| ------------------------ | --------------------------- | -------------------------------------------------------- |
+| `GET /v1/status`         |                             | `{state, error?, account?, login?}`                      |
+| `PUT /v1/session`        | `{session, sinceMs}`        | status — resumes a stored session                        |
+| `DELETE /v1/session`     |                             | status — forget the session                              |
+| `POST /v1/login/start`   | `{device?}`                 | step                                                     |
+| `POST /v1/login/submit`  | `{input: {fieldId: value}}` | step (`complete` carries `session`)                      |
+| `POST /v1/login/cookies` | `{cookies, device?}`        | step — JSON, cookie export, cURL or header               |
+| `POST /v1/login/cancel`  |                             | `{ok}`                                                   |
+| `POST /v1/resolve`       | `{username}`                | `{fbid, igid, username, name}`                           |
+| `POST /v1/send`          | `{fbid? , username?, text}` | `{messageId, threadId?, fbid}`                           |
+| `POST /v1/follow`        | `{fbid?, username?}`        | `{fbid, igid, username?, following, requested, already}` |
 
 `state` is one of `off`, `connecting`, `open`, or `error`. `error` means Instagram
 wants a human (`logged_out`, `challenge`, `checkpoint`, `consent`, `suspended`,
@@ -50,14 +57,15 @@ wants a human (`logged_out`, `challenge`, `checkpoint`, `consent`, `suspended`,
 
 ## Env
 
-| Var                       | Default | Notes                                                |
-| ------------------------- | ------- | ---------------------------------------------------- |
-| `IG_SIDECAR_SECRET`       | —       | unset = every call gets 503 (idle)                   |
-| `CORE_EVENTS_URL`         | —       | unset = events are only logged                       |
-| `IG_PROXY`                | —       | `http://`/`socks5://`; datacenter IPs get challenged |
-| `IG_MIN_SEND_GAP_SECONDS` | `20`    | account-wide pacing between DMs                      |
-| `IG_SIDECAR_ADDR`         | `:8790` |                                                      |
-| `LOG_LEVEL`               | `info`  |                                                      |
+| Var                         | Default | Notes                                                |
+| --------------------------- | ------- | ---------------------------------------------------- |
+| `IG_SIDECAR_SECRET`         | —       | unset = every call gets 503 (idle)                   |
+| `CORE_EVENTS_URL`           | —       | unset = events are only logged                       |
+| `IG_PROXY`                  | —       | `http://`/`socks5://`; datacenter IPs get challenged |
+| `IG_MIN_SEND_GAP_SECONDS`   | `20`    | account-wide pacing between DMs                      |
+| `IG_MIN_FOLLOW_GAP_SECONDS` | `60`    | account-wide pacing between follows                  |
+| `IG_SIDECAR_ADDR`           | `:8790` |                                                      |
+| `LOG_LEVEL`                 | `info`  |                                                      |
 
 ## Dev
 

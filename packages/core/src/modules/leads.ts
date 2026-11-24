@@ -769,6 +769,10 @@ export async function insertLeadTx(
     insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
     values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff', ${rows[0]!.deal_value_cents})
   `;
+  if (rows[0]!.instagram) {
+    const { queueIgFollowTx } = await import('../crm/ig-follows.ts');
+    await queueIgFollowTx(tx, rows[0]!.id, rows[0]!.instagram);
+  }
   // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
   if (nextAt) {
     const { setNextActionTx } = await import('../crm/agenda.ts');
@@ -875,6 +879,10 @@ export async function updateLeadTx(
         update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
       `
     : await tx<LeadRow[]>`update leads set updated_at = now() where id = ${id} returning *`;
+  if (typeof set.instagram === 'string' && rows[0]!.instagram) {
+    const { queueIgFollowTx } = await import('../crm/ig-follows.ts');
+    await queueIgFollowTx(tx, id, rows[0]!.instagram);
+  }
   // the agent is back on this lead: what it wrote meanwhile gets its answer
   if (
     (cur.agent_paused_at && 'agent_paused_at' in set && set.agent_paused_at === null) ||
@@ -1470,6 +1478,10 @@ export async function importLeads(
         insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
         values (${ins[0]!.id}, null, ${ins[0]!.state}, 'staff', ${ins[0]!.deal_value_cents})
       `;
+      if (ins[0]!.instagram) {
+        const { queueIgFollowTx } = await import('../crm/ig-follows.ts');
+        await queueIgFollowTx(tx, ins[0]!.id, ins[0]!.instagram);
+      }
       created++;
     }
     return { status: 200, body: { created, skipped } };

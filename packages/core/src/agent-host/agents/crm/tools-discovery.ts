@@ -12,6 +12,7 @@ import { instagramHandle } from '../../../modules/threads.ts';
 import { contactFromUrl, isBrMobilePhone, phoneFromText } from '../../../crm/channels/discovery.ts';
 import { whatsappRegistered } from '../../../crm/channels/whatsapp.ts';
 import { instagramReadyTx, whatsappReadyTx } from '../../../crm/guardrails.ts';
+import { queueIgFollowTx } from '../../../crm/ig-follows.ts';
 import { parseWakeupAt } from '../../../crm/agenda.ts';
 import { requestLeadTx } from '../../../crm/dispatch.ts';
 import { LEAD_FIELDS } from './fields.ts';
@@ -402,6 +403,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           const dupChan = gateFires(dupScore, dupWa, set.instagram ?? dup.instagram);
           if (merged.length)
             await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dupId}`;
+          if (typeof set.instagram === 'string') await queueIgFollowTx(tx, dupId, set.instagram);
           // an enriched dup clears the gate only while untouched and not vetoed by staff
           const contacted =
             dupChan && dup.state === 'lead' && dup.agent_mode !== 'off'
