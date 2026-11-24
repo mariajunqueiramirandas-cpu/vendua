@@ -41,7 +41,7 @@ export const NEXT_ACTION_REQUESTED = s
 export const MESSAGE_BODY = s
   .string({ min: 1, max: 4000 })
   .describe(
-    'the message exactly as the lead will read it: plain text, sized like a real chat message (1-3 short lines on whatsapp/instagram), at most one question, no markdown, bullets or em dashes',
+    'the message exactly as the lead will read it: warm, plain spoken Portuguese, sized like a real chat message (1-3 short lines on whatsapp/instagram), at most one genuine question, no sales clichés, no dossier dumps, no markdown, bullets or em dashes',
   );
 
 export const MESSAGE_SUBJECT = s

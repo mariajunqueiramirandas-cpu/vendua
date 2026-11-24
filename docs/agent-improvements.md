@@ -28,23 +28,32 @@ payment and opt-out counts by source.
 
 ### Sales playbook
 
-The merchant shares a storefront link through the channels their customers already use.
-Customers choose items and order through the store. The merchant manages the menu, orders,
-hours and payments in the Venduá app. Start with one part of that workflow the person would use.
-The live offer supplies plan availability, prices, fees and trial terms. The checkout determines
-trial eligibility. The workspace offer holds additional approved claims and materials.
+The merchant shares a storefront link through WhatsApp, Instagram, or QR code. Shoppers open it in
+the browser (no app download, no account/password), pick items, flavors, options, kits, or scheduled
+pre-order dates, and place the order. The merchant manages the menu (paste-list or import, one-tap
+sold-out, quick pause), orders, delivery/pickup, Pix/payments, and hours in the Venduá app. Full
+plans add Duá on WhatsApp, loyalty, KDS, thermal printing, and PDV. The agent knows the real product
+deeply and picks **one** concrete piece that fits the merchant's situation — never a feature dump.
 
-| Situation         | What the agent does                                                                                                                                            |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inbound greeting  | Introduces Venduá and asks what the person is looking for.                                                                                                     |
-| First-time seller | Helps them picture the first order and asks about the one decision that changes the advice. Estimates stay estimates.                                          |
-| Active merchant   | Uses the order workflow or friction the merchant confirmed. Shows one concrete improvement and answers direct questions first.                                 |
-| Price question    | Quotes the live plan, with the fee identified as Venduá's. Includes a signup link when the person asks for or accepts it.                                      |
-| Ready to start    | Checks availability, offers self-serve signup and follows the action the buyer accepted. If signup closes or reopens, checks the live state before continuing. |
-| Cold outreach     | Verifies the business and contact source, ties one public signal to a useful idea and asks for a low-effort reply.                                             |
-| Follow-up         | Delivers a promised next step or adds useful context in the same channel. A cadence turn can record why the sequence ended without sending.                    |
-| Discovery         | Picks a buying situation the source can show, checks duplicates and records a traceable business contact. Scores product fit and buyer intent independently.   |
-| Weekly review     | Proposes small campaigns with a single hypothesis. Reads contact and response counts alongside verified signup, activation, payment, cost and opt-outs.        |
+The live offer supplies plan availability, prices, fees, Duá limits, and trial terms. Trial
+eligibility is confirmed at signup. The workspace offer holds additional approved claims and
+materials. After consulting `get_sales_offer`, `send_message` verifies any quoted price, fee, or
+trial days directly against the live catalog so the agent can answer pricing questions and compare
+plans naturally in conversation without fabricating numbers. Official signup links always go through
+`send_signup_link` with natural `intro`/`outro` framing and compact 38-char signed tokens.
+
+| Situation              | What the agent does                                                                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound greeting       | Greets warmly as Venduá and asks an open question without guessing what they sell.                                                                                     |
+| First-time seller      | Helps them picture the first order (CPF accepted, paste list to start light) and asks one guiding question. Estimates stay estimates.                                  |
+| Active merchant        | Uses the order workflow or friction the merchant confirmed. Connects one real feature and answers direct questions in sentence one.                                    |
+| Cold outreach          | Verifies the business and contact source, picks **one** natural detail (never a scraped bio dump or SDR clichés), and asks a low-effort human question. No link/price. |
+| Short reply to cold DM | Treats "Sim", "Faz", or "Como funciona?" as curiosity — NEVER dumps price or signup link. Explains briefly how it fits their shop and asks 1 discovery question.       |
+| Price question         | Reads live plans and answers directly in natural prose (comparing Mirim vs Bandeira when helpful, attributing 0% to Venduá's fee). Does not push the link unasked.     |
+| Ready to start         | Checks availability, sends the compact signed signup link via `send_signup_link` wrapped in a natural `intro`/`outro` tailored to their business.                      |
+| Follow-up              | Delivers a promised next step or adds one light, genuinely helpful note with an easy out (no guilt-tripping). Skips with `add_note` when there is nothing useful.      |
+| Discovery              | Picks a buying situation the source can show, checks duplicates, records owner first name (if public) and one natural hook. Scores fit and intent independently.       |
+| Weekly review          | Proposes small single-hypothesis campaigns. Separates real conversations from cold 1-word drop-offs alongside verified signup, activation, payment, cost, opt-outs.    |
 
 With default pacing, an unanswered sequence gets up to two agent touches. The default cadence
 waits three days, and drafts older than three days are regenerated against the current context.
@@ -60,11 +69,12 @@ first ask is a starting hypothesis. Judge how it works for Venduá using actual 
 and conversion. [Gong's cold outreach analysis](https://www.gong.io/resources/guides/how-to-master-cold-email-get-the-data-backed-guide-based-on-85-million-emails)
 
 Run the CRM regression tests for prompt routing, tool outcomes, cadence and signup. For live
-model evaluation, run `bun run sims:crm -- --scenario picole-primeira-venda` from
-`packages/core` with a simulation database and model routes configured. It uses the actual CRM,
-catalog, signed signup links and local log delivery. The simulator reports a delivered signup
-link and a verified signup as separate outcomes. Compare the transcript and outcome on the same
-scenarios before changing the default sales model or tactic.
+model evaluation, run `bun run sims:crm -- --scenario confeitaria-sim-curto` (or
+`marmitaria-frio-preco`, `picole-primeira-venda`) from `packages/core` with a simulation database
+and model routes configured. It uses the actual CRM, catalog, signed signup links and local log
+delivery. The simulator reports a delivered signup link and a verified signup as separate outcomes.
+Compare the transcript and outcome on the same scenarios before changing the default sales model
+or tactic.
 
 ## Behavior changes (user-requested)
 

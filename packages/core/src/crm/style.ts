@@ -2,7 +2,7 @@
 // bounce the first failing body of a run back to the model with these issues; a second
 // attempt goes through as written — the check steers, it never strands a reply.
 
-const CHAT_MAX_CHARS = 700;
+const CHAT_MAX_PROSE_CHARS = 520;
 const TEMPLATE =
   /\{\{|\{\s*[a-z]\w*(?:\s*:[\w.-]+)?\s*\}|\[(?:nome|name|empresa|neg[óo]cio|cidade|link)\b[^\]]*\]|<nome>/i;
 
@@ -17,6 +17,19 @@ const ROBOTIC: [RegExp, string][] = [
   [/(estou|estamos|fico|ficamos) [àa] (sua )?disposi[çc][ãa]o/i, '"à disposição"'],
   [/entendo perfeitamente/i, '"entendo perfeitamente"'],
   [/como (um|uma) (modelo de linguagem|ia|intelig[êe]ncia artificial)/i, '"como uma IA"'],
+  [/\bfaz sentido (?:pra|para) voc[êe]s?\b/i, '"faz sentido pra vocês?" (clichê de prospecção)'],
+  [/^uma ideia:\s/im, '"Uma ideia:" (fórmula pronta de pitch)'],
+  [
+    /\b(?:conseguiu|chegou a|teve chance de) (?:ver|ler|dar uma olhada na) (?:a )?(?:minha|nossa) mensagem\b/i,
+    '"conseguiu ver minha mensagem" (cobrança)',
+  ],
+  [
+    /\b(?:alavancar|potencializar|otimizar|revolucionar) (?:as |os |suas |seus )?(?:vendas|resultados|neg[óo]cio|opera[çc][ãa]o|processos)\b/i,
+    'jargão corporativo de vendas',
+  ],
+  [/\b(?:solu[çc][ãa]o completa|infraestrutura da loja)\b/i, 'expressão corporativa/técnica'],
+  [/\b(?:n[ãa]o perca|[úu]ltima chance|vagas limitadas|imperd[íi]vel)\b/i, 'urgência artificial'],
+  [/^(?:maravilha|excelente|fant[áa]stico|incr[íi]vel|sensacional)!/i, 'elogio automático de robô'],
 ];
 
 export function messageStyleIssues(body: string, channel: string | null | undefined): string[] {
@@ -52,12 +65,21 @@ export function messageStyleIssues(body: string, channel: string | null | undefi
         'lista de palpites entre parênteses ("doces, marmitas...") — pergunte aberto, sem chutar',
       );
     }
-    const prose = text.replace(/https?:\/\/[^\s<>()]+/gi, '');
+    const prose = text.replace(/https?:\/\/[^\s<>()]+/gi, '').trim();
     if ((prose.match(/\?/g) ?? []).length > 1) {
       issues.push('mais de uma pergunta. Escolha a que muda o próximo passo');
     }
-    if (text.length > CHAT_MAX_CHARS) {
-      issues.push(`${text.length} caracteres — no chat, ≤${CHAT_MAX_CHARS} (ideal 1-3 linhas)`);
+    const paragraphs = text
+      .split(/\n\s*\n/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (paragraphs.length >= 4) {
+      issues.push('muitos blocos — no chat, junte em 1 a 3 parágrafos curtos');
+    }
+    if (prose.length > CHAT_MAX_PROSE_CHARS) {
+      issues.push(
+        `${prose.length} caracteres — no chat, ≤${CHAT_MAX_PROSE_CHARS} (ideal 1-3 linhas curtas)`,
+      );
     }
   }
   return issues;

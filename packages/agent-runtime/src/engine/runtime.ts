@@ -47,7 +47,7 @@ import {
   type Usage,
 } from '../types.ts';
 import { meterFor } from './budget.ts';
-import { loadSkillTool, replyTool } from './builtins.ts';
+import { loadSkillTool, replyToolFor } from './builtins.ts';
 import { LeaseLostError, SupersededSignal } from './errors.ts';
 import { applyEvent, initialState, type BatchItem, type ConversationState } from './state.ts';
 import { AliasBook, ToolCtx } from './tool-context.ts';
@@ -660,14 +660,15 @@ export class Runtime<H = unknown> {
       )
         pool.set(t.name, t);
     for (const t of skillTools) pool.set(t.name, t);
-    const out: ToolDefinition[] = [...(def.replies === false ? [] : [replyTool]), ...pool.values()];
+    const rt = replyToolFor(run.agent);
+    const out: ToolDefinition[] = [...(rt ? [rt] : []), ...pool.values()];
     const ls = loadSkillTool(run.agent);
     if (ls) out.push(ls);
     return out;
   }
 
   private toolByName(run: TurnRun<H>, name: string): ToolDefinition | undefined {
-    if (name === 'reply') return run.agent.def.replies === false ? undefined : replyTool;
+    if (name === 'reply') return replyToolFor(run.agent) ?? undefined;
     if (name === 'load_skill') return loadSkillTool(run.agent) ?? undefined;
     return (
       run.agent.def.tools.find((t) => t.name === name) ??

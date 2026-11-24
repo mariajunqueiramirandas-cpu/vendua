@@ -195,7 +195,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
     findings: s
       .string({ max: 4000 })
       .describe(
-        'the research dossier: what the business sells, fit signals, best channel, sources',
+        'concise research dossier: what the business sells, owner first name if public, best single natural hook for a human opener, fit signals, and where each contact came from',
       ),
     sources: s
       .array(s.string({ max: 2000 }), { max: 20 })
@@ -322,7 +322,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
             payload: {
               channel: chan,
               ...(!evidence ? { draftOnly: true } : {}),
-              focus: `primeiro contato — lead descoberto (fitScore ${String(sc)}). O dossiê de pesquisa está na timeline do lead.`,
+              focus: `primeiro contato — lead descoberto (fitScore ${String(sc)}). Use só 1 detalhe natural do dossiê na timeline pra abrir conversa leve, sem ficha corrida nem link.`,
             },
           });
           return r.mailboxId !== null;

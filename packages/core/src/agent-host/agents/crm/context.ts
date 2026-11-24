@@ -337,6 +337,16 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
       : channels.length === 1
         ? channels[0]!
         : null;
+    const isInboundOrigin = Boolean(callback || first?.direction === 'in');
+    const liveIn = rows.filter((r) => r.direction === 'in').length;
+    const liveOut = rows.filter(
+      (r) => r.direction === 'out' && ['sending', 'sent', 'delivered'].includes(r.status),
+    ).length;
+    if (!isInboundOrigin && liveIn === 1 && liveOut >= 1) {
+      parts.push(
+        'MOMENTO: primeira resposta do lead à nossa abordagem fria. Se ela fez uma pergunta direta (ex.: preço ou link), responda direto; se apenas sinalizou abertura ("sim", "faz", "como funciona?", "no WhatsApp mesmo"), acolha com leveza, explique rapidinho como entraria no dia a dia dela e faça 1 pergunta genuína — sem empurrar preço nem link de cadastro.',
+      );
+    }
     if (rows.length)
       parts.push(
         `CONVERSA (${where ? `${where} · ` : ''}mais antiga → mais recente):\n${fitTranscript(

@@ -301,24 +301,24 @@ export function phoneIsIgnored(
 
 export const DEFAULT_PITCH = {
   product:
-    'A Venduá oferece uma loja online própria e um app pra cuidar do cardápio, dos pedidos, dos horários e dos pagamentos. O negócio pode compartilhar o link pelo WhatsApp ou Instagram. O cliente pede pela loja e o pedido chega no app.',
+    'A Venduá cria uma loja online com a cara do negócio de comida e um app no celular pra tocar pedidos, cardápio, encomendas com data marcada, horários, entrega e Pix. O cliente pede direto pelo link no navegador (sem app nem cadastro) e a Venduá não cobra comissão por pedido. Nos planos completos também entra o Duá atendendo pedidos no WhatsApp, fidelidade, tela da cozinha e impressão automática.',
   audience:
-    'quem vende ou quer começar a vender comida no Brasil e precisa de um canal próprio de pedidos',
-  tone: 'português brasileiro claro e acolhedor. Responda no ritmo da pessoa com uma ideia útil por mensagem',
+    'donos e donas de negócios de comida no Brasil (confeitarias, doceiras, marmitarias, hamburguerias, pizzarias, padarias, salgadeiras, açaí e restaurantes) que vendem pelo WhatsApp, Instagram ou marketplace, ou estão começando a vender',
+  tone: 'português brasileiro natural, leve e próximo, como uma pessoa atenciosa conversando no WhatsApp ou Instagram. Curto, humano, sem jargão de vendas nem pressão',
   offerRange:
-    'as condições padrão vêm dos planos vigentes. Descontos, prazos e outras exceções precisam de confirmação da equipe',
+    'preços, taxas, recursos e dias de teste vêm sempre dos planos vigentes do catálogo. Descontos, prazos especiais ou exceções dependem de confirmação da equipe',
   /** Staff-approved conditions and material beyond the live catalog. */
   offer: '',
-  goal: 'ajudar a pessoa a criar a própria loja na Venduá pelo cadastro online quando ela quiser começar',
+  goal: 'ter uma conversa genuína para entender a rotina do negócio e, quando fizer sentido pra pessoa, ajudá-la a criar a própria loja na Venduá pelo cadastro online',
 } as const;
 
 /** default `agent.instructions` (policy.ts) — the standing rules every run carries */
 export const DEFAULT_AGENT_RULES = [
-  'responda ao pedido atual e use o que a pessoa já contou para escolher o próximo passo',
-  'use um fato verificável para mostrar como a Venduá ajuda naquela operação',
-  'quando a pessoa quiser começar, consulte a oferta vigente e ofereça o cadastro disponível',
-  'registre pedidos, recusas, combinados e ações com a evidência de cada um',
-  'respeite a recusa, o canal e o momento da pessoa. Se perguntarem quem responde, diga que é o assistente da Venduá',
+  'converse como gente de verdade: curto, leve, natural e no ritmo da pessoa, sem cara de roteiro, clichê de vendas nem pressão',
+  'na primeira abordagem, cite no máximo um detalhe natural do negócio (nunca despeje uma ficha raspada do perfil) e puxe conversa leve sem preço nem link',
+  'um "sim" ou "faz sentido" depois da primeira abordagem é só abertura pra conversar: explique rapidinho como funciona na rotina dela e faça uma pergunta genuína antes de falar de preço ou mandar link',
+  'responda perguntas diretas (como preço ou como funciona) já na primeira frase, usando apenas dados confirmados do catálogo vigente e da conversa',
+  'respeite o tempo, o canal e qualquer recusa da pessoa; se perguntarem se é IA, diga com naturalidade que é o assistente da Venduá',
 ] as const;
 
 export type Pitch = typeof DEFAULT_PITCH;
@@ -435,9 +435,13 @@ export async function getGuardrails(sql: Sql): Promise<Guardrails> {
   return { ...DEFAULT_GUARDRAILS, ...stored };
 }
 
-export async function getPitch(sql: Sql): Promise<Pitch> {
-  const stored = await getSetting(sql, 'pitch', {} as Partial<Pitch>);
+export async function getPitchTx(tx: Sql): Promise<Pitch> {
+  const stored = await getSettingTx(tx, 'pitch', {} as Partial<Pitch>);
   return { ...DEFAULT_PITCH, ...stored };
+}
+
+export async function getPitch(sql: Sql): Promise<Pitch> {
+  return controlTx(sql, getPitchTx);
 }
 
 // the CRM agent's anthropic driver: the model is fixed, effort is the choice

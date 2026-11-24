@@ -21,7 +21,8 @@ import {
   normalizeAgent,
 } from '../src/crm/policy.ts';
 import { controlTx } from '../src/modules/control.ts';
-import { validateSetting } from '../src/modules/integrations.ts';
+import { createMemoryItem, putLeadFact } from '../src/modules/agent-memory.ts';
+import { DEFAULT_PITCH, validateSetting } from '../src/modules/integrations.ts';
 
 describe('agent v2 — pure', () => {
   test('toolsets: triage never sees send_message; strategist sees no lead tools', () => {
@@ -570,5 +571,123 @@ describe.skipIf(!OWNER_URL)('agent v2 (db)', () => {
     const body = (await snake.json()) as { wakeups: { leadId: string }[] };
     expect(body.wakeups).toHaveLength(1);
     expect(body.wakeups.every((w) => w.leadId === l.id)).toBe(true);
+  });
+
+  test('POST /agent/reset-instructions resets custom instructions and pitch while preserving memory, leads, and autonomy', async () => {
+    await b.settings(
+      'supervised',
+      {},
+      {
+        instructions: '- regra customizada antiga',
+        weeklyDiscoveryUsd: 12,
+        jobs: { reply: true, outreach: false, discovery: true, strategist: false },
+      },
+    );
+    await b.control('PUT', '/control/v1/settings/pitch', {
+      value: {
+        product: 'texto antigo do produto',
+        offer: 'link antigo de oferta',
+        tone: 'tom antigo',
+      },
+    });
+    const mem = await createMemoryItem(
+      appSql,
+      { scope: 'workspace', content: 'padarias respondem melhor à tarde' },
+      b.key(),
+    );
+    const l = await b.lead({ name: 'Padaria Central' });
+    await putLeadFact(appSql, l.id, 'horario_pico', { value: 'manhã' }, b.key());
+    await b.inbound(l.whatsapp!, 'Oi, queria saber mais');
+
+    // invalid scope returns 422
+    const bad = await b.control('POST', '/control/v1/agent/reset-instructions', {
+      scope: 'memory',
+    });
+    expect(bad.status).toBe(422);
+
+    // scope: 'instructions' resets only instructions, keeping custom pitch
+    const onlyInst = await b.control('POST', '/control/v1/agent/reset-instructions', {
+      scope: 'instructions',
+    });
+    expect(onlyInst.status).toBe(200);
+    const onlyInstBody = (await onlyInst.json()) as {
+      scope: string;
+      config: {
+        instructions: string;
+        level: string;
+        weeklyDiscoveryUsd: number;
+        jobs: Record<string, boolean>;
+      };
+      pitch: Record<string, string>;
+    };
+    expect(onlyInstBody.config.instructions).toBe(DEFAULT_INSTRUCTIONS);
+    expect(onlyInstBody.pitch.product).toBe('texto antigo do produto');
+
+    // re-set custom instructions, then reset all with explicit Idempotency-Key + replay check
+    await b.settings(
+      'supervised',
+      {},
+      {
+        instructions: '- outra regra customizada',
+        weeklyDiscoveryUsd: 12,
+        jobs: { reply: true, outreach: false, discovery: true, strategist: false },
+      },
+    );
+    const idem = b.key();
+    const resetRes = await b.app.request('/control/v1/agent/reset-instructions', {
+      method: 'POST',
+      headers: {
+        'x-vendua-control': 'ctl',
+        'content-type': 'application/json',
+        'idempotency-key': idem,
+      },
+      body: JSON.stringify({ scope: 'all' }),
+    });
+    expect(resetRes.status).toBe(200);
+    const resetBody = (await resetRes.json()) as typeof onlyInstBody;
+    expect(resetBody.config.instructions).toBe(DEFAULT_INSTRUCTIONS);
+    expect(resetBody.config.level).toBe('supervised');
+    expect(resetBody.config.weeklyDiscoveryUsd).toBe(12);
+    expect(resetBody.config.jobs).toEqual({
+      reply: true,
+      outreach: false,
+      discovery: true,
+      strategist: false,
+    });
+    expect(resetBody.pitch).toEqual(DEFAULT_PITCH);
+
+    // replay returns the same payload with x-idempotent-replay
+    const replay = await b.app.request('/control/v1/agent/reset-instructions', {
+      method: 'POST',
+      headers: {
+        'x-vendua-control': 'ctl',
+        'content-type': 'application/json',
+        'idempotency-key': idem,
+      },
+      body: JSON.stringify({ scope: 'all' }),
+    });
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get('x-idempotent-replay')).toBe('true');
+
+    // raw overrides are removed from control_settings so future defaults flow in cleanly
+    const [agentRow] = await b.sql<{ value: Record<string, unknown> }[]>`
+      select value from control_settings where key = 'agent'`;
+    expect(agentRow?.value).not.toHaveProperty('instructions');
+    expect(await b.sql`select 1 from control_settings where key = 'pitch'`).toHaveLength(0);
+
+    // memory, lead, lead facts, and lead messages are completely untouched
+    expect(
+      await b.sql`select id from agent_memory_items where id = ${mem.body.item.id}`,
+    ).toHaveLength(1);
+    expect(await b.sql`select id from leads where id = ${l.id}`).toHaveLength(1);
+    expect(await b.sql`select key, value from lead_facts where lead_id = ${l.id}`).toMatchObject([
+      { key: 'horario_pico', value: 'manhã' },
+    ]);
+    expect(
+      await b.sql`
+        select m.body from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${l.id}`,
+    ).toMatchObject([{ body: 'Oi, queria saber mais' }]);
   });
 });

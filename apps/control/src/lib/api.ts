@@ -973,6 +973,17 @@ export interface AgentConfig {
   newLeadMode: { inbound: 'draft' | 'auto'; discovery: 'draft' | 'auto' };
 }
 
+export interface AgentPitch {
+  product: string;
+  offer: string;
+  audience: string;
+  tone: string;
+  offerRange: string;
+  goal: string;
+}
+
+export type ResetInstructionsScope = 'all' | 'instructions' | 'pitch';
+
 export type MemoryScope = 'workspace' | 'segment' | 'debrief';
 export interface MemoryItem {
   id: string;
@@ -991,6 +1002,11 @@ export interface MemoryItem {
 const agentV2 = {
   /** the `agent` setting with defaults applied; the Studio writes via putSetting. */
   agentConfig: () => req<AgentConfig>('/agent/config'),
+  resetAgentInstructions: (scope: ResetInstructionsScope = 'all') =>
+    req<{ scope: ResetInstructionsScope; config: AgentConfig; pitch: AgentPitch }>(
+      '/agent/reset-instructions',
+      { method: 'POST', body: JSON.stringify({ scope }) },
+    ),
   routines: () => req<{ routines: Routine[] }>('/agent/routines'),
 
   memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {

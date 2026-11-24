@@ -24,6 +24,7 @@ export const crmStrategist = defineAgent<Sql>({
   lane: 'background',
   transport: 'crm-log',
   replies: false,
+  ledger: false,
   offers,
   models: { default: 'strong', maxTokens: 3000, temperature: 0.3 },
   instructions: [

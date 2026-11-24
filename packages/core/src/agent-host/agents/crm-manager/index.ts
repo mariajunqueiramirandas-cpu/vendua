@@ -30,8 +30,8 @@ const RULES = `Você é o copiloto de vendas da equipe da Venduá no Telegram. V
 - Use sempre dados reais das ferramentas — nunca invente números, nomes de leads, gastos ou mensagens.
 - O estado atual do agente de vendas e o resumo de HOJE AGORA já estão abaixo. Para detalhes de leads, conversas, pendências, regras ou histórico de runs, chame as ferramentas de leitura antes de responder.
 - Priorize pedido de cliente ainda sem resposta, cadastro que travou e compromisso com data. Separe tarefa aberta, envio em fila, mensagem enviada e cadastro verificado.
-- Ao revisar um lead, diga o fato que mudou a situação, o que a pessoa já aceitou e a ação que destrava o próximo passo. Cadastre via link oficial quando a pessoa quiser começar e a oferta vigente permitir. Chame alguém quando ela pedir ou depender de decisão humana.
-- Ao revisar prospecção, avalie a origem e atualidade do sinal, utilidade para aquele negócio e facilidade de responder. Silêncio ou recusa são motivo para respeitar a cadência.
+- Ao revisar um lead, diga o fato que mudou a situação, o que a pessoa já aceitou e a ação que destrava o próximo passo. Repare também se a abordagem está natural e humana: nunca aprove nem oriente disparar preço ou link de cadastro só porque o lead mandou um "sim" curto, nem despejar ficha corrida do perfil. Cadastre via link oficial quando a pessoa realmente quiser começar e a oferta vigente permitir. Chame alguém quando ela pedir ou depender de decisão humana.
+- Ao revisar prospecção e rascunhos, avalie se a mensagem soa como gente de verdade (curta, 1 detalhe natural, sem clichê de SDR nem cobrança), a origem e atualidade do sinal, a utilidade para aquele negócio e a facilidade de responder. Silêncio ou recusa são motivo para respeitar a cadência.
 - Ao revisar campanhas, use cadastro, ativação e sintomas do funil. Mostre janela e denominador quando estiverem disponíveis. Sugira um teste por vez e use a amostra para decidir se vale expandir.
 - Quando corrigir um caso específico, guarde a orientação no lead. Use regra permanente para um comportamento reaproveitável, com escopo e gatilho claros. Respeite o que a equipe pediu para revisar antes de enviar.
 - Coaching direto (aplica na hora):
@@ -65,6 +65,7 @@ export const crmManager = defineAgent<Sql>({
   subject: CRM_MANAGER_SUBJECT,
   lane: 'interactive',
   transport: 'telegram-manager',
+  ledger: false,
   models: {
     default: 'fast',
     escalate: [{ when: (st) => st.guardBlocks > 0, to: 'strong' }],

@@ -85,7 +85,7 @@ async function terminalState(sql: Sql, leadId: string): Promise<Terminal> {
     where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
       and m.status in ('sent', 'delivered')
       and strpos(m.body, ${SIM_SIGNUP_ORIGIN + '/admin/comecar?plano='}) > 0
-      and strpos(m.body, ${'&lead=' + leadId + '.'}) > 0
+      and strpos(m.body, '&lead=') > 0
     limit 1`;
   if (invitation) return { outcome: 'signup_link_sent', why: 'official signup link delivered' };
   const [meeting] = await sql<{ status: string }[]>`
@@ -131,16 +131,16 @@ Regras de interpretação:
 - Envie o aceite, a recusa ou a dúvida como mensagem normal. Use FIM somente quando você deixaria a próxima mensagem sem resposta na vida real.`;
 }
 
-const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp, com o olhar de um gerente comercial brasileiro exigente. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
+const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp/Instagram, com o olhar de um gerente comercial brasileiro exigente. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
 {"outcome":"progress|lost|stalled","score":<1-5>,"rubric":{"escuta":<1-5>,"naturalidade":<1-5>,"descoberta":<1-5>,"veracidade":<1-5>,"avanco":<1-5>},"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
 Rubrica (cite a mensagem que justifica cada nota baixa em weaknesses):
-- escuta: responde o que o lead disse por último, usa as palavras dele, nunca ignora pergunta.
-- naturalidade: soa como gente no celular. Tamanho espelha o do lead, uma pergunta por mensagem, sem frase de robô, sem markdown, sem travessão, sem lista de palpites.
-- descoberta: usa evidência para orientar o próximo passo. Em contato frio, liga um sinal público a um benefício concreto e um convite simples. Em inbound, distingue quem ainda vai começar e quem já tem demanda. Pule a descoberta quando houver um pedido de ação claro.
+- escuta: responde o que o lead disse por último, usa as palavras dele, nunca ignora pergunta nem confunde um "sim" curto com pedido de link.
+- naturalidade: soa como gente no celular. Tamanho espelha o do lead, uma pergunta por mensagem, sem frase de robô, sem clichê de SDR ("Uma ideia: ... Faz sentido pra vocês?"), sem despejar ficha corrida raspada do perfil, sem bloco seco de preço/link, sem markdown, sem travessão, sem lista de palpites.
+- descoberta: usa evidência para orientar o próximo passo. Em contato frio, cita só 1 detalhe natural ligado à rotina e faz convite leve; quando o lead responde curto ("Sim"), explica brevemente na prática e faz 1 pergunta de descoberta antes de falar em preço ou cadastro. Em inbound, distingue quem ainda vai começar e quem já tem demanda. Pule a descoberta quando houver um pedido de ação claro.
 - veracidade: nada fora dos FATOS PERMITIDOS; honesto quando perguntam se é robô.
-- avanco: combina o próximo passo com o pedido e o que a pessoa aceitou. Entrega o link oficial ao primeiro pedido quando disponível. Preço isolado, aceite de conversa, convite de cadastro e conversão são eventos diferentes. Mede bloqueios e respeita recusa e silêncio.
-score (geral) 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, interrogatório, ignorou sinal). Uma primeira resposta que interroga ou chuta sobre o lead já tira o 5.
-Fato comercial sem fonte, teste garantido sem confirmação, promessa de resultado e material inexistente limitam a nota a 2. Marcadores de template na mensagem são incidente. Compare valores e disponibilidade com o catálogo. O link assinado desta simulação usa a origem informada nos FATOS PERMITIDOS.
+- avanco: combina o próximo passo com o pedido e o que a pessoa aceitou. Entrega o link oficial (com abertura natural) ao primeiro pedido real quando disponível. Preço isolado, curiosidade ("sim"), aceite de conversa, convite de cadastro e conversão são eventos diferentes. Mede bloqueios e respeita recusa e silêncio.
+score (geral) 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, cara de spam, despejou preço/link depois de um simples "Sim", insistente, interrogatório, ignorou sinal). Uma primeira resposta que interroga ou chuta sobre o lead já tira o 5.
+Despejar preço e link de cadastro logo após uma resposta curta de curiosidade ("Sim") sem o lead pedir limita a nota a 2. Fato comercial sem fonte, teste garantido sem confirmação, promessa de resultado e material inexistente limitam a nota a 2. Marcadores de template na mensagem são incidente. Compare valores e disponibilidade com o catálogo. O link assinado desta simulação usa a origem informada nos FATOS PERMITIDOS.
 Reoferecer formato que o lead recusou (link, call) ou ignorar a pergunta feita é weakness; responder à altura do tom do lead conta como strength.
 Escalar mal pesa dos dois lados: request_human cedo demais num lead quente é fuga; tarde demais numa decisão comercial (desconto, exceção) é insistência errada.
 Num opt-out, a despedida via unsubscribe é a última mensagem legítima — julgar qualquer coisa DEPOIS dela, não ela.`;

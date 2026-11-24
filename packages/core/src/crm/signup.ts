@@ -21,31 +21,68 @@ export function configureCrmSignup(value: typeof config): void {
   config = value;
 }
 
-const signature = (data: string, secret: string) =>
+const legacySignature = (data: string, secret: string) =>
   createHmac('sha256', secret).update(`crm-signup:${data}`).digest('base64url');
 
+const compactSignature = (payload: Buffer, secret: string) =>
+  createHmac('sha256', secret).update('crm-signup:v2:').update(payload).digest().subarray(0, 8);
+
+const formatUuid = (bytes: Buffer): string => {
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
+/** Compact 38-char signed attribution token (16B uuid + 4B expiry + 8B HMAC) so links don't look like phishing walls on mobile. */
 export function crmSignupToken(leadId: string, secret: string, now = Date.now()): string {
-  const data = `${leadId}.${Math.floor(now / 1000) + 30 * 86_400}`;
-  return `${data}.${signature(data, secret)}`;
+  const expiry = Math.floor(now / 1000) + 30 * 86_400;
+  if (!UUID_RE.test(leadId)) {
+    const data = `${leadId}.${expiry}`;
+    return `${data}.${legacySignature(data, secret)}`;
+  }
+  const payload = Buffer.alloc(20);
+  Buffer.from(leadId.replaceAll('-', ''), 'hex').copy(payload, 0);
+  payload.writeUInt32BE(expiry >>> 0, 16);
+  const mac = compactSignature(payload, secret);
+  return Buffer.concat([payload, mac]).toString('base64url');
 }
 
-function signupLeadId(token: unknown, secret: string): string | null {
+/** Verifies both compact tokens and legacy `<uuid>.<expiry>.<mac>` links already sent to leads. */
+export function verifyCrmSignupToken(
+  token: unknown,
+  secret: string,
+  now = Date.now(),
+): string | null {
   if (typeof token !== 'string' || token.length > 120) return null;
-  const [id, expiry, mac, extra] = token.split('.');
-  if (
-    !id ||
-    !UUID_RE.test(id) ||
-    !expiry ||
-    !/^\d{10,12}$/.test(expiry) ||
-    Number(expiry) <= Date.now() / 1000 ||
-    !mac ||
-    extra !== undefined
-  )
-    return null;
-  const expected = Buffer.from(signature(`${id}.${expiry}`, secret));
-  const actual = Buffer.from(mac);
-  return expected.length === actual.length && timingSafeEqual(expected, actual) ? id : null;
+  if (token.includes('.')) {
+    const [id, expiry, mac, extra] = token.split('.');
+    if (
+      !id ||
+      !UUID_RE.test(id) ||
+      !expiry ||
+      !/^\d{10,12}$/.test(expiry) ||
+      Number(expiry) <= now / 1000 ||
+      !mac ||
+      extra !== undefined
+    )
+      return null;
+    const expected = Buffer.from(legacySignature(`${id}.${expiry}`, secret));
+    const actual = Buffer.from(mac);
+    return expected.length === actual.length && timingSafeEqual(expected, actual) ? id : null;
+  }
+  if (!/^[A-Za-z0-9_-]{38}$/.test(token)) return null;
+  const buf = Buffer.from(token, 'base64url');
+  if (buf.length !== 28) return null;
+  const payload = buf.subarray(0, 20);
+  const mac = buf.subarray(20, 28);
+  const expiry = payload.readUInt32BE(16);
+  if (expiry <= now / 1000) return null;
+  const expected = compactSignature(payload, secret);
+  if (!timingSafeEqual(expected, mac)) return null;
+  const id = formatUuid(payload.subarray(0, 16));
+  return UUID_RE.test(id) ? id : null;
 }
+
+const signupLeadId = (token: unknown, secret: string) => verifyCrmSignupToken(token, secret);
 
 export async function crmOfferTx(tx: Sql) {
   const plans = (await publicPlans(tx)).filter((p) => p.available);

@@ -235,7 +235,7 @@ export async function scheduleCadenceTx(tx: Sql, leadId: string, days: number): 
     dedupeKey: `crm:timer:${leadId}:${randomUUID()}`,
     at: new Date(Date.now() + days * 86_400_000),
     payload: {
-      focus: `sem resposta há ${days} dia(s) desde o último envio — retome com um gancho novo`,
+      focus: `sem resposta há ${days} dia(s) desde o último envio — só retome se tiver algo leve e útil de verdade (sem cobrança); senão encerre a cadência com add_note`,
       requested: false,
       by: 'cadence',
     },

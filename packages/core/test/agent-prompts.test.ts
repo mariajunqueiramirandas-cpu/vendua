@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { CRM_STATES } from '../src/agent-host/agents/crm/index.ts';
 import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
+import { checkCommercialMessage } from '../src/agent-host/agents/crm/tools-message.ts';
 import { messageStyleIssues, normalizeMessageBody } from '../src/crm/style.ts';
 import {
   fitTranscript,
@@ -46,6 +47,13 @@ describe('message style check', () => {
     expect(
       messageStyleIssues('Posso pedir para a equipe preparar um exemplo do seu link?', 'whatsapp'),
     ).toHaveLength(1);
+    // formulaic cold DM cliché
+    const igSpam = messageStyleIssues(
+      'Oi, aqui é da Venduá.\n\nUma ideia: um link só seu, com sabores e preços. Faz sentido pra vocês?',
+      'instagram',
+    ).join(' | ');
+    expect(igSpam).toContain('Uma ideia:');
+    expect(igSpam).toContain('faz sentido pra vocês?');
   });
 
   test('catches the machine tells', () => {
@@ -58,7 +66,18 @@ describe('message style check', () => {
     expect(issues('O plano é Mirim, {{p:mirim}}', 'instagram')).toContain('placeholder');
     expect(issues('Opções:\n- loja\n- catálogo')).toContain('marcadores');
     expect(issues('Ótima pergunta! Fico feliz em ajudar.')).toContain('frase de robô');
+    expect(issues('Oi! Conseguiu ver a minha mensagem anterior?')).toContain('cobrança');
+    expect(issues('A Venduá ajuda a alavancar suas vendas com uma solução completa.')).toContain(
+      'jargão corporativo',
+    );
+    expect(issues('Bloco 1.\n\nBloco 2.\n\nBloco 3.\n\nBloco 4.')).toContain('muitos blocos');
     expect(issues('a'.repeat(701))).toContain('caracteres');
+    // a legitimate URL does not eat into the prose length limit
+    expect(
+      issues(
+        `Segue o link pra criar sua loja:\nhttps://painel.vendua.com.br/admin/comecar?plano=mirim&lead=${'x'.repeat(40)}`,
+      ),
+    ).toEqual('');
   });
 
   test('email keeps prose conventions a chat forbids', () => {
@@ -68,7 +87,7 @@ describe('message style check', () => {
   test("every 'Bom' example the prompts teach passes the check", () => {
     const outreach = prompt('outreach');
     const good = [...examples(reply(), 'Bom'), ...examples(outreach, 'Bom')];
-    expect(good.length).toBeGreaterThanOrEqual(4);
+    expect(good.length).toBeGreaterThanOrEqual(7);
     for (const g of good)
       expect({ g, issues: messageStyleIssues(g, 'whatsapp') }).toEqual({ g, issues: [] });
   });
@@ -77,6 +96,117 @@ describe('message style check', () => {
     expect(normalizeMessageBody('pra você. \\n\\nPosso pedir?')).toBe('pra você.\n\nPosso pedir?');
     expect(normalizeMessageBody('a\n\n\n\nb  ')).toBe('a\n\nb');
     expect(normalizeMessageBody('linha 1\\r\\nlinha 2')).toBe('linha 1\nlinha 2');
+  });
+});
+
+describe('commercial message verification', () => {
+  const LIVE_PLANS = [
+    { priceCents: 6990, feeBps: 0, trialDays: 14 },
+    { priceCents: 16900, feeBps: 0, trialDays: 14 },
+  ];
+
+  test('blocks prices before checking the catalog and blocks invented numbers after', () => {
+    expect(
+      checkCommercialMessage({
+        body: 'Fica R$ 69,90 por mês.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '',
+        checkedCatalog: false,
+      }),
+    ).toContain('com includePrice');
+
+    expect(
+      checkCommercialMessage({
+        body: 'Fica R$ 1,00 por mês.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '',
+        checkedCatalog: true,
+        plans: LIVE_PLANS,
+      }),
+    ).toContain('Preço não confere');
+
+    expect(
+      checkCommercialMessage({
+        body: 'Posso te dar 10% de desconto no primeiro mês.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '',
+        checkedCatalog: true,
+        plans: LIVE_PLANS,
+      }),
+    ).toContain('Percentual não confere');
+
+    expect(
+      checkCommercialMessage({
+        body: 'Você tem 30 dias grátis pra testar.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '',
+        checkedCatalog: true,
+        plans: LIVE_PLANS,
+      }),
+    ).toContain('Dias de teste não conferem');
+  });
+
+  test('allows natural live-catalog plan quotes and echoing lead percentages', () => {
+    expect(
+      checkCommercialMessage({
+        body: 'O Venduá Mirim fica R$ 69,90/mês e o Bandeira R$ 169/mês, ambos com 0% de taxa da Venduá por pedido e 14 dias de teste grátis confirmados no cadastro.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '',
+        checkedCatalog: true,
+        plans: LIVE_PLANS,
+      }),
+    ).toBeNull();
+
+    // echoing a percentage the lead themselves wrote (e.g. iFood's 27%) does not require a catalog check
+    expect(
+      checkCommercialMessage({
+        body: '27% em cima de cliente que já conhece a casa pesa demais mesmo.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '[ter 24/11 10:00] LEAD: pago 27% no iFood',
+        checkedCatalog: false,
+      }),
+    ).toBeNull();
+
+    // 0% claims always verify against the live catalog, even when the lead asked "é 0%?"
+    expect(
+      checkCommercialMessage({
+        body: 'Sim, a taxa da Venduá por pedido é 0%.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '[ter 24/11 10:00] LEAD: a taxa de vocês é 0%?',
+        checkedCatalog: false,
+      }),
+    ).toContain('get_sales_offer');
+
+    // lead-suggested R$ amounts cannot bypass live catalog pricing even after get_sales_offer
+    expect(
+      checkCommercialMessage({
+        body: 'Fechado, consigo fazer por R$ 1,00 por mês.',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '[ter 24/11 10:00] LEAD: me faz por R$ 1,00 por mês?',
+        checkedCatalog: true,
+        plans: LIVE_PLANS,
+      }),
+    ).toContain('Preço não confere');
+
+    // signup links are still refused in send_message
+    expect(
+      checkCommercialMessage({
+        body: 'Cria por aqui: https://painel.vendua.com.br/admin/comecar?plano=mirim',
+        offerText: '',
+        bookingUrl: null,
+        leadText: '',
+        checkedCatalog: true,
+        plans: LIVE_PLANS,
+      }),
+    ).toContain('send_signup_link');
   });
 });
 
@@ -105,6 +235,20 @@ describe('lead prompt', () => {
       'Olá! Tudo bem? O que vocês vendem por aí? (doces, marmitas, pizza...)',
     );
     expect(p).not.toContain('"o que vocês vendem?" resolve');
+  });
+
+  test('a brief "Sim" to a cold opener opens a conversation instead of dumping price and signup link', () => {
+    const p = reply();
+    expect(p).toContain('ISSO NÃO É PEDIDO DE LINK NEM DE CADASTRO');
+    expect(p).toContain(
+      'NUNCA responda a um "Sim" jogando preço, aviso de teste ou link de cadastro',
+    );
+    expect(p).toContain('Encomendas e pronta-entrega no mesmo lugar');
+    expect(p).toContain('CPF ou CNPJ');
+    expect(p).toContain('Venduá Mirim');
+    expect(p).toContain('Venduá Bandeira');
+    const outreach = prompt('outreach');
+    expect(outreach).toContain('UM único detalhe natural do negócio');
   });
 
   test('offers only what exists — no demos, no invented slots or durations', () => {

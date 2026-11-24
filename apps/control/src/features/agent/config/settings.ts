@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api.ts';
+import { api, type AgentConfig, type AgentPitch, type ResetInstructionsScope } from '@/lib/api.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
 
 type SettingsRes = { settings: { key: string; value: unknown }[] };
@@ -73,6 +73,46 @@ export function useSaveSetting() {
     [mutateAsync],
   );
   return { save, pending: m.isPending };
+}
+
+export function useResetAgentInstructions() {
+  const qc = useQueryClient();
+  const m = useMutation({
+    scope: { id: 'settings-put' },
+    mutationFn: (scope: ResetInstructionsScope = 'all') => api.resetAgentInstructions(scope),
+    onSuccess: async (res) => {
+      await Promise.all([
+        qc.cancelQueries({ queryKey: qk.settings() }),
+        qc.cancelQueries({ queryKey: qk.agentConfig() }),
+      ]);
+      qc.setQueryData<AgentConfig>(qk.agentConfig(), res.config);
+      qc.setQueryData<SettingsRes>(qk.settings(), (old) => {
+        const rows = old?.settings ?? [];
+        const upsert = (list: { key: string; value: unknown }[], key: string, value: unknown) =>
+          list.some((s) => s.key === key)
+            ? list.map((s) => (s.key === key ? { key, value } : s))
+            : [...list, { key, value }];
+        return { settings: upsert(upsert(rows, 'agent', res.config), 'pitch', res.pitch) };
+      });
+      toast.success('voz e instruções restauradas para o padrão — memória e leads mantidos');
+      for (const queryKey of [qk.settings(), qk.agentConfig()])
+        void qc.invalidateQueries({ queryKey });
+    },
+    onError: (e) => {
+      toast.error(`restaurar instruções: ${errorMessage(e)}`);
+      void qc.invalidateQueries({ queryKey: qk.settings() });
+      void qc.invalidateQueries({ queryKey: qk.agentConfig() });
+    },
+  });
+  const { mutateAsync } = m;
+  const resetInstructions = useCallback(
+    (
+      scope: ResetInstructionsScope = 'all',
+    ): Promise<{ scope: ResetInstructionsScope; config: AgentConfig; pitch: AgentPitch } | null> =>
+      mutateAsync(scope).catch(() => null),
+    [mutateAsync],
+  );
+  return { resetInstructions, resetting: m.isPending };
 }
 
 export const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
