@@ -188,7 +188,7 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
   join. Pick one full take and keep its own pauses, lengthening them only to land on the grid.
 - Real screens beat drawn UI, and a flat graphic world (night, lime, type) reads far less "AI" than
   a generative shader backdrop; without WebGL the full render took 2 minutes instead of 7.
-- ffmpeg's `afir` here takes `dry` as the *input* gain: `dry=0` silences the convolution.
+- ffmpeg's `afir` here takes `dry` as the _input_ gain: `dry=0` silences the convolution.
 - OpenRouter reserves credit for the maximum output (and more for video input) before a call: on a
   small key, cap `max_tokens` and send frames + audio rather than a video.
 
