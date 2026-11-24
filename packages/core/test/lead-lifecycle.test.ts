@@ -19,8 +19,9 @@ import { PLATFORM_TENANT_ID } from '../src/platform/tenancy.ts';
 
 describe('guardrails — cadence + stale-draft knobs', () => {
   test('defaults', () => {
-    expect(DEFAULT_GUARDRAILS.followupCadenceDays).toBe(2);
-    expect(DEFAULT_GUARDRAILS.staleDraftDays).toBe(7);
+    expect(DEFAULT_GUARDRAILS.maxUnansweredTouches).toBe(2);
+    expect(DEFAULT_GUARDRAILS.followupCadenceDays).toBe(3);
+    expect(DEFAULT_GUARDRAILS.staleDraftDays).toBe(3);
     expect(DEFAULT_GUARDRAILS.firstContactDelayMin).toBe(0);
   });
 

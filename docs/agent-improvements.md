@@ -26,6 +26,46 @@ The provisioner records when the store is live. The activity view displays the s
 outcome of a turn, and agent metrics include unanswered intake and signup, activation,
 payment and opt-out counts by source.
 
+### Sales playbook
+
+The merchant shares a storefront link through the channels their customers already use.
+Customers choose items and order through the store. The merchant manages the menu, orders,
+hours and payments in the Venduá app. Start with one part of that workflow the person would use.
+The live offer supplies plan availability, prices, fees and trial terms. The checkout determines
+trial eligibility. The workspace offer holds additional approved claims and materials.
+
+| Situation         | What the agent does                                                                                                                                            |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound greeting  | Introduces Venduá and asks what the person is looking for.                                                                                                     |
+| First-time seller | Helps them picture the first order and asks about the one decision that changes the advice. Estimates stay estimates.                                          |
+| Active merchant   | Uses the order workflow or friction the merchant confirmed. Shows one concrete improvement and answers direct questions first.                                 |
+| Price question    | Quotes the live plan, with the fee identified as Venduá's. Includes a signup link when the person asks for or accepts it.                                      |
+| Ready to start    | Checks availability, offers self-serve signup and follows the action the buyer accepted. If signup closes or reopens, checks the live state before continuing. |
+| Cold outreach     | Verifies the business and contact source, ties one public signal to a useful idea and asks for a low-effort reply.                                             |
+| Follow-up         | Delivers a promised next step or adds useful context in the same channel. A cadence turn can record why the sequence ended without sending.                    |
+| Discovery         | Picks a buying situation the source can show, checks duplicates and records a traceable business contact. Scores product fit and buyer intent independently.   |
+| Weekly review     | Proposes small campaigns with a single hypothesis. Reads contact and response counts alongside verified signup, activation, payment, cost and opt-outs.        |
+
+With default pacing, an unanswered sequence gets up to two agent touches. The default cadence
+waits three days, and drafts older than three days are regenerated against the current context.
+Workspace overrides set the effective limits. An explicit callback has its own timer. A plan
+uses stable milestones for situation, need, value and next step. A completed milestone carries
+the fact or action that completed it, and skipped steps leave the progress denominator.
+
+When planning a campaign, change one element at a time, such as the audience, the signal used
+in the first message or the offer to explain a workflow. Review which replies expressed interest
+before scaling. Track signup and activation in comparable cohorts. The activity totals in the
+weekly review use event dates and can include customers acquired outside that window. A light
+first ask is a starting hypothesis. Judge how it works for Venduá using actual reply quality
+and conversion. [Gong's cold outreach analysis](https://www.gong.io/resources/guides/how-to-master-cold-email-get-the-data-backed-guide-based-on-85-million-emails)
+
+Run the CRM regression tests for prompt routing, tool outcomes, cadence and signup. For live
+model evaluation, run `bun run sims:crm -- --scenario picole-primeira-venda` from
+`packages/core` with a simulation database and model routes configured. It uses the actual CRM,
+catalog, signed signup links and local log delivery. The simulator reports a delivered signup
+link and a verified signup as separate outcomes. Compare the transcript and outcome on the same
+scenarios before changing the default sales model or tactic.
+
 ## Behavior changes (user-requested)
 
 ### 1. Triage folded into the contact run — shipped

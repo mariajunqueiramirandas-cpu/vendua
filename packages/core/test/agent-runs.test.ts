@@ -169,6 +169,42 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
     expect(plan.map((s) => s.step)).not.toContain('etapa 1');
   });
 
+  test('replacing a legacy plan and rewording a milestone keep one entry per key', async () => {
+    const lead = await b.lead();
+    const writePlan = (input: Record<string, unknown>) =>
+      b.runTools([['plan', input]], { leadId: lead.id, kind: 'reply' });
+    await writePlan({
+      items: [{ step: 'responder oi' }, { step: 'responder ao olá' }, { step: 'cadastro ou call' }],
+    });
+    await writePlan({
+      replace: true,
+      items: [
+        {
+          key: 'situation',
+          step: 'começando a vender picolé',
+          status: 'done',
+          note: 'lead confirmou a ideia',
+        },
+        { key: 'next_step', step: 'oferecer o cadastro quando quiser começar' },
+      ],
+    });
+    await writePlan({ items: [{ key: 'situation', step: 'primeira venda de picolé' }] });
+    expect(await planOf(lead.id)).toEqual([
+      {
+        key: 'situation',
+        step: 'primeira venda de picolé',
+        status: 'done',
+        note: 'lead confirmou a ideia',
+      },
+      {
+        key: 'next_step',
+        step: 'oferecer o cadastro quando quiser começar',
+        status: 'todo',
+        note: null,
+      },
+    ]);
+  });
+
   test('discovery still uses run-scoped memory', async () => {
     const { outcomes } = await b.runTools([['plan', { content: 'campaign' }]], {
       kind: 'discovery',

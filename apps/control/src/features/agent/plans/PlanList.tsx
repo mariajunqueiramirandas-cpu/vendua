@@ -27,17 +27,19 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
               {AGENT_GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
             </Badge>
           </div>
-          <div className="flex items-center gap-2">
-            <ProgressSliver
-              value={resolved}
-              max={total}
-              className="max-w-56 flex-1"
-              label={`${resolved} de ${total} etapas resolvidas`}
-            />
-            <span className="text-xs text-muted-foreground tnum">
-              {resolved}/{total} etapas
-            </span>
-          </div>
+          {total > 0 && (
+            <div className="flex items-center gap-2">
+              <ProgressSliver
+                value={resolved}
+                max={total}
+                className="max-w-56 flex-1"
+                label={`${resolved} de ${total} etapas concluídas`}
+              />
+              <span className="text-xs text-muted-foreground tnum">
+                {resolved}/{total} etapas
+              </span>
+            </div>
+          )}
         </div>
         <Button
           size="icon-sm"

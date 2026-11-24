@@ -2,7 +2,17 @@ import { defineTool, type Json, s, ToolError } from '@vendua/agent-runtime';
 import type { Sql } from '../../../platform/db.ts';
 import { HttpError } from '../../../platform/http.ts';
 import { addActivity, createTask } from '../../../modules/activities.ts';
-import { getLeadDetail, leadPatch, listLeads, updateLead } from '../../../modules/leads.ts';
+import {
+  AGENT_PLAN_KEYS,
+  AGENT_PLAN_STATUSES,
+  getLeadDetail,
+  leadPatch,
+  listLeads,
+  updateLead,
+  type AgentPlanKey,
+  type AgentPlanStatus,
+  type AgentPlanStep,
+} from '../../../modules/leads.ts';
 import {
   hasMemoryTablesTx,
   LEAD_FACT_KEY_RE,
@@ -255,81 +265,85 @@ export const scheduleTool = defineTool<
 });
 
 type PlanItem = {
+  key?: AgentPlanKey | undefined;
   step: string;
-  status?: 'todo' | 'done' | 'skip' | undefined;
+  status?: AgentPlanStatus | undefined;
   note?: string | undefined;
 };
 
-export const planTool = defineTool<{ items: PlanItem[] }, Sql>({
+function normalizePlanItem(value: unknown) {
+  if (typeof value !== 'object' || value === null) return null;
+  const item = value as Record<string, unknown>;
+  const step = String(item.step ?? '')
+    .trim()
+    .slice(0, 200);
+  if (!step) return null;
+  return {
+    key: AGENT_PLAN_KEYS.find((key) => key === item.key),
+    step,
+    status: AGENT_PLAN_STATUSES.find((status) => status === item.status),
+    note: typeof item.note === 'string' ? item.note.trim().slice(0, 200) || null : undefined,
+  };
+}
+
+const planItemId = ({ key, step }: Pick<PlanItem, 'key' | 'step'>) =>
+  key ? `key:${key}` : `step:${step.toLowerCase()}`;
+
+export const planTool = defineTool<{ items: PlanItem[]; replace?: boolean | undefined }, Sql>({
   name: 'plan',
   description:
-    "The negotiation checklist for THIS lead — write it once you understand the business (methodology stages tailored to them, ending at the lead's GOAL), then send it back marking items done as they complete — it persists on the lead across turns and is your memory between messages. Items merge by step: a step you omit is kept — mark dead ends 'skip' instead of dropping them; on steps you do send, fields you omit keep their stored values (≤12 items).",
+    'Keep a short lead plan across turns. Update milestones by key (situation, need, value, next_step) even if the wording changes. Mark done with confirmed evidence in note. Omitted items and fields are kept. Legacy steps still match by text. Use replace=true with the complete revised plan when consolidating duplicated or obsolete steps.',
   effect: 'write',
   input: s.object({
+    replace: s.boolean().describe('replace the full plan with these milestones').optional(),
     items: s
       .array(
         s.object({
+          key: s.enum(AGENT_PLAN_KEYS).describe('stable milestone identity').optional(),
           step: s.string({ min: 1, max: 200 }).describe('what must happen'),
-          status: s.enum(['todo', 'done', 'skip']).optional(),
+          status: s.enum(AGENT_PLAN_STATUSES).optional(),
           note: s.string({ max: 200 }).describe('evidence/outcome, one line').optional(),
         }),
         { min: 1, max: 12 },
       )
-      .describe('the full checklist, current state'),
+      .describe('milestones to update, or the full plan when replacing'),
   }),
   run: (ctx: Ctx, input) =>
     refusals(async () => {
       const leadId = leadOf(ctx);
-      const norm = (it: unknown) => {
-        if (typeof it !== 'object' || it === null) return null;
-        const o = it as Record<string, unknown>;
-        const step = String(o.step ?? '')
-          .trim()
-          .slice(0, 200);
-        if (!step) return null;
-        const status =
-          o.status === 'todo' || o.status === 'done' || o.status === 'skip' ? o.status : null;
-        const note =
-          typeof o.note === 'string'
-            ? o.note.trim()
-              ? o.note.trim().slice(0, 200)
-              : null
-            : undefined;
-        return { step, status, note };
-      };
-      const steps = input.items.map(norm).filter((x) => x !== null);
+      const steps = input.items.map(normalizePlanItem).filter((item) => item !== null);
       if (!steps.length)
         throw new ToolError('every item needs a step: a blank plan changes nothing');
       const next = await crm(ctx, async (tx) => {
         const [cur] = await tx<{ agent_plan: unknown }[]>`
           select agent_plan from leads where id = ${leadId} for update`;
         const prev = Array.isArray(cur?.agent_plan) ? cur.agent_plan : [];
-        // patch-merge: omitted status/note keep their stored value; 'skip' rides the tail
-        const merged: { step: string; status: string; note: string | null }[] = [];
-        const index = new Map<string, number>();
+        const previous = new Map<string, AgentPlanStep>();
         for (const it of prev) {
-          const p = norm(it);
-          if (!p || index.has(p.step.toLowerCase())) continue;
-          index.set(p.step.toLowerCase(), merged.length);
-          merged.push({ step: p.step, status: p.status ?? 'todo', note: p.note ?? null });
+          const item = normalizePlanItem(it);
+          if (!item || previous.has(planItemId(item))) continue;
+          previous.set(planItemId(item), {
+            ...(item.key ? { key: item.key } : {}),
+            step: item.step,
+            status: item.status ?? 'todo',
+            note: item.note ?? null,
+          });
         }
-        for (const p of steps) {
-          const i = index.get(p.step.toLowerCase());
-          if (i === undefined) {
-            index.set(p.step.toLowerCase(), merged.length);
-            merged.push({ step: p.step, status: p.status ?? 'todo', note: p.note ?? null });
-          } else {
-            const was = merged[i]!;
-            merged[i] = {
-              step: p.step,
-              status: p.status ?? was.status,
-              note: p.note === undefined ? was.note : p.note,
-            };
-          }
+        const merged = new Map<string, AgentPlanStep>(input.replace ? undefined : previous);
+        for (const item of steps) {
+          const id = planItemId(item);
+          const was = merged.get(id) ?? previous.get(id);
+          merged.set(id, {
+            ...(item.key ? { key: item.key } : {}),
+            step: item.step,
+            status: item.status ?? was?.status ?? 'todo',
+            note: item.note === undefined ? (was?.note ?? null) : item.note,
+          });
         }
-        const plan = merged
+        const items = [...merged.values()];
+        const plan = items
           .filter((x) => x.status !== 'skip')
-          .concat(merged.filter((x) => x.status === 'skip'))
+          .concat(items.filter((x) => x.status === 'skip'))
           .slice(0, 12);
         await tx`update leads set agent_plan = ${tx.json(plan)}, updated_at = now() where id = ${leadId}`;
         return plan;

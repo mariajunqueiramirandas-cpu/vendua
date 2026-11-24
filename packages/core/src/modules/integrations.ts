@@ -217,7 +217,7 @@ export const DEFAULT_GUARDRAILS = {
    *  count, so an active negotiation is never capped; 0 = no cap */
   maxOutboundPerLeadPerDay: 3,
   /** Total unattended messages in a sequence with no new inbound, even across days. */
-  maxUnansweredTouches: 3,
+  maxUnansweredTouches: 2,
   /** false = no quiet window at all (quietStart/quietEnd kept for when it's back on) */
   quietHoursEnabled: true,
   quietStart: '21:00',
@@ -234,10 +234,10 @@ export const DEFAULT_GUARDRAILS = {
   firstContactDelayMin: 0,
   /** after an agent send with no reply, book a follow-up N days out on the lead's
    *  agenda unless something is already there; 0 = off */
-  followupCadenceDays: 2,
+  followupCadenceDays: 3,
   /** approving a draft older than N days supersedes it and recomposes against
    *  current state; 0 = approve always sends */
-  staleDraftDays: 7,
+  staleDraftDays: 3,
   /** a brief whose last N runs produced zero leads auto-pauses; 0 = never */
   briefAutoPauseRuns: 5,
   /** account-wide cap on agent cold DMs (instagram threads the lead never wrote
@@ -297,23 +297,24 @@ export function phoneIsIgnored(
 
 export const DEFAULT_PITCH = {
   product:
-    'Venduá: plataforma que coloca no ar, em poucos dias, a loja online própria de um pequeno negócio de comida, com catálogo, pedidos e pagamento integrados.',
+    'A Venduá oferece uma loja online própria e um app pra cuidar do cardápio, dos pedidos, dos horários e dos pagamentos. O negócio pode compartilhar o link pelo WhatsApp ou Instagram. O cliente pede pela loja e o pedido chega no app.',
   audience:
-    'donos de pequenos negócios de comida no Brasil (docerias, confeitarias, marmitas, pizzarias, padarias, lanchonetes) que hoje vendem por WhatsApp, Instagram ou marketplace',
-  tone: 'direto e caloroso, como um bom vendedor brasileiro no WhatsApp: mensagens curtas, português falado, zero formalidade de e-mail',
+    'quem vende ou quer começar a vender comida no Brasil e precisa de um canal próprio de pedidos',
+  tone: 'português brasileiro claro e acolhedor. Responda no ritmo da pessoa com uma ideia útil por mensagem',
   offerRange:
-    'nenhuma condição especial pré-aprovada: desconto, teste grátis, prazo ou exceção são decisão da equipe, então escale para humano',
-  /** the only commercial claims the agent may state verbatim; empty = nothing may be quoted */
+    'as condições padrão vêm dos planos vigentes. Descontos, prazos e outras exceções precisam de confirmação da equipe',
+  /** Staff-approved conditions and material beyond the live catalog. */
   offer: '',
-  goal: 'entender o negócio da pessoa e levar a um próximo passo real: uma conversa curta com a equipe',
+  goal: 'ajudar a pessoa a criar a própria loja na Venduá pelo cadastro online quando ela quiser começar',
 } as const;
 
 /** default `agent.instructions` (policy.ts) — the standing rules every run carries */
 export const DEFAULT_AGENT_RULES = [
-  'nunca invente funcionalidades, prazos, preços ou resultados',
-  'nunca pressione quem disse não ou pediu para parar',
-  'uma mensagem curta por vez, com no máximo uma pergunta; sem listas nem jargão',
-  'não se identifique como IA a menos que perguntem; se perguntarem, seja honesto',
+  'responda ao pedido atual e use o que a pessoa já contou para escolher o próximo passo',
+  'use um fato verificável para mostrar como a Venduá ajuda naquela operação',
+  'quando a pessoa quiser começar, consulte a oferta vigente e ofereça o cadastro disponível',
+  'registre pedidos, recusas, combinados e ações com a evidência de cada um',
+  'respeite a recusa, o canal e o momento da pessoa. Se perguntarem quem responde, diga que é o assistente da Venduá',
 ] as const;
 
 export type Pitch = typeof DEFAULT_PITCH;

@@ -4,8 +4,7 @@ import { hasMemoryTablesTx, rememberTx } from '../../../modules/agent-memory.ts'
 import { discoveryBudgetTx } from '../../../crm/policy.ts';
 import { crm, emitAfter, refusals, type Ctx } from './shared.ts';
 
-// The weekly strategist's writes: the agent's standing memory and drafted discovery briefs. Both
-// are staff-driven jobs only: stored text reaches every later prompt.
+// The weekly strategist records learnings and files proposals under the workspace discovery budget.
 
 export const rememberTool = defineTool<
   { fact: string; scope?: 'workspace' | 'segment' | undefined; segment?: string | undefined },
@@ -13,7 +12,7 @@ export const rememberTool = defineTool<
 >({
   name: 'remember',
   description:
-    'Persist a durable learning (agent memory, e.g. "docerias respond better at night"). scope: "workspace" (default: applies to every run) or "segment" + `segment` for a learning that only fits one niche. Deduped case-insensitively per scope/segment: repeating a learning refreshes it. Cap 200 learnings (staff-pinned items never drop); an old learning the cap drops comes back as `evicted`: fold it into a consolidated learning on a later call.',
+    'Record a durable learning with its evidence, period and scope. Use segment for a narrow finding. Keep hypotheses tentative. Deduplicates per scope and keeps staff-pinned memories.',
   effect: 'write',
   input: s.object({
     fact: s.string({ min: 1, max: 500 }),
@@ -59,7 +58,7 @@ export const proposeBriefTool = defineTool<
 >({
   name: 'propose_brief',
   description:
-    'Propose a NEW discovery brief as a DISABLED draft: staff approves it on the board with one click; you never enable anything. Only propose gaps the BRIEFS list does not already cover: a segment that converts but lacks volume, a city/flavor with no brief, an angle memory says works. `reason` is the one-line justification staff reads before approving.',
+    'Propose one new, testable discovery brief for a specific buying situation and audience. Give the signal and the success criterion in reason. Deduplicates against the board and returns enabled when the configured weekly budget approves it. Otherwise staff can review the draft.',
   effect: 'write',
   input: s.object({
     name: s.string({ min: 1, max: 120 }).describe('short slug, e.g. "docerias fortaleza"'),

@@ -207,6 +207,9 @@ export const RESPONSE_ACTIONS = [
 export const waitsForResponse = (t: TurnInfo) =>
   t.trigger === 'message.inbound' || t.source === 'site';
 
+export const notedFollowupSkip = (t: TurnInfo) =>
+  t.trigger === 'timer.followup' && t.actions.includes('add_note');
+
 export function applyCrm(prev: Json, e: AgentEvent): Json {
   const c: CrmCustom = { turn: { ...EMPTY_TURN, ...(obj(prev).turn as unknown as TurnInfo) } };
   const p = obj(e.payload);

@@ -22,7 +22,11 @@ import {
   checkSendAllowedTx,
   resolveChannelTx,
 } from '../../../crm/guardrails.ts';
-import { messageStyleIssues, normalizeMessageBody } from '../../../crm/style.ts';
+import {
+  hasUnresolvedTemplate,
+  messageStyleIssues,
+  normalizeMessageBody,
+} from '../../../crm/style.ts';
 import { MESSAGE_BODY, MESSAGE_SUBJECT } from './fields.ts';
 import { crm, emitAfter, leadOf, refusals, turn, type Ctx } from './shared.ts';
 
@@ -51,6 +55,10 @@ function styleBounce(ctx: Ctx, body: string, ch: string | null): Json | null {
 }
 
 const notifyOutbox = (tx: Sql) => tx`select pg_notify(${CRM_OUTBOX_CHANNEL}, '')`;
+const TEMPLATE_FAILURE = {
+  code: 'unresolved_template',
+  error: 'A mensagem contém um placeholder. Retire ou preencha com um valor confirmado.',
+};
 
 export const draftMessageTool = defineTool<
   { channel?: string | undefined; body: string; subject?: string | undefined },
@@ -69,6 +77,7 @@ export const draftMessageTool = defineTool<
     refusals(async () => {
       const leadId = leadOf(ctx);
       const body = normalizeMessageBody(input.body);
+      if (hasUnresolvedTemplate(body, input.subject)) return TEMPLATE_FAILURE;
       const bounced = styleBounce(ctx, body, input.channel ?? override(ctx));
       if (bounced) return bounced;
       const out = await crm(ctx, async (tx) => {
@@ -162,28 +171,42 @@ export const sendSignupLinkTool = defineTool<
   }),
   run: async (ctx, input) => {
     const offer = await crm(ctx, crmOfferTx);
-    const plan = offer.plans.find((p) => p.id === input.planId);
-    const link = plan && offer.signupOpen ? crmSignupLink(leadOf(ctx), plan.id) : null;
     const wantsLink = input.includeLink !== false;
-    if (
-      !plan ||
-      (wantsLink && !link) ||
-      (!wantsLink && (!input.includePrice || plan.priceCents === null))
-    )
+    if (wantsLink && !offer.signupOpen)
       return {
+        code: 'signup_closed',
         error:
-          'Cadastro indisponível para esse plano. Consulte get_sales_offer ou encaminhe para a equipe.',
+          'O cadastro online está fechado agora. Ofereça ajuda na conversa se a pessoa quiser começar.',
       };
+    const plan = offer.plans.find((p) => p.id === input.planId);
+    if (!plan) {
+      return {
+        code: 'plan_unavailable',
+        error: 'Esse plano está indisponível. Consulte get_sales_offer para ver opções vigentes.',
+      };
+    }
+    if (!wantsLink && (!input.includePrice || plan.priceCents === null)) {
+      return {
+        code: 'price_unavailable',
+        error: 'Não há preço para enviar com esses parâmetros.',
+      };
+    }
+    const link = wantsLink ? crmSignupLink(leadOf(ctx), plan.id) : null;
+    if (wantsLink && !link) {
+      return { code: 'link_unavailable', error: 'O link oficial não pôde ser criado.' };
+    }
     const price =
       input.includePrice && plan.priceCents !== null
-        ? `O plano ${plan.name} custa ${(plan.priceCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por mês. A taxa por pedido é de ${(plan.feeBps / 100).toLocaleString('pt-BR')}%. `
+        ? `O plano ${plan.name} custa ${(plan.priceCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por mês. A taxa da Venduá por pedido é de ${(plan.feeBps / 100).toLocaleString('pt-BR')}%.`
         : '';
     const trial =
       plan.trialDays > 0
-        ? `No cadastro você confirma se pode usar os ${plan.trialDays} dias de teste. `
+        ? `O cadastro confirma se você pode usar os ${plan.trialDays} dias de teste.`
         : '';
     return composeAgentSend(ctx, {
-      body: `${price}${trial}${wantsLink ? `Você pode criar sua loja no plano ${plan.name} por aqui: ${link}` : ''}`.trim(),
+      body: [price, trial, link && `Crie sua loja no plano ${plan.name}\n${link}`]
+        .filter(Boolean)
+        .join('\n'),
     });
   },
 });
@@ -197,6 +220,7 @@ function composeAgentSend(
     const t = turn(ctx.state);
     const draftOnly = t.params.draftOnly === true;
     const body = normalizeMessageBody(input.body);
+    if (hasUnresolvedTemplate(body, input.subject)) return TEMPLATE_FAILURE;
     const bounced = styleBounce(ctx, body, input.channel ?? override(ctx));
     if (bounced) return bounced;
     const out = await crm(ctx, async (tx) => {
@@ -292,10 +316,11 @@ export const unsubscribeTool = defineTool<
       const out = await crm(ctx, async (tx) => {
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         let threadId: string | null = null;
-        let sendBlocked: string | null = null;
+        let sendBlocked: string | null =
+          reply && hasUnresolvedTemplate(reply) ? TEMPLATE_FAILURE.code : null;
         let drafted = false;
         let queued = false;
-        if (reply) {
+        if (reply && !sendBlocked) {
           const pick = await resolveChannelTx(tx, leadId, {
             requested: null,
             override: override(ctx),

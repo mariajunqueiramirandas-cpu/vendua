@@ -87,7 +87,7 @@ export const webSearchTool = defineTool<{ query: string; purpose?: string | unde
 export const readPagesTool = defineTool<{ urls: string[]; goal?: string | undefined }, Sql>({
   name: 'read_pages',
   description:
-    "Read pages: each page's markdown text (read it: contacts hide in prose, a bio, a footer mailto), foundContacts (phone/whatsapp/email/socials parsed from links, text, meta and redirects; phoneHints = '9xxxx-xxxx' sem DDD, proof of a whatsapp to resolve) and nav (contact-ish follow-ups). Link-in-bio hubs and google-business/maps pointers are chased one hop for free (marked chasedFrom). truncated:true = cut mid-render, the contact line may be past the fold. Up to 6 urls of one prospect per call; facebook is login-walled; a repeated URL returns its cached output.",
+    "Read pages: each page's markdown text (read it: contacts hide in prose, a bio, a footer mailto), foundContacts (phone/whatsapp/email/socials parsed from links, text, meta and redirects; phoneHints are partial numbers that need verification) and nav (contact-ish follow-ups). Link-in-bio hubs and google-business/maps pointers are chased one hop for free (marked chasedFrom). truncated:true = cut mid-render, the contact line may be past the fold. Up to 6 urls of one prospect per call; facebook is login-walled; a repeated URL returns its cached output.",
   effect: 'read',
   input: s.object({
     urls: s
@@ -333,7 +333,7 @@ export const mapsLookupTool = defineTool<
 >({
   name: 'maps_lookup',
   description:
-    "Google Maps business lookup via monid (~$0.0045/result against the turn's monid cap). query='what' + city='where' → structured candidates: name, phone, whatsappLikely (true when the phone is a BR mobile: that number IS the whatsapp, carry it into the lead's whatsapp field), address, website, rating, category. The strongest open for physical segments.",
+    "Google Maps business lookup via monid (~$0.0045/result against the turn's monid cap). Returns business identity, phone, site and location. whatsappLikely indicates a Brazilian mobile number. Keep it as phone until a source or registration confirms WhatsApp.",
   effect: 'read',
   input: s.object({
     query: s.string({ min: 1, max: 200 }).describe("business/segment, e.g. 'padaria artesanal'"),

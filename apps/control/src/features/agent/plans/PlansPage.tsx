@@ -93,13 +93,14 @@ export default function PlansPage() {
   const progressCell = (l: LeadListItem | undefined) => {
     if (!l?.agentPlan.length) return null;
     const { resolved, total } = planProgress(l);
+    if (!total) return null;
     return (
       <span className="flex items-center gap-1.5">
         <ProgressSliver
           value={resolved}
           max={total}
           className="w-12"
-          label={`${resolved} de ${total} etapas resolvidas`}
+          label={`${resolved} de ${total} etapas concluídas`}
         />
         <span className="text-[11px] text-muted-foreground tnum">
           {resolved}/{total}

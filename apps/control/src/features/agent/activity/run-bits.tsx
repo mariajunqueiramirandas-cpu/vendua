@@ -25,6 +25,7 @@ export const RUN_OUTCOME_LABEL: Record<string, string> = {
   staff_task: 'tarefa criada',
   closed: 'encerrado',
   followup_scheduled: 'retorno agendado',
+  followup_skipped: 'retorno encerrado',
   lead_updated: 'cadastro atualizado',
   no_action: 'sem ação',
 };

@@ -53,7 +53,9 @@ describe('message style check', () => {
     expect(issues('A Venduá ajuda negócios — como docerias — a vender')).toContain('travessão');
     expect(issues('Olá **Marta**, tudo certo?')).toContain('markdown');
     expect(issues('Oi, [nome]! Tudo bem?')).toContain('placeholder');
-    expect(issues('Tudo bem? Vende o quê? Onde fica?')).toContain('3+ perguntas');
+    expect(issues('Tudo bem? Vende o quê?')).toContain('mais de uma pergunta');
+    expect(issues('Pode abrir https://app.example/loja?plano=mirim por aqui?')).toEqual('');
+    expect(issues('O plano é Mirim, {{p:mirim}}', 'instagram')).toContain('placeholder');
     expect(issues('Opções:\n- loja\n- catálogo')).toContain('marcadores');
     expect(issues('Ótima pergunta! Fico feliz em ajudar.')).toContain('frase de robô');
     expect(issues('a'.repeat(701))).toContain('caracteres');
@@ -108,7 +110,7 @@ describe('lead prompt', () => {
   test('offers only what exists — no demos, no invented slots or durations', () => {
     for (const goal of ['meeting', 'negotiation'] as const) {
       const p = reply({ goal, bookingUrl: null });
-      expect(p).toContain('Você NÃO consegue criar, gerar, montar ou mandar nada');
+      expect(p).toContain('só podem ser oferecidos se estiverem autorizados na OFERTA');
       expect(p).not.toMatch(/loja parecida|15h|15 min|\(teste, demonstração/);
     }
     // the stock latitude authorizes nothing on its own
@@ -116,6 +118,27 @@ describe('lead prompt', () => {
     expect(DEFAULT_PITCH.goal).not.toContain('demonstração');
     const meeting = reply({ goal: 'meeting', bookingUrl: 'https://cal.example/x' });
     expect(meeting).toContain('pelo link de agendamento (BOOKING_URL)');
+  });
+
+  test('signup is the default next step for a lead who wants to start', () => {
+    const bookingUrl = 'https://cal.example/x';
+    const p = reply({ bookingUrl });
+    expect(DEFAULT_PITCH.goal).toContain('cadastro online');
+    expect(p).toContain('Ajude a pessoa a criar a própria loja pelo cadastro online.');
+    expect(p).toContain('Com cadastro aberto e plano disponível, ofereça o link oficial');
+    expect(p).toContain('envie com send_signup_link sem perguntar de novo');
+    expect(p).toContain(
+      'Se o cadastro estiver fechado, explique e ofereça ajuda da equipe na mesma conversa',
+    );
+    expect(p).toContain('includePrice=true e includeLink=false');
+    expect(p).not.toContain(bookingUrl);
+    expect(reply({ goal: 'meeting', bookingUrl })).toContain(bookingUrl);
+
+    const manual = reply({
+      tools: new Set([...TOOLS.reply].filter((tool) => tool !== 'send_signup_link')),
+    });
+    expect(manual).toContain('deixe o envio do link oficial a cargo da equipe');
+    expect(manual).not.toContain('send_signup_link');
   });
 });
 

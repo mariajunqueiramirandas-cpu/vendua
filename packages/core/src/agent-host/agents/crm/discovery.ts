@@ -67,16 +67,16 @@ export const bookSettled: OutputGuard = {
   run(_text, { state }) {
     const t = turn(state);
     if (t.nudged) return pass;
-    const open = t.book.filter((e) => e.status === 'open' && !e.channels.whatsapp);
+    const open = t.book.filter((e) => e.status === 'open');
     if (!open.length) return pass;
     return block(
       'book_open',
-      `Prospects abertos sem whatsapp: ${open
+      `Prospects com pesquisa pendente: ${open
         .slice(0, 8)
         .map((e) => e.name)
         .join(
           ', ',
-        )}. Resolva cada um (whatsapp no book e create_lead) ou marque dead com os movimentos gastos em tried antes de encerrar.`,
+        )}. Use book para marcar resolved com canal verificado e decisão registrada, ou dead com o motivo e as tentativas em tried.`,
     );
   },
 };

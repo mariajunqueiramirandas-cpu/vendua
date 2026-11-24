@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { controlTx } from '../src/modules/control.ts';
 import { upsertIntegration } from '../src/modules/integrations.ts';
+import { approveMessage, composeMessageTx } from '../src/modules/threads.ts';
 import { dispatchMessage } from '../src/crm/send.ts';
+import { requestLeadTx } from '../src/crm/dispatch.ts';
 import { deliverQueued } from '../src/crm/outbox.ts';
 import { prepareCrmGatewayTx } from '../src/crm/delivery-policy.ts';
 import { configureCrmSignup } from '../src/crm/signup.ts';
@@ -291,5 +293,121 @@ describe.skipIf(!OWNER_URL)('autonomous sales workflow', () => {
       configureCrmSignup(null);
       await b.sql`delete from control_settings where key = 'signup'`;
     }
+  });
+
+  test('signup reopening affects the link without conflating a quote and plan availability', async () => {
+    await b.settings('autopilot');
+    await upsertIntegration(b.sql, { kind: 'email', driver: 'log', enabled: true }, b.key());
+    const setSignup = (enabled: boolean) => b.sql`
+      insert into control_settings (key, value) values ('signup', ${b.sql.json({ enabled })})
+      on conflict (key) do update set value = excluded.value`;
+    configureCrmSignup({
+      origin: 'https://admin.example.test',
+      secret: 'crm-test',
+      provider: { platformConfigured: true },
+    });
+    try {
+      const lead = await b.lead();
+      await setSignup(false);
+      const closed = await b.runTools(
+        [
+          ['send_signup_link', { planId: 'mirim' }],
+          ['send_signup_link', { planId: 'mirim', includePrice: true, includeLink: false }],
+        ],
+        { leadId: lead.id, kind: 'reply' },
+      );
+      expect(closed.outcomes[0]).toMatchObject({ data: { code: 'signup_closed' } });
+      const [quote] = await b.outbound(lead.id);
+      expect(quote?.body).toContain('A taxa da Venduá por pedido');
+      expect(quote?.body).not.toContain('https://');
+
+      await setSignup(true);
+      const open = await b.runTools(
+        [
+          ['send_signup_link', { planId: 'unknown-plan' }],
+          ['send_signup_link', { planId: 'mirim' }],
+        ],
+        { leadId: lead.id, kind: 'reply' },
+      );
+      expect(open.outcomes[0]).toMatchObject({ data: { code: 'plan_unavailable' } });
+      const messages = await b.outbound(lead.id);
+      expect(messages).toHaveLength(2);
+      expect(messages[1]?.body).toContain(
+        'https://admin.example.test/admin/comecar?plano=mirim&lead=',
+      );
+    } finally {
+      configureCrmSignup(null);
+      await b.sql`delete from control_settings where key = 'signup'`;
+    }
+  });
+
+  test('a template expression cannot leak through a draft or a repeated send attempt', async () => {
+    await b.settings('autopilot');
+    const lead = await b.lead();
+    const { outcomes } = await b.runTools(
+      [
+        ['send_message', { body: 'O plano é o Mirim, {{p:mirim}}.' }],
+        ['send_message', { body: 'A loja da {{empresa:nome}} pode receber pedidos.' }],
+        ['draft_message', { subject: 'Cadastro de [nome]', body: 'Consigo ajudar pelo cadastro.' }],
+        ['send_message', { body: 'Quer ajuda para criar a loja?' }],
+      ],
+      { leadId: lead.id, kind: 'reply' },
+    );
+    for (const outcome of outcomes.slice(0, 3))
+      expect(outcome).toMatchObject({ data: { code: 'unresolved_template' } });
+    expect(await b.outbound(lead.id)).toMatchObject([{ body: 'Quer ajuda para criar a loja?' }]);
+  });
+
+  test('a cadence turn can finish with a reason and send nothing', async () => {
+    await b.settings('autopilot');
+    const lead = await b.lead();
+    await controlTx(b.appSql, (tx) =>
+      requestLeadTx(tx, {
+        leadId: lead.id,
+        kind: 'timer.followup',
+        source: 'agenda',
+        dedupeKey: b.key(),
+        payload: { focus: 'cadência sem resposta' },
+      }),
+    );
+    const { rt, adapter } = b.runtime([
+      call('add_note', { body: 'Sem informação nova para retomar. Cadência encerrada.' }),
+      say('ok'),
+    ]);
+    await b.settle(rt);
+    expect(adapter.requests).toHaveLength(2);
+    expect(await b.outbound(lead.id)).toHaveLength(0);
+    const [result] = await b.sql`select outcome from crm_turns where lead_id = ${lead.id}`;
+    expect(result?.outcome).toBe('followup_skipped');
+  });
+
+  test('pending agent messages from older versions are checked before approval and delivery', async () => {
+    await b.settings('autopilot');
+    const lead = await b.lead();
+    const write = (status: 'draft' | 'queued') =>
+      controlTx(b.appSql, (tx) =>
+        composeMessageTx(tx, {
+          leadId: lead.id,
+          channel: 'whatsapp',
+          body: 'O preço está em {{p:mirim}}.',
+          author: 'agent',
+          status,
+        }),
+      );
+    const draft = await write('draft');
+    const queued = await write('queued');
+    await expect(
+      approveMessage(b.appSql, draft.body.message.id, 'staff', b.key()),
+    ).rejects.toMatchObject({
+      code: 'DRAFT_TEMPLATE_UNRESOLVED',
+    });
+    expect(await dispatchMessage(b.appSql, queued.body.message.id)).toMatchObject({
+      ok: false,
+      reason: 'unresolved template',
+    });
+    expect((await b.outbound(lead.id)).map((message) => message.status)).toEqual([
+      'draft',
+      'failed',
+    ]);
   });
 });

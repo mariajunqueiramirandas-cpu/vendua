@@ -10,6 +10,7 @@ import {
   type Guardrails,
 } from './integrations.ts';
 import { recordStaffEventTx } from './staff-events.ts';
+import { hasUnresolvedTemplate } from '../crm/style.ts';
 
 // Unified inbox: one thread per (lead, channel); owns persistence + the
 // draft→approve→dispatch lifecycle — provider sends live in crm/channels.
@@ -813,6 +814,13 @@ export async function approveMessage(
     `;
     if (!rows[0]) throw new HttpError(404, 'MESSAGE_NOT_FOUND', 'draft message not found');
     if (rows[0].author === 'agent') {
+      if (hasUnresolvedTemplate(rows[0].body, rows[0].subject)) {
+        throw new HttpError(
+          409,
+          'DRAFT_TEMPLATE_UNRESOLVED',
+          'Preencha os campos do rascunho ou peça uma nova versão antes de aprovar.',
+        );
+      }
       await recordStaffEventTx(tx, 'draft.resolved', {
         messageId: rows[0].id,
         outcome: 'approved',

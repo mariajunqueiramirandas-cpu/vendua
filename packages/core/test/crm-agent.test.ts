@@ -123,7 +123,9 @@ describe.skipIf(!OWNER_URL)('CRM agents on Runtime v3 (db)', () => {
     ]);
     await settle(rt);
     expect(adapter.requests).toHaveLength(3);
-    expect(JSON.stringify(adapter.requests[1]!.messages)).toContain('Ação pendente');
+    expect(JSON.stringify(adapter.requests[1]!.messages)).toContain(
+      'precisa de um próximo passo concreto',
+    );
     expect((await outbound(l.id)).map((m) => m.status)).toEqual(['draft']);
     expect((await turns(l.id))[0]).toMatchObject({ acted: true, status: 'done' });
   });

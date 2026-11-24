@@ -26,11 +26,14 @@ export type AgentGoal = (typeof AGENT_GOALS)[number];
  *  survives across runs. */
 export const AGENT_PLAN_STATUSES = ['todo', 'done', 'skip'] as const;
 export type AgentPlanStatus = (typeof AGENT_PLAN_STATUSES)[number];
-export interface AgentPlanStep {
+export const AGENT_PLAN_KEYS = ['situation', 'need', 'value', 'next_step'] as const;
+export type AgentPlanKey = (typeof AGENT_PLAN_KEYS)[number];
+export type AgentPlanStep = {
+  key?: AgentPlanKey;
   step: string;
   status: AgentPlanStatus;
   note: string | null;
-}
+};
 
 export interface LeadRow {
   id: string;

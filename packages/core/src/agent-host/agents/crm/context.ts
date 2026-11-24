@@ -10,6 +10,7 @@ import {
   type Pitch,
 } from '../../../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../../../modules/leads.ts';
+import { agentMetrics } from '../../../modules/agent-metrics.ts';
 import { bookingLinkForRunner } from '../../../modules/meetings.ts';
 import {
   hasMemoryTablesTx,
@@ -135,10 +136,10 @@ async function promptMemoryTx(tx: Sql, segment: string | null): Promise<PromptMe
 
 function segmentLines(stats: Awaited<ReturnType<typeof segmentStats>>): string | null {
   if (!stats.length) return null;
-  return `SEGMENTOS (leads · responderam · ativos · custo):\n${stats
+  return `SEGMENTOS (contagens históricas de leads, contato, respostas e lojas ativas. Custo de 30 dias):\n${stats
     .map(
       (s) =>
-        `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · US$${(s.costCents / 100).toFixed(2)}`,
+        `- ${s.segment}: ${s.leads} leads, ${s.contacted} contatados, ${s.replied} com resposta, ${s.live} lojas ativas. Em 30 dias, ${s.leads30d} novos e US$${(s.costCents / 100).toFixed(2)} de custo.`,
     )
     .join('\n')}`;
 }
@@ -250,14 +251,19 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
             .join('\n')}`,
         );
     }
-    const dossier = await c<{ body: string | null }[]>`
-      select body from lead_activities
+    const dossier = await c<{ body: string | null; sources: unknown }[]>`
+      select body, meta->'sources' as sources from lead_activities
       where lead_id = ${leadId} and kind = 'note'
       order by at desc limit ${CTX.notes}`;
     if (dossier.length)
       parts.push(
         `DOSSIÊ (notas e pesquisa, mais recente primeiro):\n${withinBudget(
-          dossier.map((a) => `- ${(a.body ?? '').slice(0, CTX.noteChars)}`),
+          dossier.map((a) => {
+            const sources = Array.isArray(a.sources)
+              ? a.sources.filter((source) => typeof source === 'string').slice(0, 3)
+              : [];
+            return `- ${(a.body ?? '').slice(0, CTX.noteChars)}${sources.length ? ` [fontes registradas: ${sources.map((source) => source.slice(0, 500)).join(', ')}]` : ''}`;
+          }),
           CTX.dossierChars,
         ).join('\n')}`,
       );
@@ -402,6 +408,20 @@ export async function reviewSubjectTx(
     const parts: string[] = [];
     const seg = segmentLines(await segmentStats(c));
     if (seg) parts.push(seg);
+    const { sales, replies, outbound, window } = await agentMetrics(c, 30);
+    parts.push(
+      `FUNIL DOS ÚLTIMOS 30 DIAS (eventos na janela, sem coorte): ${JSON.stringify({
+        window,
+        contacted: replies.leadsContacted,
+        replied: replies.leadsReplied,
+        sent: outbound.sent,
+        awaitingReply: sales.awaitingReply,
+        medianResponseSeconds: sales.medianResponseSeconds,
+        handoffs: sales.handoffs,
+        bySource: sales.bySource.slice(0, 20),
+        additionalSources: Math.max(0, sales.bySource.length - 20),
+      })}`,
+    );
     const briefs = await c<
       {
         name: string;

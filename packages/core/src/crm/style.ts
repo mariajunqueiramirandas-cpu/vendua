@@ -3,6 +3,11 @@
 // attempt goes through as written — the check steers, it never strands a reply.
 
 const CHAT_MAX_CHARS = 700;
+const TEMPLATE =
+  /\{\{|\{\s*[a-z]\w*(?:\s*:[\w.-]+)?\s*\}|\[(?:nome|name|empresa|neg[óo]cio|cidade|link)\b[^\]]*\]|<nome>/i;
+
+export const hasUnresolvedTemplate = (body: string, subject?: string | null) =>
+  TEMPLATE.test(body) || TEMPLATE.test(subject ?? '');
 
 const ROBOTIC: [RegExp, string][] = [
   [/[óo]tima pergunta/i, '"ótima pergunta"'],
@@ -18,10 +23,8 @@ export function messageStyleIssues(body: string, channel: string | null | undefi
   const issues: string[] = [];
   const text = body.trim();
   const chat = channel !== 'email';
-  if (
-    /\[(nome|name|empresa|neg[óo]cio|cidade|link)[^\]]*\]|\{\{?\s*\w+\s*\}?\}|<nome>/i.test(text)
-  ) {
-    issues.push('placeholder de template no texto ([nome], {{x}}) — escreva o valor real ou tire');
+  if (hasUnresolvedTemplate(text)) {
+    issues.push('placeholder de template no texto. Preencha com o valor confirmado ou retire');
   }
   if (/\*\*[^*]+\*\*|^#{1,6}\s/m.test(text)) {
     issues.push('markdown (** ou #) — o celular mostra os símbolos crus; texto puro');
@@ -32,7 +35,7 @@ export function messageStyleIssues(body: string, channel: string | null | undefi
     )
   ) {
     issues.push(
-      'oferece exemplo/prévia/demo, que ninguém vai entregar — ofereça só o passo real (conversa com a equipe, o que a OFERTA diz); se a OFERTA tem isso, mande de novo',
+      'oferece exemplo/prévia/demo. Use material autorizado na OFERTA ou explique como funciona a loja',
     );
   }
   for (const [re, label] of ROBOTIC) {
@@ -49,8 +52,9 @@ export function messageStyleIssues(body: string, channel: string | null | undefi
         'lista de palpites entre parênteses ("doces, marmitas...") — pergunte aberto, sem chutar',
       );
     }
-    if ((text.match(/\?/g) ?? []).length >= 3) {
-      issues.push('3+ perguntas — mande uma só; ela responde uma e as outras morrem');
+    const prose = text.replace(/https?:\/\/[^\s<>()]+/gi, '');
+    if ((prose.match(/\?/g) ?? []).length > 1) {
+      issues.push('mais de uma pergunta. Escolha a que muda o próximo passo');
     }
     if (text.length > CHAT_MAX_CHARS) {
       issues.push(`${text.length} caracteres — no chat, ≤${CHAT_MAX_CHARS} (ideal 1-3 linhas)`);

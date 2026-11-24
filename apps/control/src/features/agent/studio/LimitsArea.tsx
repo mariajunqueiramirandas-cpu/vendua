@@ -53,7 +53,7 @@ function Guardrails({
 }) {
   const cur = {
     maxOutboundPerLeadPerDay: num(value.maxOutboundPerLeadPerDay, 3),
-    maxUnansweredTouches: num(value.maxUnansweredTouches, 3),
+    maxUnansweredTouches: num(value.maxUnansweredTouches, 2),
     quietHoursEnabled: value.quietHoursEnabled !== false,
     quietStart: str(value.quietStart, '21:00'),
     quietEnd: str(value.quietEnd, '08:00'),
@@ -62,8 +62,8 @@ function Guardrails({
     discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
     inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
     firstContactDelayMin: num(value.firstContactDelayMin, 0),
-    followupCadenceDays: num(value.followupCadenceDays, 2),
-    staleDraftDays: num(value.staleDraftDays, 7),
+    followupCadenceDays: num(value.followupCadenceDays, 3),
+    staleDraftDays: num(value.staleDraftDays, 3),
     briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
     instagramColdDmsPerDay: num(value.instagramColdDmsPerDay, 15),
   };

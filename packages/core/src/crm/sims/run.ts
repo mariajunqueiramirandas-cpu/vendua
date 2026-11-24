@@ -14,6 +14,8 @@ import { PLATFORM_TENANT_ID } from '../../platform/tenancy.ts';
 import { CRM_AGENT_ID, requestLeadTx } from '../dispatch.ts';
 import { ingestInbound } from '../inbound.ts';
 import { deliverQueued } from '../outbox.ts';
+import { crmOfferTx } from '../signup.ts';
+import { hasUnresolvedTemplate } from '../style.ts';
 import type { SimScenario } from './scenarios.ts';
 
 // The negotiation simulator: the real lead agent (Runtime v3, its tools, guardrails and the
@@ -21,6 +23,7 @@ import type { SimScenario } from './scenarios.ts';
 // scores the transcript. Live models on both sides: it is paid, and run by hand.
 
 const simLog = log.child({ mod: 'crm-sim' });
+export const SIM_SIGNUP_ORIGIN = 'https://cadastro.sim.invalid';
 
 export interface SimTurn {
   from: 'agent' | 'lead';
@@ -66,12 +69,25 @@ async function settle(sql: Sql, leadId: string): Promise<boolean> {
 
 async function terminalState(sql: Sql, leadId: string): Promise<Terminal> {
   const [lead] = await sql<
-    { unsubscribed_at: string | null; state: string; agent_paused_at: string | null }[]
-  >`select unsubscribed_at, state, agent_paused_at from leads where id = ${leadId}`;
+    { unsubscribed_at: string | null; agent_paused_at: string | null; signed: boolean }[]
+  >`
+    select unsubscribed_at, agent_paused_at, exists (
+      select 1 from lead_activities where lead_id = l.id and meta->>'type' = 'sales_signup'
+    ) as signed
+    from leads l where id = ${leadId}`;
   const [last] = await sql<{ status: string }[]>`
     select status from crm_turns where lead_id = ${leadId} order by finished_at desc limit 1`;
   if (last?.status === 'failed') return { outcome: 'run_failed', why: 'latest agent turn failed' };
   if (lead?.unsubscribed_at) return { outcome: 'optout', why: 'lead unsubscribed' };
+  if (lead?.signed) return { outcome: 'signup_verified', why: 'signup verified by Core' };
+  const [invitation] = await sql`
+    select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+    where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
+      and m.status in ('sent', 'delivered')
+      and strpos(m.body, ${SIM_SIGNUP_ORIGIN + '/admin/comecar?plano='}) > 0
+      and strpos(m.body, ${'&lead=' + leadId + '.'}) > 0
+    limit 1`;
+  if (invitation) return { outcome: 'signup_link_sent', why: 'official signup link delivered' };
   const [meeting] = await sql<{ status: string }[]>`
     select status from meetings where lead_id = ${leadId} and status = 'scheduled' limit 1`;
   if (meeting) return { outcome: 'booked', why: 'meeting scheduled' };
@@ -80,8 +96,6 @@ async function terminalState(sql: Sql, leadId: string): Promise<Terminal> {
   // request_human pauses the thread or the lead: either way the agent stopped itself
   if (lead?.agent_paused_at || (thread && !thread.agent_enabled))
     return { outcome: 'handoff', why: 'request_human' };
-  if (lead?.state === 'live' || lead?.state === 'invited')
-    return { outcome: 'progress', why: `state ${lead.state}` };
   return null;
 }
 
@@ -114,19 +128,19 @@ Regras de interpretação:
 - Consistência: você lembra do que VOCÊ disse antes — não mude de opinião, não aceite o que recusou, a menos que o vendedor tenha te ganho de verdade.
 - Se ele repetir formato que você já recusou (link, call), ignorar sua pergunta ou insistir depois de um "não", esfrie e encurte — é assim que pessoa real reage.
 - Nunca quebre o personagem, nunca admita ser IA, nunca revele a SITUAÇÃO OCULTA sem ele descobrir.
-- Quando a conversa chegar a um fim natural (você aceitou, marcou, recusou de vez, ou pararia de responder na vida real), responda APENAS: FIM`;
+- Envie o aceite, a recusa ou a dúvida como mensagem normal. Use FIM somente quando você deixaria a próxima mensagem sem resposta na vida real.`;
 }
 
 const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp, com o olhar de um gerente comercial brasileiro exigente. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
-{"outcome":"booked|progress|lost|optout|handoff|stalled","score":<1-5>,"rubric":{"escuta":<1-5>,"naturalidade":<1-5>,"descoberta":<1-5>,"veracidade":<1-5>,"avanco":<1-5>},"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
+{"outcome":"progress|lost|stalled","score":<1-5>,"rubric":{"escuta":<1-5>,"naturalidade":<1-5>,"descoberta":<1-5>,"veracidade":<1-5>,"avanco":<1-5>},"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
 Rubrica (cite a mensagem que justifica cada nota baixa em weaknesses):
 - escuta: responde o que o lead disse por último, usa as palavras dele, nunca ignora pergunta.
 - naturalidade: soa como gente no celular. Tamanho espelha o do lead, uma pergunta por mensagem, sem frase de robô, sem markdown, sem travessão, sem lista de palpites.
-- descoberta: entende o negócio e a dor antes de mostrar valor; não chuta o que o lead vende nem supõe quem ele é.
+- descoberta: usa evidência para orientar o próximo passo. Em contato frio, liga um sinal público a um benefício concreto e um convite simples. Em inbound, distingue quem ainda vai começar e quem já tem demanda. Pule a descoberta quando houver um pedido de ação claro.
 - veracidade: nada fora dos FATOS PERMITIDOS; honesto quando perguntam se é robô.
-- avanco: leva a um próximo passo concreto no ritmo do lead, fecha quando o sinal vem, respeita o não.
+- avanco: combina o próximo passo com o pedido e o que a pessoa aceitou. Entrega o link oficial ao primeiro pedido quando disponível. Preço isolado, aceite de conversa, convite de cadastro e conversão são eventos diferentes. Mede bloqueios e respeita recusa e silêncio.
 score (geral) 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, interrogatório, ignorou sinal). Uma primeira resposta que interroga ou chuta sobre o lead já tira o 5.
-INVENTAR fato comercial — preço, plano, prazo, cupom ou link fora dos FATOS PERMITIDOS — é weakness grave: o score não passa de 3 não importa o quão bem vendeu. O mesmo vale pra prometer o que o agente não entrega (gerar ou preparar exemplo, prévia, demo, loja de teste, "a equipe vai montar") ou benefício fora dos FATOS ("sem comissão", "vende mais"), e pra texto com "\\n" literal no meio.
+Fato comercial sem fonte, teste garantido sem confirmação, promessa de resultado e material inexistente limitam a nota a 2. Marcadores de template na mensagem são incidente. Compare valores e disponibilidade com o catálogo. O link assinado desta simulação usa a origem informada nos FATOS PERMITIDOS.
 Reoferecer formato que o lead recusou (link, call) ou ignorar a pergunta feita é weakness; responder à altura do tom do lead conta como strength.
 Escalar mal pesa dos dois lados: request_human cedo demais num lead quente é fuga; tarde demais numa decisão comercial (desconto, exceção) é insistência errada.
 Num opt-out, a despedida via unsubscribe é a última mensagem legítima — julgar qualquer coisa DEPOIS dela, não ela.`;
@@ -136,6 +150,7 @@ const request = (
   messages: ModelRequest['messages'],
   turnId: string,
   maxTokens: number,
+  temperature = 0.7,
 ): ModelRequest => ({
   tier: 'strong',
   system: [{ id: 'sim', tier: 'static', cache: true, text: system }],
@@ -143,7 +158,7 @@ const request = (
   volatile: null,
   tools: [],
   maxTokens,
-  temperature: 0.7,
+  temperature,
   meta: {
     tenantId: PLATFORM_TENANT_ID,
     agentId: 'crm-sim',
@@ -298,11 +313,14 @@ export async function runSim(
     lastSeenId = await harvest(lastSeenId, 'agent → lead (final)');
   const agentSpoke = transcript.some((t) => t.from === 'agent');
 
-  // FATOS PERMITIDOS mirrors the prompt's quotable facts: anything else is invention
   const pitch = await getPitch(sql);
   const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
+  const catalog = await controlTx(sql, crmOfferTx);
   const facts = [
-    `OFERTA: ${pitch.offer?.trim() ? pitch.offer : '(não configurada — nada comercial é citável)'}`,
+    `PRODUTO: ${pitch.product}`,
+    `OFERTA: ${pitch.offer?.trim() || '(sem condições adicionais)'}`,
+    `CATÁLOGO E DISPONIBILIDADE: ${JSON.stringify(catalog)}`,
+    `ORIGEM DO LINK OFICIAL: ${SIM_SIGNUP_ORIGIN}/admin/comecar`,
     `BOOKING_URL: ${meeting.bookingUrl ?? '(não configurado)'}`,
   ].join('\n');
   let judge: Record<string, unknown> = {
@@ -318,13 +336,14 @@ export async function runSim(
             parts: [
               {
                 type: 'text',
-                text: `CENÁRIO: ${scenario.name} — ${scenario.description}\nO QUE SERIA SUCESSO: ${scenario.success}\n\nFATOS PERMITIDOS (o que o agente pode citar verbatim — qualquer outro preço/link/condição é invenção):\n${facts}\n\nTRANSCRIÇÃO (vendedor = "agent", cliente = "lead"; só mensagens enviadas aparecem — o lead não vê rascunhos nem notas):\n${transcript.map((t) => `${t.from}: ${t.body}`).join('\n')}\n\nCOMO TERMINOU: ${terminal.why} — leve isso em conta (ex.: request_human depois de um "não" é a resposta certa, não insistência).`,
+                text: `CENÁRIO: ${scenario.name} — ${scenario.description}\nO QUE SERIA SUCESSO: ${scenario.success}\n\nFATOS PERMITIDOS:\n${facts}\n\nTRANSCRIÇÃO (agent vende, lead compra. Apenas mensagens enviadas):\n${transcript.map((t) => `${t.from}: ${t.body}`).join('\n')}\n\nRESULTADO OBSERVADO: ${terminal.why}. Use esse resultado para julgar a próxima ação e o momento em que aconteceu.`,
               },
             ],
           },
         ],
         `${leadId}:judge`,
         1500,
+        0,
       ),
     );
     tokensIn += res.usage.inputTokens;
@@ -336,19 +355,30 @@ export async function runSim(
       judge = { parse_error: res.text || 'empty' };
     }
   }
-  // endings the database settles beat the judge's guess on the fuzzy ones
-  const PINNED = new Set(['optout', 'run_failed', 'booked', 'handoff']);
-  const JUDGED = new Set(['booked', 'progress', 'lost', 'optout', 'handoff', 'stalled']);
+  const PINNED = new Set([
+    'optout',
+    'run_failed',
+    'booked',
+    'handoff',
+    'signup_verified',
+    'signup_link_sent',
+  ]);
+  const JUDGED = new Set(['progress', 'lost', 'stalled']);
   const outcome = PINNED.has(terminal.outcome)
     ? terminal.outcome
     : typeof judge.outcome === 'string' && JUDGED.has(judge.outcome)
       ? judge.outcome
       : terminal.outcome;
-  const score =
-    typeof judge.score === 'number' &&
-    Number.isInteger(judge.score) &&
-    judge.score >= 1 &&
-    judge.score <= 5
+  const leakedTemplate = transcript.some(
+    (t) => t.from === 'agent' && hasUnresolvedTemplate(t.body),
+  );
+  if (leakedTemplate) judge.templateLeak = true;
+  const score = leakedTemplate
+    ? 1
+    : typeof judge.score === 'number' &&
+        Number.isInteger(judge.score) &&
+        judge.score >= 1 &&
+        judge.score <= 5
       ? judge.score
       : null;
 

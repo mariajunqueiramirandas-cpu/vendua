@@ -176,7 +176,7 @@ describe('unconfigured tools — hidden, refused, never named', () => {
       { tools: offeredFor('outreach', GATES.noResearch!), channels: ['instagram'] },
     );
     expect(outreach).toContain('sem pesquisa externa nesta instalação');
-    expect(outreach).toContain('Não mande nada: create_task para humano');
+    expect(outreach).toContain('pare e use create_task para registrar o fato que falta');
     expect(outreach).not.toContain('a primeira mensagem já chega perguntando quem é');
   });
 

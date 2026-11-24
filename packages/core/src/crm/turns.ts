@@ -2,6 +2,7 @@ import type { FencedTx, Json, TurnEnd, TurnFailure } from '@vendua/agent-runtime
 import {
   triageMissing,
   RESPONSE_ACTIONS,
+  notedFollowupSkip,
   waitsForResponse,
   turn,
   turnOf,
@@ -222,6 +223,7 @@ async function leadTurnOutcomeTx(
     return handedOff ? 'handoff' : 'closed';
   }
   if (has('schedule')) return 'followup_scheduled';
+  if (notedFollowupSkip(info)) return 'followup_skipped';
   return info.acted ? 'lead_updated' : 'no_action';
 }
 
