@@ -532,21 +532,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         { 'x-vendua-control': 'ctl' },
       );
     const before = (await sql`select value from control_settings where key = 'signup'`)[0]?.value;
+    const previousDrivers = await sql<{ id: string; enabled: boolean; updated_at: Date }[]>`
+      select id, enabled, updated_at from control_integrations
+      where driver = 'log' and kind in ('whatsapp', 'email')`;
     const added: string[] = [];
     try {
       expect((await put('yes' as never)).status).toBe(422);
       expect((await put(false)).status).toBe(200);
       expect(await ready()).toMatchObject({ on: false, open: false, billing: true });
       expect((await put(true)).status).toBe(200);
-      for (const kind of ['whatsapp', 'email'])
-        added.push(
-          ...(
-            await sql<{ id: string }[]>`
-              insert into control_integrations (kind, driver, enabled, updated_at)
-              values (${kind}, 'log', true, now() + interval '1 minute')
-              on conflict do nothing returning id`
-          ).map((r) => r.id),
-        );
+      for (const kind of ['whatsapp', 'email']) {
+        const [row] = await sql<{ id: string }[]>`
+          insert into control_integrations (kind, driver, enabled, updated_at)
+          values (${kind}, 'log', true, now() + interval '1 minute')
+          on conflict (kind, driver) do update
+          set enabled = excluded.enabled, updated_at = excluded.updated_at
+          returning id`;
+        if (row && !previousDrivers.some((previous) => previous.id === row.id)) added.push(row.id);
+      }
       expect(await ready()).toMatchObject({ on: true, whatsapp: true, email: true, open: true });
       expect((await signupReadiness(appSql, { platformConfigured: false })).open).toBe(
         !!process.env.VENDUA_SIGNUP_ACCESS_CODE,
@@ -575,6 +578,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       }
     } finally {
       if (added.length) await sql`delete from control_integrations where id = any(${added})`;
+      for (const previous of previousDrivers)
+        await sql`update control_integrations
+          set enabled = ${previous.enabled}, updated_at = ${previous.updated_at}
+          where id = ${previous.id}`;
       if (before === undefined) await sql`delete from control_settings where key = 'signup'`;
       else
         await sql`update control_settings set value = ${sql.json(before as never)} where key = 'signup'`;

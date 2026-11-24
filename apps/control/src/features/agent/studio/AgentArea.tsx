@@ -359,9 +359,9 @@ function AgentForm({
               />
             </Field>
             <Field
-              label="oferta — fatos que ele pode citar (preço, link, loja exemplo)"
+              label="oferta e materiais aprovados pela equipe"
               htmlFor="pitch-offer"
-              hint="vazio = ele não cita preço nem link nenhum"
+              hint="o agente consulta os planos vigentes para preços, testes e cadastro"
             >
               <Textarea
                 id="pitch-offer"
@@ -369,7 +369,7 @@ function AgentForm({
                 maxLength={4000}
                 value={voice.edit.offer}
                 onChange={setV('offer')}
-                placeholder="ex.: plano R$149/mês, sem comissão; 7 dias grátis; cadastro: https://..."
+                placeholder="link de uma loja de exemplo autorizada"
               />
             </Field>
             <Field label="público" htmlFor="pitch-audience">

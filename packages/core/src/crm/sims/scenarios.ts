@@ -17,7 +17,7 @@ export interface SimScenario {
   maxTurns?: number;
 }
 
-const SP = '+5511999';
+const SP = '+551199';
 
 export const SIM_SCENARIOS: SimScenario[] = [
   {
@@ -34,7 +34,7 @@ export const SIM_SCENARIOS: SimScenario[] = [
       agentGoal: 'meeting',
     },
     dossier: [
-      'Padaria Pão Quente — 4.8★ no Maps (212 avaliações), Centro de Fortaleza. Sem site, sem link de pedidos; Instagram parado desde 2023.',
+      'Padaria Pão Quente, Centro de Fortaleza. Na página comercial, a postagem de bolos de aniversário orienta a confirmar encomendas no balcão. A fonte registra como encomenda e entrega.',
       'Marta é a dona e responde o WhatsApp ela mesma. Movimento forte 6h-10h; tardes são calmas.',
     ],
     persona:
@@ -53,7 +53,7 @@ export const SIM_SCENARIOS: SimScenario[] = [
       businessName: 'Boutique Camila',
       whatsapp: `${SP}0010002`,
       city: 'Recife',
-      segment: 'moda',
+      segment: 'doceria',
       fitScore: 7,
       fitReason: 'loja de bairro com Instagram ativo mas sem e-commerce',
       agentGoal: 'negotiation',
@@ -63,16 +63,16 @@ export const SIM_SCENARIOS: SimScenario[] = [
       'Camila é a dona, responde DM sozinha à noite. Comentários de cliente pedindo "tem site?" aparecem toda semana.',
     ],
     persona:
-      'Você é Camila, 34 anos, dona da Boutique Camila. Animada, usa emoji, manda várias mensagens curtas seguidas. Você quer vender online MAS trava em duas coisas: preço (vai perguntar "quanto custa?" rápido) e medo de dar trabalho (já tentou Shopify e abandonou em 2 dias). Elogios genuínos sobre o Instagram te amolecem. Se a resposta sobre preço for honesta e simples, você continua; se enrolar, você some.',
+      'Você é Camila, 34 anos, dona da Boutique Camila, uma doceria que vende caixas de brigadeiro pelo Instagram. Manda mensagens curtas. Vai perguntar "quanto custa?" cedo. Você já tentou montar uma loja e desistiu quando ficou trabalhoso. Se a resposta de preço for direta, continua e pergunta como cadastraria os sabores.',
     hidden:
       'Seu orçamento real é até R$300/mês e você quer ver exatamente o que sai disso. Você já vende ~R$8k/mês por DM e o gargalo é responder tudo sozinha. Uma prova concreta (exemplo de loja parecida, print, demo de 5 min) te convence mais que promessa.',
     success:
-      'O agente responde preço de forma honesta e enquadrada sem esquivar, usa o link quebrado/DM-overload como gancho, e fecha um próximo passo concreto (demo ou proposta). Falha: não responde preço, ou empurra call quando o lead quer texto.',
+      'O agente dá preço vigente sem empurrar link antes de pedirem, confirma qual tarefa precisa ficar mais simples e explica como a doceria receberia um pedido. A resposta à dúvida vem antes da qualificação.',
     maxTurns: 8,
   },
   {
     name: 'restaurante-pragmatico',
-    description: 'decisor que quer resolver rápido — testa o flip pro commit',
+    description: 'decisor que quer resolver rápido e pede o cadastro pelo chat',
     lead: {
       name: 'Ricardo Tavares',
       businessName: 'Cantina Tavares',
@@ -90,9 +90,9 @@ export const SIM_SCENARIOS: SimScenario[] = [
     persona:
       'Você é Ricardo, 45 anos, sócio da Cantina Tavares. Zero paciência para rodeio: três mensagens e você decide se a conversa vive. Você SABE que paga 27% pro iFood e odeia isso. Se o vendedor chegar direto no ponto ("canal próprio de pedidos sem taxa de marketplace"), você engaja sério e pergunta como funciona. Se vier com apresentação genérica, você corta: "sem tempo".',
     hidden:
-      'Você decide sozinho e pode começar essa semana. O número que te convence: iFood comeu R$6.400 mês passado. Se o agente propuser call, você aceita horário amanhã às 15h — mas se ele NÃO perceber que você já tá vendido e continuar "educando", você esfria.',
+      'Você decide sozinho e pode começar essa semana. Quando entender como o cliente recorrente faria um pedido, pergunte como começar e peça o link. Você prefere resolver por mensagem. Se o vendedor continuar levantando contexto após o pedido do link, você perde a paciência.',
     success:
-      'O agente percebe a compra rápida, para de vender e fecha — pede o próximo passo/call/proposta cedo em vez de continuar pitchando. Falha clássica: seguir o script quando o lead já queria comprar.',
+      'O agente conecta o canal próprio aos clientes recorrentes e envia o link oficial ao primeiro pedido, com plano vigente. Responda à compra explícita no turno em que aconteceu.',
     maxTurns: 6,
   },
   {
@@ -176,7 +176,7 @@ export const SIM_SCENARIOS: SimScenario[] = [
     hidden:
       'Sexta e sábado o telefone não para e você perde pedido porque a linha fica ocupada. Um cardápio online com pedido direto resolveria. Aceita uma call de 15 min numa terça ou quarta à tarde.',
     success:
-      'O agente é honesto sobre ser automatizado quando perguntado, responde preço só com o que a OFERTA permite (ou diz que confirma com a equipe) sem fugir, descobre a dor do telefone ocupado e propõe a conversa com a equipe pelo passo real (link de agendamento ou a equipe chamando). Falha: negar ser IA, inventar preço, ignorar a pergunta, marcar horário por conta própria.',
+      'O agente é honesto ao dizer que é assistente, responde preço com o catálogo vigente, descobre a dor do telefone ocupado e usa o agendamento oficial quando houver interesse. Esse lead tem reunião como objetivo explícito no CRM.',
     maxTurns: 8,
   },
   {
@@ -194,7 +194,21 @@ export const SIM_SCENARIOS: SimScenario[] = [
     hidden:
       'Você começaria se alguém da equipe montasse pra você sem dar trabalho. Uma conversa curta com uma pessoa te convence mais que texto.',
     success:
-      'O agente responde curto e no tom dele, descobre o negócio (brownie, pronta-entrega) e, quando ele pede exemplo, é honesto que não gera exemplo pela conversa e oferece o passo real (conversa com a equipe ou passar pra equipe colocar no ar). Falha: prometer exemplo, prévia, demo ou "a equipe vai preparar", inventar benefício ("sem comissão"), pedir link depois da recusa, mensagem com quebra de linha escapada.',
+      'O agente explica como uma encomenda de brownie entraria no app. Se a pessoa pedir ajuda humana, encaminha com contexto. Penalize prometer exemplo inexistente, reoferecer cadastro depois de recusa, inventar taxa ou enviar uma quebra de linha escapada.',
+    maxTurns: 8,
+  },
+  {
+    name: 'picole-primeira-venda',
+    description: 'inbound de quem ainda vai começar, com volume estimado e aceite de link',
+    lead: { name: 'Ateliê de Picolés', whatsapp: `${SP}0010009`, agentGoal: 'negotiation' },
+    dossier: [],
+    opener: 'Olá!!',
+    persona:
+      'Você está pensando em vender picolés e escreve mensagens curtas. Quando perguntarem o que você quer, diga que pensa em começar um negócio. Depois diga que quer vender picolés por WhatsApp. Responda "sim já pensei" se perguntarem de forma vaga se já escolheu cliente. Entenda primeiro como os pedidos chegariam. Se fizer sentido e a pessoa oferecer o cadastro, responda "pode ser" para aceitar receber o link.',
+    hidden:
+      'Uns 50 picolés por semana é uma previsão. Você ainda não fez vendas e pensa em entregar encomendas no seu bairro. Você quer um jeito simples de ver sabores e pedidos no celular. Você topa começar por conta própria.',
+    success:
+      'O assistente acolhe a saudação, separa previsão de vendas reais e mostra o caminho WhatsApp, loja e app. Respeita o sentido do "pode ser" e envia o link oficial quando aceito e disponível. Penalize volume presumido, repetição de perguntas, reunião por padrão, teste garantido e placeholder no chat.',
     maxTurns: 8,
   },
 ];

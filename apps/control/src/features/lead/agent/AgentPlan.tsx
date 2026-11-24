@@ -4,17 +4,18 @@ import { cn } from '@/lib/cn.ts';
 import { AGENT_GOAL_LABEL } from '@/lib/labels.ts';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Hint, Section } from '../Section.tsx';
+import { planProgress } from '@/features/agent/plans/queries.ts';
 
 export function AgentPlan({ lead }: { lead: LeadListItem }) {
   const plan = lead.agentPlan;
-  const resolved = plan.filter((s) => s.status !== 'todo').length;
+  const { total: active, resolved: done, ratio } = planProgress(lead);
   return (
     <Section
       title="plano"
       actions={
-        plan.length > 0 && (
+        active > 0 && (
           <span className="text-xs text-muted-foreground tnum">
-            {resolved}/{plan.length}
+            {done}/{active}
           </span>
         )
       }
@@ -25,19 +26,21 @@ export function AgentPlan({ lead }: { lead: LeadListItem }) {
             <Badge variant="agent" title="objetivo atual">
               {AGENT_GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
             </Badge>
-            <span
-              className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
-              title={`${resolved} de ${plan.length} etapas resolvidas`}
-            >
+            {active > 0 && (
               <span
-                className="block h-full rounded-full bg-agent"
-                style={{ width: `${(resolved / plan.length) * 100}%` }}
-              />
-            </span>
+                className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
+                title={`${done} de ${active} etapas concluídas`}
+              >
+                <span
+                  className="block h-full rounded-full bg-agent"
+                  style={{ width: `${ratio * 100}%` }}
+                />
+              </span>
+            )}
           </div>
           <ol className="flex flex-col gap-1.5">
             {plan.map((s, i) => (
-              <li key={i} className="flex gap-2">
+              <li key={s.key ?? i} className="flex gap-2">
                 {s.status === 'done' ? (
                   <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
                 ) : s.status === 'skip' ? (

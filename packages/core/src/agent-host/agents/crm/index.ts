@@ -18,6 +18,7 @@ import {
   applyCrm,
   EMPTY_TURN,
   RESPONSE_ACTIONS,
+  notedFollowupSkip,
   triageMissing,
   waitsForResponse,
   turn,
@@ -122,12 +123,14 @@ export const mustAct: OutputGuard = {
     if (
       waitsForResponse(t)
         ? RESPONSE_ACTIONS.some((action) => t.actions.includes(action))
-        : t.acted || t.actions.includes('schedule')
+        : t.acted || t.actions.includes('schedule') || notedFollowupSkip(t)
     )
       return pass;
     return block(
       'no_action',
-      'Ação pendente: a run ainda não fez nada que a pessoa ou a equipe veja (mensagem, rascunho, tarefa, mudança de estado ou request_human). Se ela está esperando resposta, responda agora (send_message ou draft_message). Se não há o que dizer, registre o próximo passo (schedule ou create_task). Se um guardrail ou canal morto trava a resposta, request_human é a saída.',
+      t.trigger === 'timer.followup'
+        ? 'Registre o resultado do retorno. Se houver uma ajuda concreta, responda. Se a sequência deve acabar, registre o motivo em add_note.'
+        : 'A pessoa ou a equipe precisa de um próximo passo concreto. Responda ao pedido com a ferramenta adequada ou registre a tarefa com a decisão pendente.',
     );
   },
 };

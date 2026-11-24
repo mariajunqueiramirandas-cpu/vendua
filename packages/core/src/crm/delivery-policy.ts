@@ -14,6 +14,7 @@ import { isAutomated } from './dispatch.ts';
 import { cancelAgentWakeupsTx } from './agenda.ts';
 import { CRM_AGENT_ID, jobOf } from './jobs.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
+import { hasUnresolvedTemplate } from './style.ts';
 
 export async function unattendedDeliveryTx(
   tx: Sql,
@@ -27,6 +28,9 @@ export async function unattendedDeliveryTx(
       agent_enabled: boolean;
       state: string;
       tenant_id: string | null;
+      approved_by: string | null;
+      body: string;
+      subject: string | null;
       is_farewell: boolean;
       superseded: boolean;
       trigger: string | null;
@@ -34,6 +38,7 @@ export async function unattendedDeliveryTx(
     }[]
   >`
     select t.lead_id, t.channel, t.agent_enabled, l.state, l.tenant_id, m.is_farewell,
+      m.approved_by, m.body, m.subject,
       started.payload->'batch'->0->>'kind' as trigger, started.payload->'batch'->0->>'source' as source,
       exists (
         select 1 from lead_messages newer join lead_threads nt on nt.id = newer.thread_id
@@ -52,9 +57,11 @@ export async function unattendedDeliveryTx(
         and e.turn_id = m.agent_run_id and e.type = 'turn.started'
       order by e.at limit 1
     ) started on true
-    where m.id = ${messageId} and m.author = 'agent' and m.approved_by is null
+    where m.id = ${messageId} and m.author = 'agent'
     for share of t, l`;
   if (!m) return null;
+  if (hasUnresolvedTemplate(m.body, m.subject)) return { reason: 'unresolved template' };
+  if (m.approved_by !== null) return null;
   if (m.state === 'live' || m.tenant_id) return { reason: 'store already created' };
   if (m.superseded) return { reason: 'superseded by newer contact' };
   if (!m.agent_enabled) return { reason: 'thread paused for agent' };

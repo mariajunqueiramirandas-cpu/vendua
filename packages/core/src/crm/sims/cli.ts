@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { simGateways } from '../../agent-host/sim-gateways.ts';
 import { upsertIntegration } from '../../modules/integrations.ts';
 import { createSql, migrate, type Sql } from '../../platform/db.ts';
-import { runSim } from './run.ts';
+import { runSim, SIM_SIGNUP_ORIGIN } from './run.ts';
 import { getScenario, SIM_SCENARIOS } from './scenarios.ts';
+import { configureCrmSignup } from '../signup.ts';
 
 // `bun run sims:crm` — the lead agent's negotiation sims on live models (paid), on an isolated
 // `vendua_sim` database: the run rewrites the workspace's pitch, guardrails and agent settings.
@@ -55,10 +56,12 @@ async function seedSimEnv(sql: Sql) {
   // autopilot: a first contact sends instead of drafting, so scenarios reach the wire
   await put('agent', { level: 'autopilot' });
   await put('meeting', { bookingUrl: 'https://sim.invalid/agendar' });
-  // the quotable offer: without it the prompt forbids citing any price or link
-  await put('pitch', {
-    offer:
-      'plano Venduá: R$149/mês, sem comissão por pedido; 7 dias de teste grátis; cadastro: https://sim.invalid/cadastro; loja exemplo: https://sim.invalid/loja-exemplo',
+  await put('signup', { enabled: true });
+  await put('pitch', {});
+  configureCrmSignup({
+    origin: SIM_SIGNUP_ORIGIN,
+    secret: crypto.randomUUID(),
+    provider: { platformConfigured: true },
   });
 }
 

@@ -127,10 +127,10 @@ export function buildQueue(
   ].sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** A skipped step counts as resolved, not pending. */
+/** Progress counts completed, applicable milestones. */
 export const planProgress = (l: LeadListItem) => {
-  const total = l.agentPlan.length;
-  const resolved = l.agentPlan.filter((s) => s.status !== 'todo').length;
+  const total = l.agentPlan.filter((s) => s.status !== 'skip').length;
+  const resolved = l.agentPlan.filter((s) => s.status === 'done').length;
   return { total, resolved, ratio: total ? resolved / total : 0 };
 };
 

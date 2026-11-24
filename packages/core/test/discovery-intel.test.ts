@@ -82,7 +82,8 @@ describe('discovery intelligence — pure', () => {
       { facts: ['docerias respondem melhor à noite'] },
       { tools: new Set(['propose_brief', 'remember']), channels: [] },
     );
-    expect(p).toContain('estrategista');
+    expect(p).toContain('Revisão de aquisição da Venduá');
+    expect(p).toContain('Priorize cadastro verificado, loja ativa e primeiro pagamento');
     expect(p).toContain('propose_brief');
     expect(p).toContain('docerias respondem melhor à noite');
     expect(p).not.toContain('OBJETIVO DESTE LEAD');

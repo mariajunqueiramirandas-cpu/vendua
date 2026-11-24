@@ -48,6 +48,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export interface AgentPlanStep {
+  key?: 'situation' | 'need' | 'value' | 'next_step';
   step: string;
   status: 'todo' | 'done' | 'skip';
   note: string | null;

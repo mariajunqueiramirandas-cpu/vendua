@@ -176,8 +176,7 @@ function normalizeContacts(payload: Record<string, unknown>): boolean {
       payload.instagram = m ? `@${m[1]}` : undefined;
     }
   }
-  // a BR mobile IS whatsapp-reachable: filled, but marked derived so the autocontact gate still
-  // asks for real evidence
+  // A Brazilian mobile is a candidate for WhatsApp. The contact gate still checks evidence.
   const derived =
     !payload.whatsapp && typeof payload.phone === 'string' && isBrMobilePhone(payload.phone);
   if (derived) payload.whatsapp = payload.phone;
@@ -247,7 +246,15 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         const phone = digits(value);
         return phone !== null && t.seen.some((contact) => digits(contact) === phone);
       };
-      row.whatsapp_verified = Boolean(row.whatsapp) && !whatsappDerived && observed(row.whatsapp);
+      const waDigits = digits(row.whatsapp);
+      row.whatsapp_verified =
+        waDigits !== null &&
+        t.seen.some((contact) => {
+          const url = asUrl(contact);
+          const evidence = url ? contactFromUrl(url) : null;
+          return Boolean(evidence?.whatsappLink && digits(evidence.phone) === waDigits);
+        });
+      if (row.whatsapp_verified) whatsappDerived = false;
 
       const out = await crm(ctx, async (tx) => {
         const g = {
@@ -260,7 +267,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         // call, made only when it could unlock a first contact
         const score = typeof row.fit_score === 'number' ? row.fit_score : null;
         if (
-          whatsappDerived &&
+          row.whatsapp_verified !== true &&
           observed(row.whatsapp) &&
           g.discoveryAutoContact &&
           waReady &&
