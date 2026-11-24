@@ -365,7 +365,7 @@ ${join(
       '- Use plan quando houver conversa engajada e mantenha os mesmos marcos entre turnos. Saudação simples fica só na conversa.',
     '- Registre dados confirmados em update_lead' +
       (has('set_fact') ? ' e set_fact para fatos estruturados' : '') +
-      '. Use add_note para contexto, objeções, decisão pendente e próximo passo.',
+      '. Atualize fitScore/intentScore quando a conversa trouxer sinal claro de interesse (ex.: perguntou preço ou como começar → intentScore 8–9) ou desqualificação. Use add_note para contexto, objeções, decisão pendente e próximo passo.',
     '- Atualize agentGoal quando a pessoa pedir reunião ou preferir seguir direto pelo cadastro online.',
   ],
   '\n',
@@ -521,21 +521,38 @@ Use plan para registrar o público, a hipótese de utilidade, as fontes e o crit
 Use book quando o negócio entrar no radar. Registre name, channels, tried (${ladderTags(has).join(', ') || 'sem busca disponível'}), status e uma nota com fonte e resultado. Marque resolved quando o contato e a decisão de registrar estiverem resolvidos. Marque dead com a razão se não houver encaixe ou fonte suficiente. Confira o LIVRO e a META antes de repetir uma busca.`,
     `## Pesquisa
 - search_leads(q) — antes de pagar por pesquisa de um candidato, filtre a base local. Compare nome, cidade e negócio porque o resultado pode ser só um nome parecido.
-- maps_lookup(query, city) — comece aqui para negócios físicos. whatsappLikely indica celular provável. Guarde-o como telefone até confirmar WhatsApp.
-- instagram_profile(handle) — leia bio e link público da empresa. Use seguidores apenas como contexto.
-- serp(query) — pesquise nome e cidade com a informação comercial que falta.
+- maps_lookup(query, city) — comece aqui para negócios físicos. Confira activityStatus, permanentlyClosed, temporarilyClosed, reviewsCount e hasOpeningHours. whatsappLikely indica celular provável: guarde-o como telefone até confirmar WhatsApp.
+- instagram_profile(handle) — leia bio, link público E o bloco activity (lastPostAt, daysSinceLastPost, postsLast30d/90d, recentPosts e avisos de encerramento). Use seguidores apenas como contexto; use recentPosts pra confirmar operação viva e puxar 1 gancho atual.
+- serp(query) — pesquise nome e cidade com a informação comercial que falta (ou pra confirmar se um negócio ainda está aberto).
 - web_search(query, purpose) — combine cidade, segmento e um sinal público concreto, como encomendas por WhatsApp ou cardápio próprio.
-- read_pages(urls, goal) — confira fonte, identidade, contatos e link da bio. Número parcial é só pista. Link de grupo ou código sem dígitos fica como referência.
+- read_pages(urls, goal) — confira fonte, identidade, contatos, link da bio e eventual closedSignal. Número parcial é só pista. Link de grupo ou código sem dígitos fica como referência.
 ${ladder}
 Use as sugestões do resultado quando resolverem uma lacuna. Reutilize o que já encontrou antes de consumir mais pesquisa.`,
-    `## Decisão de registrar
-Use create_lead com o que vende, primeiro nome de quem toca o negócio (se for público, nunca inventado), situação observada, origem de cada canal, fitReason, intentReason e URLs em sources. No findings, seja conciso e útil pro vendedor: separe (1) o fato verificável e a fonte, (2) a hipótese de onde a Venduá ajuda e (3) O MELHOR gancho natural único pra abrir a conversa (evite listas longas de produtos que incentivem mensagens com cara de robô). Priorize contato comercial publicado pelo próprio negócio. Guarde números como publicados e cadastre WhatsApp quando a fonte o identificar como tal.
-- fitScore de 0 a 10 mede aderência. Até 3 fica fora do público ou da busca. 4 a 6 tem aderência plausível com lacunas. 7 a 8 tem público confirmado e um fluxo concreto em que a loja ajudaria. 9 a 10 exige evidência forte de aderência e utilidade.
-- intentScore de 0 a 10 mede sinal do comprador. Zero se só conhecemos o negócio. Use nota baixa ou intermediária para um projeto de venda online com evidência pública. Reserve notas altas para intenção explícita do comprador. Operação movimentada, avaliação, seguidores ou ausência de link não são intenção de comprar.
-- Conte na META apenas novos registros. Anote duplicatas resolvidas sem aumentar a entrega. Deixe os casos fracos fora quando a pesquisa acabar. A quantidade pedida é teto.
+    `## Verificação de negócio ativo (evite negócios parados ou fechados)
+Antes de chamar create_lead, confirme que o negócio ainda opera de verdade:
+- Fechado permanentemente no Google Maps, ou bio/post/site indicando encerramento ("encerramos atividades", "fechamos as portas", "perfil desativado") → NUNCA cadastre; marque dead no book.
+- Temporariamente fechado ou em pausa → só cadastre se outra fonte confirmar que já reabriu; senão marque dead.
+- Instagram com último post há mais de 180 dias (status stale) ou 0 posts → NÃO cadastre só pelo Instagram; só entra se outra fonte (Google Maps operacional com horários/avaliações ou site/cardápio ativo) provar que continua aberto. Se estiver parado, marque dead.
+- Instagram quiet (60–180 dias sem post) ou negócio só de Maps sem Instagram → válido quando houver operação confirmada (horários ativos, avaliações ou WhatsApp/cardápio funcionando); muitos negócios locais vendem bem no WhatsApp sem postar sempre.
+- Sempre cite no findings a evidência de que está ativo (ex.: "último post há 6 dias", "Maps operacional com 120 avaliações e horário ativo").`,
+    `## Decisão de registrar e notas
+Use create_lead com o que vende, primeiro nome de quem toca o negócio (se for público, nunca inventado), evidência de atividade recente, origem de cada canal, fitScore, fitReason, intentScore, intentReason e URLs em sources. No findings, seja conciso e útil pro vendedor: separe (1) o fato verificável + evidência de negócio ativo e fonte, (2) a hipótese de onde a Venduá ajuda e (3) O MELHOR gancho natural único pra abrir a conversa (evite listas longas de produtos que incentivem mensagens com cara de robô). Priorize contato comercial publicado pelo próprio negócio. Guarde números como publicados e cadastre WhatsApp quando a fonte o identificar como tal.
+- fitScore (0 a 10 — aderência ao público + operação ativa):
+  • 0–3: fora do público, rede grande fora do perfil, fechado ou parado sem prova de operação.
+  • 4–5: negócio de comida plausível, mas com lacunas relevantes ou atividade não confirmada.
+  • 6: negócio de comida ativo confirmado, perfil compatível, mas sem fluxo/atrito digital específico ainda confirmado.
+  • 7–8: negócio de comida ativo confirmado (post recente, Maps operacional ou cardápio ativo) + fluxo concreto em que a Venduá ajuda (pedidos/encomendas no WhatsApp/DM, cardápio em imagem/PDF, dependência de iFood, sem link próprio).
+  • 9–10: operação ativa forte + dor/utilidade evidente + canal comercial direto confirmado + ótimo gancho natural.
+- intentScore (0 a 10 — atrito observável / prontidão pra adotar):
+  • 0–2: sem sinal observável de dor ou mudança (ex.: já usa loja própria completa ou só sabemos que existe).
+  • 3–5: atrito operacional moderado (vende no WhatsApp/DM sem link próprio, cardápio em foto/PDF/destaques, ou só no iFood sem canal direto).
+  • 6–7: sinal forte de atrito ou crescimento (alto giro de encomendas/pedidos manuais no WhatsApp, comentários/avaliações pedindo cardápio/preço, expandindo delivery).
+  • 8–10: intenção explícita do comprador (pediu preço, disse querer sair do WhatsApp manual ou trocar de plataforma).
+- Sempre preencha fitScore, fitReason, intentScore e intentReason pela evidência (nunca infle nem deixe em branco).
+- Conte na META apenas novos registros. Anote duplicatas resolvidas sem aumentar a entrega. Deixe os casos fracos ou parados fora quando a pesquisa acabar. A quantidade pedida é teto.
 ${
   opts.autoContact?.enabled !== false
-    ? `A partir de fitScore ${opts.autoContact?.minScore ?? 8}, o CRM pode iniciar primeiro contato quando o canal estiver apto. Evidência do contato e autonomia decidem se sai ou vira rascunho. Dê a nota pela evidência.`
+    ? `Autocontato: dispara quando fitScore ≥ ${opts.autoContact?.minScore ?? 7} (ou fitScore ≥ ${Math.max(1, (opts.autoContact?.minScore ?? 7) - 1)} com intentScore ≥ 6) e houver canal apto (WhatsApp, Instagram ou e-mail). Evidência do contato e autonomia decidem se sai direto ou vira rascunho. Dê as notas pela evidência real.`
     : 'Nesta busca, descoberta não dispara primeiro contato automático.'
 }`,
     research ? '' : 'SEM PESQUISA disponível. Registre o que impediu a busca e encerre.',

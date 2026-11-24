@@ -13,7 +13,7 @@ import {
   type Guardrails,
   type Pitch,
 } from '../modules/integrations.ts';
-import { channelAvailabilityTx, leadHasContactTx } from './guardrails.ts';
+import { channelAvailabilityTx, leadHasContactTx, passesAutoContactScore } from './guardrails.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 
 // The one agent setting (`agent`): autonomy preset × automatic jobs × staff instructions,
@@ -190,20 +190,26 @@ export async function explainAutonomyTx(
   const lead = (
     await tx<
       {
+        state: string;
         agent_mode: string;
         archived_at: string | null;
         unsubscribed_at: string | null;
         agent_paused_at: string | null;
         whatsapp: string | null;
+        whatsapp_verified: boolean;
         phone: string | null;
         email: string | null;
         email_bounced_at: string | null;
+        fit_score: number | null;
+        intent_score: number | null;
+        discovered_via: string | null;
         spent: number;
         wa_thread: number;
       }[]
     >`
-      select l.agent_mode, l.archived_at, l.unsubscribed_at, l.agent_paused_at,
-        l.whatsapp, l.phone, l.email, l.email_bounced_at,
+      select l.state, l.agent_mode, l.archived_at, l.unsubscribed_at, l.agent_paused_at,
+        l.whatsapp, l.whatsapp_verified, l.phone, l.email, l.email_bounced_at,
+        l.fit_score, l.intent_score, l.discovered_via,
         coalesce((select sum(r.cost_cents) from crm_turns r where r.lead_id = l.id), 0)::int as spent,
         (select count(*) from lead_threads t
           where t.lead_id = l.id and t.channel = 'whatsapp' and t.external_id is not null)::int as wa_thread
@@ -241,6 +247,7 @@ export async function explainAutonomyTx(
     reasons.push({ code: 'workspace_off', message: 'autonomia do workspace desligada' });
   reasons.push(...blockers);
   const ch = await channelAvailabilityTx(tx, leadId);
+  const contacted = await leadHasContactTx(tx, leadId);
   let sendMode: AutonomyExplanation['sendMode'];
   if (blockers.length) sendMode = 'blocked';
   else if (!ch.whatsapp.ok && !ch.instagram.ok && !ch.email.ok) {
@@ -252,7 +259,7 @@ export async function explainAutonomyTx(
   } else {
     const d = draftDecision({
       level,
-      firstContact: !(await leadHasContactTx(tx, leadId)),
+      firstContact: !contacted,
       leadMode: lead.agent_mode,
     });
     sendMode = d.forceDraft ? 'draft' : 'auto';
@@ -271,6 +278,29 @@ export async function explainAutonomyTx(
             ? 'piloto automático — envia dentro dos limites (horário, msgs sem resposta)'
             : 'supervisionado — follow-ups e respostas saem sem aprovação',
       });
+    if (lead.state === 'lead' && lead.discovered_via && !contacted) {
+      if (!g.discoveryAutoContact) {
+        reasons.push({
+          code: 'discovery_auto_contact_off',
+          message: 'autocontato na descoberta desligado (aguarda disparo manual)',
+        });
+      } else if (
+        !passesAutoContactScore(lead.fit_score, lead.intent_score, g.discoveryContactMinScore)
+      ) {
+        reasons.push({
+          code: 'below_min_score',
+          message:
+            lead.fit_score == null
+              ? 'sem fitScore — autocontato aguarda qualificação'
+              : `fit ${lead.fit_score} abaixo do mínimo ${g.discoveryContactMinScore} para autocontato`,
+        });
+      } else if (lead.whatsapp && !lead.whatsapp_verified && !ch.instagram.ok && !ch.email.ok) {
+        reasons.push({
+          code: 'whatsapp_unverified',
+          message: 'whatsapp derivado do celular ainda não verificado',
+        });
+      }
+    }
   }
   return { level, canRun, sendMode, reasons };
 }

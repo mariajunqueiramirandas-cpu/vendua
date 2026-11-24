@@ -17,6 +17,14 @@ import {
   type ReadPagesResult,
 } from '../../../crm/channels/discovery.ts';
 import { MonidBudget, monidRun } from '../../../crm/channels/monid.ts';
+import {
+  assessInstagramActivity,
+  assessMapsActivity,
+  detectClosedPhrase,
+  normIgKey,
+  normNameKey,
+  type LivenessSignal,
+} from '../../../crm/liveness.ts';
 import { workspaceOf } from './availability.ts';
 import { counters, str, turn, type Ctx } from './shared.ts';
 
@@ -257,9 +265,12 @@ export const readPagesTool = defineTool<{ urls: string[]; goal?: string | undefi
     }
     // a turn's log row stays far under its 256 KB cap: the text shrinks to fit, nav and contacts stay
     const each = Math.min(PAGE_TEXT_MAX, Math.floor(PAGES_TEXT_TOTAL / Math.max(1, pages.length)));
-    const shown = pages.map((p) =>
-      p.text.length > each ? { ...p, text: `${p.text.slice(0, each)}\n[…]`, clipped: true } : p,
-    );
+    const shown = pages.map((p) => {
+      const closedSignal = detectClosedPhrase(`${p.title ?? ''}\n${p.text.slice(0, 2500)}`);
+      const body =
+        p.text.length > each ? { ...p, text: `${p.text.slice(0, each)}\n[…]`, clipped: true } : p;
+      return closedSignal ? { ...body, closedSignal } : body;
+    });
     return {
       content: JSON.stringify({ pages: shown, ...(errs.length ? { errors: errs } : {}) }),
       data: {
@@ -333,7 +344,7 @@ export const mapsLookupTool = defineTool<
 >({
   name: 'maps_lookup',
   description:
-    "Google Maps business lookup via monid (~$0.0045/result against the turn's monid cap). Returns business identity, phone, site and location. whatsappLikely indicates a Brazilian mobile number. Keep it as phone until a source or registration confirms WhatsApp.",
+    "Google Maps business lookup via monid (~$0.0045/result against the turn's monid cap). Returns business identity, phone, site, location, operational status (permanentlyClosed/temporarilyClosed), reviewsCount and opening hours. whatsappLikely indicates a Brazilian mobile number. Keep it as phone until a source or registration confirms WhatsApp.",
   effect: 'read',
   input: s.object({
     query: s.string({ min: 1, max: 200 }).describe("business/segment, e.g. 'padaria artesanal'"),
@@ -358,47 +369,85 @@ export const mapsLookupTool = defineTool<
       );
       return { value: r.output, costUsd: r.costUsd || 0.0045 * r.output.length };
     });
+    const liveness: LivenessSignal[] = [];
     const candidates = res.value.map((r) => {
+      const name = str(r.name ?? r.title);
       const phone = str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone);
+      const instagram = igFrom(r);
       const rating = r.rating ?? r.totalScore;
+      const act = assessMapsActivity(r, ctx.now);
+      if (act.status !== 'unknown' && act.status !== 'private') {
+        const reason =
+          act.status === 'closed'
+            ? `Google Maps: fechado permanentemente${act.closedSignal ? ` (${act.closedSignal})` : ''}`
+            : act.status === 'paused'
+              ? 'Google Maps: temporariamente fechado'
+              : `Google Maps operacional${act.reviewsCount ? ` (${act.reviewsCount} avaliações)` : ''}${act.hasOpeningHours ? ', com horário ativo' : ''}`;
+        for (const key of [normNameKey(name), normIgKey(instagram)]) {
+          if (key)
+            liveness.push({
+              key,
+              source: 'maps',
+              status: act.status,
+              reason,
+              ...(act.lastReviewAt ? { lastAt: act.lastReviewAt } : {}),
+            });
+        }
+      }
       return {
-        name: str(r.name ?? r.title),
+        name,
         phone,
         whatsappLikely: phone ? isBrMobilePhone(phone) : false,
         address: str(r.address ?? r.fullAddress ?? r.street),
         website: str(r.website),
-        instagram: igFrom(r),
+        instagram,
         rating: typeof rating === 'number' ? rating : null,
+        reviewsCount: act.reviewsCount,
         category: str(r.categoryName ?? r.category),
+        activityStatus: act.status,
+        permanentlyClosed: act.permanentlyClosed,
+        temporarilyClosed: act.temporarilyClosed,
+        hasOpeningHours: act.hasOpeningHours,
+        ...(act.lastReviewAt ? { lastReviewAt: act.lastReviewAt } : {}),
       };
     });
     const contacts = fresh(
       ctx,
       candidates.flatMap((c) => [c.phone, c.instagram]),
     );
+    const closedHints = candidates
+      .filter((c) => c.permanentlyClosed || c.temporarilyClosed)
+      .slice(0, 5)
+      .map((c) =>
+        c.permanentlyClosed
+          ? `${c.name}: FECHADO PERMANENTEMENTE no Google Maps — descarte (marque dead no book)`
+          : `${c.name}: temporariamente fechado no Google Maps — confirme se reabriu antes de cadastrar`,
+      );
+    const phoneHints = candidates
+      .filter((c) => !c.phone && !c.permanentlyClosed)
+      .slice(0, 5)
+      .map((c) =>
+        c.instagram
+          ? `${c.name}: sem telefone — instagram_profile('${c.instagram}') ou serp "${c.name} ${city}" telefone`
+          : `${c.name}: sem telefone — serp "${c.name} ${city}" telefone`,
+      );
     return {
       candidates,
       newContacts: contacts.length,
       spentUsd: res.spentUsd,
       capUsd: res.capUsd,
-      next: candidates
-        .filter((c) => !c.phone)
-        .slice(0, 5)
-        .map((c) =>
-          c.instagram
-            ? `${c.name}: sem telefone — instagram_profile('${c.instagram}') ou serp "${c.name} ${city}" telefone`
-            : `${c.name}: sem telefone — serp "${c.name} ${city}" telefone`,
-        ),
+      next: [...phoneHints, ...closedHints],
       monidUsd: res.costUsd,
       contacts,
-    };
+      liveness,
+    } as unknown as Json;
   },
 });
 
 export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
   name: 'instagram_profile',
   description:
-    "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers and any public contact fields, with the bio parsed into contacts. The fix for profiles that render as shells when the page itself is read.",
+    "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers, public contact fields, AND activity freshness (lastPostAt, daysSinceLastPost, postsLast30d/90d, recent post captions, closed/paused warnings) so you can confirm the business is still operating.",
   effect: 'read',
   input: s.object({
     handle: s.string({ min: 1, max: 100 }).describe('instagram @handle (with or without @)'),
@@ -442,19 +491,76 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
     }
     for (const f of ['publicEmail', 'contactPhoneNumber', 'whatsappNumber'] as const) {
       const v = str(p[f]);
-      if (v) (/@/.test(v) ? found.emails : found.phones).push(v);
+      if (!v) continue;
+      if (/@/.test(v)) found.emails.push(v);
+      else {
+        found.phones.push(v);
+        // Instagram's explicit whatsappNumber field is direct WhatsApp evidence for create_lead.
+        if (f === 'whatsappNumber') {
+          const digits = v.replace(/\D/g, '');
+          if (digits.length >= 10 && digits.length <= 15) {
+            const full = digits.length <= 11 ? `55${digits}` : digits;
+            found.whatsappLinks.push(`https://wa.me/${full}`);
+          }
+        }
+      }
+    }
+    const activity = assessInstagramActivity(p, ctx.now);
+    const username = str(p.username) ?? handle;
+    const fullName = str(p.fullName);
+    const liveness: LivenessSignal[] = [];
+    if (activity.status !== 'unknown' && activity.status !== 'private') {
+      const reason =
+        activity.status === 'closed'
+          ? `Instagram @${username}: indica encerramento (${activity.closedSignal ?? 'bio/post'})`
+          : activity.status === 'paused'
+            ? `Instagram @${username}: indica pausa (${activity.pausedSignal ?? 'bio/post'})`
+            : activity.status === 'stale'
+              ? activity.daysSinceLastPost !== null
+                ? `Instagram @${username}: sem postagem há ${activity.daysSinceLastPost} dias (último em ${activity.lastPostAt})`
+                : `Instagram @${username}: sem nenhuma publicação (0 posts)`
+              : activity.status === 'quiet'
+                ? `Instagram @${username}: último post há ${activity.daysSinceLastPost} dias (${activity.lastPostAt})`
+                : `Instagram @${username}: ativo (último post em ${activity.lastPostAt}, há ${activity.daysSinceLastPost}d)`;
+      for (const key of [normIgKey(username), normIgKey(handle), normNameKey(fullName)]) {
+        if (key)
+          liveness.push({
+            key,
+            source: 'instagram',
+            status: activity.status,
+            reason,
+            ...(activity.lastPostAt ? { lastAt: activity.lastPostAt } : {}),
+          });
+      }
     }
     const next: string[] = [];
     // the hints name read_pages only where it is offered
     const canRead = !workspaceOf(ctx.state.context.tenant)?.disabled.read_pages;
-    if (canRead && extIsHub)
+    if (canRead && extIsHub && activity.status !== 'closed')
       next.push(
         `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
       );
-    else if (canRead && externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
-    if (found.phoneHints.length && !found.phones.length)
+    else if (canRead && externalUrl && activity.status !== 'closed')
+      next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+    if (found.phoneHints.length && !found.phones.length && activity.status !== 'closed')
       next.push(
         `phoneHints ${found.phoneHints.join(', ')} sem DDD — serp "${handle} ${found.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
+      );
+    if (activity.status === 'closed')
+      next.push(
+        `AVISO: perfil indica negócio encerrado ("${activity.closedSignal}") — NÃO cadastre; marque dead no book`,
+      );
+    else if (activity.status === 'paused')
+      next.push(
+        `AVISO: perfil indica pausa temporária ("${activity.pausedSignal}") — confirme se já reabriu antes de cadastrar`,
+      );
+    else if (activity.status === 'stale')
+      next.push(
+        `AVISO: perfil parado (${activity.daysSinceLastPost !== null ? `último post há ${activity.daysSinceLastPost} dias` : '0 posts'}) — confirme em outra fonte (Google Maps/site) que ainda opera; se parado, marque dead no book`,
+      );
+    else if (activity.status === 'quiet')
+      next.push(
+        `atenção: último post no Instagram há ${activity.daysSinceLastPost} dias (${activity.lastPostAt}) — confira se ainda está operando ativamente`,
       );
     const contacts = fresh(ctx, [
       `@${handle}`,
@@ -464,13 +570,26 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
     ]);
     return {
       profile: {
-        username: str(p.username) ?? handle,
-        fullName: str(p.fullName),
+        username,
+        fullName,
         biography: bio,
         externalUrl,
         followers: typeof p.followersCount === 'number' ? p.followersCount : null,
         category: str(p.businessCategoryName),
+        isPrivate: p.private === true || p.isPrivate === true,
+        isBusinessAccount: p.isBusinessAccount === true || p.isProfessionalAccount === true,
       },
+      activity: {
+        status: activity.status,
+        lastPostAt: activity.lastPostAt,
+        daysSinceLastPost: activity.daysSinceLastPost,
+        postsCount: activity.postsCount,
+        postsLast30d: activity.postsLast30d,
+        postsLast90d: activity.postsLast90d,
+        ...(activity.closedSignal ? { closedSignal: activity.closedSignal } : {}),
+        ...(activity.pausedSignal ? { pausedSignal: activity.pausedSignal } : {}),
+      },
+      ...(activity.recentPosts.length ? { recentPosts: activity.recentPosts } : {}),
       foundContacts: found,
       newContacts: contacts.length,
       spentUsd: res.spentUsd,
@@ -478,6 +597,7 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
       ...(next.length ? { next } : {}),
       monidUsd: res.costUsd,
       contacts,
+      liveness,
     } as unknown as Json;
   },
 });
@@ -499,12 +619,37 @@ export const serpTool = defineTool<{ query: string }, Sql>({
       return { value: r.output, costUsd: r.costUsd || 0.001 };
     });
     const results = res.value.slice(0, 10).map((r) => {
+      const title = str(r.title);
+      const url = str(r.link ?? r.url);
       const snippet = str(r.snippet ?? r.description) ?? '';
+      const contacts = contactsFromText(snippet);
+      let urlIg: string | null = null;
+      if (url) {
+        try {
+          const parsed = contactFromUrl(new URL(url));
+          if (parsed.instagram) {
+            urlIg = parsed.instagram;
+            if (!contacts.instagram.includes(parsed.instagram))
+              contacts.instagram.push(parsed.instagram);
+          }
+          if (parsed.whatsappLink && !contacts.whatsappLinks.includes(parsed.whatsappLink))
+            contacts.whatsappLinks.push(parsed.whatsappLink);
+          if (parsed.phone && !contacts.phones.includes(parsed.phone))
+            contacts.phones.push(parsed.phone);
+        } catch {
+          /* non-url */
+        }
+      }
+      const date = str(r.date ?? r.publishedDate);
+      const closedSignal = detectClosedPhrase(`${title ?? ''} ${snippet}`);
       return {
-        title: str(r.title),
-        url: str(r.link ?? r.url),
+        title,
+        url,
         snippet: snippet.slice(0, 300),
-        contacts: contactsFromText(snippet),
+        ...(date ? { date } : {}),
+        ...(closedSignal ? { closedSignal } : {}),
+        ...(urlIg ? { instagram: urlIg } : {}),
+        contacts,
       };
     });
     const contacts = fresh(
@@ -513,6 +658,7 @@ export const serpTool = defineTool<{ query: string }, Sql>({
         ...r.contacts.phones,
         ...r.contacts.whatsappLinks,
         ...r.contacts.emails,
+        ...r.contacts.instagram,
       ]),
     );
     return {

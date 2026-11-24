@@ -429,21 +429,26 @@ export function leadSort(v: unknown): LeadSort {
 }
 
 /**
- * Lead score in SQL — completeness + engagement recency, minus hard
- * negatives; one expression so list, board and detail rank identically.
+ * Lead priority score in SQL (0–100) — AI fit/intent (40) + verified reachability (30) +
+ * real engagement & recency (20) + profile context (10), minus hard negatives; one expression
+ * so list, board and detail rank identically.
  */
 const LEAD_SCORE_SQL = `greatest(0, least(100, (
-    (case when l.phone is not null or l.whatsapp is not null then 20 else 0 end)
-  + (case when l.email is not null then 10 else 0 end)
-  + (case when l.instagram is not null then 10 else 0 end)
-  + (case when l.business_name is not null then 10 else 0 end)
-  + (case when l.segment is not null then 10 else 0 end)
-  + (case when l.city is not null then 5 else 0 end)
-  + (case when l.website is not null then 5 else 0 end)
-  + (case when l.deal_value_cents is not null then 5 else 0 end)
-  + least(15, coalesce(act.n, 0) * 3)
-  + (case when act.last_at > now() - interval '7 days' then 10
-          when act.last_at > now() - interval '30 days' then 5 else 0 end)
+    (case when l.fit_score is not null then l.fit_score * 3
+          else (case when l.business_name is not null then 8 else 0 end)
+             + (case when l.segment is not null then 7 else 0 end) end)
+  + least(10, coalesce(l.intent_score, 0))
+  + (case when l.whatsapp is not null and l.whatsapp_verified then 20
+          when l.whatsapp is not null or l.phone is not null then 10 else 0 end)
+  + (case when l.instagram is not null then 5 else 0 end)
+  + (case when l.email is not null and l.email_bounced_at is null then 5 else 0 end)
+  + (case when coalesce(dr.inbound_n, 0) > 0 then 12 else 0 end)
+  + (case when coalesce(dr.last_in_at, act.last_at) > now() - interval '7 days' then 8
+          when coalesce(dr.last_in_at, act.last_at) > now() - interval '30 days' then 4 else 0 end)
+  + (case when l.business_name is not null then 3 else 0 end)
+  + (case when l.segment is not null then 3 else 0 end)
+  + (case when l.city is not null then 2 else 0 end)
+  + (case when l.website is not null or l.deal_value_cents is not null then 2 else 0 end)
   - (case when l.unsubscribed_at is not null or l.archived_at is not null then 100 else 0 end)
 )))`;
 
@@ -460,9 +465,13 @@ const LEAD_LIST_FROM = `
     where t.lead_id = l.id and t.done_at is null
   ) tk on true
   left join lateral (
-    select count(*)::int n from lead_messages m
+    select
+      count(*) filter (where m.status = 'draft')::int n,
+      count(*) filter (where m.direction = 'in' and not m.historical)::int inbound_n,
+      max(m.created_at) filter (where m.direction = 'in' and not m.historical) last_in_at
+    from lead_messages m
     join lead_threads th on th.id = m.thread_id
-    where th.lead_id = l.id and m.status = 'draft'
+    where th.lead_id = l.id
   ) dr on true
 `;
 

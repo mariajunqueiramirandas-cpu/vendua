@@ -12,6 +12,7 @@ import { controlTx } from '../../../modules/control.ts';
 import { emitControlEvent, type ControlEventType } from '../../../modules/control-events.ts';
 import { afterCommit, type Sql } from '../../../platform/db.ts';
 import { jobOf } from '../../../crm/jobs.ts';
+import type { LivenessSignal } from '../../../crm/liveness.ts';
 import type { JobKind } from '../../../crm/policy.ts';
 
 // What the three CRM agents share (ADR 0030 steps 2–4): the turn as its batch describes it, the
@@ -41,6 +42,8 @@ export interface TurnInfo {
   monidUsd: number;
   /** contact values already banked this turn: a repeat isn't progress */
   seen: string[];
+  /** business liveness signals observed by research tools this turn */
+  liveness: LivenessSignal[];
   /** a message already went back once for sounding like a robot */
   styleBounced: boolean;
   /** discovery's working memory: the prospect ledger and the campaign plan */
@@ -96,6 +99,7 @@ export const EMPTY_TURN: TurnInfo = {
   pageReads: 0,
   monidUsd: 0,
   seen: [],
+  liveness: [],
   styleBounced: false,
   book: [],
   campaign: null,
@@ -248,6 +252,23 @@ export function applyCrm(prev: Json, e: AgentEvent): Json {
           ...c.turn.seen,
           ...d.contacts.filter((v): v is string => typeof v === 'string'),
         ];
+      if (Array.isArray(d.liveness)) {
+        const incoming = (d.liveness as unknown[]).filter(
+          (v): v is LivenessSignal =>
+            Boolean(v) &&
+            typeof v === 'object' &&
+            typeof (v as Record<string, unknown>).key === 'string' &&
+            typeof (v as Record<string, unknown>).status === 'string',
+        );
+        if (incoming.length) {
+          const existing = new Set(c.turn.liveness.map((s) => `${s.key}|${s.source}|${s.status}`));
+          const freshSignals = incoming.filter(
+            (s) => !existing.has(`${s.key}|${s.source}|${s.status}`),
+          );
+          if (freshSignals.length)
+            c.turn.liveness = [...c.turn.liveness, ...freshSignals].slice(-200);
+        }
+      }
       // create_lead: the lead it filed or merged into is now this turn's to touch
       if (typeof d.leadId === 'string' && !c.turn.leads.includes(d.leadId))
         c.turn.leads = [...c.turn.leads, d.leadId];

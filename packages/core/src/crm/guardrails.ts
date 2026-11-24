@@ -35,6 +35,32 @@ export async function instagramReadyTx(tx: Sql): Promise<boolean> {
   return ig.driver === 'sidecar' ? igState() === 'open' : true;
 }
 
+/** Enabled email row + live credentials ('log' needs none; 'resend' needs its key). */
+export async function emailReadyTx(tx: Sql): Promise<boolean> {
+  const em = await getIntegrationTx(tx, 'email');
+  if (!em) return false;
+  return (
+    em.driver !== 'resend' ||
+    Boolean((em.secret_ref && process.env[em.secret_ref]) ?? process.env.RESEND_API_KEY)
+  );
+}
+
+/** Minimum intentScore that lets a fitScore one point below the threshold still auto-contact. */
+export const INTENT_BOOST_MIN = 6;
+
+/** Auto-contact score gate: fitScore >= minScore, or one point below with strong intent (>= 6). */
+export function passesAutoContactScore(
+  fitScore: number | null,
+  intentScore: number | null,
+  minScore: number,
+): boolean {
+  if (fitScore === null) return false;
+  if (fitScore >= minScore) return true;
+  return (
+    intentScore !== null && fitScore >= Math.max(1, minScore - 1) && intentScore >= INTENT_BOOST_MIN
+  );
+}
+
 /** Channels that can carry a message now: contact data + enabled
  *  integration + deliverability; 'manual' always works. */
 export async function channelAvailabilityTx(
@@ -412,6 +438,40 @@ export async function instagramColdCapTx(
     `
   )[0]!.n;
   return used >= cap ? 'instagram cold-DM daily cap reached' : null;
+}
+
+/** Remaining rolling-24h Instagram cold-DM slots and when the earliest occupied slot frees up. */
+export async function instagramColdBudgetTx(
+  tx: Sql,
+  g: Guardrails,
+): Promise<{ remaining: number; nextSlotAt: Date | null }> {
+  const cap = g.instagramColdDmsPerDay ?? DEFAULT_GUARDRAILS.instagramColdDmsPerDay;
+  if (cap <= 0) return { remaining: 0, nextSlotAt: null };
+  const [row] = await tx<{ used: number; oldest: Date | null }[]>`
+    select count(distinct o.id)::int as used, min(o.opened_at) as oldest from (
+      select t.id, min(m.created_at) as opened_at
+      from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.channel = 'instagram' and m.direction = 'out'
+        and m.status in ('queued', 'sending', 'sent', 'delivered')
+      group by t.id
+    ) o
+    join lead_messages first on first.thread_id = o.id and first.created_at = o.opened_at
+    where o.opened_at > now() - interval '1 day'
+      and first.author = 'agent'
+      and not exists (
+        select 1 from lead_messages i
+        where i.thread_id = o.id and i.direction = 'in' and i.created_at < o.opened_at
+      )
+  `;
+  const used = row?.used ?? 0;
+  const remaining = Math.max(0, cap - used);
+  if (remaining > 0) return { remaining, nextSlotAt: null };
+  // Earliest rolling-24h slot frees up 24h + 2 min after the oldest cold DM opened.
+  const next = row?.oldest
+    ? new Date(new Date(row.oldest).getTime() + 86_400_000 + 120_000)
+    : new Date(Date.now() + 3_600_000);
+  return { remaining: 0, nextSlotAt: next };
 }
 
 /** Earliest instant ≥ `at` outside quiet hours, in the workspace timezone — the dispatcher

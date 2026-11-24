@@ -8,10 +8,18 @@ import {
   newLeadModesOf,
   type Guardrails,
 } from '../../../modules/integrations.ts';
+import { hasMemoryTablesTx, upsertLeadFactTx } from '../../../modules/agent-memory.ts';
 import { instagramHandle } from '../../../modules/threads.ts';
 import { contactFromUrl, isBrMobilePhone, phoneFromText } from '../../../crm/channels/discovery.ts';
 import { whatsappRegistered } from '../../../crm/channels/whatsapp.ts';
-import { instagramReadyTx, whatsappReadyTx } from '../../../crm/guardrails.ts';
+import {
+  emailReadyTx,
+  instagramColdBudgetTx,
+  instagramReadyTx,
+  passesAutoContactScore,
+  whatsappReadyTx,
+} from '../../../crm/guardrails.ts';
+import { detectClosedPhrase, resolveLeadLiveness } from '../../../crm/liveness.ts';
 import { queueIgFollowTx } from '../../../crm/ig-follows.ts';
 import { parseWakeupAt } from '../../../crm/agenda.ts';
 import { requestLeadTx } from '../../../crm/dispatch.ts';
@@ -242,11 +250,33 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
       }
       const observed = (value: unknown) => {
         if (typeof value !== 'string' || !value) return false;
-        if (value.startsWith('@'))
+        if (value.includes('@'))
           return t.seen.some((contact) => contact.toLowerCase() === value.toLowerCase());
         const phone = digits(value);
         return phone !== null && t.seen.some((contact) => digits(contact) === phone);
       };
+      // Deterministic dead/stale business check from this turn's research tools (and findings text).
+      const live = resolveLeadLiveness(t.liveness, {
+        instagram: row.instagram,
+        businessName: row.business_name,
+        name: row.name,
+      });
+      const findingsClosed = detectClosedPhrase(findings);
+      if (live.status === 'closed' || findingsClosed) {
+        return {
+          error: `BUSINESS_CLOSED — negócio fechado/encerrado (${live.reason ?? findingsClosed}). Não cadastre; marque dead no book.`,
+        };
+      }
+      if (live.status === 'paused') {
+        return {
+          error: `BUSINESS_PAUSED — ${live.reason}. Confirme em outra fonte se já reabriu antes de cadastrar, ou marque dead no book.`,
+        };
+      }
+      if (live.status === 'stale') {
+        return {
+          error: `BUSINESS_STALE — ${live.reason}. Confirme em outra fonte (Google Maps operacional, site ou cardápio ativo) que ainda opera; se parado, marque dead no book.`,
+        };
+      }
       const waDigits = digits(row.whatsapp);
       row.whatsapp_verified =
         waDigits !== null &&
@@ -262,34 +292,44 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           ...DEFAULT_GUARDRAILS,
           ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),
         };
-        const waReady = await whatsappReadyTx(tx);
-        const igReady = g.instagramColdDmsPerDay > 0 && (await instagramReadyTx(tx));
+        const [waReady, igReady, emailReady] = [
+          await whatsappReadyTx(tx),
+          g.instagramColdDmsPerDay > 0 && (await instagramReadyTx(tx)),
+          await emailReadyTx(tx),
+        ];
         // a derived whatsapp is promoted when the number is registered: the probe is a network
         // call, made only when it could unlock a first contact
         const score = typeof row.fit_score === 'number' ? row.fit_score : null;
+        const intent = typeof row.intent_score === 'number' ? row.intent_score : null;
         if (
           row.whatsapp_verified !== true &&
           observed(row.whatsapp) &&
           g.discoveryAutoContact &&
           waReady &&
-          score !== null &&
-          score >= g.discoveryContactMinScore &&
+          passesAutoContactScore(score, intent, g.discoveryContactMinScore) &&
           (await whatsappRegistered(String(row.whatsapp), tx).catch(() => null)) === true
         ) {
           whatsappDerived = false;
           row.whatsapp_verified = true;
         }
-        /** the autocontact gate: fitScore ≥ min, then a verified whatsapp on a live driver, else
-         *  an instagram handle on a live sidecar with cold DMs on */
+        /** the autocontact gate: fitScore >= min (or min-1 with intentScore >= 6), then a live
+         *  verified whatsapp, else an instagram handle with cold DMs on, else a valid email */
         const gateFires = (
           sc: number | null,
+          it: number | null,
           wa: string,
           ig: unknown,
-        ): 'whatsapp' | 'instagram' | null => {
-          if (!g.discoveryAutoContact || sc === null || sc < g.discoveryContactMinScore)
+          em: unknown,
+          emBounced = false,
+        ): 'whatsapp' | 'instagram' | 'email' | null => {
+          if (
+            !g.discoveryAutoContact ||
+            !passesAutoContactScore(sc, it, g.discoveryContactMinScore)
+          )
             return null;
           if (waReady && wa) return 'whatsapp';
           if (igReady && typeof ig === 'string' && instagramHandle(ig)) return 'instagram';
+          if (emailReady && !emBounced && typeof em === 'string' && em.trim()) return 'email';
           return null;
         };
         /** a first contact waits on nothing already in flight: pending outreach mail, any
@@ -310,27 +350,58 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         const firstContact = async (
           leadId: string,
           sc: number | null,
-          chan: 'whatsapp' | 'instagram',
+          it: number | null,
+          chan: 'whatsapp' | 'instagram' | 'email',
           evidence: boolean,
         ) => {
           if (await outreachActive(leadId)) return false;
+          // If Instagram's rolling 24h cold-DM cap is full, defer the mailbox item until the next
+          // slot opens instead of waking the agent just to get blocked and drop the lead.
+          let deferAt: Date | null = null;
+          if (chan === 'instagram' && evidence) {
+            const budget = await instagramColdBudgetTx(tx, g);
+            if (budget.remaining <= 0 && budget.nextSlotAt) deferAt = budget.nextSlotAt;
+          }
+          const scoreTag =
+            it !== null
+              ? `fitScore ${String(sc)}, intentScore ${String(it)}`
+              : `fitScore ${String(sc)}`;
           const r = await requestLeadTx(tx, {
             leadId,
             kind: 'lead.first_contact',
             source: 'first_contact',
             dedupeKey: `crm:first_contact:${leadId}`,
+            ...(deferAt ? { at: deferAt } : {}),
             payload: {
               channel: chan,
               ...(!evidence ? { draftOnly: true } : {}),
-              focus: `primeiro contato — lead descoberto (fitScore ${String(sc)}). Use só 1 detalhe natural do dossiê na timeline pra abrir conversa leve, sem ficha corrida nem link.`,
+              focus: `primeiro contato — lead descoberto (${scoreTag}). Use só 1 detalhe natural do dossiê na timeline pra abrir conversa leve, sem ficha corrida nem link.`,
             },
           });
           return r.mailboxId !== null;
         };
-        const writeFindings = (leadId: string, extra: Record<string, unknown> = {}) => tx`
-          insert into lead_activities (lead_id, kind, body, meta, created_by)
-          values (${leadId}, 'note', ${findings.slice(0, 4000)},
-                  ${tx.json({ type: 'research', sources, ...extra } as never)}, 'agent')`;
+        const liveMeta =
+          live.status !== 'unknown'
+            ? {
+                activityStatus: live.status,
+                ...(live.reason ? { activityReason: live.reason } : {}),
+                ...(live.lastAt ? { lastActiveAt: live.lastAt } : {}),
+              }
+            : {};
+        const writeFindings = async (leadId: string, extra: Record<string, unknown> = {}) => {
+          await tx`
+            insert into lead_activities (lead_id, kind, body, meta, created_by)
+            values (${leadId}, 'note', ${findings.slice(0, 4000)},
+                    ${tx.json({ type: 'research', sources, ...liveMeta, ...extra } as never)}, 'agent')`;
+          if (live.reason && (await hasMemoryTablesTx(tx))) {
+            await upsertLeadFactTx(tx, leadId, {
+              key: 'last_public_activity',
+              value: live.reason.slice(0, 500),
+              source: 'agent',
+              sourceRunId: ctx.turnId,
+            });
+          }
+        };
 
         // one key serializes dedupe + cap + insert: concurrent hunts never file one prospect twice
         await tx`select pg_advisory_xact_lock(hashtext('lead-dedupe'))`;
@@ -367,7 +438,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           limit 1`;
         if (dup) {
           const dupId = dup.id as string;
-          // fill still-empty columns, never overwrite
+          // fill still-empty columns, never overwrite existing contacts
           const set: Record<string, unknown> = {};
           const merged: string[] = [];
           for (const col of FILL_COLS) {
@@ -378,11 +449,27 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
               merged.push(col);
             }
           }
-          for (const col of ['fit_score', 'intent_score'] as const)
-            if (typeof row[col] === 'number' && dup[col] == null) {
-              set[col] = row[col];
+          // Fill missing scores, and allow fresh research on an untouched lead to upgrade a stale lower score.
+          for (const [col, reasonCol] of [
+            ['fit_score', 'fit_reason'],
+            ['intent_score', 'intent_reason'],
+          ] as const) {
+            const nextVal = row[col];
+            const curVal = dup[col];
+            const canUpgrade =
+              dup.state === 'lead' &&
+              typeof curVal === 'number' &&
+              typeof nextVal === 'number' &&
+              nextVal > curVal;
+            if (typeof nextVal === 'number' && (curVal == null || canUpgrade)) {
+              set[col] = nextVal;
               merged.push(col);
+              if (canUpgrade && typeof row[reasonCol] === 'string' && row[reasonCol].trim()) {
+                set[reasonCol] = row[reasonCol].trim();
+                if (!merged.includes(reasonCol)) merged.push(reasonCol);
+              }
             }
+          }
           if ('whatsapp' in set) set.whatsapp_verified = row.whatsapp_verified === true;
           // A newly observed WhatsApp can confirm a matching stored contact.
           if (
@@ -396,11 +483,20 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
             if (!merged.includes('whatsapp_verified')) merged.push('whatsapp_verified');
           }
           const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
+          const dupIntent = (set.intent_score ?? dup.intent_score) as number | null;
           const waEvidence = dup.whatsapp_verified === true || set.whatsapp_verified === true;
           const dupWa =
             (waEvidence ? String(dup.whatsapp ?? '').trim() : '') ||
             (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
-          const dupChan = gateFires(dupScore, dupWa, set.instagram ?? dup.instagram);
+          const dupEmail = set.email ?? dup.email;
+          const dupChan = gateFires(
+            dupScore,
+            dupIntent,
+            dupWa,
+            set.instagram ?? dup.instagram,
+            dupEmail,
+            Boolean(dup.email_bounced_at && !('email' in set)),
+          );
           if (merged.length)
             await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dupId}`;
           if (typeof set.instagram === 'string') await queueIgFollowTx(tx, dupId, set.instagram);
@@ -410,8 +506,13 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
               ? await firstContact(
                   dupId,
                   dupScore,
+                  dupIntent,
                   dupChan,
-                  dupChan === 'whatsapp' ? waEvidence : observed(set.instagram ?? dup.instagram),
+                  dupChan === 'whatsapp'
+                    ? waEvidence
+                    : dupChan === 'instagram'
+                      ? observed(set.instagram ?? dup.instagram)
+                      : observed(dupEmail),
                 )
               : false;
           await writeFindings(dupId, { merged });
@@ -433,8 +534,10 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           throw new ToolError(`DISCOVERY_CAP: discovery cap reached — max ${cap} leads per run`);
         const autoContact = gateFires(
           score,
+          intent,
           whatsappDerived ? '' : String(row.whatsapp ?? '').trim(),
           row.instagram,
+          row.email,
         );
         const created = await insertLeadTx(
           tx,
@@ -447,8 +550,13 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           ? await firstContact(
               lead.id,
               score,
+              intent,
               autoContact,
-              autoContact === 'whatsapp' ? row.whatsapp_verified === true : observed(row.instagram),
+              autoContact === 'whatsapp'
+                ? row.whatsapp_verified === true
+                : autoContact === 'instagram'
+                  ? observed(row.instagram)
+                  : observed(row.email),
             )
           : false;
         const { id: _id, ...visible } = lead;
@@ -457,13 +565,18 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           created: true,
           shown: {
             lead: { ref: ctx.alias(LEAD, lead.id), ...visible },
-            ...(contacted ? { firstContactQueued: true } : {}),
+            ...(contacted ? { firstContactQueued: true, contactChannel: autoContact } : {}),
             ...(whatsappDerived
               ? {
                   whatsappUnverified: true,
                   next: 'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)',
                 }
-              : {}),
+              : score === null
+                ? {
+                    fitScoreMissing: true,
+                    next: 'fitScore ausente — sem nota de aderência o autocontato não dispara; preencha com update_lead',
+                  }
+                : {}),
             leadsCreated: t.leadsCreated + 1,
             cap,
           },

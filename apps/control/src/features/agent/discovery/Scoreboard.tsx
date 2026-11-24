@@ -108,7 +108,7 @@ function Scores({ l }: { l: LeadListItem }) {
     <span className="flex items-center gap-1.5">
       {l.fitScore != null && (
         <span title={l.fitReason ?? undefined}>
-          <ScoreBar score={l.fitScore} />
+          <ScoreBar score={l.fitScore} max={10} />
         </span>
       )}
       {l.intentScore != null && (

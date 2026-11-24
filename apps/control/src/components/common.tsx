@@ -148,15 +148,26 @@ export function Avatar({
   );
 }
 
-/** Score 0–100 as a sliver + tabular number. */
-export function ScoreBar({ score, className }: { score: number; className?: string | undefined }) {
-  const pct = Math.max(0, Math.min(100, score));
+/** Score 0–max (default 100) as a sliver + tabular number. */
+export function ScoreBar({
+  score,
+  max = 100,
+  className,
+}: {
+  score: number;
+  max?: number | undefined;
+  className?: string | undefined;
+}) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, (score / max) * 100)) : 0;
   return (
-    <span className={cn('inline-flex items-center gap-1.5', className)} title={`score ${score}`}>
+    <span
+      className={cn('inline-flex items-center gap-1.5', className)}
+      title={max === 100 ? `score ${score}` : `${score}/${max}`}
+    >
       <span className="h-1 w-10 overflow-hidden rounded-full bg-muted">
         <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
       </span>
-      <span className="text-xs font-medium tnum">{score}</span>
+      <span className="text-xs font-medium tnum">{max === 100 ? score : `${score}/${max}`}</span>
     </span>
   );
 }
