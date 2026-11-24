@@ -703,6 +703,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('telegram sales-agent manager (d
     const seen = JSON.stringify(lastAdapter!.requests.at(-1));
     expect(seen).toContain('CARTÕES DE CONFIRMAÇÃO');
     expect(seen).toMatch(/mudar configuração do agente[^"]*JÁ CONFIRMADO por Ana/);
+    expect(seen).toContain('Venduá Mirim (mirim): R$\u00a069,90/mês');
     expect(seen).toContain('descoberta: na fila');
     expect(seen).toContain('doceiras em Araruama');
 

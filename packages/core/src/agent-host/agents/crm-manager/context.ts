@@ -7,6 +7,7 @@ import {
   getSettingTx,
   type Guardrails,
 } from '../../../modules/integrations.ts';
+import { publicPlans } from '../../../modules/billing/plans.ts';
 import { staffConfigTx } from '../../../modules/staff.ts';
 import {
   agentSettingTx,
@@ -15,7 +16,7 @@ import {
   type AutonomyLevel,
 } from '../../../crm/policy.ts';
 import { CRM_DISCOVERY_ID, CRM_STRATEGIST_ID } from '../../../crm/jobs.ts';
-import { label, ts, usd } from '../../../modules/telegram/format.ts';
+import { brl, label, ts, usd } from '../../../modules/telegram/format.ts';
 
 export interface ManagerWorkspace {
   timezone: string;
@@ -25,6 +26,8 @@ export interface ManagerWorkspace {
   instructionsPreview: string;
   pinnedRulesCount: number;
   activeBriefsCount: number;
+  /** one line per public plan, formatted here: the model quotes it, it never computes a price */
+  plans: string[];
 }
 
 export interface ManagerLive {
@@ -47,7 +50,7 @@ export interface ManagerLive {
 /** Static-ish workspace snapshot loaded once per turn. */
 export async function managerWorkspaceTx(tx: Sql): Promise<ManagerWorkspace> {
   return controlTx(tx, async (c) => {
-    const [agent, g, pinned, briefs] = await Promise.all([
+    const [agent, g, pinned, briefs, plans] = await Promise.all([
       agentSettingTx(c),
       getSettingTx<Partial<Guardrails>>(c, 'guardrails', {}),
       c<{ n: number }[]>`
@@ -56,6 +59,7 @@ export async function managerWorkspaceTx(tx: Sql): Promise<ManagerWorkspace> {
       c<{ n: number }[]>`
         select count(*)::int as n from discovery_briefs where enabled
       `,
+      publicPlans(c),
     ]);
     return {
       timezone: g.timezone ?? DEFAULT_GUARDRAILS.timezone,
@@ -65,6 +69,12 @@ export async function managerWorkspaceTx(tx: Sql): Promise<ManagerWorkspace> {
       instructionsPreview: agent.instructions.slice(0, 1200),
       pinnedRulesCount: pinned[0]?.n ?? 0,
       activeBriefsCount: briefs[0]?.n ?? 0,
+      plans: plans.map(
+        (p) =>
+          `${p.name} (${p.id}): ${p.priceCents === null ? 'sem preço publicado' : `${brl(p.priceCents)}/mês`}, ` +
+          `taxa ${(p.feeBps / 100).toLocaleString('pt-BR')}% por pedido` +
+          `${p.trialDays > 0 ? `, ${p.trialDays} dias de teste` : ''}${p.available ? '' : ' (fora de venda)'}`,
+      ),
     };
   });
 }
@@ -222,6 +232,9 @@ export function workspacePrompt(w: ManagerWorkspace): string {
     `- Autonomia: ${label('autonomy', w.level)} (${w.level})`,
     `- Rotinas ligadas: ${onJobs.length ? onJobs.join(', ') : 'nenhuma'}${offJobs.length ? ` | desligadas: ${offJobs.join(', ')}` : ''}`,
     `- Regras fixadas na memória: ${w.pinnedRulesCount} | briefs de descoberta ativos: ${w.activeBriefsCount}`,
+    w.plans.length
+      ? `PLANOS VIGENTES (valores reais; cite exatamente estes quando falar de plano ou preço):\n${w.plans.map((l) => `- ${l}`).join('\n')}`
+      : '',
     w.instructionsPreview ? `- Instruções atuais (trecho):\n${w.instructionsPreview}` : '',
   ]
     .filter(Boolean)
