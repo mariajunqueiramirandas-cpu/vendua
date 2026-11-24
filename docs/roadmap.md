@@ -48,13 +48,14 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
   segment, stale-draft regen, run provenance labels.
 - **Backlog** — [`agent-improvements.md`](agent-improvements.md) is the
   maintained list; every numbered item has shipped, two follow-ups remain.
-- **Staff bot on Discord** ([ADR 0023](adr/0023-staff-events-on-discord.md)) — every change
-  the team should hear about is a typed event in `staff_events`, recorded in the change's own
-  transaction (orders, payments, billing, signups, CRM, agent, fleet, Core itself) and
-  delivered by the scheduler to the team's private Discord: living cards (an order, a draft,
-  a handoff, an incident, a store's onboarding toward the First-store gate), buttons that
-  approve drafts and acknowledge incidents, slash commands and a daily summary. Setup:
-  [deploy/discord.md](deploy/discord.md).
+- **Staff bot on Telegram** ([ADR 0047](adr/0047-staff-events-on-telegram.md), superseding
+  [ADR 0023](adr/0023-staff-events-on-discord.md)) — every change the team should hear about is
+  a typed event in `staff_events`, recorded in the change's own transaction (orders, payments,
+  billing, signups, CRM, agent, fleet, Core itself) and delivered by the scheduler to every
+  linked team member's private Telegram DM: living cards (an order, a draft, a handoff, an
+  incident, a store's onboarding toward the First-store gate) kept in sync across DMs, inline
+  buttons that approve drafts and acknowledge incidents, DM slash commands and a daily summary.
+  Setup: [deploy/telegram.md](deploy/telegram.md).
 - **Duá Copilot** ([ADR 0034](adr/0034-dua-copilot.md)) — Duá working for the store's people
   in the admin (Pangolim): answers from the admin's own routes, with every amount a Core figure,
   and prepares changes (pause, prep time, special days, prices, stock, coupons) as cards that

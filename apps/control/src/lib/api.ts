@@ -220,44 +220,41 @@ export interface Integration {
   createdAt: string;
   updatedAt: string;
 }
-export type DiscordLevel = 'off' | 'silent' | 'normal' | 'ping';
-export interface DiscordKind {
+export type TelegramLevel = 'off' | 'silent' | 'normal' | 'ping';
+export interface TelegramKind {
   kind: string;
   category: string;
-  level: DiscordLevel;
+  level: TelegramLevel;
   label: string;
   hint: string | null;
   /** edits an earlier card; its level only governs the extra reply */
   follows: boolean;
 }
-export interface DiscordSetting {
-  channels: Record<string, string>;
-  levels: Record<string, DiscordLevel>;
-  staffRoleId: string | null;
+export interface TelegramSetting {
+  levels: Record<string, TelegramLevel>;
   digest: { enabled: boolean; hour: number };
   excerpts: boolean;
 }
-export interface DiscordOverview {
+export interface TelegramOverview {
   catalog: {
-    levels: DiscordLevel[];
+    levels: TelegramLevel[];
     categories: { key: string; emoji: string; label: string; hint: string }[];
-    kinds: DiscordKind[];
-    channelKeys: string[];
+    kinds: TelegramKind[];
   };
   app: {
     ok: boolean;
     reason: string | null;
     enabled: boolean;
-    applicationId: string | null;
-    guildId: string | null;
-    publicKey: string | null;
+    botId: string | null;
+    username: string | null;
+    firstName: string | null;
+    botUrl: string | null;
     tokenEnv: string;
     tokenPresent: boolean;
-    invite: string | null;
-    endpointPath: string;
-    endpointUrl: string;
+    webhookPath: string;
+    webhookUrl: string;
   };
-  setting: DiscordSetting;
+  setting: TelegramSetting;
   state: {
     mutes: Record<string, string>;
     commands: { hash: string; at: string } | null;
@@ -274,19 +271,22 @@ export interface DiscordOverview {
     oldest: string | null;
   };
   failures: { kind: string; error: string | null; at: string }[];
-  team: { members: number; linked: number };
+  team: {
+    members: number;
+    linked: number;
+    recipients: { chatId: string; name: string; username: string | null }[];
+  };
 }
-export interface DiscordConnect {
-  applicationId: string;
-  guildId: string | null;
-  guilds: { id: string; name: string }[];
-  invite: string;
-  endpoint: { url: string; ok: boolean; error: string | null };
+export interface TelegramConnect {
+  botId: string;
+  username: string;
+  firstName: string;
+  botUrl: string;
+  webhook: { url: string; ok: boolean; error: string | null };
 }
-export interface DiscordGuild {
-  guild: { id: string; name: string };
-  channels: { id: string; name: string; category: string | null }[];
-  roles: { id: string; name: string; color: number }[];
+export interface TelegramLink {
+  url: string;
+  expiresAt: string;
 }
 export interface AgentRun {
   id: string;
@@ -796,28 +796,28 @@ const apiBase = {
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
-  discord: () => req<DiscordOverview>('/discord'),
-  discordGuild: () => req<DiscordGuild>('/discord/guild'),
-  discordConnect: (guildId?: string) =>
-    req<DiscordConnect>('/discord/connect', {
+  telegram: () => req<TelegramOverview>('/telegram'),
+  telegramConnect: (secretRef?: string) =>
+    req<TelegramConnect>('/telegram/connect', {
       method: 'POST',
-      body: JSON.stringify(guildId ? { guildId } : {}),
+      body: JSON.stringify(secretRef ? { secretRef } : {}),
     }),
-  discordSetup: (staffRoleId: string) =>
-    req<{ channels: Record<string, string>; created: string[] }>('/discord/setup', {
+  telegramDisconnect: () => req<{ ok: boolean }>('/telegram/disconnect', { method: 'POST' }),
+  telegramLink: (memberIndex?: number) =>
+    req<TelegramLink>('/telegram/link', {
       method: 'POST',
-      body: JSON.stringify({ staffRoleId }),
+      body: JSON.stringify(memberIndex !== undefined ? { memberIndex } : {}),
     }),
-  discordTest: () =>
+  telegramTest: () =>
     req<{
-      results: { channelId: string; categories: string[]; ok: boolean; error?: string }[];
-    }>('/discord/test', { method: 'POST' }),
-  discordCommands: () =>
-    req<{ ok: boolean; error: string | null; commands: number }>('/discord/commands', {
+      results: { chatId: string; name: string; ok: boolean; error?: string }[];
+    }>('/telegram/test', { method: 'POST' }),
+  telegramCommands: () =>
+    req<{ ok: boolean; error: string | null; commands: number }>('/telegram/commands', {
       method: 'POST',
     }),
-  discordMute: (category: string, minutes: number) =>
-    req<{ mutes: Record<string, string> }>(`/discord/mutes/${category}`, {
+  telegramMute: (category: string, minutes: number) =>
+    req<{ mutes: Record<string, string> }>(`/telegram/mutes/${category}`, {
       method: 'PUT',
       body: JSON.stringify({ minutes }),
     }),

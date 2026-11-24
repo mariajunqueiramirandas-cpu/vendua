@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { digestReportTx } from '../src/modules/discord/digest.ts';
+import { digestReportTx } from '../src/modules/telegram/digest.ts';
 import { validateSetting } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
@@ -17,7 +17,7 @@ const code = (fn: () => unknown) => {
 };
 
 describe('validateSetting digest', () => {
-  test('the email digest is retired: the daily summary is set in settings.discord', () => {
+  test('the email digest is retired: the daily summary is set in settings.telegram', () => {
     expect(code(() => validateSetting('digest', { enabled: true, to: 'staff@vendua.app' }))).toBe(
       'BAD_REQUEST',
     );
@@ -50,8 +50,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('digest (db)', () => {
         values (${leadId}, now() + interval '6 hours', now() + interval '7 hours', 'agent')
       `;
       await tx`
-        insert into agent_runs (kind, lead_id, status, cost_cents, tokens_in, tokens_out)
-        values ('reply', ${leadId}, 'done', 150, 10, 10)
+        insert into crm_turns (
+          turn_id, actor_id, agent_id, kind, source, lead_id, status,
+          started_at, finished_at, cost_cents, tokens_in, tokens_out
+        )
+        values (
+          gen_random_uuid(), gen_random_uuid(), 'crm', 'reply', 'inbound', ${leadId}, 'done',
+          now(), now(), 150, 10, 10
+        )
       `;
       return digestReportTx(tx, 'hoje');
     });

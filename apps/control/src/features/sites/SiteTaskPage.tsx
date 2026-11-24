@@ -170,7 +170,7 @@ function Callout({ t }: { t: SiteTask }) {
   return null;
 }
 
-/** /lojas/sites/:id — one site sob medida task (Discord cards link here). */
+/** /lojas/sites/:id — one site sob medida task (Telegram cards link here). */
 export default function SiteTaskPage() {
   const { id = '' } = useParams();
   const q = useSiteTask(id);

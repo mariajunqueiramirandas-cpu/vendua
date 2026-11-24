@@ -18,7 +18,7 @@ import {
 const DAY = 86_400_000;
 const SNOOZE_MS = { '1d': DAY, '1w': 7 * DAY } as const;
 
-/** The agent's handoff tasks keep their title — completing one closes its Discord card. */
+/** The agent's handoff tasks keep their title — completing one closes its Telegram card. */
 export const isHandoff = (t: Pick<Task, 'title'>) => t.title.startsWith('[humano]');
 
 /** ISO → the `datetime-local` value in the viewer's zone ("2026-10-06T09:00"). */

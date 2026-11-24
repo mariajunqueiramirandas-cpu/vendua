@@ -121,6 +121,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0044](adr/0044-admin-native-app.md)                   | The merchant admin as an iOS and Android app, from the same code                          |
 | [0045](adr/0045-self-hosted-tts.md)                    | Replies can be spoken: Pocket TTS on our own C++ engine (built, not yet called)           |
 | [0046](adr/0046-insumos.md)                            | Insumos: fichas técnicas, stock drawn by each sale (never refused), the CMV               |
+| [0047](adr/0047-staff-events-on-telegram.md)           | Staff events delivered to per-member Telegram DMs (supersedes Discord from ADR 0023)      |
 
 ## Conventions
 

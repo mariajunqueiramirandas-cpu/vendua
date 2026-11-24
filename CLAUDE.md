@@ -43,10 +43,10 @@ the only producer of `site_tasks`),
   a turn's writes run behind the actor's lease fence in `withTenant`, and a tool takes its
   tenant and subject from the runtime, never from the model's arguments.
 - What the team should hear about is a `recordStaffEventTx` call (`modules/staff-events.ts`,
-  ADR 0023) inside the transaction that commits the change — never a direct Discord call, never
-  an email or WhatsApp to the team (Discord is the only staff channel), never inside a
-  `Promise.all` with other statements of that tx (it runs in a savepoint). A store's own
-  tx passes that store's `tenantId`; shoppers' names and phones never go in event data.
+  ADR 0023 / ADR 0047) inside the transaction that commits the change — never a direct Telegram
+  call, never an email or WhatsApp to the team (Telegram is the only staff channel), never inside
+  a `Promise.all` with other statements of that tx (it runs in a savepoint). A store's own tx
+  passes that store's `tenantId`; shoppers' names and phones never go in event data.
 
 ## Toolchain
 

@@ -335,7 +335,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
     await sql`delete from scheduled_jobs where name = ${name}`;
     const routines = await listRoutines(sql);
     const names = routines.map((r) => r.name);
-    for (const n of ['briefs', 'weekly-review', 'discord-digest', 'pipeline-snapshot'])
+    for (const n of ['briefs', 'weekly-review', 'telegram-digest', 'pipeline-snapshot'])
       expect(names).toContain(n);
     const briefs = routines.find((r) => r.name === 'briefs')!;
     expect(briefs.cadence).toMatch(/^todo dia às \d\d:00$/);

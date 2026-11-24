@@ -2,9 +2,10 @@ import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { controlTx } from './control.ts';
 
-// ADR 0023: what happened across the stack, for the team. Domain code records an event in the
-// same transaction as the change (`recordStaffEventTx`); the `discord` scheduler job delivers it.
-// The catalog below is closed and typed: a new kind needs a data shape, a category and a label.
+// ADR 0023 / ADR 0047: what happened across the stack, for the team. Domain code records an
+// event in the same transaction as the change (`recordStaffEventTx`); the `telegram` scheduler
+// job delivers it to every linked team member's DM. The catalog below is closed and typed: a
+// new kind needs a data shape, a category and a label.
 
 export const STAFF_CATEGORIES = [
   'atendimento',
@@ -46,7 +47,7 @@ export const CATEGORY_META: Record<StaffCategory, { emoji: string; label: string
     resumo: { emoji: '📊', label: 'resumo', hint: 'o resumo diário' },
   };
 
-/** how loud a kind is: off = not posted, silent = no notification, ping = mentions the staff role */
+/** how loud a kind is: off = not sent, silent = no notification, normal = notifies, ping = urgent */
 export const STAFF_LEVELS = ['off', 'silent', 'normal', 'ping'] as const;
 export type StaffLevel = (typeof STAFF_LEVELS)[number];
 
@@ -382,7 +383,7 @@ export interface StaffEventMap {
   'job.recovered': { job: string; label: string; failingSince: Opt<string> };
   'status.opened': { incidentId: Id; title: string; severity: string; body: Opt<string> };
   'status.updated': { incidentId: Id; title: string; severity: string; resolved: boolean };
-  'discord.test': { by: Opt<Name> };
+  'telegram.test': { by: Opt<Name> };
   /** the App Review sign-in (VENDUA_REVIEW_LOGIN, ADR 0044) opened a session in a demo store */
   'auth.review_login': { storeName: Name };
   // resumo
@@ -393,7 +394,7 @@ export type StaffEventKind = keyof StaffEventMap;
 
 export interface KindMeta<K extends StaffEventKind = StaffEventKind> {
   category: StaffCategory;
-  /** default level; the `discord` setting overrides it per kind */
+  /** default level; the `telegram` setting overrides it per kind */
   level: StaffLevel;
   severity: Severity | ((d: StaffEventMap[K]) => Severity);
   /** CRM label (pt-BR) */
@@ -424,7 +425,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'off',
     severity: 'info',
     label: 'handoff assumido',
-    hint: 'edita o cartão; ligado, também avisa no canal',
+    hint: 'edita o cartão; ligado, também avisa na DM',
     anchor: { role: 'follows', key: (d) => `handoff:${d.taskId}` },
   },
   'handoff.resolved': {
@@ -440,7 +441,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'normal',
     severity: 'info',
     label: 'rascunho para aprovar',
-    hint: 'o agente escreveu e espera um ok — aprove ou rejeite pelo próprio Discord',
+    hint: 'o agente escreveu e espera um ok — aprove ou rejeite pelo próprio Telegram',
     anchor: { role: 'opens', key: (d) => `draft:${d.messageId}` },
   },
   'draft.resolved': {
@@ -624,7 +625,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'off',
     severity: 'success',
     label: 'passo do onboarding',
-    hint: 'edita o cartão da loja; ligado, também avisa no canal',
+    hint: 'edita o cartão da loja; ligado, também avisa na DM',
     anchor: { role: 'follows', key: (_d, t) => `onboarding:${t}` },
   },
   'store.reset': {
@@ -754,7 +755,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'normal',
     severity: (d) => d.severity,
     label: 'incidente aberto',
-    hint: 'sonda falhando, implantação ou provisionamento travado — crítico sempre menciona',
+    hint: 'sonda falhando, implantação ou provisionamento travado — crítico sempre destaca com 🔔',
     anchor: { role: 'opens', key: (d) => `incident:${d.incidentId}` },
   },
   'incident.updated': {
@@ -864,7 +865,7 @@ export const STAFF_EVENT_KINDS: Catalog = {
     label: 'aviso da status page atualizado',
     anchor: { role: 'follows', key: (d) => `status:${d.incidentId}` },
   },
-  'discord.test': {
+  'telegram.test': {
     category: 'sistema',
     level: 'normal',
     severity: 'info',

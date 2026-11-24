@@ -3,9 +3,9 @@ import { anchorTx } from '../../crm/schedule-anchors.ts';
 import { controlTx } from '../control.ts';
 import { getIntegrationTx, getSettingTx } from '../integrations.ts';
 import { recordStaffEvent, type DailyDigest } from '../staff-events.ts';
-import { discordAppOf, discordSettingOf } from './config.ts';
+import { telegramAppOf, telegramSettingOf } from './config.ts';
 
-// The daily summary (`discord-digest` job), the team's only one: CRM and agent numbers from
+// The daily summary (`telegram-digest` job), the team's only one: CRM and agent numbers from
 // their own tables, commerce, billing and system numbers from the staff event log of the last
 // 24 hours — staff never need a cross-tenant query on orders for it.
 
@@ -188,8 +188,8 @@ export async function computeDigest(sql: Sql, date: string): Promise<DailyDigest
 }
 
 async function dueDateTx(tx: Sql): Promise<{ due: string | null; next: Date | null }> {
-  if (!discordAppOf(await getIntegrationTx(tx, 'discord')).ok) return { due: null, next: null };
-  const s = discordSettingOf(await getSettingTx<unknown>(tx, 'discord', {}));
+  if (!telegramAppOf(await getIntegrationTx(tx, 'telegram')).ok) return { due: null, next: null };
+  const s = telegramSettingOf(await getSettingTx<unknown>(tx, 'telegram', {}));
   if (!s.digest.enabled) return { due: null, next: null };
   const { next, timezone } = await anchorTx(tx, { hour: s.digest.hour });
   const [now] = await tx<{ date: string; hour: number }[]>`
@@ -202,12 +202,12 @@ async function dueDateTx(tx: Sql): Promise<{ due: string | null; next: Date | nu
 }
 
 /** Today's hour until today's summary exists, then tomorrow's; null = off or not configured. */
-export async function discordDigestNextAtTx(tx: Sql): Promise<Date | null> {
+export async function telegramDigestNextAtTx(tx: Sql): Promise<Date | null> {
   return (await dueDateTx(tx)).next;
 }
 
 /** Records today's `digest.daily` once (the dedupe key is the local date). */
-export async function sweepDiscordDigest(sql: Sql): Promise<boolean> {
+export async function sweepTelegramDigest(sql: Sql): Promise<boolean> {
   const { due } = await controlTx(sql, dueDateTx);
   if (!due) return false;
   const report = await computeDigest(sql, due);
@@ -215,8 +215,8 @@ export async function sweepDiscordDigest(sql: Sql): Promise<boolean> {
   return true;
 }
 
-export async function discordDigestCadenceTx(tx: Sql): Promise<string> {
-  const s = discordSettingOf(await getSettingTx<unknown>(tx, 'discord', {}));
+export async function telegramDigestCadenceTx(tx: Sql): Promise<string> {
+  const s = telegramSettingOf(await getSettingTx<unknown>(tx, 'telegram', {}));
   return s.digest.enabled
     ? `todo dia às ${String(s.digest.hour).padStart(2, '0')}:00`
     : 'desligado';

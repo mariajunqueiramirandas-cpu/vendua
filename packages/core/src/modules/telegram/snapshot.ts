@@ -191,7 +191,7 @@ export interface StoreHit {
   slug: string;
 }
 
-/** Autocomplete for /loja: name or slug, newest first. */
+/** Search for /loja: name or slug, newest first. */
 export async function searchStores(sql: Sql, q: string, limit = 10): Promise<StoreHit[]> {
   const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   return sql<StoreHit[]>`
@@ -208,7 +208,7 @@ export interface LeadHit {
   state: string;
 }
 
-/** Autocomplete for /lead: name, business, phone digits or email. */
+/** Search for /lead: name, business, phone digits or email. */
 export async function searchLeads(sql: Sql, q: string, limit = 10): Promise<LeadHit[]> {
   return controlTx(sql, (tx) => {
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;

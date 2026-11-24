@@ -2,7 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { getSettingTx, type Guardrails } from './integrations.ts';
 import type { StaffConfig } from './staff-config.ts';
 
-// The team roster. Staff hear about things only through staff events on Discord (ADR 0023):
+// The team roster. Staff hear about things only through staff events on Telegram (ADR 0047):
 // `recordStaffEventTx` in the transaction that commits the change. Nothing here sends.
 
 export async function staffConfigTx(tx: Sql): Promise<StaffConfig> {

@@ -1,4 +1,4 @@
-import type { DiscordOverview, IgStatus, Integration, MeetingStatus } from '@/lib/api.ts';
+import type { IgStatus, Integration, MeetingStatus, TelegramOverview } from '@/lib/api.ts';
 import { KINDS, providerStatus, WA_IDLE, type ProvTone, type WaState } from './providers.ts';
 import { obj, str, type SettingsMap } from './queries.ts';
 
@@ -7,7 +7,7 @@ export const AREAS = [
   { key: 'conexoes', label: 'conexões' },
   { key: 'agenda', label: 'agenda' },
   { key: 'equipe', label: 'equipe' },
-  { key: 'discord', label: 'discord' },
+  { key: 'telegram', label: 'telegram' },
   { key: 'relatorios', label: 'relatórios' },
 ] as const;
 export type AreaKey = (typeof AREAS)[number]['key'];
@@ -49,7 +49,7 @@ export function computeReadiness({
   wa,
   ig,
   mStatus,
-  discord,
+  telegram,
 }: {
   integrations: Integration[];
   integErr: boolean;
@@ -59,7 +59,7 @@ export function computeReadiness({
   ig: IgStatus | null;
   mStatus: MeetingStatus | 'err' | null;
   /** null while the first read is in flight, 'err' when it failed */
-  discord: DiscordOverview | 'err' | null;
+  telegram: TelegramOverview | 'err' | null;
 }): Readiness {
   const provTones = KINDS.map(
     (k) =>
@@ -194,7 +194,7 @@ export function computeReadiness({
         },
       ];
 
-  routine.push(discordCheck(discord));
+  routine.push(telegramCheck(telegram));
 
   const ready = essential.filter((c) => c.tone === 'live').length;
   const attn = [...essential, ...routine].filter((c) => c.tone === 'warn').length;
@@ -209,13 +209,13 @@ export function computeReadiness({
   return { essential, routine, ready, attn, provLive, connMark, agendaCheck };
 }
 
-function discordCheck(d: DiscordOverview | 'err' | null): Check {
+function telegramCheck(d: TelegramOverview | 'err' | null): Check {
   const c = (state: string, tone: ProvTone): Check => ({
-    key: 'discord',
-    label: 'avisos no discord',
+    key: 'telegram',
+    label: 'avisos no telegram',
     state,
     tone,
-    to: 'discord',
+    to: 'telegram',
   });
   if (d === null) return c('lendo status…', 'off');
   if (d === 'err') return c('falha ao ler', 'warn');
@@ -224,10 +224,6 @@ function discordCheck(d: DiscordOverview | 'err' | null): Check {
   const recentError =
     d.state.lastError && Date.now() - new Date(d.state.lastError.at).getTime() < 86_400_000;
   if (recentError) return c(`erro: ${d.state.lastError!.message}`, 'warn');
-  const mapped = Object.values(d.setting.channels).filter(Boolean).length;
-  if (!mapped) return c('nenhum canal escolhido', 'warn');
-  return c(
-    `${mapped} ${mapped === 1 ? 'canal' : 'canais'} · ${d.team.linked}/${d.team.members} da equipe`,
-    'live',
-  );
+  if (d.team.linked === 0) return c('ninguém conectou a DM ainda', 'warn');
+  return c(`@${d.app.username} · ${d.team.linked}/${d.team.members} da equipe`, 'live');
 }

@@ -323,7 +323,7 @@ export async function deleteTask(
   const res = await claimControl(sql, idemKey, async (tx) => {
     const cur = (await tx<TaskRow[]>`select * from lead_tasks where id = ${taskId}`)[0];
     if (!cur) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
-    // an open handoff's Discord card would wait forever — it closes by completing the task
+    // an open handoff's Telegram card would wait forever — it closes by completing the task
     if (!cur.done_at && (await hasHandoffCard(tx, cur))) {
       throw new HttpError(
         409,

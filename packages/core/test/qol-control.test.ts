@@ -2,11 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { render, type EventRow, type RenderCtx } from '../src/modules/discord/render.ts';
+import { render, type EventRow, type RenderCtx } from '../src/modules/telegram/render.ts';
 import { recordStaffEvent } from '../src/modules/staff-events.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// CRM quality of life: the palette's store search, Discord cards that open the store, archive
+// CRM quality of life: the palette's store search, Telegram cards that open the store, archive
 // restore, task edits, the new pipeline filters, saved views, bulk lead edits and the store
 // timeline. The API runs as vendua_app, so RLS applies as in production.
 
@@ -15,16 +15,15 @@ const rctx: RenderCtx = {
   excerpts: true,
   storeUrl: 'https://loja.test',
   store: null,
-  routedHere: [],
   now: new Date(),
 };
 const T = 'abcdef12-2222-4333-8444-5555555555aa';
 const links = (ev: EventRow) =>
-  (render(ev, [ev], rctx).card.components ?? []).flatMap((r) =>
-    r.components.map((b) => ('url' in b ? b.url : null)),
+  (render(ev, [ev], rctx).card.buttons ?? []).flatMap((r) =>
+    r.map((b) => ('url' in b ? b.url : null)),
   );
 
-describe('discord: cards about a store open its CRM page', () => {
+describe('telegram: cards about a store open its CRM page', () => {
   const ev = (kind: string, data: unknown, tenant: string | null): EventRow =>
     ({
       id: 1,

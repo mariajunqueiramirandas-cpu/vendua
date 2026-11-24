@@ -6,7 +6,7 @@ import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
 import { JOB_KINDS } from '../crm/jobs.ts';
 import { normalizeStaff } from './staff-config.ts';
-import { validateDiscordConfig, validateDiscordSetting } from './discord/config.ts';
+import { validateTelegramConfig, validateTelegramSetting } from './telegram/config.ts';
 import { validateMediaRoutes } from '../vendedor/media.ts';
 import { RESET_KEY } from './instance-reset.ts';
 
@@ -19,7 +19,7 @@ export const INTEGRATION_KINDS = [
   'whatsapp',
   'instagram',
   'discovery',
-  'discord',
+  'telegram',
 ] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 
@@ -30,7 +30,7 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   whatsapp: ['baileys', 'log'],
   instagram: ['sidecar', 'log'],
   discovery: ['tinyfish', 'mock'],
-  discord: ['bot'],
+  telegram: ['bot'],
 };
 
 // fallback env var per driver when secret_ref is null — mirrors the drivers'
@@ -43,7 +43,7 @@ export const DEFAULT_SECRET: Record<string, string> = {
   resend: 'RESEND_API_KEY',
   tinyfish: 'TINYFISH_API_KEY',
   sidecar: 'IG_SIDECAR_SECRET',
-  bot: 'DISCORD_BOT_TOKEN',
+  bot: 'TELEGRAM_BOT_TOKEN',
 };
 
 // drivers that read `(env[ref]) ?? env[DEFAULT]` — a configured-but-missing
@@ -72,12 +72,17 @@ export function integrationJson(row: IntegrationRow) {
       ? row.secret_ref
       : (DEFAULT_SECRET[row.driver] ?? row.secret_ref ?? null);
   const present = secretName ? !!process.env[secretName] : null;
+  const rawConfig = row.config ?? {};
+  const config =
+    row.kind === 'telegram' && 'webhookSecret' in rawConfig
+      ? Object.fromEntries(Object.entries(rawConfig).filter(([k]) => k !== 'webhookSecret'))
+      : rawConfig;
   return {
     id: row.id,
     kind: row.kind,
     driver: row.driver,
     enabled: row.enabled,
-    config: row.config ?? {},
+    config,
     secretRef: row.secret_ref,
     secretName,
     secretPresent: present,
@@ -153,7 +158,7 @@ export async function upsertIntegration(
   ) {
     throw new HttpError(422, 'BAD_REQUEST', 'config must be an object', { field: 'config' });
   }
-  if (kind === 'discord' && input.config) validateDiscordConfig(input.config);
+  if (kind === 'telegram' && input.config) validateTelegramConfig(input.config);
   if (kind === 'llm' && driver === 'anthropic' && input.config)
     validateAnthropicConfig(input.config);
   const secretRef =
@@ -166,9 +171,18 @@ export async function upsertIntegration(
     });
   }
   const res = await claimControl(sql, idemKey, async (tx) => {
+    let config: Record<string, unknown> = input.config ?? {};
+    if (kind === 'telegram' && !config.webhookSecret) {
+      const [existing] = await tx<{ config: Record<string, unknown> }[]>`
+        select config from control_integrations where kind = 'telegram' and driver = ${driver}
+      `;
+      if (typeof existing?.config?.webhookSecret === 'string' && existing.config.webhookSecret) {
+        config = { ...config, webhookSecret: existing.config.webhookSecret };
+      }
+    }
     const rows = await tx<IntegrationRow[]>`
       insert into control_integrations (kind, driver, enabled, config, secret_ref)
-      values (${kind}, ${driver}, ${input.enabled ?? false}, ${tx.json((input.config ?? {}) as never)}, ${secretRef})
+      values (${kind}, ${driver}, ${input.enabled ?? false}, ${tx.json(config as never)}, ${secretRef})
       on conflict (kind, driver) do update set
         config = excluded.config,
         secret_ref = excluded.secret_ref,
@@ -562,6 +576,8 @@ export function validateSetting(key: string, value: unknown): void {
 
   // written only by POST /control/v1/instance/reset, which checks VENDUA_ALLOW_RESET
   if (key === RESET_KEY) throw bad('*', 'is not a setting');
+  // internal bot state written by the Telegram module under row locks
+  if (key === 'telegram_state' || key === 'discord_state') throw bad('*', 'is internal bot state');
   if (key === 'agent_runtime.routes') {
     validateModelRoutes(value, bad);
     return;
@@ -760,10 +776,13 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  if (key === 'discord') {
-    validateDiscordSetting(value);
+  if (key === 'telegram') {
+    validateTelegramSetting(value);
     return;
   }
+
+  // retired: the Discord bot was replaced by Telegram (ADR 0047)
+  if (key === 'discord') throw bad('*', 'is retired: staff alerts moved to settings.telegram');
 
   if (key === 'whatsapp_history') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -795,8 +814,8 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // retired: the daily summary is Discord's (`discord.digest`), staff hear nothing by email
-  if (key === 'digest') throw bad('*', 'is retired: the daily summary is set in settings.discord');
+  // retired: the daily summary is Telegram's (`telegram.digest`), staff hear nothing by email
+  if (key === 'digest') throw bad('*', 'is retired: the daily summary is set in settings.telegram');
 
   if (key === 'agent') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {

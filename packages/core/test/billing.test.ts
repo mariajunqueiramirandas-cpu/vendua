@@ -1269,7 +1269,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(chk.body.customDomain.status).toBe('dns_ok');
     await runDomainChecks(appSql, jobOpts, new Date(Date.now() + 60 * 60_000));
     await s.owner('POST', `/account/domains/${cd.id}/check`, {});
-    // the team hears it once, on Discord; nobody has to switch anything on by hand any more
+    // the team hears it once, on Telegram; nobody has to switch anything on by hand any more
     const ready = await sql`
       select 1 from staff_events where kind = 'domain.ready' and tenant_id = ${s.id}
     `;

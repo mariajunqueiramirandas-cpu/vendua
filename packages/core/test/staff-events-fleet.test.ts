@@ -437,7 +437,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           .status,
       ).toBe(404);
 
-      // Discord's buttons: the same function, attributed to a staff member, keyed by the interaction
+      // Telegram's buttons: the same function, attributed to a staff member, keyed by the callback
       const row = (await controlTx(appSql, (tx) =>
         openIncidentTx(tx, {
           tenantId: a.id,
@@ -446,11 +446,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
           summary: `${a.slug}: teste`,
         }),
       ))!;
-      const first = await ackIncident(appSql, row.id, { ack: true }, 'Ana', `discord:${nonce}:1`);
+      const first = await ackIncident(appSql, row.id, { ack: true }, 'Ana', `telegram:${nonce}:1`);
       expect(first).toMatchObject({ status: 200, replayed: false });
-      const again = await ackIncident(appSql, row.id, { ack: true }, 'Ana', `discord:${nonce}:1`);
+      const again = await ackIncident(appSql, row.id, { ack: true }, 'Ana', `telegram:${nonce}:1`);
       expect(again.replayed).toBe(true);
-      await ackIncident(appSql, row.id, { resolved: true }, 'Bia', `discord:${nonce}:2`);
+      await ackIncident(appSql, row.id, { resolved: true }, 'Bia', `telegram:${nonce}:2`);
       expect(
         (await evs('incident.updated', sql`and data->>'incidentId' = ${row.id}`)).map((r) => [
           r.tenant_id,
@@ -465,7 +465,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         1,
       );
       await expect(
-        ackIncident(appSql, row.id, {}, 'Ana', `discord:${nonce}:3`),
+        ackIncident(appSql, row.id, {}, 'Ana', `telegram:${nonce}:3`),
       ).rejects.toBeInstanceOf(HttpError);
     });
 

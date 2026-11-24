@@ -1,26 +1,26 @@
 import { useEffect, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
-import type { DiscordLevel, DiscordOverview, DiscordSetting } from '@/lib/api.ts';
+import type { TelegramLevel, TelegramOverview, TelegramSetting } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
 import { Label, Select } from '@/components/ui/input.tsx';
 import { SaveBar } from '../bits.tsx';
-import { useSaveDiscordSetting } from './queries.ts';
+import { useSaveTelegramSetting } from './queries.ts';
 
-const LEVEL_LABEL: Record<DiscordLevel, string> = {
+const LEVEL_LABEL: Record<TelegramLevel, string> = {
   off: 'desligado',
   silent: 'silencioso',
   normal: 'normal',
-  ping: 'com menção',
+  ping: 'urgente',
 };
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
-/** What each event does in Discord: off, silent, a normal message, or a mention of the team. */
-export function EventsPanel({ d }: { d: DiscordOverview }) {
-  const save = useSaveDiscordSetting();
+/** What each event does in your Telegram DM: off, silent (no buzz), normal, or urgent. */
+export function EventsPanel({ d }: { d: TelegramOverview }) {
+  const save = useSaveTelegramSetting();
   const base = {
     levels: d.setting.levels,
     excerpts: d.setting.excerpts,
@@ -32,8 +32,8 @@ export function EventsPanel({ d }: { d: DiscordOverview }) {
   useEffect(() => setEdit(base), [baseKey]);
   const dirty = JSON.stringify(edit) !== baseKey;
 
-  const levelOf = (kind: string, fallback: DiscordLevel) => edit.levels[kind] ?? fallback;
-  const setLevel = (kind: string, def: DiscordLevel, level: DiscordLevel) => {
+  const levelOf = (kind: string, fallback: TelegramLevel) => edit.levels[kind] ?? fallback;
+  const setLevel = (kind: string, def: TelegramLevel, level: TelegramLevel) => {
     const levels = { ...edit.levels };
     // the default is not stored: a later catalog change of the default still applies
     if (level === def) delete levels[kind];
@@ -42,21 +42,21 @@ export function EventsPanel({ d }: { d: DiscordOverview }) {
   };
 
   const submit = () => {
-    const next: DiscordSetting = { ...d.setting, ...edit };
+    const next: TelegramSetting = { ...d.setting, ...edit };
     save.mutate(next);
   };
 
   return (
-    <Panel title="o que avisar" aside="cada evento, do mais urgente ao resumo">
+    <Panel title="o que avisar" aside="tudo chega na sua DM — ajuste o barulho por evento">
       <div className="flex flex-col gap-2.5 border-b pb-3">
         <div className="flex items-start gap-2.5">
           <Switch
-            id="dc-digest"
+            id="tg-digest"
             checked={edit.digest.enabled}
             onCheckedChange={(on) => setEdit({ ...edit, digest: { ...edit.digest, enabled: on } })}
           />
-          <Label htmlFor="dc-digest" className="flex flex-1 flex-col text-sm">
-            <span className="text-foreground">resumo diário no canal resumo</span>
+          <Label htmlFor="tg-digest" className="flex flex-1 flex-col text-sm">
+            <span className="text-foreground">resumo diário no Telegram</span>
             <span className="text-xs font-normal text-muted-foreground">
               crm, agente, vendas, assinaturas, frota e sistema das últimas 24h
             </span>
@@ -79,14 +79,14 @@ export function EventsPanel({ d }: { d: DiscordOverview }) {
         </div>
         <div className="flex items-start gap-2.5">
           <Switch
-            id="dc-excerpts"
+            id="tg-excerpts"
             checked={edit.excerpts}
             onCheckedChange={(on) => setEdit({ ...edit, excerpts: on })}
           />
-          <Label htmlFor="dc-excerpts" className="flex flex-col text-sm">
+          <Label htmlFor="tg-excerpts" className="flex flex-col text-sm">
             <span className="text-foreground">mostrar trechos das conversas</span>
             <span className="text-xs font-normal text-muted-foreground">
-              respostas de leads e rascunhos do agente aparecem no Discord; desligado, o aviso só
+              respostas de leads e rascunhos do agente aparecem no Telegram; desligado, o aviso só
               diz quem e onde
             </span>
           </Label>
@@ -144,9 +144,9 @@ export function EventsPanel({ d }: { d: DiscordOverview }) {
                       )}
                       <Select
                         aria-label={`nível de ${k.label}`}
-                        className={cn('w-36 shrink-0', changed && '[&_select]:border-primary/50')}
+                        className={cn('w-32 shrink-0', changed && '[&_select]:border-primary/50')}
                         value={level}
-                        onChange={(e) => setLevel(k.kind, k.level, e.target.value as DiscordLevel)}
+                        onChange={(e) => setLevel(k.kind, k.level, e.target.value as TelegramLevel)}
                       >
                         {d.catalog.levels.map((l) => (
                           <option key={l} value={l}>
@@ -164,9 +164,8 @@ export function EventsPanel({ d }: { d: DiscordOverview }) {
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        críticos (incidente crítico, canal caído, chargeback) mencionam o cargo mesmo em “normal”.
-        Silenciar uma categoria por um tempo: <code className="text-[11px]">/silenciar</code> no
-        Discord.
+        silencioso chega na DM sem vibrar; urgente destaca com 🔔. Para pausar notificações de uma
+        categoria por um tempo: <code className="text-[11px]">/silenciar</code> na DM.
       </p>
 
       <SaveBar inCard pinned={dirty}>

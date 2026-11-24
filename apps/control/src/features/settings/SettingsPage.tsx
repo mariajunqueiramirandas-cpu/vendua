@@ -9,8 +9,8 @@ import { tabTriggerClass } from '@/components/ui/controls.tsx';
 import { TzList } from './bits.tsx';
 import { AgendaArea } from './AgendaArea.tsx';
 import { ConnectionsArea } from './ConnectionsArea.tsx';
-import { DiscordArea } from './DiscordArea.tsx';
-import { useDiscord } from './discord/queries.ts';
+import { TelegramArea } from './TelegramArea.tsx';
+import { useTelegram } from './telegram/queries.ts';
 import { OverviewArea } from './OverviewArea.tsx';
 import { KINDS, WA_IDLE, type ProvTone } from './providers.ts';
 import { AREAS, computeReadiness, STUDIO, type AreaKey } from './readiness.ts';
@@ -45,12 +45,19 @@ export default function SettingsPage() {
   const waQ = useWaQr();
   const igQ = useIgStatus();
   const mQ = useMeetingsStatus();
-  const dQ = useDiscord();
+  const tQ = useTelegram();
   const saveSetting = useSaveSetting();
 
-  // pre-redesign links used ?s=; the agent sections moved to the Estúdio
+  // pre-redesign links used ?s=; the agent sections moved to the Estúdio, Discord moved to Telegram
   const legacy = params.get('s');
+  const legacyDiscord = params.get('a') === 'discord';
   useEffect(() => {
+    if (legacyDiscord) {
+      const next = new URLSearchParams(params);
+      next.set('a', 'telegram');
+      setParams(next, { replace: true });
+      return;
+    }
     if (!legacy) return;
     if (legacy === 'agente') return nav(STUDIO, { replace: true });
     if (legacy === 'regras') return nav(`${STUDIO}?s=limites`, { replace: true });
@@ -58,7 +65,7 @@ export default function SettingsPage() {
     next.delete('s');
     if (AREAS.some((a) => a.key === legacy) && legacy !== 'visao') next.set('a', legacy);
     setParams(next, { replace: true });
-  }, [legacy, params, nav, setParams]);
+  }, [legacy, legacyDiscord, params, nav, setParams]);
 
   const area: AreaKey = AREAS.find((a) => a.key === params.get('a'))?.key ?? 'visao';
   const anchor = params.get('p');
@@ -87,12 +94,12 @@ export default function SettingsPage() {
     wa,
     ig: igQ.data ?? null,
     mStatus,
-    discord: dQ.isError ? 'err' : (dQ.data ?? null),
+    telegram: tQ.isError ? 'err' : (tQ.data ?? null),
   });
   const marks: Partial<Record<AreaKey, ProvTone>> = {};
   if (mStatus && r.agendaCheck.tone !== 'live') marks.agenda = r.agendaCheck.tone;
-  const discordTone = r.routine.find((c) => c.key === 'discord')?.tone;
-  if (discordTone === 'warn') marks.discord = 'warn';
+  const telegramTone = r.routine.find((c) => c.key === 'telegram')?.tone;
+  if (telegramTone === 'warn') marks.telegram = 'warn';
 
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -200,10 +207,11 @@ export default function SettingsPage() {
               value={obj(settings.staff)}
               onSave={save('staff')}
               saving={savingKey === 'staff'}
+              telegramReady={tQ.data?.app.ok === true}
             />
           </div>
-          <div hidden={area !== 'discord'}>
-            <DiscordArea onGoTeam={() => go('equipe')} />
+          <div hidden={area !== 'telegram'}>
+            <TelegramArea onGoTeam={() => go('equipe')} />
           </div>
           <div hidden={area !== 'relatorios'}>
             <ReportsArea
