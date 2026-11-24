@@ -156,8 +156,11 @@ provision_store()          tenant, <slug>.<store domain> (covered by the wildcar
 ```
 
 Two ways in: a self-serve signup (ADR 0021, `/admin/comecar`) and a staff invite from a CRM
-lead ("criar loja", `POST /control/v1/fleet/provisionings`). A signup whose phone or email is
-already a lead graduates that lead. A store not live 30 min after it was born opens
+lead ("criar loja", `POST /control/v1/fleet/provisionings`). A signup whose verified phone is
+already a lead, or that came through the sales agent's signed link, graduates that lead. The lead
+then takes the owner's answers (`crm/lead-profile.ts`): signup's at once, the Bem-vindo's each
+time the wizard moves on. The owner's name, store name and city follow the store; contacts and the
+segment only fill blanks. A store not live 30 min after it was born opens
 `provisioning_stuck`; "tentar de novo" restarts it from `release`. Custom domains are a
 follow-up the owner starts in the admin ([12](12-domains-and-tls.md)).
 
