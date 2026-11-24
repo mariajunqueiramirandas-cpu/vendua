@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ClipboardPaste, KeyRound, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, ApiError, type IgStatus, type IgStep } from '@/lib/api.ts';
@@ -7,6 +7,7 @@ import { errorMessage, qk } from '@/lib/query.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Input, Textarea } from '@/components/ui/input.tsx';
 import { ConfirmButton } from '@/components/common.tsx';
+import { InstagramCaptcha } from './InstagramCaptcha.tsx';
 
 const dark =
   'border-sidebar-border bg-sidebar-accent text-sidebar-foreground placeholder:text-sidebar-muted';
@@ -15,6 +16,17 @@ const foot = 'text-xs text-sidebar-muted';
 
 // errors the sidecar can't fix with a login — nothing to type, only ops can help
 const UNREACHABLE = new Set(['sidecar_unreachable', 'no_secret', 'sidecar_error']);
+const VERIFY_ON_INSTAGRAM = new Set([
+  'IG_CAPTCHA',
+  'IG_CHECKPOINT_UNSUPPORTED',
+  'IG_UNSUPPORTED_STEP',
+  'IG_CHALLENGE',
+  'IG_CHECKPOINT',
+]);
+
+type LoginAction =
+  | { type: 'start' | 'cancel' | 'cookies' }
+  | { type: 'submit'; input?: Record<string, string> | undefined };
 
 /**
  * Login + status panel for an active sidecar driver. The sidecar walks Instagram's
@@ -33,59 +45,74 @@ export function InstagramConnect({
   loggingOut: boolean;
 }) {
   const qc = useQueryClient();
-  const [step, setStep] = useState<IgStep | null>(null);
   const [mode, setMode] = useState<'password' | 'cookies'>('password');
   const [values, setValues] = useState<Record<string, string>>({});
   const [cookies, setCookies] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+
+  const setLogin = async (login: IgStep | null) => {
+    await qc.cancelQueries({ queryKey: qk.igStatus(), exact: true });
+    qc.setQueryData<IgStatus>(qk.igStatus(), (status) => ({
+      ...status,
+      state: status?.state ?? 'off',
+      login,
+    }));
+    setValues({});
+  };
+
+  const {
+    mutate,
+    reset,
+    isPending: busy,
+    variables,
+    error,
+  } = useMutation({
+    mutationFn: async (action: LoginAction) => {
+      switch (action.type) {
+        case 'start':
+          return (await api.igLoginStart()).step;
+        case 'submit':
+          return (await api.igLoginSubmit(action.input ?? values)).step;
+        case 'cookies':
+          return (await api.igLoginCookies(cookies)).step;
+        case 'cancel':
+          await api.igLoginCancel();
+          return null;
+      }
+    },
+    onSuccess: async (step) => {
+      if (step?.type === 'complete') {
+        toast.success(step.instructions || 'instagram conectado');
+        setCookies('');
+      }
+      await setLogin(step?.type === 'complete' ? null : step);
+    },
+    onError: () => setLogin(null),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.integrations() });
+    },
+  });
 
   useEffect(() => {
-    setStep(null);
-    setErr(null);
+    reset();
     setValues({});
-  }, [resetSignal]);
+    setCookies('');
+    setMode('password');
+  }, [reset, resetSignal]);
 
-  // a login the sidecar still holds (page reload mid-2FA) picks up where it was
-  const shown = step ?? ig?.login ?? null;
+  const cancelling = busy && variables?.type === 'cancel';
+  const shown = ig?.login ?? null;
+  const captcha = shown?.type === 'captcha' ? shown.captcha : undefined;
 
-  const done = (s: IgStep) => {
-    if (s.type === 'complete') {
-      toast.success(s.instructions || 'instagram conectado');
-      setStep(null);
-      setCookies('');
-    } else {
-      setStep(s);
-    }
+  const cancel = () => {
     setValues({});
-    void qc.invalidateQueries({ queryKey: qk.integrations() });
+    setCookies('');
+    setMode('password');
+    mutate({ type: 'cancel' });
   };
 
-  const run = async (fn: () => Promise<{ step: IgStep }>) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      done((await fn()).step);
-    } catch (e) {
-      setErr(errorMessage(e));
-      // the sidecar dropped the login (expired/terminal) — back to the start button
-      if (e instanceof ApiError && e.status >= 400 && e.status < 500) setStep(null);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const cancel = async () => {
-    setStep(null);
-    setErr(null);
-    setValues({});
-    await api.igLoginCancel().catch(() => undefined);
-    void qc.invalidateQueries({ queryKey: qk.integrations() });
-  };
-
-  const submit = (e: FormEvent, input: Record<string, string> = values) => {
+  const submit = (e: FormEvent, input?: Record<string, string>) => {
     e.preventDefault();
-    void run(() => api.igLoginSubmit(input));
+    if (!busy) mutate({ type: 'submit', input });
   };
 
   if (ig?.state === 'open') {
@@ -162,32 +189,50 @@ export function InstagramConnect({
         </p>
       )}
 
-      {shown ? (
+      {cancelling ? (
+        <p role="status" className="text-sm">
+          cancelando login…
+        </p>
+      ) : shown && captcha ? (
+        <InstagramCaptcha
+          key={captcha.instance}
+          captcha={captcha}
+          instructions={shown.instructions}
+          busy={busy}
+          onSolved={(token) =>
+            mutate({
+              type: 'submit',
+              input: { captcha_token: token, captcha_instance: captcha.instance },
+            })
+          }
+          onCancel={cancel}
+        />
+      ) : shown ? (
         <StepForm
           step={shown}
           values={values}
           setValues={setValues}
           busy={busy}
           onSubmit={submit}
-          onCancel={() => void cancel()}
+          onCancel={cancel}
         />
       ) : mode === 'password' ? (
         <>
           <div className="text-sm font-medium">entrar na conta do instagram da venduá</div>
           <p className={foot}>
-            o login roda no sidecar, pelo mesmo IP que vai enviar as DMs — o instagram pode pedir
-            código de 2 fatores ou aprovação no app.
+            o instagram pode pedir uma verificação, código de 2 fatores ou aprovação no app.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="agent"
-              disabled={busy}
-              onClick={() => void run(() => api.igLoginStart())}
-            >
+            <Button variant="agent" disabled={busy} onClick={() => mutate({ type: 'start' })}>
               {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
               entrar com usuário e senha
             </Button>
-            <Button variant="ghost" className={quiet} onClick={() => setMode('cookies')}>
+            <Button
+              variant="ghost"
+              className={quiet}
+              disabled={busy}
+              onClick={() => setMode('cookies')}
+            >
               <ClipboardPaste /> colar cookies
             </Button>
           </div>
@@ -197,7 +242,7 @@ export function InstagramConnect({
           className="flex flex-col gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            void run(() => api.igLoginCookies(cookies));
+            if (!busy && cookies.trim()) mutate({ type: 'cookies' });
           }}
         >
           <div className="text-sm font-medium">entrar com cookies do navegador</div>
@@ -222,7 +267,13 @@ export function InstagramConnect({
               {busy && <Loader2 className="animate-spin" />}
               {busy ? 'validando…' : 'conectar'}
             </Button>
-            <Button variant="ghost" className={quiet} onClick={() => setMode('password')}>
+            <Button
+              type="button"
+              variant="ghost"
+              className={quiet}
+              disabled={busy}
+              onClick={() => setMode('password')}
+            >
               voltar
             </Button>
           </div>
@@ -232,7 +283,20 @@ export function InstagramConnect({
         </form>
       )}
 
-      {err && <p className="text-xs text-destructive">{err}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {errorMessage(error)}
+        </p>
+      )}
+      {error instanceof ApiError && VERIFY_ON_INSTAGRAM.has(error.code) && (
+        <div>
+          <Button asChild variant="agent">
+            <a href="https://www.instagram.com/" target="_blank" rel="noopener noreferrer">
+              abrir Instagram
+            </a>
+          </Button>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -262,21 +326,35 @@ function StepForm({
 }) {
   const fields = step.fields ?? [];
   const select = fields.find((f) => f.type === 'select');
+  const choices = select?.options?.filter(
+    (option) => select.id !== 'cookie_consent' || option !== 'Cancelar login',
+  );
   return (
     <form className="flex flex-col gap-2" onSubmit={(e) => onSubmit(e)}>
       <p className="text-sm">{step.instructions}</p>
       {step.type === 'input' && select ? (
         <div className="flex flex-wrap gap-2">
-          {(select.options ?? []).map((o) => (
+          {choices?.map((option) => (
             <Button
-              key={o}
+              key={option}
+              type="button"
               variant="agent"
               disabled={busy}
-              onClick={(e) => onSubmit(e, { [select.id]: o })}
+              className="h-auto min-h-8 whitespace-normal py-1.5"
+              onClick={(e) => onSubmit(e, { [select.id]: option })}
             >
-              {o}
+              {option}
             </Button>
           ))}
+          <Button
+            type="button"
+            variant="ghost"
+            className={quiet}
+            disabled={busy}
+            onClick={onCancel}
+          >
+            cancelar
+          </Button>
         </div>
       ) : (
         <>
@@ -299,7 +377,13 @@ function StepForm({
               {busy && <Loader2 className="animate-spin" />}
               {step.type === 'wait' ? 'já aprovei' : busy ? 'enviando…' : 'continuar'}
             </Button>
-            <Button variant="ghost" className={quiet} disabled={busy} onClick={onCancel}>
+            <Button
+              type="button"
+              variant="ghost"
+              className={quiet}
+              disabled={busy}
+              onClick={onCancel}
+            >
               cancelar
             </Button>
           </div>

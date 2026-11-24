@@ -16,6 +16,7 @@ import {
   parseIgEvent,
   seal,
   unseal,
+  type IgStatus,
 } from '../src/crm/channels/instagram.ts';
 import { approveMessage, composeMessageTx, instagramHandle } from '../src/modules/threads.ts';
 import {
@@ -439,6 +440,74 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
         status: 'draft',
       }),
     );
+  });
+
+  test('relays a CAPTCHA response and reads the live wizard after the step ends', async () => {
+    await enable('sidecar');
+    const instance = crypto.randomUUID();
+    const captcha = {
+      type: 'captcha' as const,
+      stepId: 'fi.mau.meta.instagram.web_captcha',
+      instructions: 'Resolva a verificação.',
+      captcha: {
+        iframeURL: 'https://www.fbsbx.com/captcha/recaptcha/iframe/?locale=en_US',
+        instance,
+      },
+    };
+    const otp = {
+      type: 'input' as const,
+      stepId: 'instagram.two_factor',
+      instructions: 'Digite o código.',
+    };
+    let status: IgStatus = { state: 'off', login: captcha };
+    let received: unknown;
+    const sidecar = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        switch (new URL(req.url).pathname) {
+          case '/v1/status':
+            return Response.json(status);
+          case '/v1/login/submit':
+            received = await req.json();
+            status = { state: 'off', login: otp };
+            return Response.json(otp);
+          default:
+            return new Response(null, { status: 404 });
+        }
+      },
+    });
+    const prevURL = process.env.IG_SIDECAR_URL;
+    process.env.IG_SIDECAR_URL = sidecar.url.origin;
+    try {
+      const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
+      const headers = { 'x-vendua-control': 'ctl-secret' };
+      const getStatus = async () =>
+        (await app.request('/control/v1/ig/status', { headers })).json();
+      expect(await getStatus()).toEqual(status);
+
+      const input = { captcha_token: 'token'.repeat(300), captcha_instance: instance };
+      const res = await app.request('/control/v1/ig/login/submit', {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'content-type': 'application/json',
+          'idempotency-key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({ input }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ step: otp });
+      expect(received).toEqual({ input });
+
+      status = { state: 'off' };
+      expect(igStatus().login).toEqual(otp);
+      expect(await getStatus()).toEqual(status);
+    } finally {
+      sidecar.stop();
+      if (prevURL === undefined) delete process.env.IG_SIDECAR_URL;
+      else process.env.IG_SIDECAR_URL = prevURL;
+    }
   });
 
   test('signed sidecar events: 404 unsigned, state updates, message ingests', async () => {

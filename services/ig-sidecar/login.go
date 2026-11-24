@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -22,13 +24,19 @@ import (
 
 // Step is one screen of the login wizard as Core/CRM render it.
 type Step struct {
-	// input = show fields and submit; wait = approve elsewhere, then submit {}; complete = done
+	// input and wait use the form, captcha uses the provider widget, complete ends the wizard.
 	Type         string   `json:"type"`
 	StepID       string   `json:"stepId"`
 	Instructions string   `json:"instructions"`
 	Fields       []Field  `json:"fields,omitempty"`
+	Captcha      *Captcha `json:"captcha,omitempty"`
 	Account      *Account `json:"account,omitempty"`
 	Session      *Session `json:"session,omitempty"`
+}
+
+type Captcha struct {
+	IframeURL string `json:"iframeURL"`
+	Instance  string `json:"instance"`
 }
 
 type Field struct {
@@ -55,6 +63,8 @@ const (
 	fieldIdentifier = "username"
 	fieldPassword   = "password"
 	fieldTwoFactor  = "verification_code"
+	fieldCaptcha    = "captcha_token"
+	fieldCaptchaID  = "captcha_instance"
 
 	declineOptionalCookies = "Continuar só com os cookies obrigatórios"
 	cancelCookieConsent    = "Cancelar login"
@@ -64,13 +74,13 @@ const (
 
 var (
 	errUnsupportedStep = &LoginError{http.StatusBadRequest, "unsupported_step",
-		"O Instagram pediu uma etapa de login que não dá para concluir por aqui. Entre pelo navegador e use a opção de cookies."}
+		"Abra o Instagram para verificar a conta. Depois, inicie um novo login aqui."}
 	errCAAFailed = &LoginError{http.StatusBadGateway, "login_step_failed",
 		"O Instagram não concluiu essa etapa. Tente de novo."}
 	errCheckpointUnsupported = &LoginError{http.StatusBadRequest, "checkpoint_unsupported",
-		"O Instagram pediu uma verificação que não dá para concluir por aqui. Conclua no app, depois comece o login de novo — ou use a opção de cookies."}
+		"Conclua a verificação no Instagram. Depois, inicie um novo login aqui."}
 	errCaptcha = &LoginError{http.StatusBadRequest, "captcha",
-		"O Instagram pediu um CAPTCHA. Entre pelo navegador e use a opção de cookies."}
+		"O Instagram pediu uma verificação. Abra o Instagram para verificar a conta e tente entrar aqui de novo."}
 	errRateLimited = &LoginError{http.StatusTooManyRequests, "rate_limited",
 		"O Instagram está limitando tentativas de login. Espere alguns minutos."}
 	errSuspended = &LoginError{http.StatusForbidden, "suspended",
@@ -145,7 +155,7 @@ func twoFactorStep(ch *instameow.InstagramWebTwoFactorChallenge, instructions st
 	}
 }
 
-// fromBridgeStep converts an instameow/bridgev2 step; webview/cookie/webauthn handoffs can't be rendered.
+// fromBridgeStep converts the input, approval and CAPTCHA steps understood by the CRM.
 func fromBridgeStep(s *bridgev2.LoginStep) (*Step, error) {
 	switch s.Type {
 	case bridgev2.LoginStepTypeUserInput:
@@ -163,10 +173,41 @@ func fromBridgeStep(s *bridgev2.LoginStep) (*Step, error) {
 		}
 		return &Step{Type: "wait", StepID: s.StepID, Instructions: s.Instructions}, nil
 	case bridgev2.LoginStepTypeCookies:
-		// the web auth platform's CAPTCHA handoff needs an embedded browser
-		return nil, errCaptcha
+		return fromCaptchaStep(s)
 	}
 	return nil, errUnsupportedStep
+}
+
+func fromCaptchaStep(s *bridgev2.LoginStep) (*Step, error) {
+	params := s.CookiesParams
+	if s.StepID != instameow.InstagramWebCaptchaStepID || params == nil || params.Hidden ||
+		params.URL != "https://www.instagram.com/accounts/login/" || len(params.Fields) != 1 {
+		return nil, errUnsupportedStep
+	}
+	field := params.Fields[0]
+	if field.ID != fieldCaptcha || !field.Required || len(field.Sources) != 1 ||
+		field.Sources[0].Type != bridgev2.LoginCookieTypeSpecial || field.Sources[0].Name != fieldCaptcha {
+		return nil, errUnsupportedStep
+	}
+	// Instameow supplies the widget configuration as a JSON argument to its native webview script.
+	// Only forward the data the CRM needs to load the provider's iframe.
+	script := strings.TrimSpace(params.ExtractJS)
+	start := strings.LastIndex(script, ")({")
+	var captcha Captcha
+	if start < 0 || !strings.HasSuffix(script, "})") ||
+		json.Unmarshal([]byte(script[start+2:len(script)-1]), &captcha) != nil ||
+		len(captcha.Instance) != 36 {
+		return nil, errCheckpointUnsupported
+	}
+	frameURL, err := url.Parse(captcha.IframeURL)
+	if err != nil || frameURL.Scheme != "https" || frameURL.Host != "www.fbsbx.com" ||
+		frameURL.User != nil || frameURL.EscapedPath() != "/captcha/recaptcha/iframe/" || frameURL.Fragment != "" {
+		return nil, errCheckpointUnsupported
+	}
+	return &Step{
+		Type: "captcha", StepID: s.StepID, Captcha: &captcha,
+		Instructions: "Resolva a verificação do Instagram para continuar o login.",
+	}, nil
 }
 
 func sanitizeCAAStep(step *bridgev2.LoginStep) error {
@@ -316,6 +357,17 @@ func (p *loginProc) submit(ctx context.Context, input map[string]string) (*Step,
 		return p.continueAccountManager(ctx, input)
 	}
 	if p.webTwoFactor != nil && p.webTwoFactor.AuthPlatform {
+		if p.client.HasInstagramWebCaptcha() {
+			pending := p.m.pendingLoginStep()
+			if pending == nil || pending.Captcha == nil {
+				return nil, errNoLogin
+			}
+			if input[fieldCaptchaID] != pending.Captcha.Instance {
+				return pending, nil
+			}
+			step, err := p.client.SubmitInstagramWebCaptcha(ctx, input[fieldCaptcha])
+			return p.handleAuthPlatform(ctx, step, err)
+		}
 		step, err := p.client.DoInstagramWebAuthPlatformSteps(ctx, input)
 		return p.handleAuthPlatform(ctx, step, err)
 	}

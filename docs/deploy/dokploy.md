@@ -260,8 +260,9 @@ people who never wrote first, and Instagram can challenge or restrict the accoun
 1. Set `IG_SIDECAR_SECRET` (one value — compose hands it to both services) and,
    ideally, `IG_PROXY` pointing at a static residential proxy in Brazil.
 2. CRM → config → conexões → instagram → **usar sidecar**, then **entrar com
-   usuário e senha** (2FA and in-app approvals are answered on the same card),
-   or paste browser cookies / a "Copy as cURL" if Instagram asks for a CAPTCHA.
+   usuário e senha**. The same card handles 2FA, approvals, and supported CAPTCHA challenges.
+   When Instagram requires verification in its app, open Instagram from the card and start
+   a fresh login after verifying the account.
 3. Estúdio → limites → **DMs frias no instagram / dia** caps agent first
    contacts account-wide (default 15; replies don't count). Start low on a
    young account.

@@ -2786,7 +2786,8 @@ export function createApp({
   // re-sending a one-time code; only responses are stored, never the password.
   app.get('/control/v1/ig/status', async (c) => {
     controlGate(c);
-    const { igStatus } = await import('./crm/channels/instagram.ts');
+    const { igStatus, reconcileInstagram } = await import('./crm/channels/instagram.ts');
+    await reconcileInstagram(sql, await getIntegration(sql, 'instagram'), false);
     return c.json(igStatus());
   });
 
@@ -2818,8 +2819,9 @@ export function createApp({
     }
     const input: Record<string, string> = {};
     for (const [k, v] of entries) {
-      if (k.length > 60 || typeof v !== 'string' || v.length > 500) {
-        throw new HttpError(422, 'BAD_REQUEST', 'input values must be strings ≤500 chars', {
+      const limit = k === 'captcha_token' ? 16_384 : 500;
+      if (k.length > 60 || typeof v !== 'string' || v.length > limit) {
+        throw new HttpError(422, 'BAD_REQUEST', 'invalid login input field or value length', {
           field: 'input',
         });
       }
