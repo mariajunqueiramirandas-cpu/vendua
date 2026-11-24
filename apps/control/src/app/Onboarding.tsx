@@ -6,6 +6,7 @@ import { api } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { qk } from '@/lib/query.ts';
 import { useIntegrations } from '@/lib/queries.ts';
+import { useAiModels } from '@/features/ai/queries.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog } from '@/components/ui/overlay.tsx';
 import { obj, str, useMeetingsStatus, useSettingsMap } from '@/features/settings/queries.ts';
@@ -30,6 +31,7 @@ export function Onboarding() {
   // an open conversation owns the bottom edge (composer), as do the bars that mark
   // <html data-bottom-bar> (lib/bottomBar.ts)
   const inThread = useMatch('/inbox/:threadId');
+  const aiQ = useAiModels();
 
   const save = (value: Record<string, unknown>) =>
     void api
@@ -41,7 +43,9 @@ export function Onboarding() {
   const on = (kind: string) =>
     integQ.data?.integrations.find((i) => i.kind === kind && i.enabled)?.driver;
   const state = obj(settingsQ.data?.[KEY]);
-  const firstRun = ready && !state.seenAt && !on('llm');
+  // the agent's models are routes in the IA hub, not a 'llm' connection (settings/providers.ts)
+  const modelsReady = aiQ.isSuccess && aiQ.data.routesSource !== 'none';
+  const firstRun = ready && !state.seenAt && !modelsReady;
 
   useEffect(() => {
     if (!firstRun) return;
@@ -52,7 +56,6 @@ export function Onboarding() {
 
   if (!ready) return null;
 
-  const llm = on('llm');
   const channel = on('whatsapp') ?? on('email') ?? on('instagram');
   const product = str(obj(settingsQ.data?.pitch).product, '');
   const weekDays = mQ.data
@@ -61,10 +64,12 @@ export function Onboarding() {
   const steps: Step[] = [
     {
       key: 'llm',
-      label: 'conecte o modelo',
-      hint: llm ? `${llm} ativo` : 'sem ele o agente não roda — nem a revisão semanal',
-      done: Boolean(llm),
-      to: '/config?a=conexoes&p=llm',
+      label: 'defina o modelo',
+      hint: modelsReady
+        ? 'rotas de modelo definidas'
+        : 'sem ele o agente não roda — nem a revisão semanal',
+      done: modelsReady,
+      to: '/ia/modelos',
     },
     {
       key: 'canal',
