@@ -6,22 +6,19 @@ import { errorMessage, qk } from '@/lib/query.ts';
 
 export const isActive = (status: string | undefined) => status === 'queued' || status === 'running';
 
-/** ?status= values; 'scheduled' is the delayed queue (scheduled=1), not a status — own cursor/ordering */
+/** Execution list status filter (scheduled future work lives in Próximos; Runtime v3 never stores canceled turns). */
 export const RUN_VIEWS = [
-  ['', 'todos'],
-  ['queued', 'na fila'],
+  ['', 'todas'],
   ['running', 'rodando'],
-  ['scheduled', 'agendados'],
-  ['done', 'feitos'],
+  ['queued', 'na fila'],
+  ['done', 'feitas'],
   ['failed', 'falhas'],
-  ['canceled', 'cancelados'],
 ] as const;
 
 export function runListParams(kind: string, view: string): Record<string, string> {
   return {
     ...(kind ? { kind } : {}),
-    ...(view && view !== 'scheduled' ? { status: view } : {}),
-    ...(view === 'scheduled' ? { scheduled: '1', status: 'queued', limit: '200' } : {}),
+    ...(view ? { status: view } : {}),
   };
 }
 

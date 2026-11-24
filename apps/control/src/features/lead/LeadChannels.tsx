@@ -58,7 +58,7 @@ export function NewThreadButtons({
   );
 }
 
-/** Compact thread list for the facts rail — the full previews live in the "conversas" tab. */
+/** Compact thread shortcuts for the facts rail — full previews & toggles live in the "conversas" tab. */
 export function LeadChannels({ leadId }: { leadId: string }) {
   const { data: threads = [], isPending } = useLeadThreads(leadId);
   return (
@@ -67,7 +67,7 @@ export function LeadChannels({ leadId }: { leadId: string }) {
         <Row key={t.id}>
           <Badge>{t.channel}</Badge>
           <span className="flex-1 truncate text-xs text-muted-foreground">
-            {t.agentEnabled ? 'agente ativo' : 'agente fora'}
+            {!t.agentEnabled ? 'agente desligado' : ''}
           </span>
           <Button asChild size="sm" variant="ghost">
             <Link to={`/inbox/${t.id}`}>abrir</Link>

@@ -118,14 +118,22 @@ export function Briefs() {
   };
 
   const briefs = q.data ?? [];
+  const pendingProposals = briefs.filter((b) => !b.enabled && b.created_by === 'strategist').length;
   return (
     <Panel
-      title="rotina diária"
-      aside="1x/dia · autocontato conforme guardrails"
+      title="briefs diários"
+      aside="1x/dia · autocontato conforme limites"
       actions={
-        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-          <Plus /> brief
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {pendingProposals > 0 && (
+            <Badge variant="warn">
+              {pendingProposals} proposta{pendingProposals === 1 ? '' : 's'}
+            </Badge>
+          )}
+          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+            <Plus /> brief
+          </Button>
+        </div>
       }
       flush
     >

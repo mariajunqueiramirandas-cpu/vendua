@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { DataList, type Column } from '@/components/DataList.tsx';
 import { EmptyState, ErrorState, LoadingRows } from '@/components/common.tsx';
+import { RoutinesPanel } from './RoutinesPanel.tsx';
 import { SectionHead } from './bits.tsx';
 import type { ProvTone } from './providers.ts';
 import { useChannelHealth, useInstance } from './queries.ts';
@@ -21,10 +22,12 @@ const DOT: Record<ProvTone, string> = {
 export function OverviewArea({
   r,
   loading,
+  active,
   onGo,
 }: {
   r: Readiness;
   loading: boolean;
+  active: boolean;
   onGo: (a: AreaKey, p?: string) => void;
 }) {
   const instance = useInstance();
@@ -69,18 +72,17 @@ export function OverviewArea({
           )}
         </Panel>
       </section>
-      <section>
-        <SectionHead
-          title="saúde dos canais"
-          sub="envios, falhas e bloqueios de guarda · últimos 30 dias"
-        />
-        <ChannelHealthPanel />
-        {instance.data?.resetEnabled && (
-          <div className="mt-4">
-            <ResetPanel />
-          </div>
-        )}
-      </section>
+      <div className="flex flex-col gap-4">
+        <section>
+          <SectionHead
+            title="saúde dos canais"
+            sub="envios, falhas e bloqueios de limite · últimos 30 dias"
+          />
+          <ChannelHealthPanel />
+        </section>
+        <RoutinesPanel active={active} />
+        {instance.data?.resetEnabled && <ResetPanel />}
+      </div>
     </div>
   );
 }
@@ -112,7 +114,7 @@ function CheckRow({ c, onGo }: { c: Check; onGo: (a: AreaKey, p?: string) => voi
         {c.state}
       </span>
       {c.route && (
-        <span className="hidden text-[11px] text-muted-foreground sm:inline">estúdio</span>
+        <span className="hidden text-[11px] text-muted-foreground sm:inline">agente</span>
       )}
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
     </button>

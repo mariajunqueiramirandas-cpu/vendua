@@ -35,8 +35,8 @@ function kpis(s: Stats): Kpi[] {
     {
       label: 'custo agente · 30d',
       value: fmtUsdCents(s.agent30d.costCents),
-      to: '/agente/atividade',
-      hint: `${s.agent30d.runs} runs · ${s.agent30d.tokens.toLocaleString('pt-BR')} tokens`,
+      to: '/agente/operacao?v=execucoes',
+      hint: `${s.agent30d.runs} execuções · ${s.agent30d.tokens.toLocaleString('pt-BR')} tokens`,
     },
     { label: 'descobertos · 7d', value: s.discoveredThisWeek, to: '/agente/descoberta' },
   ];

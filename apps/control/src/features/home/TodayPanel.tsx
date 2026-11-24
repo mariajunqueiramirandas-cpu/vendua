@@ -49,11 +49,14 @@ export function TodayPanel() {
 
       <Panel
         flush
-        title="próximos passos do agente"
+        title="próximos disparos do agente"
         aside={wakeups.length ? String(wakeups.length) : undefined}
         actions={
-          <Link to="/agente/planos" className="text-xs text-muted-foreground hover:text-foreground">
-            planos →
+          <Link
+            to="/agente/operacao"
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            fila →
           </Link>
         }
       >
@@ -68,7 +71,15 @@ export function TodayPanel() {
                 <AlarmClockCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <div className="flex min-w-0 items-center gap-1.5 text-sm">
-                    <Badge variant="agent-soft">{RUN_KIND_LABEL[w.kind] ?? w.kind}</Badge>
+                    <Badge
+                      variant={w.requested || w.createdBy === 'staff' ? 'agent' : 'agent-soft'}
+                    >
+                      {w.requested
+                        ? 'promessa'
+                        : w.createdBy === 'staff'
+                          ? 'equipe'
+                          : (RUN_KIND_LABEL[w.kind] ?? w.kind)}
+                    </Badge>
                     {w.leadId ? (
                       <Link to={`/pipeline/${w.leadId}`} className="truncate hover:underline">
                         {w.leadName ?? 'lead'}
@@ -91,7 +102,7 @@ export function TodayPanel() {
             ))}
           </ul>
         ) : (
-          <p className="px-3 py-3 text-sm text-muted-foreground">nenhum wakeup agendado</p>
+          <p className="px-3 py-3 text-sm text-muted-foreground">nenhum disparo agendado</p>
         )}
       </Panel>
     </div>

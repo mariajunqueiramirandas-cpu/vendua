@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Bot, PauseCircle, PlayCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, ApiError, type AutonomyLevel, type LeadListItem } from '@/lib/api.ts';
-import { AGENT_GOALS, AGENT_MODES } from '@/lib/labels.ts';
+import { api, ApiError, type LeadListItem } from '@/lib/api.ts';
+import { cn } from '@/lib/cn.ts';
+import { AGENT_GOALS, AGENT_MODES, AUTONOMY_LABEL } from '@/lib/labels.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -13,29 +14,17 @@ import { useLeadAutonomy, useLeadThreads, type LeadPatch } from '../queries.ts';
 import { Hint, Row, Section } from '../Section.tsx';
 import { FetchErr, isMissing } from './shared.tsx';
 
-const LEVEL_LABEL: Record<AutonomyLevel, string> = {
-  off: 'off',
-  copilot: 'copiloto',
-  supervised: 'supervisionado',
-  autopilot: 'piloto automático',
-};
-const LEVEL_NOTE: Record<AutonomyLevel, string> = {
-  off: 'o agente só age quando alguém dispara um run',
-  copilot: 'roda sozinho, mas toda mensagem vira rascunho',
-  supervised: 'primeiro contato passa por aprovação; follow-ups e respostas saem',
-  autopilot: 'envia sem aprovação — horário de silêncio e demais limites valem',
-};
 const SEND_LABEL = {
-  auto: 'envia sem aprovação',
+  auto: 'envia direto',
   draft: 'vira rascunho',
-  blocked: 'envio bloqueado',
+  blocked: 'bloqueado',
 } as const;
 const SEND_VARIANT = { auto: 'agent', draft: 'warn', blocked: 'bad' } as const;
 
 const MODE_NOTE: Record<string, string> = {
-  off: 'a equipe toca o lead — o agente não tria nem fala com ele',
+  off: 'a equipe toca o lead — o agente não responde nem faz follow-up',
   draft: 'o agente prepara mensagens — você aprova cada envio no inbox',
-  auto: 'o agente conversa sozinho, dentro das guardrails',
+  auto: 'o agente age dentro da autonomia e dos limites configurados',
 };
 
 type ActChannel = 'auto' | 'whatsapp' | 'instagram' | 'email';
@@ -88,24 +77,54 @@ export function ThreadAgentSwitch({
   );
 }
 
-function AutonomySummary({ leadId }: { leadId: string }) {
-  const { data, isPending, error, refetch } = useLeadAutonomy(leadId);
-  if (isPending) return <Hint>carregando…</Hint>;
+function AutonomyVerdict({ lead, onResume }: { lead: LeadListItem; onResume: () => void }) {
+  const { data, isPending, error, refetch } = useLeadAutonomy(lead.id);
+
+  if (lead.agentPausedAt) {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-soft px-2.5 py-2">
+        <PauseCircle className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-warning-foreground">pausado · handoff da equipe</p>
+          <p className="text-xs text-muted-foreground">
+            o agente segura este lead até alguém retomar
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={onResume}>
+          <PlayCircle /> retomar
+        </Button>
+      </div>
+    );
+  }
+
+  if (isPending) return <Hint>verificando autonomia…</Hint>;
   if (error && isMissing(error))
     return (
-      <Hint>
-        a API ainda não expõe a explicação de autonomia — os controles abaixo valem normalmente
-      </Hint>
+      <Hint>explicação de autonomia indisponível — os controles abaixo valem normalmente</Hint>
     );
   if (error) return <FetchErr what="a autonomia" retry={() => void refetch()} />;
+
+  const tone =
+    data.sendMode === 'auto'
+      ? 'border-agent/35 bg-agent-soft/60'
+      : data.sendMode === 'draft'
+        ? 'border-warning/30 bg-warning-soft/70'
+        : 'border-border bg-muted/60';
+
   return (
-    <div className="flex flex-col gap-1">
-      <p className="text-sm">
+    <div className={cn('flex flex-col gap-1 rounded-md border px-2.5 py-2', tone)}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge variant={SEND_VARIANT[data.sendMode]}>{SEND_LABEL[data.sendMode]}</Badge>
+        <span className="text-[11px] text-muted-foreground">
+          workspace: {AUTONOMY_LABEL[data.level]}
+        </span>
+      </div>
+      <p className="text-xs text-foreground">
         {data.reasons[0]?.message ??
           (data.canRun ? 'o agente pode agir neste lead' : 'o agente não age neste lead')}
       </p>
       {data.reasons.slice(1).map((r) => (
-        <p key={r.code} className="text-xs text-muted-foreground">
+        <p key={r.code} className="text-[11px] text-muted-foreground">
           · {r.message}
         </p>
       ))}
@@ -113,20 +132,7 @@ function AutonomySummary({ leadId }: { leadId: string }) {
   );
 }
 
-export function AutonomyBadges({ leadId }: { leadId: string }) {
-  const { data } = useLeadAutonomy(leadId);
-  if (!data) return null;
-  return (
-    <>
-      <Badge variant="agent" title={LEVEL_NOTE[data.level]}>
-        {LEVEL_LABEL[data.level]}
-      </Badge>
-      <Badge variant={SEND_VARIANT[data.sendMode]}>{SEND_LABEL[data.sendMode]}</Badge>
-    </>
-  );
-}
-
-/** Mode/goal/pause, per-thread switches and the manual "agir agora" trigger. */
+/** Mode/goal/pause, muted-thread alerts and manual "agir agora" trigger. */
 export function AgentControl({
   lead,
   patch,
@@ -151,9 +157,27 @@ export function AgentControl({
     },
   });
 
+  // Only surface thread exceptions here — full per-thread controls live in Conversas & Inbox.
+  const mutedThreads = threads.filter((t) => !t.agentEnabled);
+
   return (
-    <Section title="agente" actions={<AutonomyBadges leadId={lead.id} />}>
-      <AutonomySummary leadId={lead.id} />
+    <Section
+      title="controle do agente"
+      actions={
+        !lead.agentPausedAt &&
+        lead.agentMode !== 'off' && (
+          <Button
+            size="sm"
+            variant="ghost"
+            title="pausar o agente neste lead para a equipe assumir"
+            onClick={() => patch({ agentPaused: true })}
+          >
+            <PauseCircle /> pausar
+          </Button>
+        )
+      }
+    >
+      <AutonomyVerdict lead={lead} onResume={() => patch({ agentPaused: false })} />
 
       <div className="mt-3 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -179,48 +203,16 @@ export function AgentControl({
         <Hint>{MODE_NOTE[lead.agentMode]}</Hint>
       </div>
 
-      {lead.agentPausedAt ? (
-        <Row className="mt-2 rounded-md bg-warning-soft px-2">
-          <Badge variant="warn">
-            <PauseCircle /> pausado
-          </Badge>
-          <span className="min-w-0 flex-1 text-xs text-warning-foreground">
-            handoff da equipe — o agente segura este lead
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            title="retomar libera o agente neste lead de novo"
-            onClick={() => patch({ agentPaused: false })}
-          >
-            <PlayCircle /> retomar
-          </Button>
-        </Row>
-      ) : (
-        lead.agentMode !== 'off' && (
-          <Row className="mt-1">
-            <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-              handoff — pausar o agente e assumir a conversa
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              title="o agente para de agir neste lead até alguém retomar"
-              onClick={() => patch({ agentPaused: true })}
-            >
-              <PauseCircle /> pausar
-            </Button>
-          </Row>
-        )
-      )}
-
-      {threads.length > 0 && (
-        <div className="mt-1 border-t pt-1">
-          {threads.map((t) => (
+      {mutedThreads.length > 0 && (
+        <div className="mt-2 border-t pt-2">
+          <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+            conversas silenciadas
+          </p>
+          {mutedThreads.map((t) => (
             <Row key={t.id}>
-              <Badge>{t.channel}</Badge>
+              <Badge variant="outline">{t.channel}</Badge>
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {t.agentEnabled ? 'agente lê e responde' : 'agente não entra nesta conversa'}
+                desligado nesta conversa
               </span>
               <ThreadAgentSwitch thread={t} leadId={lead.id} />
             </Row>
@@ -229,7 +221,7 @@ export function AgentControl({
       )}
 
       {lead.agentMode !== 'off' && !lead.unsubscribedAt && !lead.agentPausedAt && (
-        <div className="mt-2 flex flex-col gap-1">
+        <div className="mt-2.5 flex flex-col gap-1 border-t pt-2.5">
           <div className="flex gap-1.5">
             <Select
               value={channel}
@@ -245,7 +237,7 @@ export function AgentControl({
             </Select>
             <Button
               variant="agent"
-              title="rodar o agente agora"
+              title="disparar o agente agora neste lead"
               disabled={run.isPending}
               onClick={() => run.mutate()}
             >

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import {
+  Bot,
   ChevronRight,
   ChevronsUpDown,
   Download,
@@ -13,7 +14,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { useStoredState } from '@/lib/hooks.ts';
-import { useBadges, useLlmDriver } from '@/lib/queries.ts';
+import { useAgentStatus, useBadges, type AgentStatus } from '@/lib/queries.ts';
 import { THEME_LABEL, useTheme } from '@/lib/theme.ts';
 import { CountDot } from '@/components/ui/badge.tsx';
 import { Kbd, Tooltip } from '@/components/ui/controls.tsx';
@@ -41,6 +42,13 @@ import { CommandPalette } from './CommandPalette.tsx';
 import { Onboarding } from './Onboarding.tsx';
 import { ShellContext, type ShellApi } from './shell-context.ts';
 
+const AGENT_DOT: Record<AgentStatus['tone'], string> = {
+  live: 'bg-success',
+  warn: 'bg-warning',
+  bad: 'bg-destructive',
+  off: 'bg-nav-muted',
+};
+
 // Chrome/Android only — on iOS the install button never renders.
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -53,7 +61,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
   const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const badges = useBadges();
   useAttentionCount(badges.drafts + badges.overdue + badges.sites);
-  const llmDriver = useLlmDriver();
+  const agentStatus = useAgentStatus();
   const nav = useNavigate();
 
   useEffect(() => {
@@ -125,9 +133,9 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
             void installEvt.prompt();
           }
         : undefined,
-      llmDriver,
+      agentStatus,
     }),
-    [onLogout, installEvt, llmDriver],
+    [onLogout, installEvt, agentStatus],
   );
 
   return (
@@ -329,21 +337,28 @@ function Sidebar({
                 <span
                   className={cn(
                     'absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-app',
-                    shell.llmDriver && shell.llmDriver !== 'off' ? 'bg-success' : 'bg-nav-muted',
+                    AGENT_DOT[shell.agentStatus.tone],
                   )}
                 />
               </span>
               <span className={cn(label, 'min-w-0 flex-1 text-left')}>
                 <span className="block truncate text-[13px] leading-tight">Equipe</span>
                 <span className="block truncate text-[11px] leading-tight font-normal text-nav-muted">
-                  agente · {shell.llmDriver || '…'}
+                  agente · {shell.agentStatus.label || '…'}
                 </span>
               </span>
               <ChevronsUpDown className={cn(label)} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuLabel>agente · {shell.llmDriver || '…'}</DropdownMenuLabel>
+            <DropdownMenuLabel>agente · {shell.agentStatus.label || '…'}</DropdownMenuLabel>
+            <DropdownMenuItem
+              onSelect={() =>
+                nav(shell.agentStatus.modelsMissing ? '/ia/modelos' : '/agente/configurar')
+              }
+            >
+              <Bot /> {shell.agentStatus.modelsMissing ? 'Configurar modelo' : 'Configurar agente'}
+            </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={(e) => {
                 e.preventDefault();
@@ -425,7 +440,7 @@ function SalesSubNav({ badges }: { badges: Record<string, number> }) {
   const { pathname } = useLocation();
   const lead = useMatch('/pipeline/:id');
   const thread = useMatch('/inbox/:threadId');
-  const run = useMatch('/agente/atividade/:id');
+  const run = useMatch('/agente/operacao/:id');
   const detail =
     !!thread || !!run || (!!lead && !['relatorios', 'analytics'].includes(lead.params.id ?? ''));
   if (!isSalesPath(pathname) || detail) return null;

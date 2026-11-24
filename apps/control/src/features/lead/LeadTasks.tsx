@@ -85,7 +85,11 @@ export function LeadTasks({ leadId }: { leadId: string }) {
       ) : error ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
       ) : !tasks.length ? (
-        <EmptyState icon={ListTodo} title="sem tarefas" hint="crie uma acima — ou o agente cria" />
+        <EmptyState
+          icon={ListTodo}
+          title="sem tarefas da equipe"
+          hint="crie uma acima — pedidos de ajuda do agente também aparecem aqui"
+        />
       ) : (
         <ul className="divide-y rounded-lg border bg-card">
           {tasks.map((t) => {

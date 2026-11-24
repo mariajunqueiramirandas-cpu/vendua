@@ -1,11 +1,12 @@
 import { createContext, useContext } from 'react';
+import type { AgentStatus } from '@/lib/queries.ts';
 
 export interface ShellApi {
   openPalette: () => void;
   openHelp: () => void;
   logout: () => void;
   install: (() => void) | undefined;
-  llmDriver: string;
+  agentStatus: AgentStatus;
 }
 
 export const ShellContext = createContext<ShellApi | null>(null);

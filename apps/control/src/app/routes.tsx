@@ -48,10 +48,9 @@ const ReportsPage = lazy(() => import('@/features/reports/ReportsPage.tsx'));
 const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage.tsx'));
 const InboxPage = lazy(() => import('@/features/inbox/InboxPage.tsx'));
 const AgendaPage = lazy(() => import('@/features/agenda/AgendaPage.tsx'));
-const ActivityPage = lazy(() => import('@/features/agent/activity/ActivityPage.tsx'));
-const PlansPage = lazy(() => import('@/features/agent/plans/PlansPage.tsx'));
+const OperationsPage = lazy(() => import('@/features/agent/operations/OperationsPage.tsx'));
 const DiscoveryPage = lazy(() => import('@/features/agent/discovery/DiscoveryPage.tsx'));
-const StudioPage = lazy(() => import('@/features/agent/studio/StudioPage.tsx'));
+const ConfigPage = lazy(() => import('@/features/agent/config/ConfigPage.tsx'));
 const StoresPage = lazy(() => import('@/features/stores/StoresPage.tsx'));
 const StorePage = lazy(() => import('@/features/stores/StorePage.tsx'));
 const AiUsagePage = lazy(() => import('@/features/ai/UsagePage.tsx'));
@@ -83,6 +82,15 @@ function Legacy({
   for (const [k, v] of Object.entries(extra ?? {})) qs.set(k, v);
   const s = qs.toString();
   return <Navigate to={`${path}${s ? `?${s}` : ''}`} replace />;
+}
+
+/** Old /agente/estudio?s=agenda moved to the unified queue; other studio links go to Configurar. */
+function LegacyStudio() {
+  const loc = useLocation();
+  const qs = new URLSearchParams(loc.search);
+  if (qs.get('s') === 'agenda') return <Navigate to="/agente/operacao?v=fila" replace />;
+  const s = qs.toString();
+  return <Navigate to={`/agente/configurar${s ? `?${s}` : ''}`} replace />;
 }
 
 /** Header of the page being loaded, so only its content area shows a skeleton. */
@@ -145,12 +153,11 @@ export function AppRoutes() {
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/inbox/:threadId" element={<InboxPage />} />
         <Route path="/agenda" element={<AgendaPage />} />
-        <Route path="/agente" element={<Navigate to="/agente/atividade" replace />} />
-        <Route path="/agente/atividade" element={<ActivityPage />} />
-        <Route path="/agente/atividade/:id" element={<ActivityPage />} />
-        <Route path="/agente/planos" element={<PlansPage />} />
+        <Route path="/agente" element={<Navigate to="/agente/operacao" replace />} />
+        <Route path="/agente/operacao" element={<OperationsPage />} />
+        <Route path="/agente/operacao/:id" element={<OperationsPage />} />
         <Route path="/agente/descoberta" element={<DiscoveryPage />} />
-        <Route path="/agente/estudio" element={<StudioPage />} />
+        <Route path="/agente/configurar" element={<ConfigPage />} />
         <Route path="/lojas" element={<StoresPage />} />
         <Route path="/lojas/planos" element={<BillingPlansPage />} />
         <Route path="/lojas/parceiros" element={<PartnersPage />} />
@@ -172,12 +179,25 @@ export function AppRoutes() {
         <Route path="/tarefas" element={<Legacy to="/vendas?t=tarefas" />} />
         <Route path="/descoberta" element={<Legacy to="/agente/descoberta" />} />
         <Route path="/lancar" element={<Legacy to="/agente/descoberta" />} />
-        <Route path="/estudio" element={<Legacy to="/agente/estudio" />} />
-        <Route path="/plano" element={<Legacy to="/agente/planos" />} />
+        <Route path="/estudio" element={<LegacyStudio />} />
+        <Route path="/plano" element={<Legacy to="/agente/operacao" extra={{ v: 'planos' }} />} />
         <Route path="/relatorios" element={<Legacy to="/pipeline/relatorios" />} />
         <Route
+          path="/agente/atividade"
+          element={<Legacy to="/agente/operacao" extra={{ v: 'execucoes' }} />}
+        />
+        <Route
+          path="/agente/atividade/:id"
+          element={<Legacy to={(p) => `/agente/operacao/${p.id}`} />}
+        />
+        <Route
+          path="/agente/planos"
+          element={<Legacy to="/agente/operacao" extra={{ v: 'planos' }} />}
+        />
+        <Route path="/agente/estudio" element={<LegacyStudio />} />
+        <Route
           path="/agente/runs/:id"
-          element={<Legacy to={(p) => `/agente/atividade/${p.id}`} />}
+          element={<Legacy to={(p) => `/agente/operacao/${p.id}`} />}
         />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

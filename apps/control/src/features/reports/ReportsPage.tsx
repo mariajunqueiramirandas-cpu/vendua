@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { Segmented } from '@/components/ui/controls.tsx';
 import { PIPELINE_TABS } from '@/features/pipeline/tabs.ts';
-import { AgentMetricsPanel, ChannelHealthPanel, SegmentsPanel } from './OpsPanels.tsx';
+import { AgentImpactPanel } from './OpsPanels.tsx';
 import { TrendChart } from './TrendChart.tsx';
 import { ValueBars } from './ValueBars.tsx';
 
@@ -120,7 +120,8 @@ export default function ReportsPage() {
               {
                 label: 'custo do agente · 30d',
                 value: fmtUsdCents(s.agent30d.costCents),
-                hint: `${s.agent30d.runs} runs`,
+                hint: `${s.agent30d.runs} execuções`,
+                to: '/agente/operacao?v=execucoes',
               },
             ]}
           />
@@ -148,7 +149,7 @@ export default function ReportsPage() {
                 <EmptyState
                   icon={LineChart}
                   title="sem snapshots ainda"
-                  hint="o agente grava um por dia — use “atualizar snapshot” para gravar o primeiro"
+                  hint="o sistema grava um por dia — use “atualizar snapshot” para gravar o primeiro"
                 />
               ) : view === 'tabela' ? (
                 <div className="max-h-72 overflow-auto">
@@ -176,7 +177,10 @@ export default function ReportsPage() {
               title="por estágio"
               flush
               actions={
-                <Link to="/config" className="text-xs text-muted-foreground hover:text-foreground">
+                <Link
+                  to="/config?a=relatorios"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
                   probabilidades em config →
                 </Link>
               }
@@ -204,12 +208,7 @@ export default function ReportsPage() {
             <ValueBars title="valor por segmento" rows={s.bySegment} />
           </div>
 
-          <AgentMetricsPanel days={days} onDays={(d) => set('dias', d === 30 ? '30' : null)} />
-
-          <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <SegmentsPanel />
-            <ChannelHealthPanel />
-          </div>
+          <AgentImpactPanel days={days} onDays={(d) => set('dias', d === 30 ? '30' : null)} />
         </div>
       )}
     </Page>

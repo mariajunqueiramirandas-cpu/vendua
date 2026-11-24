@@ -201,7 +201,7 @@ function Stream({ steps, queued }: { steps: Step[]; queued: boolean }) {
       aria-live="polite"
       className="flex h-72 flex-col gap-1.5 overflow-auto p-4 font-mono text-xs md:h-96"
     >
-      <p className="text-sidebar-muted">contexto carregado — pitch, memória, guardrails</p>
+      <p className="text-sidebar-muted">contexto carregado — pitch, memória, limites</p>
       {steps
         .filter((s) => s.type !== 'system_prompt')
         .map((s, i) =>
@@ -292,7 +292,7 @@ function EndSummary({
           <Plus /> nova caçada
         </Button>
         <Button asChild size="sm" variant="ghost">
-          <Link to={`/agente/atividade/${run.id}`}>
+          <Link to={`/agente/operacao/${run.id}`}>
             <History /> trajetória completa
           </Link>
         </Button>

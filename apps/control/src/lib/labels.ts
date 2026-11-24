@@ -1,4 +1,4 @@
-import type { Meeting } from './api.ts';
+import type { AutonomyLevel, Meeting } from './api.ts';
 
 /** Canonical entity labels — pair order = pipeline order for selects/columns. */
 export const LEAD_STATES = [
@@ -22,6 +22,13 @@ export const AGENT_MODES = [
   ['auto', 'auto'],
 ] as const;
 export const AGENT_MODE_LABEL: Record<string, string> = Object.fromEntries(AGENT_MODES);
+
+export const AUTONOMY_LABEL: Record<AutonomyLevel, string> = {
+  off: 'desligado',
+  copilot: 'copiloto',
+  supervised: 'supervisionado',
+  autopilot: 'piloto automático',
+};
 
 export const RUN_KIND_LABEL: Record<string, string> = {
   triage: 'triagem',
