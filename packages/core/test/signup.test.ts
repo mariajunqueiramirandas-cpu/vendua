@@ -248,12 +248,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
       );
       const { signupToken } = await verified(phone, salesApp);
       const slug = `signup-${nonce}-sales`;
-      const payload = { trial: true, salesLead: crmSignupToken(lead!.id, deps.sessionSecret) };
+      const payload = {
+        trial: true,
+        segment: 'doces',
+        salesLead: crmSignupToken(lead!.id, deps.sessionSecret),
+      };
       const created = await signup(signupToken, slug, payload, salesApp);
       expect(created.status).toBe(201);
       expect((await signup(signupToken, slug, payload, salesApp)).status).toBe(201);
-      const [linked] = await sql`select tenant_id, agent_mode from leads where id = ${lead!.id}`;
+      const [linked] = await sql`select * from leads where id = ${lead!.id}`;
       expect(linked).toMatchObject({ tenant_id: created.body.store.id, agent_mode: 'off' });
+      // the lead now reads as signup's answers, its WhatsApp the number the code reached
+      expect(linked).toMatchObject({
+        name: 'Ana Lima',
+        business_name: 'Doces da Praia',
+        email: 'ana@example.com',
+        segment: 'doces',
+        whatsapp: `+55${phone}`,
+        whatsapp_verified: true,
+        source: 'instagram',
+      });
+      const notes = await sql`select body, meta from lead_activities
+        where lead_id = ${lead!.id} and meta->>'type' = 'store_profile'`;
+      expect(notes).toHaveLength(1);
+      expect(notes[0]!.body).toBe(
+        'perfil atualizado com os dados da loja: nome, nome da loja, segmento, e-mail, whatsapp',
+      );
+      expect(notes[0]!.meta).toMatchObject({
+        via: 'signup',
+        changes: { name: { from: 'Lead do CRM', to: 'Ana Lima' } },
+      });
       const [provisioning] =
         await sql`select lead_id from provisionings where tenant_id = ${created.body.store.id}`;
       expect(provisioning?.lead_id).toBe(lead!.id);
@@ -266,6 +290,67 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('self-serve signup (db)', () => 
         where a.subject_id = ${lead!.id} and m.consumed_by_turn is null`,
       ).toHaveLength(0);
     } finally {
+      await sql`delete from leads where id = ${lead!.id}`;
+    }
+  });
+
+  test("a lead's held contacts and segment stay; the Bem-vindo's answers reach it as it goes", async () => {
+    const phone = mkPhone();
+    const handle = `doces${nonce}`;
+    const [lead] = await sql<{ id: string }[]>`
+      insert into leads (name, business_name, whatsapp, whatsapp_verified, email, segment, source)
+      values ('Doces da Praia (insta)', 'docesdapraia', ${`+55${phone}`}, false,
+        'contato@docesdapraia.com', 'confeitaria artesanal', 'instagram')
+      returning id`;
+    const read = async () => (await sql`select * from leads where id = ${lead!.id}`)[0]!;
+    const notes = () => sql<{ body: string; meta: any }[]>`select body, meta from lead_activities
+      where lead_id = ${lead!.id} and meta->>'type' = 'store_profile' order by at, id`;
+    try {
+      const { signupToken } = await verified(phone);
+      const r = await signup(signupToken, `signup-${nonce}-profile`, {
+        trial: true,
+        segment: 'doces',
+      });
+      expect(r.status).toBe(201);
+      expect(await read()).toMatchObject({
+        tenant_id: r.body.store.id,
+        name: 'Ana Lima',
+        business_name: 'Doces da Praia',
+        whatsapp: `+55${phone}`,
+        whatsapp_verified: true,
+        email: 'contato@docesdapraia.com',
+        segment: 'confeitaria artesanal',
+        city: null,
+      });
+      expect((await notes()).map((n) => n.body)).toEqual([
+        'perfil atualizado com os dados da loja: nome, nome da loja, whatsapp verificado',
+      ]);
+
+      // the wizard's answers land on the lead when it moves on, not on each keystroke
+      const owner = session(r.cookie);
+      const saved = await owner('PATCH', '/store', {
+        profile: { city: 'Fortaleza', instagram: `@${handle}` },
+      });
+      expect(saved.status).toBe(200);
+      expect((await read()).city).toBeNull();
+      expect((await owner('PATCH', '/onboarding', { step: 'atendimento' })).status).toBe(200);
+      expect(await read()).toMatchObject({ city: 'Fortaleza', instagram: `@${handle}` });
+      const after = await notes();
+      expect(after).toHaveLength(2);
+      expect(after[1]!).toMatchObject({
+        body: 'perfil atualizado com os dados da loja: cidade, instagram',
+        meta: { via: 'onboarding', changes: { city: { from: null, to: 'Fortaleza' } } },
+      });
+      // nothing new to tell: no second note
+      expect((await owner('PATCH', '/onboarding', { step: 'pagamento' })).status).toBe(200);
+      expect(await notes()).toHaveLength(2);
+      // while the owner is in the wizard, the store's answers win over an edit to the lead
+      await sql`update leads set name = 'Ana (dona)' where id = ${lead!.id}`;
+      await owner('PATCH', '/store', { profile: { city: 'Caucaia' } });
+      expect((await owner('PATCH', '/onboarding', { step: 'cardapio' })).status).toBe(200);
+      expect(await read()).toMatchObject({ name: 'Ana Lima', city: 'Caucaia' });
+    } finally {
+      await sql`delete from ig_follows where handle = ${handle}`;
       await sql`delete from leads where id = ${lead!.id}`;
     }
   });

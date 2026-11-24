@@ -9,6 +9,7 @@ import type { Sql } from '../platform/db.ts';
 import { afterCommit } from '../platform/db.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { dropLeadMailTx } from './agenda.ts';
+import { syncLeadProfileTx } from './lead-profile.ts';
 
 let config: {
   origin: string | null;
@@ -96,6 +97,7 @@ export async function linkCrmSignupTx(
     await tx`insert into lead_activities (lead_id, kind, body, meta, created_by)
       values (${lead.id}, 'system', 'cadastro confirmado pelo WhatsApp',
         ${tx.json({ type: 'sales_signup', tenantId, fromLink: linkedId === lead.id })}, 'system')`;
+    await syncLeadProfileTx(tx, tenantId, { verifiedPhone: phone, via: 'signup' });
     afterCommit(tx, () => emitControlEvent('lead.change', lead.id));
     return lead.id;
   });

@@ -1,3 +1,4 @@
+import { syncLeadProfileTx } from '../crm/lead-profile.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson } from '../platform/http.ts';
 import type { StoreSettingsRow } from '../modules/store.ts';
@@ -222,6 +223,8 @@ export function mountOnboarding(d: AdminDeps) {
           { step: 'setup' },
           { tenantId: t.id, dedupeKey: `onboarding:${t.id}:setup` },
         );
+      // the wizard saves its place on every screen it leaves: the CRM lead picks up the answers
+      await syncLeadProfileTx(tx, t.id, { via: 'onboarding' });
       return { status: 200, body: await onboardingView(tx, t.id) };
     }),
   );
