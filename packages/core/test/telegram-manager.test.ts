@@ -722,4 +722,104 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('telegram sales-agent manager (d
       await sql`delete from tenants where id = ${tenant!.id}`;
     }
   });
+
+  test('get_lead_details reads lead_activities.at with null body, and crm-manager failures surface real errors without store link or vv_', async () => {
+    const lead = await controlTx(appSql, (tx) =>
+      insertLeadTx(tx, { name: 'Vinicius', business_name: 'Picolé Do Vini' }),
+    );
+    const leadId = lead.body.lead.id;
+    await controlTx(
+      sql,
+      (tx) => tx`
+      insert into lead_activities (lead_id, kind, body, created_by)
+      values (${leadId}, 'state_change', null, 'system')
+    `,
+    );
+
+    // 1) crm-manager calls get_lead_details on a lead with null-body activity and replies cleanly
+    await webhook({
+      update_id: 1030,
+      message: {
+        message_id: 830,
+        from: { id: Number(ANA_ID), first_name: 'Ana' },
+        chat: { id: Number(ANA_ID), type: 'private' },
+        text: 'Esse lead foi um sucesso então, né?',
+      },
+    });
+    const okRt = managerRuntime([
+      tools(call('get_lead_details', { leadId })),
+      tools(call('reply', { text: 'Sim! **Picolé Do Vini** já avançou no funil.' })),
+    ]);
+    await new Promise((r) => setTimeout(r, 260));
+    await okRt.pump('interactive', { limit: 10, perTenantCap: 10 });
+    calls = [];
+    await deliverStaffEvents(appSql, { fetch: tgFetch });
+    const replyMsg = calls.find((c) => c.method === 'sendMessage' && c.body.chat_id === ANA_ID);
+    expect(String(replyMsg?.body.text)).toContain('<b>Picolé Do Vini</b>');
+
+    // 2) Forced gateway failure surfaces real error, omits Venduá/[loja no CRM], and avoids vv_
+    await webhook({
+      update_id: 1031,
+      message: {
+        message_id: 831,
+        from: { id: Number(ANA_ID), first_name: 'Ana' },
+        chat: { id: Number(ANA_ID), type: 'private' },
+        text: 'testando falha',
+      },
+    });
+    const brokenRt = managerRuntime([
+      { error: { status: 400, message: 'Unexpected role user after tool' } },
+      { error: { status: 400, message: 'Unexpected role user after tool' } },
+      { error: { status: 400, message: 'Unexpected role user after tool' } },
+    ]);
+    await new Promise((r) => setTimeout(r, 260));
+    for (let i = 0; i < 4; i++) {
+      await controlTx(
+        sql,
+        (tx) => tx`
+        update agent_actors set next_wake_at = now()
+        where agent_id = ${CRM_MANAGER_AGENT_ID} and owner is null
+      `,
+      );
+      await brokenRt.pump('interactive', { limit: 10, perTenantCap: 10 });
+    }
+    calls = [];
+    await deliverStaffEvents(appSql, { fetch: tgFetch });
+    const failCard = calls.find(
+      (c) =>
+        c.method === 'sendMessage' &&
+        c.body.chat_id === ANA_ID &&
+        String(c.body.text).includes('turno do agente falhou'),
+    );
+    expect(failCard).toBeDefined();
+    expect(String(failCard?.body.text)).toContain('Unexpected role user after tool');
+    expect(String(failCard?.body.text)).not.toContain('vv_');
+    expect(String(failCard?.body.text)).not.toContain('Venduá');
+    expect(failCard?.body.reply_markup).toBeUndefined();
+
+    // 3) Cards whose title already starts with an emoji never duplicate the category emoji
+    await controlTx(sql, async (tx) => {
+      await recordStaffEventTx(tx, 'store.live', {
+        storeName: 'Picolé Do Vini',
+        host: 'picole-do-vini.vendua.com.br',
+      });
+      await recordStaffEventTx(tx, 'lead.milestone', {
+        leadId,
+        leadName: 'vinicius',
+        business: null,
+        from: 'invited',
+        to: 'live',
+        by: 'system',
+      });
+    });
+    calls = [];
+    await deliverStaffEvents(appSql, { fetch: tgFetch });
+    const texts = calls
+      .filter((c) => c.method === 'sendMessage' && c.body.chat_id === ANA_ID)
+      .map((c) => String(c.body.text));
+    expect(texts.some((t) => t.startsWith('🚀 <b>Picolé Do Vini'))).toBe(true);
+    expect(texts.some((t) => t.includes('🚀 🚀'))).toBe(false);
+    expect(texts.some((t) => t.startsWith('🎯 <b>vinicius'))).toBe(true);
+    expect(texts.some((t) => t.includes('💬 🎯'))).toBe(false);
+  });
 });

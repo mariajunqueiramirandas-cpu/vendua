@@ -153,15 +153,33 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
         messages.push({ role: 'system', content: system.map((b) => b.text).join('\n\n') });
       }
     }
+    function mergeUserContent(prev: unknown, next: string | OaPart[]): string | OaPart[] {
+      if (typeof prev === 'string' && typeof next === 'string') return `${prev}\n\n${next}`;
+      const a: OaPart[] =
+        typeof prev === 'string' ? [{ type: 'text', text: prev }] : Array.isArray(prev) ? prev : [];
+      const b: OaPart[] = typeof next === 'string' ? [{ type: 'text', text: next }] : next;
+      return [...a, ...b];
+    }
+
+    function pushUser(content: string | OaPart[]): void {
+      if (!mistral) {
+        messages.push({ role: 'user', content });
+        return;
+      }
+      // Mistral rejects `user` directly after `tool` ("Unexpected role 'user' after role 'tool'").
+      if (messages[messages.length - 1]?.role === 'tool')
+        messages.push({ role: 'assistant', content: 'OK.' });
+      const tail = messages[messages.length - 1];
+      if (tail?.role === 'user') tail.content = mergeUserContent(tail.content, content);
+      else messages.push({ role: 'user', content });
+    }
+
     for (const m of req.messages) {
       if (m.role === 'user') {
         const parts = m.parts.map(partOf).filter((p): p is OaPart => p !== null);
         if (parts.length === 0) continue;
         const textOnly = parts.every((p) => p.type === 'text');
-        messages.push({
-          role: 'user',
-          content: textOnly ? parts.map((p) => p.text as string).join('\n') : parts,
-        });
+        pushUser(textOnly ? parts.map((p) => p.text as string).join('\n') : parts);
       } else if (m.role === 'tool') {
         messages.push({
           role: 'tool',
@@ -190,7 +208,18 @@ export function openAiCompatibleAdapter(opts: OpenAiCompatibleOpts): ProviderAda
         });
       }
     }
-    if (req.volatile) messages.push({ role: 'user', content: req.volatile });
+    if (req.volatile) {
+      if (mistral && messages[messages.length - 1]?.role === 'tool') {
+        // Keep tool-loop steps ending on `tool` so Mistral never sees `user` after `tool`.
+        const last = messages[messages.length - 1]!;
+        last.content =
+          typeof last.content === 'string' && last.content
+            ? `${last.content}\n\n${req.volatile}`
+            : req.volatile;
+      } else {
+        pushUser(req.volatile);
+      }
+    }
 
     return {
       model: req.model,

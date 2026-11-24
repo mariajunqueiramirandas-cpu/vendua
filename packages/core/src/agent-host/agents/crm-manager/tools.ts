@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { defineTool, s, ToolError, type Json } from '@vendua/agent-runtime';
+import { defineTool, LeaseLostError, s, ToolError, type Json } from '@vendua/agent-runtime';
 import type { Sql } from '../../../platform/db.ts';
 import { HttpError, UUID_RE } from '../../../platform/http.ts';
+import { log } from '../../../platform/log.ts';
 import {
   AGENT_JOBS,
   agentSettingTx,
@@ -27,13 +28,17 @@ import { mgr, type ManagerCtx } from './shared.ts';
 // 3) Proposal tools (1-tap Confirm/Cancel card in Telegram) — global autonomy/instructions,
 //    deleting memory rules, approving drafts, sending direct messages to leads, paid board runs.
 
+const tlog = log.child({ mod: 'crm-manager' });
+
 async function safe<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof ToolError) throw e;
+    if (e instanceof ToolError || e instanceof LeaseLostError) throw e;
     if (e instanceof HttpError) throw new ToolError(e.message);
-    throw e;
+    tlog.error({ err: e }, 'crm-manager tool failed');
+    const detail = e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160);
+    throw new ToolError(`erro interno ao consultar/atualizar o CRM (${detail})`);
   }
 }
 
@@ -228,10 +233,10 @@ export const getLeadDetailsTool = defineTool<{ leadId: string }, Sql>({
             where lead_id = ${leadId} and done_at is null
             order by created_at desc limit 5
           `,
-          tx<{ kind: string; body: string; created_by: string; created_at: Date }[]>`
-            select kind, body, created_by, created_at from lead_activities
+          tx<{ kind: string; body: string | null; created_by: string; at: Date }[]>`
+            select kind, body, created_by, at from lead_activities
             where lead_id = ${leadId}
-            order by created_at desc limit 6
+            order by at desc limit 6
           `,
           tx<
             {
@@ -285,7 +290,8 @@ export const getLeadDetailsTool = defineTool<{ leadId: string }, Sql>({
           recentNotes: notes.map((n) => ({
             kind: n.kind,
             by: n.created_by,
-            body: n.body.slice(0, 250),
+            body: (n.body ?? '').slice(0, 250),
+            at: n.at.toISOString(),
           })),
           recentRuns: runs.map((r) => ({
             kind: r.kind,
@@ -390,7 +396,7 @@ export const listRulesTool = defineTool<Record<string, never>, Sql>({
             select id, scope, segment, content, pinned, source from agent_memory_items
             where scope in ('workspace', 'segment')
             order by pinned desc, updated_at desc limit 25
-          `.catch(() => []),
+          `,
         ]);
         return {
           instructions: agent.instructions,

@@ -45,10 +45,10 @@ export async function managerWorkspaceTx(tx: Sql): Promise<ManagerWorkspace> {
       getSettingTx<Partial<Guardrails>>(c, 'guardrails', {}),
       c<{ n: number }[]>`
         select count(*)::int as n from agent_memory_items where pinned
-      `.catch(() => [{ n: 0 }]),
+      `,
       c<{ n: number }[]>`
         select count(*)::int as n from discovery_briefs where enabled
-      `.catch(() => [{ n: 0 }]),
+      `,
     ]);
     return {
       timezone: g.timezone ?? DEFAULT_GUARDRAILS.timezone,

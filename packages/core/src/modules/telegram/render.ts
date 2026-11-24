@@ -76,9 +76,14 @@ interface CardInput {
   buttons?: InlineButton[][];
 }
 
+const LEADING_EMOJI = /^([\p{Extended_Pictographic}\p{Emoji_Presentation}]\uFE0F?)\s+/u;
+
 function card(ev: EventRow, input: CardInput): TelegramMessage {
   const meta = CATEGORY_META[STAFF_EVENT_KINDS[ev.kind].category];
-  const header = `${meta.emoji} ${b(input.title)}`;
+  const own = LEADING_EMOJI.exec(input.title);
+  const header = own
+    ? `${own[1]} ${b(input.title.slice(own[0].length))}`
+    : `${meta.emoji} ${b(input.title)}`;
   const body = (input.body ?? []).filter((x): x is string => typeof x === 'string' && x.length > 0);
   const parts = [header, ...body];
   if (input.footer) parts.push(i(input.footer));
@@ -835,13 +840,14 @@ function runFailed(ev: Ev<'agent.run_failed'>, ctx: RenderCtx): Rendered {
 function turnFailed(ev: Ev<'agent.turn_failed'>): Rendered {
   const d = ev.data;
   const title = `turno do agente falhou · ${esc(d.agentId)}`;
+  const ver = d.version.startsWith('v') ? esc(d.version) : `v${esc(d.version)}`;
   return {
     card: card(ev, {
       title,
       body: [
         metaLine([
           d.storeName ? esc(d.storeName) : null,
-          `v${esc(d.version)}`,
+          ver,
           `${d.attempts} tentativas`,
           esc(d.actorId),
         ]),
