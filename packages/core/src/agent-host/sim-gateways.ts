@@ -1,5 +1,5 @@
 import { createGateway, type ModelGateway, type ProviderAdapter } from '@vendua/agent-runtime';
-import { adaptersFromEnv, preferMistralLarge4, routesFromEnv } from './models.ts';
+import { adaptersFromEnv, preferMistralPrimary, routesFromEnv } from './models.ts';
 
 // The model side of the live sims (`sims:vendedor`, `sims:crm`): the agent's gateway and the
 // simulated person's, from env.
@@ -9,7 +9,7 @@ import { adaptersFromEnv, preferMistralLarge4, routesFromEnv } from './models.ts
 //   plus the provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, …)
 //   SIM_RPM (default 0 = unthrottled) and SIM_MAX_REQUESTS — a free tier's limits (e.g. 15 and 450)
 //
-// Large 4 is first when MISTRAL_API_KEY is set. SIM_USER_ROUTES can pick a comparison model.
+// The Mistral primary (DeepSeek V4.1 Flash) is first when MISTRAL_API_KEY is set. SIM_USER_ROUTES can pick a comparison model.
 // With only GEMINI_API_KEY and no AGENT_MODEL_ROUTES, both sides use SIM_GEMINI_MODEL. The sims
 // send synthetic fixtures only, which is why a test key outside a zero-data-retention arrangement
 // may serve them; never put such a route in production's agent_runtime.routes.
@@ -19,7 +19,7 @@ const routesOf = (setting: ReturnType<typeof routesFromEnv>, mistralFirst = fals
     routes: async (_t: string, _a: string, tier: 'fast' | 'strong') => {
       const routes = setting?.default?.[tier] ?? setting?.default?.fast ?? [];
       const list = Array.isArray(routes) ? routes.filter((r) => r?.provider && r.model) : [];
-      return mistralFirst ? preferMistralLarge4(list) : list;
+      return mistralFirst ? preferMistralPrimary(list) : list;
     },
   };
 };

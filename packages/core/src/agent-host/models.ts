@@ -11,14 +11,14 @@ import { controlTx } from '../modules/control.ts';
 import { ANTHROPIC_MODEL, ANTHROPIC_PRICING, isEffort } from '../platform/anthropic.ts';
 import type { Sql } from '../platform/db.ts';
 import { anthropicAdapter } from './anthropic.ts';
-import { isMistralLarge4, mistralAdapter, MISTRAL_PRIMARY_ROUTE } from './mistral.ts';
+import { isMistralPrimary, mistralAdapter, MISTRAL_PRIMARY_ROUTE } from './mistral.ts';
 
 /**
  * Model routes, set by staff in `control_settings` key `agent_runtime.routes`:
  *   { "default": { "fast": [route…], "strong": [route…] },
  *     "agents":  { "<agentId>": { "fast": […] } },
  *     "tenants": { "<tenantId>": { "strong": […] } } }
- * Mistral Large 4 leads both tiers when its key is configured. The most specific list supplies the fallbacks.
+ * The Mistral primary (DeepSeek V4.1 Flash) leads both tiers when its key is configured. The most specific list supplies the fallbacks.
  * A route is { provider, model, zdr, endpoint?, effort?, pricing?, timeoutMs? }. `zdr`
  * (zero data retention) is staff's per-route choice since 2026-10-05 (default on in the CRM):
  * OpenRouter enforces it per request when on; on a direct provider it's the account's contract.
@@ -78,8 +78,8 @@ export function routesFromEnv(raw: string | undefined): RoutesSetting | null {
   }
 }
 
-export function preferMistralLarge4(routes: ModelRoute[]): ModelRoute[] {
-  const isPrimary = (r: ModelRoute) => r.provider === 'mistral' && isMistralLarge4(r.model);
+export function preferMistralPrimary(routes: ModelRoute[]): ModelRoute[] {
+  const isPrimary = (r: ModelRoute) => r.provider === 'mistral' && isMistralPrimary(r.model);
   const existing = routes.find(isPrimary);
   return [
     {
@@ -110,7 +110,7 @@ export function settingRoutes(
         };
       }
       const routes = routesFrom(cached.value, tenantId, agentId, tier);
-      return env.MISTRAL_API_KEY ? preferMistralLarge4(routes) : routes;
+      return env.MISTRAL_API_KEY ? preferMistralPrimary(routes) : routes;
     },
   };
 }
