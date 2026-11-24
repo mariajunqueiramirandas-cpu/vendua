@@ -120,6 +120,26 @@ export function LeadFacts({ lead, patch }: { lead: LeadListItem; patch: (p: Lead
           <KV label="valor">
             <MoneyEdit cents={lead.dealValueCents} onSave={(c) => patch({ dealValueCents: c })} />
           </KV>
+          {lead.fitScore != null && (
+            <KV label="fit">
+              <div className="min-w-0">
+                <span className="text-sm font-medium tnum">{lead.fitScore}/10</span>
+                {lead.fitReason && (
+                  <p className="text-xs leading-snug text-muted-foreground">{lead.fitReason}</p>
+                )}
+              </div>
+            </KV>
+          )}
+          {lead.intentScore != null && (
+            <KV label="intenção">
+              <div className="min-w-0">
+                <span className="text-sm font-medium tnum">{lead.intentScore}/10</span>
+                {lead.intentReason && (
+                  <p className="text-xs leading-snug text-muted-foreground">{lead.intentReason}</p>
+                )}
+              </div>
+            </KV>
+          )}
           {lead.discoveredVia && (
             <KV label="descoberto via">
               <span className="truncate text-sm">{lead.discoveredVia}</span>

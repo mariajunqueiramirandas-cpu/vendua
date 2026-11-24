@@ -3,7 +3,6 @@ import { controlTx } from '../../../modules/control.ts';
 import {
   capCentsOf,
   DEFAULT_GUARDRAILS,
-  getIntegrationTx,
   getPitch,
   getSettingTx,
   type Guardrails,
@@ -24,6 +23,7 @@ import { parkedReasonTx } from '../../../crm/dispatch.ts';
 import {
   unansweredTouchesTx,
   channelAvailabilityTx,
+  emailReadyTx,
   instagramReadyTx,
   whatsappReadyTx,
 } from '../../../crm/guardrails.ts';
@@ -86,17 +86,12 @@ export async function workspaceTx(tx: Sql): Promise<Workspace> {
       ...(await getSettingTx<Partial<Guardrails>>(c, 'guardrails', {})),
     };
     const { instructions } = await agentSettingTx(c);
-    const [wa, ig, em, memory] = [
+    const [wa, ig, emailReady, memory] = [
       await whatsappReadyTx(c),
       await instagramReadyTx(c),
-      await getIntegrationTx(c, 'email'),
+      await emailReadyTx(c),
       await hasMemoryTablesTx(c),
     ];
-    // resend without its key throws at dispatch — same check sendEmail makes
-    const emailReady =
-      !!em &&
-      (em.driver !== 'resend' ||
-        !!((em.secret_ref && process.env[em.secret_ref]) ?? process.env.RESEND_API_KEY));
     const ready: Record<SendChannel, boolean> = { whatsapp: wa, instagram: ig, email: emailReady };
     const channels = SEND_CHANNELS.filter((ch) => ready[ch]);
     const disabled: Record<string, string> = {};
@@ -111,6 +106,7 @@ export async function workspaceTx(tx: Sql): Promise<Workspace> {
     if (!memory)
       for (const n of ['remember', 'set_fact'])
         disabled[n] = 'tabelas de memória não migradas (0035)';
+    const igColdReady = g.instagramColdDmsPerDay > 0 && ig;
     return {
       timezone: g.timezone,
       pitch: await getPitch(c),
@@ -118,7 +114,7 @@ export async function workspaceTx(tx: Sql): Promise<Workspace> {
       channels,
       disabled,
       autoContact: {
-        enabled: g.discoveryAutoContact && wa,
+        enabled: g.discoveryAutoContact && (wa || igColdReady || emailReady),
         minScore: g.discoveryContactMinScore,
       },
     };

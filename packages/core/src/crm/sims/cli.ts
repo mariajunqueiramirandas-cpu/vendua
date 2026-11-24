@@ -49,7 +49,7 @@ async function seedSimEnv(sql: Sql) {
     quietHoursEnabled: false,
     timezone: 'America/Sao_Paulo',
     discoveryAutoContact: false,
-    discoveryContactMinScore: 8,
+    discoveryContactMinScore: 7,
     inboundReplyDelayMin: 0,
     firstContactDelayMin: 0,
   });

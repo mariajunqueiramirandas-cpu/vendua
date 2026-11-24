@@ -35,7 +35,7 @@ export function guardrailsOf(value: Record<string, unknown>): GuardrailsDraft {
     quietEnd: str(value.quietEnd, '08:00'),
     timezone: str(value.timezone, 'America/Sao_Paulo'),
     discoveryAutoContact: value.discoveryAutoContact !== false,
-    discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
+    discoveryContactMinScore: num(value.discoveryContactMinScore, 7),
     inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
     firstContactDelayMin: num(value.firstContactDelayMin, 0),
     followupCadenceDays: num(value.followupCadenceDays, 3),
@@ -322,7 +322,7 @@ export function LimitsPanel({
             </Field>
             <Field
               label="autocontato na descoberta"
-              hint="lead descoberto com fit ≥ nota mínima ganha disparo automático (respeita a autonomia)"
+              hint="lead descoberto dentro da nota mínima ganha disparo automático em WhatsApp, Instagram ou e-mail (respeita a autonomia)"
             >
               <Toggle
                 checked={edit.discoveryAutoContact}
@@ -334,7 +334,7 @@ export function LimitsPanel({
             <Field
               label="nota mínima p/ autocontato (fit)"
               htmlFor="gr-discoveryContactMinScore"
-              hint="fitScore mínimo (1 a 10) para iniciar contato sozinho"
+              hint="fitScore mínimo (1 a 10); 1 ponto abaixo também dispara se intentScore ≥ 6"
             >
               {numIn('discoveryContactMinScore', 1, 10, 1)}
             </Field>

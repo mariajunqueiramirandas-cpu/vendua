@@ -14,7 +14,7 @@ import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { nextReminderAtTx, sendMeetingReminders, syncMeetingEffects } from '../modules/meetings.ts';
 import { log } from '../platform/log.ts';
-import { sweepBriefs, sweepStrategist } from './board.ts';
+import { sweepBriefs, sweepOutreachBacklog, sweepStrategist } from './board.ts';
 import { adoptLegacy } from './legacy.ts';
 import { agentSettingTx } from './policy.ts';
 import { anchorTx } from './schedule-anchors.ts';
@@ -101,6 +101,18 @@ export const JOBS: readonly ScheduledJob[] = [
       return a.level !== 'off' && a.jobs.discovery;
     },
     run: sweepBriefs,
+  },
+  {
+    name: 'outreach-backlog',
+    label: 'primeiro contato — leads qualificados pendentes',
+    cadence: async () => 'verificação a cada 10 min',
+    nextAt: async () => new Date(Date.now() + RECONCILE_MS),
+    wakesOn: on('control_settings', 'control_integrations'),
+    enabled: async (tx) => {
+      const a = await agentSettingTx(tx);
+      return a.level !== 'off' && a.jobs.outreach;
+    },
+    run: sweepOutreachBacklog,
   },
   {
     name: 'weekly-review',

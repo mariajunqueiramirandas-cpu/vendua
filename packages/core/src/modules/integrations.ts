@@ -223,10 +223,10 @@ export const DEFAULT_GUARDRAILS = {
   quietStart: '21:00',
   quietEnd: '08:00',
   timezone: 'America/Sao_Paulo',
-  /** a discovered lead ≥ discoveryContactMinScore with a phone channel gets an
-   *  outreach run (the autonomy preset still decides draft vs send) */
+  /** a discovered lead clearing discoveryContactMinScore (fitScore >= min, or min-1 with
+   *  intentScore >= 6) and a ready channel gets an outreach run (autonomy still decides draft vs send) */
   discoveryAutoContact: true,
-  discoveryContactMinScore: 8,
+  discoveryContactMinScore: 7,
   /** reply run is queued with run_at = now() + N min; 0 = answer at once */
   inboundReplyDelayMin: 0,
   /** staff-created lead's outreach run is scheduled N min after create;

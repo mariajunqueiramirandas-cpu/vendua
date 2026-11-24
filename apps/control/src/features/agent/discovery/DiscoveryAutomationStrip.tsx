@@ -44,7 +44,7 @@ export function DiscoveryAutomationStrip() {
 
   const g = obj(settings?.guardrails);
   const autoContact = g.discoveryAutoContact !== false;
-  const minScore = num(g.discoveryContactMinScore, 8);
+  const minScore = num(g.discoveryContactMinScore, 7);
   const autoPause = num(g.briefAutoPauseRuns, 5);
 
   const off = cfg?.level === 'off';
@@ -98,7 +98,9 @@ export function DiscoveryAutomationStrip() {
         <div className="min-w-0 pl-4 sm:pl-0">
           <div className="text-xs font-medium">autocontato</div>
           <p className="truncate text-xs text-muted-foreground">
-            {autoContact ? `fit ≥ ${minScore} inicia contato` : 'só cria o card no pipeline'}
+            {autoContact
+              ? `fit ≥ ${minScore} (ou ${Math.max(1, minScore - 1)} com int. ≥ 6) inicia contato`
+              : 'só cria o card no pipeline'}
           </p>
         </div>
 

@@ -6,6 +6,7 @@ import { adoptLidMappings } from '../modules/threads.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { AlreadyConsumed, membershipsOf, routeToDua, type DuaDeps, type InboxRow } from './dua.ts';
+import { setProbeSql } from './probe.ts';
 import { refreshPlatformSession } from './session.ts';
 import { VENDUA_SESSION } from './transport.ts';
 import type { InboundMedia } from '../crm/channels/whatsapp.ts';
@@ -197,6 +198,7 @@ export async function consumeInboxOnce(d: InboxDeps, limit = 50): Promise<number
  * platform session's cached state refreshed on the same tick (waStatus reads it).
  */
 export function startPlatformInbox(d: InboxDeps, o: { tickMs?: number } = {}) {
+  setProbeSql(d.sql);
   let stopped = false;
   let running: Promise<void> | null = null;
   let again = false;
@@ -226,6 +228,7 @@ export function startPlatformInbox(d: InboxDeps, o: { tickMs?: number } = {}) {
   return {
     async stop() {
       stopped = true;
+      setProbeSql(null);
       clearInterval(timer);
       await (await sub)?.unlisten().catch(() => undefined);
       await running;
