@@ -73,7 +73,7 @@ Without either, every site waits for someone to click deploy, which eats the 24-
 
 ## 4. Staff
 
-The 1-day promise counts weekends. Discord pings for "site pronto para revisar", "site travado"
+The 1-day promise counts weekends. Telegram alerts for "site pronto para revisar", "site travado"
 and "site perto do prazo" need someone every day. The CRM's store page (Sites) is where staff
 approve, retry, take a task by hand or cancel.
 

@@ -4,8 +4,10 @@ export interface StaffMember {
   name: string;
   email: string;
   whatsapp: string;
-  /** Discord user id: the person may use the Venduá bot (ADR 0023) */
-  discord?: string;
+  /** Telegram numeric user id: receives staff alerts in DM and may use commands/buttons */
+  telegram?: string;
+  /** Telegram @username (without @), stored for display in Config → Equipe when linked via /start */
+  telegramUsername?: string;
 }
 
 export interface StaffConfig {
@@ -13,7 +15,8 @@ export interface StaffConfig {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DISCORD_ID_RE = /^\d{17,20}$/;
+export const TELEGRAM_ID_RE = /^\d{5,20}$/;
+const TELEGRAM_USER_RE = /^[A-Za-z0-9_]{3,64}$/;
 const MAX_MEMBERS = 20;
 
 /** '+55 (11) 99999-0000', '11999990000', '5511999990000' → '+5511999990000';
@@ -50,16 +53,44 @@ export function normalizeStaff(value: unknown): StaffConfig {
     const name = s('name', 80);
     const email = s('email', 320).toLowerCase();
     const rawWa = s('whatsapp', 40);
-    const discord = s('discord', 25);
+    const telegram = s('telegram', 25);
+    const rawUser = s('telegramUsername', 65).replace(/^@/, '');
     if (email && !EMAIL_RE.test(email)) throw bad(`members.${i}.email`, 'must be an email address');
     const whatsapp = rawWa ? normalizeWhatsapp(rawWa) : '';
     if (whatsapp === null) throw bad(`members.${i}.whatsapp`, 'must be a phone number');
-    if (discord && !DISCORD_ID_RE.test(discord))
-      throw bad(`members.${i}.discord`, 'must be a Discord user id (17–20 digits)');
-    if (!email && !whatsapp && !discord)
-      throw bad(`members.${i}`, 'needs an email, a whatsapp or a discord id');
-    return { name, email, whatsapp, ...(discord ? { discord } : {}) };
+    if (telegram && !TELEGRAM_ID_RE.test(telegram))
+      throw bad(`members.${i}.telegram`, 'must be a Telegram user id (5–20 digits)');
+    if (rawUser && !TELEGRAM_USER_RE.test(rawUser))
+      throw bad(`members.${i}.telegramUsername`, 'must be a Telegram username');
+    if (!email && !whatsapp && !telegram)
+      throw bad(`members.${i}`, 'needs an email, a whatsapp or a telegram id');
+    return {
+      name,
+      email,
+      whatsapp,
+      ...(telegram ? { telegram } : {}),
+      ...(telegram && rawUser ? { telegramUsername: rawUser } : {}),
+    };
   });
-  // a stored `events` (the retired email/WhatsApp toggles) is dropped on the next save
+  // legacy `events` and `discord` keys are dropped on save
   return { members };
+}
+
+/** Unique Telegram DMs linked on the team roster (preserving order). */
+export function linkedTelegramMembers(
+  cfg: StaffConfig,
+): { chatId: string; name: string; username: string | null }[] {
+  const seen = new Set<string>();
+  const out: { chatId: string; name: string; username: string | null }[] = [];
+  for (const m of cfg.members) {
+    const id = typeof m.telegram === 'string' ? m.telegram.trim() : '';
+    if (!id || !TELEGRAM_ID_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      chatId: id,
+      name: m.name?.trim() || m.email || 'equipe',
+      username: m.telegramUsername?.trim() || null,
+    });
+  }
+  return out;
 }

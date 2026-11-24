@@ -62,7 +62,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)         |
 | `IG_SIDECAR_SECRET`                        | Instagram DMs — Core↔ig-sidecar shared secret (see below)         |
 | `IG_PROXY`                                 | static residential proxy for the ig-sidecar (recommended)         |
-| `DISCORD_BOT_TOKEN`                        | the team's Discord bot — see [discord.md](discord.md)             |
+| `TELEGRAM_BOT_TOKEN`                       | the team's Telegram bot — see [telegram.md](telegram.md)          |
 | `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth       |
 | `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)            |
 | `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |
@@ -300,7 +300,7 @@ WhatsApp Web protocol). It needs nothing of its own: it shares Core's database r
 must have the same values). It never migrates; it starts once `core` is healthy.
 
 - A store links its number in the admin (WhatsApp → gerar código) and chooses which order steps
-  message its shoppers. Staff see connects and drops in Discord (`whatsapp.store`); a gateway
+  message its shoppers. Staff see connects and drops in Telegram (`whatsapp.store`); a gateway
   that stops beating for 2 min while stores need it raises `channel.down` (`whatsapp_lojas`).
 - Scale out by adding replicas: each claims stores by lease up to `WA_MAX_SESSIONS`. A deploy
   sends SIGTERM; the gateway closes its sockets (logins kept) and hands the leases back, so the

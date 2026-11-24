@@ -1,19 +1,18 @@
 import { AlertTriangle, BellOff, Users } from 'lucide-react';
-import type { DiscordOverview } from '@/lib/api.ts';
+import type { TelegramOverview } from '@/lib/api.ts';
 import { fmtDateTime, rel } from '@/lib/format.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { KpiStrip } from '@/components/common.tsx';
-import { useDiscordMute } from './queries.ts';
+import { useTelegramMute } from './queries.ts';
 
-/** Is the bot keeping up: what went out, what waits, what failed and why. */
-export function HealthPanel({ d, onGoTeam }: { d: DiscordOverview; onGoTeam: () => void }) {
-  const mute = useDiscordMute();
+/** Is the bot keeping up: what went out, what waits, what failed and who receives DMs. */
+export function HealthPanel({ d, onGoTeam }: { d: TelegramOverview; onGoTeam: () => void }) {
+  const mute = useTelegramMute();
   const q = d.queue;
   const cats = new Map(d.catalog.categories.map((c) => [c.key, c]));
   const kinds = new Map(d.catalog.kinds.map((k) => [k.kind, k.label]));
   const mutes = Object.entries(d.state.mutes);
-  const unlinked = d.team.members - d.team.linked;
 
   return (
     <Panel title="saúde" aside="o que o bot fez nas últimas 24h">
@@ -31,7 +30,7 @@ export function HealthPanel({ d, onGoTeam }: { d: DiscordOverview; onGoTeam: () 
             hint: q.oldest ? `mais antigo há ${rel(q.oldest)}` : undefined,
           },
           { label: 'falharam', value: q.failed, tone: q.failed ? 'bad' : undefined },
-          { label: 'pulados', value: q.skipped, hint: 'desligados ou sem canal' },
+          { label: 'pulados', value: q.skipped, hint: 'desligados ou sem DM' },
         ]}
       />
 
@@ -87,14 +86,18 @@ export function HealthPanel({ d, onGoTeam }: { d: DiscordOverview; onGoTeam: () 
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 text-sm">
         <Users className="size-4 text-muted-foreground" />
         <span className="min-w-0 flex-1">
-          {d.team.linked} de {d.team.members}{' '}
-          {d.team.members === 1 ? 'pessoa da equipe usa' : 'pessoas da equipe usam'} os comandos e
-          botões
-          {unlinked > 0 && (
-            <span className="block text-xs text-muted-foreground">
-              quem não tem o ID do Discord na equipe recebe os avisos, mas não consegue agir — o bot
-              mostra o ID para quem tentar
-            </span>
+          {d.team.linked === 0 ? (
+            'ninguém conectou o Telegram ainda'
+          ) : (
+            <>
+              {d.team.linked} de {d.team.members}{' '}
+              {d.team.members === 1 ? 'pessoa recebe' : 'pessoas recebem'} os avisos na DM
+              <span className="block text-xs text-muted-foreground">
+                {d.team.recipients
+                  .map((r) => (r.username ? `${r.name} (@${r.username})` : r.name))
+                  .join(' · ')}
+              </span>
+            </>
           )}
         </span>
         <Button size="sm" variant="outline" onClick={onGoTeam}>

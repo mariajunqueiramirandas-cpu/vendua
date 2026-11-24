@@ -1,7 +1,7 @@
 # ADR 0023: Staff events, delivered to Discord by an HTTP-only bot
 
-- Status: Accepted (implemented 2026-10-01, Core migration 0068; amended 2026-10-09, migration
-  0113: Discord is the only staff channel)
+- Status: Superseded in part by [ADR 0047](0047-staff-events-on-telegram.md) (2026-11-23: the
+  `staff_events` log remains; delivery moved from Discord to per-member Telegram DMs)
 - Date: 2026-10-01
 
 ## Context

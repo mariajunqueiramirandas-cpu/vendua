@@ -3,6 +3,7 @@ import { defineOnlineQa, RollingScore, type OnlineQaAgent } from '@vendua/agent-
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import type { Sql } from '../platform/db.ts';
 import { COPILOT_AGENT_ID } from './agents/copilot/shared.ts';
+import { CRM_MANAGER_AGENT_ID } from './agents/crm-manager/shared.ts';
 import { ONBOARDING_AGENT_ID } from './agents/vendedor-onboarding/index.ts';
 import { dispatchTx } from './dispatch.ts';
 import { isCrmTurn } from '../crm/turns.ts';
@@ -125,6 +126,7 @@ export function hostOnlineQa(
       end.agentId === agent.def.id ||
       end.agentId === COPILOT_AGENT_ID ||
       end.agentId === ONBOARDING_AGENT_ID ||
+      end.agentId === CRM_MANAGER_AGENT_ID ||
       !agent.qa.shouldSample(end.actorId) ||
       (isCrmTurn(end) ? end.agentId !== CRM_AGENT_ID : !end.state.repliedSinceLastInput) ||
       (isCrmTurn(end) &&

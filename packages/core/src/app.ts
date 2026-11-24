@@ -277,9 +277,9 @@ import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountControlPartners } from './modules/control-partners.ts';
 import { mountSiteLeads } from './modules/site-leads.ts';
 import { mountSiteCatalog } from './modules/billing/routes-signup.ts';
-import { mountDiscord } from './modules/discord/routes.ts';
+import { mountTelegram } from './modules/telegram/routes.ts';
 import { recordStaffEventTx } from './modules/staff-events.ts';
-import type { DiscordFetch } from './modules/discord/rest.ts';
+import type { TelegramFetch } from './modules/telegram/rest.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 const waLog = log.child({ mod: 'whatsapp' });
@@ -326,8 +326,8 @@ export interface AppDeps {
   domains?: DomainProviders | undefined;
   /** domains-sync's key for /sync/v1 (default VENDUA_SYNC_SECRET) */
   syncSecret?: string | undefined;
-  /** Discord's network for the bot's control routes (default: fetch); tests swap it */
-  discordFetch?: DiscordFetch | undefined;
+  /** Telegram's network for the bot's control routes (default: fetch); tests swap it */
+  telegramFetch?: TelegramFetch | undefined;
   /** public storefront reads kept in memory (index.ts passes the notify-driven one); the
    *  default also waits out pending notifies on each read, so a write is seen right away */
   readCache?: StoreReadCache | undefined;
@@ -472,6 +472,7 @@ function timed<T>(p: Promise<T>, what: string): Promise<T> {
 async function testIntegration(
   sql: Sql,
   kind: IntegrationKind,
+  telegramFetch?: TelegramFetch,
 ): Promise<{ status: number; body: { ok: boolean; detail: string } }> {
   const integration = await getIntegration(sql, kind);
   const probe = async (): Promise<{ ok: boolean; detail: string }> => {
@@ -536,23 +537,29 @@ async function testIntegration(
       const r = await timed(d.search('padaria', 'teste de conectividade'), 'tinyfish');
       return { ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` };
     }
-    if (kind === 'discord') {
-      const { discordAppOf } = await import('./modules/discord/config.ts');
-      const { discordClient } = await import('./modules/discord/rest.ts');
-      const st = discordAppOf(integration);
+    if (kind === 'telegram') {
+      const { telegramAppOf } = await import('./modules/telegram/config.ts');
+      const { telegramClient } = await import('./modules/telegram/rest.ts');
+      const st = telegramAppOf(integration);
       if (!st.ok) return { ok: false, detail: st.reason };
-      const client = discordClient(st.app.token);
-      const me = await timed(client.request<{ username: string }>('GET', '/users/@me'), 'discord');
-      const guild = await timed(
-        client.request<{ name: string }>('GET', `/guilds/${st.app.guildId}`),
-        'discord',
+      const client = telegramClient(st.app.token, telegramFetch);
+      const me = await timed(client.call<{ username?: string }>('getMe'), 'telegram');
+      const hook = await timed(
+        client.call<{ url?: string; last_error_message?: string }>('getWebhookInfo'),
+        'telegram',
       ).catch(() => null);
-      return guild
-        ? { ok: true, detail: `bot ${me.username} no servidor ${guild.name}` }
-        : {
+      if (hook && !hook.url) {
+        return {
+          ok: false,
+          detail: `bot @${me.username ?? st.app.username} autenticado, mas o webhook não está ativo — clique em conectar`,
+        };
+      }
+      return hook?.last_error_message
+        ? {
             ok: false,
-            detail: `bot ${me.username} autenticado, mas fora do servidor — use o convite`,
-          };
+            detail: `bot @${me.username ?? st.app.username} · webhook falhou: ${hook.last_error_message}`,
+          }
+        : { ok: true, detail: `bot @${me.username ?? st.app.username} ativo` };
     }
     return { ok: false, detail: `tipo desconhecido: ${kind}` };
   };
@@ -582,7 +589,7 @@ export function createApp({
   signupReady,
   fleet,
   edgeSecret,
-  discordFetch,
+  telegramFetch,
   readCache,
   domains,
   syncSecret,
@@ -1962,7 +1969,9 @@ export function createApp({
   app.post('/control/v1/integrations/:kind/test', async (c) => {
     controlGate(c);
     const kind = integrationKind(c.req.param('kind'));
-    const res = await claimControl(sql, requireIdemKey(c), () => testIntegration(sql, kind));
+    const res = await claimControl(sql, requireIdemKey(c), () =>
+      testIntegration(sql, kind, telegramFetch),
+    );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body, res.status as 200);
   });
@@ -1973,7 +1982,13 @@ export function createApp({
     // guardrails/pitch return effective objects (defaults merged), not the sparse override.
     return c.json({
       settings: [
-        ...rows.filter((r) => r.key !== 'guardrails' && r.key !== 'pitch'),
+        ...rows.filter(
+          (r) =>
+            r.key !== 'guardrails' &&
+            r.key !== 'pitch' &&
+            r.key !== 'telegram_state' &&
+            r.key !== 'discord_state',
+        ),
         { key: 'guardrails', value: await getGuardrails(sql) },
         { key: 'pitch', value: await getPitch(sql) },
       ],
@@ -3105,7 +3120,13 @@ export function createApp({
     proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
   });
   mountImportsControl({ app, sql, controlGate });
-  mountDiscord({ app, sql, controlGate, fetch: discordFetch });
+  mountTelegram({
+    app,
+    sql,
+    controlGate,
+    fetch: telegramFetch,
+    ...(duaMedia !== undefined ? { media: duaMedia.media } : {}),
+  });
   const fleetD =
     fleet ??
     fleetDeps(sql, {

@@ -1,5 +1,5 @@
 import { mintCouponTx } from '../modules/coupons.ts';
-import { brl } from '../modules/discord/format.ts';
+import { brl } from '../modules/telegram/format.ts';
 import { freioConfig, queueTx, readyInMinutes, type FreioPush } from '../modules/freio.ts';
 import type { OrderView } from '../modules/orders.ts';
 import type { StoreSettingsRow } from '../modules/store.ts';

@@ -153,9 +153,9 @@ services:
       GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
       DAILY_API_KEY: ${DAILY_API_KEY:-}
-      # The team's Discord bot (ADR 0023, docs/deploy/discord.md): the token only — the
-      # application id, public key, server and channels are set in the CRM (Config → Discord).
-      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      # The team's Telegram bot (ADR 0047, docs/deploy/telegram.md): the token only —
+      # webhook, commands and linked staff DMs are configured in the CRM (Config → Telegram).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       # optional: the commit the "Core reiniciou" card shows
       GIT_COMMIT: ${GIT_COMMIT:-}
       # Voice-note transcription via the stt service below (ADR 0037); unset secret = off.

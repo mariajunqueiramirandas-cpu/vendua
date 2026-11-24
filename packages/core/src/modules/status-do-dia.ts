@@ -1,4 +1,4 @@
-import { brl } from './discord/format.ts';
+import { brl } from './telegram/format.ts';
 import { getProductsById, storeTimezone } from './catalog.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';

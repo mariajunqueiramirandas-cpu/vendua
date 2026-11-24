@@ -115,7 +115,7 @@ export async function resolveIncidentTx(
   return row;
 }
 
-/** Staff ack or resolve: the CRM's PATCH and Discord's buttons. One claim per key, so a replay
+/** Staff ack or resolve: the CRM's PATCH and Telegram's buttons. One claim per key, so a replay
  *  changes nothing and records nothing. */
 export async function ackIncident(
   sql: Sql,

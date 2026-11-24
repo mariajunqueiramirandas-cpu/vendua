@@ -173,7 +173,7 @@ const stopAdminSweeper = startAdminSweeper(jobsSql, {
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET || sessionSecret);
 
-// The CRM's routines (meetings, Discord, the board's daily and weekly work; woken by LISTEN/NOTIFY) +
+// The CRM's routines (meetings, Telegram, the board's daily and weekly work; woken by LISTEN/NOTIFY) +
 // WhatsApp socket when the baileys driver is enabled.
 startScheduler(jobsSql);
 // Agent Runtime v3 (ADR 0030) with the Vendedor (ADR 0031): its tools reach checkout and

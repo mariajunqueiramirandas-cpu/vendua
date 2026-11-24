@@ -2,14 +2,14 @@ import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import {
   deliverStaffEvents,
-  discordEnabledTx,
-  discordNextAtTx,
-} from '../modules/discord/deliver.ts';
+  telegramEnabledTx,
+  telegramNextAtTx,
+} from '../modules/telegram/deliver.ts';
 import {
-  discordDigestCadenceTx,
-  discordDigestNextAtTx,
-  sweepDiscordDigest,
-} from '../modules/discord/digest.ts';
+  sweepTelegramDigest,
+  telegramDigestCadenceTx,
+  telegramDigestNextAtTx,
+} from '../modules/telegram/digest.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { nextReminderAtTx, sendMeetingReminders, syncMeetingEffects } from '../modules/meetings.ts';
@@ -129,23 +129,23 @@ export const JOBS: readonly ScheduledJob[] = [
     run: sweepPipelineSnapshots,
   },
   {
-    name: 'discord',
-    label: 'avisos da equipe no Discord',
+    name: 'telegram',
+    label: 'avisos da equipe no Telegram',
     cadence: async () => 'na hora de cada evento',
-    nextAt: discordNextAtTx,
-    // a new staff event, or the bot's config changing
-    wakesOn: on('staff_events', 'control_integrations', 'control_settings'),
-    enabled: discordEnabledTx,
+    nextAt: telegramNextAtTx,
+    // a new staff event, a manager DM reply, or the bot's config / linked team roster changing
+    wakesOn: on('staff_events', 'telegram_dm_outbox', 'control_integrations', 'control_settings'),
+    enabled: telegramEnabledTx,
     run: (sql) => deliverStaffEvents(sql),
   },
   {
-    name: 'discord-digest',
-    label: 'resumo diário no Discord',
-    cadence: discordDigestCadenceTx,
-    nextAt: discordDigestNextAtTx,
+    name: 'telegram-digest',
+    label: 'resumo diário no Telegram',
+    cadence: telegramDigestCadenceTx,
+    nextAt: telegramDigestNextAtTx,
     wakesOn: on('control_settings', 'control_integrations'),
-    enabled: discordEnabledTx,
-    run: sweepDiscordDigest,
+    enabled: telegramEnabledTx,
+    run: sweepTelegramDigest,
   },
   {
     name: 'legacy-adopt',
