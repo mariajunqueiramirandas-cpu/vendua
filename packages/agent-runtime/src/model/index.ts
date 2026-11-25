@@ -29,6 +29,7 @@ export {
   redactText,
   restoreResponse,
   restoreText,
+  unresolvedToken,
   type PiiVault,
 } from './pii.ts';
 export {

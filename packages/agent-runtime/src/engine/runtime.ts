@@ -9,7 +9,13 @@ import {
   type ToolResult,
 } from '../define/tool.ts';
 import { compile, messageTokens } from '../context/compiler.ts';
-import { confirmation, stateGate } from '../guards/stock.ts';
+import {
+  confirmation,
+  stateGate,
+  unresolvedContactFeedback,
+  unresolvedContacts,
+} from '../guards/stock.ts';
+import { unresolvedToken } from '../model/pii.ts';
 import { render } from '../ledger/render.ts';
 import { decide } from '../memory/policy.ts';
 import { BudgetExceededError } from '../model/gateway.ts';
@@ -763,7 +769,12 @@ export class Runtime<H = unknown> {
     allowed: ReadonlySet<string>,
     input: unknown,
   ): Promise<Verdict> {
-    const guards: ToolGuard[] = [stateGate, confirmation, ...(run.agent.def.guards?.tool ?? [])];
+    const guards: ToolGuard[] = [
+      stateGate,
+      unresolvedContacts,
+      confirmation,
+      ...(run.agent.def.guards?.tool ?? []),
+    ];
     for (const g of guards) {
       const v = await g.run(call, { state: run.state, tool, allowed, input });
       if (!v.ok) return { ...v, reason: `${g.id}:${v.reason}` };
@@ -888,6 +899,9 @@ export class Runtime<H = unknown> {
         `unknown:${rendered.unknown.join(',')}`,
         `Referências inexistentes: ${rendered.unknown.map((u) => `{{${u}}}`).join(', ')}. Use só as do REGISTRO; sem um valor confirmado, escreva a frase sem a referência.`,
       ));
+    const leaked = unresolvedToken(rendered.text);
+    if (leaked)
+      return void (await blocked('unresolved_contact', leaked, unresolvedContactFeedback(leaked)));
     const gctx: OutputGuardCtx = {
       state: run.state,
       raw,

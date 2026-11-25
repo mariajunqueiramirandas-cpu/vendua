@@ -1,8 +1,11 @@
+import { createHmac, randomBytes } from 'node:crypto';
 import type { ChatMessage, Json, ModelResponse, Part } from '../types.ts';
 
 // Shopper phones and emails never reach a provider: each becomes a token for the length of one
-// call and is put back in what the model returns. Numbering follows order of appearance, so an
-// unchanged transcript redacts to the same bytes and the provider's prompt cache still hits.
+// call and is put back in what the model returns. A token is a keyed hash of its value, so an
+// unchanged transcript redacts to the same bytes (the provider's prompt cache still hits) and a
+// token the model makes up or carries over from another call names nothing. A counter's ⟦tel5⟧
+// would have restored to whichever number came fifth in this call: another business's.
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 const PHONE = new RegExp(
@@ -16,23 +19,31 @@ const PHONE = new RegExp(
   ].join('|'),
   'g',
 );
-const TOKEN = /⟦(tel|email)(\d+)⟧/g;
+const TOKEN = /⟦(tel|email):([0-9a-f]+)⟧/g;
+/** Anything shaped like a token, the old ⟦tel5⟧ included: left after restore, it names no value. */
+const TOKEN_LIKE = /⟦\s*(?:tel|email)[^⟧\n]{0,24}⟧?/i;
+// per process: the hash of a phone could otherwise be brute-forced back to the number
+const KEY = randomBytes(32);
 
 export interface PiiVault {
   /** token → original */
   readonly tokens: Map<string, string>;
   readonly byValue: Map<string, string>;
-  readonly counts: { tel: number; email: number };
 }
 
 export function createPiiVault(): PiiVault {
-  return { tokens: new Map(), byValue: new Map(), counts: { tel: 0, email: 0 } };
+  return { tokens: new Map(), byValue: new Map() };
 }
 
 function tokenFor(vault: PiiVault, kind: 'tel' | 'email', value: string): string {
   const known = vault.byValue.get(value);
   if (known) return known;
-  const token = `⟦${kind}${++vault.counts[kind]}⟧`;
+  const hash = createHmac('sha256', KEY).update(`${kind}:${value}`).digest('hex');
+  let token = '';
+  for (let n = 6; n <= hash.length; n += 2) {
+    token = `⟦${kind}:${hash.slice(0, n)}⟧`;
+    if (!vault.tokens.has(token)) break;
+  }
   vault.byValue.set(value, token);
   vault.tokens.set(token, value);
   return token;
@@ -46,6 +57,26 @@ export function redactText(text: string, vault: PiiVault): string {
 
 export function restoreText(text: string, vault: PiiVault): string {
   return text.replace(TOKEN, (m) => vault.tokens.get(m) ?? m);
+}
+
+/** The first token-shaped string in a value: one the restore left means the model wrote a contact
+ *  it was never shown, and it must not reach a tool, a reply or a stored field. */
+export function unresolvedToken(value: Json | undefined): string | null {
+  if (typeof value === 'string') return TOKEN_LIKE.exec(value)?.[0] ?? null;
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const t = unresolvedToken(v);
+      if (t) return t;
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const v of Object.values(value)) {
+      const t = unresolvedToken(v);
+      if (t) return t;
+    }
+  }
+  return null;
 }
 
 function mapStrings(value: Json, fn: (s: string) => string): Json {

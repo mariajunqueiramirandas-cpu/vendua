@@ -281,6 +281,15 @@ export function e164Phone(raw: string): string | null {
 
 // "(31) 98765-4321" stored as typed reaches WhatsApp as 31987654321, a Dutch number
 function normalizePhones(row: Record<string, unknown>): void {
+  for (const col of ['phone', 'whatsapp', 'email'] as const) {
+    const v = row[col];
+    // the model gateway's mask for a contact (⟦tel:…⟧): one that reaches here was never restored
+    if (typeof v === 'string' && /[⟦⟧]/.test(v)) {
+      throw new HttpError(422, 'INVALID_LEAD', `${col} is a masked placeholder, not a contact`, {
+        field: col,
+      });
+    }
+  }
   for (const col of ['phone', 'whatsapp'] as const) {
     const v = row[col];
     if (typeof v === 'string' && v.trim()) row[col] = e164Phone(v) ?? v;
