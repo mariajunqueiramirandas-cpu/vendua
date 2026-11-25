@@ -11,6 +11,7 @@ import {
 } from './integrations.ts';
 import { recordStaffEventTx } from './staff-events.ts';
 import { hasUnresolvedTemplate } from '../crm/style.ts';
+import { isAutoReplyTx } from '../crm/auto-reply.ts';
 
 // Unified inbox: one thread per (lead, channel); owns persistence + the
 // draft→approve→dispatch lifecycle — provider sends live in crm/channels.
@@ -67,6 +68,8 @@ export interface MessageRow {
   is_farewell: boolean;
   /** a voice note: in, the lead's (body = its transcript); out, the agent's (crm/voice.ts, 0150) */
   audio?: boolean;
+  /** the lead's machine answering our send, not a person (crm/auto-reply.ts, 0152) */
+  auto_reply?: boolean;
   created_at: string;
 }
 
@@ -98,6 +101,7 @@ export function messageJson(row: MessageRow) {
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     audio: row.audio === true,
+    autoReply: row.auto_reply === true,
     createdAt: row.created_at,
   };
 }
@@ -143,11 +147,11 @@ export async function listThreads(
               l.name as lead_name, l.business_name, l.state as lead_state,
               lm.n as message_count, lm.last_body, lm.last_direction,
               dr.n as pending_drafts,
-              (lm.last_direction = 'in'
+              (lm.last_live_direction = 'in'
                  and not exists (
                    select 1 from lead_messages m2
                    where m2.thread_id = t.id and m2.direction = 'out'
-                     and m2.created_at > lm.last_at
+                     and m2.created_at > lm.last_live_at
                  )) as needs_reply
        from lead_threads t
        join leads l on l.id = t.lead_id
@@ -155,7 +159,11 @@ export async function listThreads(
          select count(*)::int n,
                 (array_agg(m.body order by m.created_at desc))[1] as last_body,
                 (array_agg(m.direction order by m.created_at desc))[1] as last_direction,
-                max(m.created_at) as last_at
+                max(m.created_at) as last_at,
+                -- a machine's greeting needs no reply (crm/auto-reply.ts)
+                (array_agg(m.direction order by m.created_at desc) filter (where not m.auto_reply))[1]
+                  as last_live_direction,
+                max(m.created_at) filter (where not m.auto_reply) as last_live_at
          from lead_messages m
          where m.thread_id = t.id and m.status <> 'rejected'
        ) lm on true
@@ -270,6 +278,8 @@ export interface InboundResult {
   /** true when provider_message_id was already recorded — callers must not
    *  re-trigger side effects (opt-out logging, reply runs) on replays. */
   alreadySeen: boolean;
+  /** the lead's machine answering our send (crm/auto-reply.ts): context, never answered */
+  autoReply?: boolean;
 }
 
 export const UNVERIFIED_EMAIL_SOURCE = 'inbound:email-unverified';
@@ -309,6 +319,8 @@ export async function addInboundMessage(
     unverifiedSender?: boolean;
     /** a voice note: the body is its transcript (crm/voice.ts) */
     audio?: boolean;
+    /** the provider's own timestamp of a live message — times an auto reply against our send */
+    providerAt?: Date;
   },
 ): Promise<InboundResult | null> {
   const body = str(input.body, 'body', 8000).trim();
@@ -338,7 +350,7 @@ export async function addInboundMessage(
     const pmid = input.providerMessageId ? `${input.channel}:${input.providerMessageId}` : null;
     if (pmid) {
       const seen = await tx`
-        select m.id, t.lead_id, m.thread_id from lead_messages m
+        select m.id, t.lead_id, m.thread_id, m.auto_reply from lead_messages m
         join lead_threads t on t.id = m.thread_id
         where m.provider_message_id = ${pmid}
       `;
@@ -349,6 +361,7 @@ export async function addInboundMessage(
           messageId: seen[0].id,
           leadCreated: false,
           alreadySeen: true,
+          ...(seen[0].auto_reply ? { autoReply: true } : {}),
         };
       }
     }
@@ -501,10 +514,15 @@ export async function addInboundMessage(
 
     const author = direction === 'in' ? 'lead' : 'staff';
     const status = direction === 'in' ? 'received' : 'sent';
+    const live = direction === 'in' && !input.historical;
+    const autoReply =
+      live && !leadCreated && input.channel !== 'manual' && !input.audio
+        ? await isAutoReplyTx(tx, thread.id, body, input.providerAt ?? null)
+        : false;
     const message = (
       await tx<MessageRow[]>`
-        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at, historical, audio)
-        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()}, ${input.historical === true}, ${input.audio === true})
+        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at, historical, audio, auto_reply)
+        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()}, ${input.historical === true}, ${input.audio === true}, ${autoReply})
         returning *
       `
     )[0]!;
@@ -519,7 +537,8 @@ export async function addInboundMessage(
         update leads set updated_at = now() where id = ${leadId} returning name, business_name
       `
     )[0]!;
-    if (direction === 'in' && !input.historical) {
+    // a machine's greeting is no reply: the follow-ups stay, and the team hears nothing
+    if (live && !autoReply) {
       // A reply retires the agent's own pending follow-ups (the reply run re-commits what's
       // still wanted); callbacks the lead asked for and staff dates are promises and stay.
       const { retireWakeupsOnInboundTx } = await import('../crm/agenda.ts');
@@ -551,12 +570,19 @@ export async function addInboundMessage(
       await tx`
         insert into lead_activities (lead_id, kind, body, meta, created_by)
         values (${leadId}, 'agent',
-                ${direction === 'in' ? `Recebida via ${input.channel}` : `Enviada via ${input.channel}`},
-                ${tx.json({ channel: input.channel, messageId: message.id } as never)}, 'system')
+                ${direction === 'in' ? `${autoReply ? 'Resposta automática recebida' : 'Recebida'} via ${input.channel}` : `Enviada via ${input.channel}`},
+                ${tx.json({ channel: input.channel, messageId: message.id, ...(autoReply ? { autoReply: true } : {}) } as never)}, 'system')
       `;
     }
 
-    return { leadId, threadId: thread.id, messageId: message.id, leadCreated, alreadySeen: false };
+    return {
+      leadId,
+      threadId: thread.id,
+      messageId: message.id,
+      leadCreated,
+      alreadySeen: false,
+      ...(autoReply ? { autoReply: true } : {}),
+    };
   });
   if (result && !result.alreadySeen) {
     emitControlEvent('thread.message', result.threadId);

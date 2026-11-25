@@ -227,7 +227,11 @@ export const DEFAULT_GUARDRAILS = {
    *  intentScore >= 6) and a ready channel gets an outreach run (autonomy still decides draft vs send) */
   discoveryAutoContact: true,
   discoveryContactMinScore: 7,
-  /** reply run is queued with run_at = now() + N min; 0 = answer at once */
+  /** answer like a person (crm/pacing.ts): a lead who took over 10 min gets the answer 4–9 min
+   *  later, one in the conversation within a minute, a burst once they stop typing. Off = the
+   *  fixed inboundReplyDelayMin below */
+  humanReplyPacing: true,
+  /** with humanReplyPacing off: reply run is queued with run_at = now() + N min; 0 = at once */
   inboundReplyDelayMin: 0,
   /** staff-created lead's outreach run is scheduled N min after create;
    *  0 = fire at once, subject to the workspace send policy */
@@ -270,6 +274,7 @@ export type Guardrails = {
   timezone: string;
   discoveryAutoContact: boolean;
   discoveryContactMinScore: number;
+  humanReplyPacing: boolean;
   inboundReplyDelayMin: number;
   firstContactDelayMin: number;
   followupCadenceDays: number;
@@ -656,6 +661,9 @@ export function validateSetting(key: string, value: unknown): void {
     }
     if (v.quietHoursEnabled !== undefined && typeof v.quietHoursEnabled !== 'boolean') {
       throw bad('quietHoursEnabled', 'must be a boolean');
+    }
+    if (v.humanReplyPacing !== undefined && typeof v.humanReplyPacing !== 'boolean') {
+      throw bad('humanReplyPacing', 'must be a boolean');
     }
     if (v.discoveryAutoContact !== undefined && typeof v.discoveryAutoContact !== 'boolean') {
       throw bad('discoveryAutoContact', 'must be a boolean');

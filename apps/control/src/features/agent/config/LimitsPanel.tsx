@@ -16,6 +16,7 @@ export interface GuardrailsDraft {
   timezone: string;
   discoveryAutoContact: boolean;
   discoveryContactMinScore: number;
+  humanReplyPacing: boolean;
   inboundReplyDelayMin: number;
   firstContactDelayMin: number;
   followupCadenceDays: number;
@@ -36,6 +37,7 @@ export function guardrailsOf(value: Record<string, unknown>): GuardrailsDraft {
     timezone: str(value.timezone, 'America/Sao_Paulo'),
     discoveryAutoContact: value.discoveryAutoContact !== false,
     discoveryContactMinScore: num(value.discoveryContactMinScore, 7),
+    humanReplyPacing: value.humanReplyPacing !== false,
     inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
     firstContactDelayMin: num(value.firstContactDelayMin, 0),
     followupCadenceDays: num(value.followupCadenceDays, 3),
@@ -201,11 +203,26 @@ export function LimitsPanel({
             {!tzOk && <FieldError>fuso IANA inválido</FieldError>}
           </Field>
           <Field
-            label="atraso na resposta (min)"
-            htmlFor="gr-inboundReplyDelayMin"
-            hint="0 = responde na hora; >0 espera esse tempo depois da mensagem do lead"
+            label="ritmo de resposta"
+            hint={
+              edit.humanReplyPacing
+                ? 'lead que demorou mais de 10 min recebe a resposta em 4 a 9 min; conversa ativa, em até 1 min. Espera a pessoa terminar de digitar'
+                : 'atraso fixo depois da mensagem do lead; 0 = responde na hora'
+            }
           >
-            {numIn('inboundReplyDelayMin', 0, 1440, 0)}
+            <Toggle
+              checked={edit.humanReplyPacing}
+              onChange={(v) => onEdit({ ...edit, humanReplyPacing: v })}
+            >
+              {edit.humanReplyPacing ? 'como uma pessoa' : 'atraso fixo'}
+            </Toggle>
+            <div className={cn('flex items-center gap-2', edit.humanReplyPacing && 'hidden')}>
+              <label htmlFor="gr-inboundReplyDelayMin" className="sr-only">
+                atraso fixo na resposta (min)
+              </label>
+              {numIn('inboundReplyDelayMin', 0, 1440, 0)}
+              <span className="text-xs text-muted-foreground">min</span>
+            </div>
           </Field>
           <Field
             label="atraso no 1º contato (min)"

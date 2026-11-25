@@ -43,7 +43,7 @@ export async function unattendedDeliveryTx(
       exists (
         select 1 from lead_messages newer join lead_threads nt on nt.id = newer.thread_id
         where nt.lead_id = t.lead_id and not newer.historical and newer.received_at > coalesce(started.at, m.received_at)
-          and (newer.direction = 'in' or (newer.direction = 'out' and newer.author = 'staff'
+          and ((newer.direction = 'in' and not newer.auto_reply) or (newer.direction = 'out' and newer.author = 'staff'
             and newer.status in ('queued', 'sending', 'sent', 'delivered')))
         union all
         select 1 from lead_activities a where a.lead_id = t.lead_id
@@ -143,7 +143,7 @@ export async function salesDeliveryFailedTx(tx: Sql, messageId: string): Promise
     select t.lead_id, m.thread_id from lead_messages m join lead_threads t on t.id = m.thread_id
     where m.id = ${messageId} and m.author = 'agent' and not m.is_farewell and exists (
       select 1 from lead_messages i join lead_threads it on it.id = i.thread_id
-      where it.lead_id = t.lead_id and i.direction = 'in' and not i.historical
+      where it.lead_id = t.lead_id and i.direction = 'in' and not i.historical and not i.auto_reply
         and i.received_at between m.received_at - interval '3 days' and m.received_at
       union all
       select 1 from lead_activities a where a.lead_id = t.lead_id and a.meta->>'type' = 'site_callback'

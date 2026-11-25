@@ -110,6 +110,14 @@ function Bubble({ m }: { m: Message }) {
       {draft && <Badge variant="warn">rascunho</Badge>}
       {m.status === 'failed' && <Badge variant="bad">falhou</Badge>}
       {m.status === 'rejected' && <Badge>rejeitado</Badge>}
+      {m.autoReply && (
+        <Badge
+          className="px-1.5"
+          title="resposta automática do número do lead (saudação, ausência ou menu): o agente não responde a ela"
+        >
+          automática
+        </Badge>
+      )}
       {m.subject && out && <span className="min-w-0 truncate">{m.subject}</span>}
       {m.audio && (
         <span
@@ -136,6 +144,7 @@ function Bubble({ m }: { m: Message }) {
         className={cn(
           'max-w-[85%] min-w-0 rounded-2xl px-3 py-2 text-sm leading-snug break-words md:max-w-[75%]',
           !out && 'rounded-bl-md border bg-card',
+          !out && m.autoReply && 'border-dashed text-muted-foreground',
           out && !draft && !bad && 'rounded-br-md bg-primary text-primary-foreground',
           draft && 'w-full rounded-br-md border border-warning bg-card sm:w-auto sm:min-w-80',
           bad && 'rounded-br-md border border-dashed bg-muted text-muted-foreground',

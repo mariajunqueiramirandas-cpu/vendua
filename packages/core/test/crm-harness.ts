@@ -101,7 +101,7 @@ export function crmBench(tag = 'crm') {
     await (appSql as unknown as { end: () => Promise<void> }).end();
   }
 
-  /** The agent setting and guardrails; quiet hours off unless a test turns them on. */
+  /** The agent setting and guardrails; quiet hours and human pacing off unless a test turns them on. */
   async function settings(
     level: 'off' | 'copilot' | 'supervised' | 'autopilot',
     g: Record<string, unknown> = {},
@@ -111,7 +111,7 @@ export function crmBench(tag = 'crm') {
       values ('agent', ${sql.json({ level, ...agent } as never)})
       on conflict (key) do update set value = excluded.value`;
     await sql`insert into control_settings (key, value)
-      values ('guardrails', ${sql.json({ ...DEFAULT_GUARDRAILS, quietHoursEnabled: false, ...g } as never)})
+      values ('guardrails', ${sql.json({ ...DEFAULT_GUARDRAILS, quietHoursEnabled: false, humanReplyPacing: false, ...g } as never)})
       on conflict (key) do update set value = excluded.value`;
   }
 

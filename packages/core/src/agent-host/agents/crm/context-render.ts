@@ -74,6 +74,8 @@ export interface TranscriptMessage {
   channel?: string;
   /** a voice note (an inbound one's body already starts with "[áudio]") */
   audio?: boolean;
+  /** the lead's machine answering our send, not a person (crm/auto-reply.ts) */
+  auto_reply?: boolean;
 }
 
 const STATUS_NOTE: Record<string, string> = {
@@ -102,7 +104,9 @@ function transcriptEntries(
   return msgs.map((m) => {
     const who =
       m.direction === 'in'
-        ? 'LEAD'
+        ? m.auto_reply
+          ? 'ROBÔ DO LEAD (resposta automática do número dela, não foi uma pessoa)'
+          : 'LEAD'
         : m.author === 'staff'
           ? 'VENDUÁ (equipe)'
           : m.author === 'system'

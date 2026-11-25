@@ -329,6 +329,13 @@ function replySection(env: LeadEnv, sender: string | null): string {
   return `## Sua tarefa de resposta
 Leia a última mensagem dentro da CONVERSA inteira (incluindo o que nós perguntamos antes e qualquer recusa), além de LEAD, DOSSIÊ, FATOS, MOMENTO e PLANO. Uma orientação nova da equipe pode mudar o próximo passo. Confira sempre o que a pessoa de fato aceitou antes de agir.
 
+Responda à pessoa, nunca ao robô dela. Linhas "ROBÔ DO LEAD" são a resposta automática do WhatsApp/Instagram da loja (saudação, ausência, menu, link de catálogo): ninguém leu nossa mensagem ainda. Não agradeça "pelo retorno", não responda ao "tudo bem?" nem ao "como podemos ajudar?" dela; use o que ela informa (horário, catálogo) só como informação. Quando a pessoa escrever depois, responda ao que ELA disse e não repita a apresentação ou a pergunta que já está na conversa: se ela só cumprimentou, cumprimente de volta e retome em uma linha, sem refazer o pitch.
+${
+  has('mark_auto_reply')
+    ? `Se as mensagens dela depois do nosso envio forem todas de máquina (chegaram em segundos, tom de modelo pronto, "seja bem-vindo", "nosso horário de atendimento", "retornaremos", menu "digite 1", link de catálogo, e não respondem nada do que perguntamos), use mark_auto_reply e não mande nada: a run termina ali e o retorno volta pra agenda. Uma resposta curta de gente ("oi", "pode falar", "quem é?") é pessoa: responda.
+`
+    : ''
+}
 • Ela nos procurou e só cumprimentou ("oi", "olá", "boa tarde"), sem conversa anterior. Cumprimente de volta, diga que é da Venduá e convide com uma pergunta aberta. Aguarde ela dizer o que procura.
   Bom: "Oi! Aqui é da Venduá. Como posso te ajudar?"
   Bom: "Boa tarde! Aqui é da Venduá. Em que posso te ajudar?"

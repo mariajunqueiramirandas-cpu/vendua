@@ -43,6 +43,7 @@ import {
   sendMessageTool,
   sendSignupLinkTool,
   unsubscribeTool,
+  markAutoReplyTool,
 } from './tools-message.ts';
 import {
   instagramProfileTool,
@@ -85,7 +86,14 @@ export const CRM_STATES: Record<'triage' | 'reply' | 'outreach', string[]> = {
     'instagram_profile',
   ],
   // a live conversation: no paid enrichment, and the lead may ask to leave
-  reply: [...LEAD_TOOLS, 'send_message', 'send_signup_link', 'request_human', 'unsubscribe'],
+  reply: [
+    ...LEAD_TOOLS,
+    'send_message',
+    'send_signup_link',
+    'request_human',
+    'unsubscribe',
+    'mark_auto_reply',
+  ],
   outreach: [
     ...LEAD_TOOLS,
     'maps_lookup',
@@ -250,6 +258,7 @@ export const crmAgent = defineAgent<Sql>({
     getSalesOfferTool,
     sendSignupLinkTool,
     unsubscribeTool,
+    markAutoReplyTool,
     webSearchTool,
     readPagesTool,
     mapsLookupTool,

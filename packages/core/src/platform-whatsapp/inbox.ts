@@ -97,7 +97,11 @@ async function toCrm(d: InboxDeps, row: InboxRow) {
       ...(row.sent_at ? { sentAt: row.sent_at } : {}),
       historical: true,
     });
-  else await ingestInbound(d.jobsSql, common);
+  else
+    await ingestInbound(d.jobsSql, {
+      ...common,
+      ...(row.sent_at ? { providerAt: row.sent_at } : {}),
+    });
 }
 
 /** The transcript of a voice note the gateway stored, or null when the row isn't one. */
