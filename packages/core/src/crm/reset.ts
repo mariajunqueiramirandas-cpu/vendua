@@ -242,6 +242,7 @@ export function mountCrmReset(o: {
         'draft.change',
         'run.update',
         'meeting.change',
+        'settings.change',
       ] as const)
         emitControlEvent(type);
     return c.json(res.body, res.status as 200);
