@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { sweepBriefs, sweepStrategist } from '../src/crm/board.ts';
 import { requestLeadTx } from '../src/crm/dispatch.ts';
 import { anchorTx } from '../src/crm/schedule-anchors.ts';
+import { applyIgEvent } from '../src/crm/channels/instagram.ts';
 import { workspaceTx } from '../src/agent-host/agents/crm/context.ts';
 import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
 import { crmStrategist } from '../src/agent-host/agents/crm/strategist.ts';
@@ -114,12 +115,13 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
     delete process.env.MONID_API_KEY;
     const ref = `VENDUA_TEST_TF_${uniq}`;
     const emRef = `VENDUA_TEST_RESEND_${uniq}`;
+    const igSecret = `test-ig-${uniq}`;
     // other files leave integration rows behind — snapshot the ones this test touches
     const prior = await sql<
       { kind: string; driver: string; enabled: boolean; secret_ref: string | null }[]
     >`
       select kind, driver, enabled, secret_ref from control_integrations
-      where kind = 'discovery' or (kind = 'email' and driver = 'resend')
+      where kind in ('discovery', 'instagram') or (kind = 'email' and driver = 'resend')
     `;
     const upsert = (kind: string, driver: string, secretRef: string | null) => sql`
       insert into control_integrations (kind, driver, enabled, secret_ref)
@@ -128,7 +130,7 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
         set enabled = true, secret_ref = excluded.secret_ref, updated_at = now()
     `;
     try {
-      await sql`update control_integrations set enabled = false where kind = 'discovery'`;
+      await sql`update control_integrations set enabled = false where kind in ('discovery', 'instagram')`;
       const real = await workspaceTx(sql);
       for (const n of ['instagram_profile', 'maps_lookup', 'read_pages', 'serp', 'web_search'])
         expect(real.disabled[n]).toBeDefined();
@@ -146,8 +148,15 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
       process.env[ref] = 'k';
       process.env.MONID_API_KEY = 'k';
       const research = await workspaceTx(sql);
-      for (const n of ['instagram_profile', 'maps_lookup', 'read_pages', 'serp', 'web_search'])
+      for (const n of ['maps_lookup', 'read_pages', 'serp', 'web_search'])
         expect(research.disabled[n]).toBeUndefined();
+      // instagram_profile rides ig-sidecar, not monid
+      expect(research.disabled.instagram_profile).toContain('ig-sidecar');
+
+      await upsert('instagram', 'sidecar', null);
+      await applyIgEvent(sql, { type: 'state', status: { state: 'open' } }, igSecret);
+      const withIg = await workspaceTx(sql);
+      expect(withIg.disabled.instagram_profile).toBeUndefined();
 
       // the newest enabled email row is THE provider: a resend without its key can't send
       await upsert('email', 'resend', emRef);
@@ -158,10 +167,12 @@ describe.skipIf(!OWNER_URL)('discovery intelligence (db)', () => {
       expect(withKey.channels).toContain('email');
       expect(withKey.disabled.send_message).toBeUndefined();
     } finally {
+      await applyIgEvent(sql, { type: 'state', status: { state: 'off' } }, igSecret);
       // rows this test created go; rows that were there get their state back
       for (const [kind, driver] of [
         ['discovery', 'mock'],
         ['discovery', 'tinyfish'],
+        ['instagram', 'sidecar'],
         ['email', 'resend'],
       ] as const) {
         if (!prior.some((r) => r.kind === kind && r.driver === driver)) {

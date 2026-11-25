@@ -605,6 +605,60 @@ export async function followInstagram(
   );
 }
 
+// profile lookups queue behind the sidecar's pacer (4-6s each), so parallel bursts need room
+const PROFILE_TIMEOUT_MS = 90_000;
+
+export interface IgBioLink {
+  url: string;
+  title?: string;
+  linkType?: string;
+}
+
+export interface IgProfilePost {
+  timestamp: number;
+  caption?: string;
+  shortcode?: string;
+  isPinned?: boolean;
+}
+
+export interface IgProfile {
+  username: string;
+  fullName?: string;
+  igid?: string;
+  biography: string;
+  externalUrl?: string;
+  externalUrls?: IgBioLink[];
+  followersCount?: number;
+  postsCount?: number;
+  businessCategoryName?: string;
+  isPrivate: boolean;
+  isBusinessAccount: boolean;
+  publicEmail?: string;
+  contactPhoneNumber?: string;
+  whatsappNumber?: string;
+  latestPosts?: IgProfilePost[];
+}
+
+/** Reads an Instagram profile through the connected ig-sidecar (/v1/profile). Returns null on 404. */
+export async function fetchInstagramProfile(
+  sql: Sql,
+  handle: string,
+  timeoutMs = PROFILE_TIMEOUT_MS,
+): Promise<IgProfile | null> {
+  const username = instagramHandle(handle);
+  if (!username) throw new SidecarError(422, 'bad_username', 'usuário do instagram inválido');
+  const integration = await getIntegration(sql, 'instagram');
+  if (!integration || !sidecarActive(integration)) {
+    throw new SidecarError(409, 'driver_inactive', 'Instagram (ig-sidecar) não conectado');
+  }
+  try {
+    return await call<IgProfile>(integration, 'POST', '/v1/profile', { username }, timeoutMs);
+  } catch (e) {
+    if (e instanceof SidecarError && e.code === 'user_not_found') return null;
+    throw e;
+  }
+}
+
 /** Constant-time check of the sidecar's HMAC over "<ts>.<body>". */
 export function igEventSignatureOk(
   secret: string,

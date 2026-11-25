@@ -45,6 +45,7 @@ func (a *api) routes() http.Handler {
 	mux.HandleFunc("POST /v1/resolve", a.auth(a.resolve))
 	mux.HandleFunc("POST /v1/send", a.auth(a.send))
 	mux.HandleFunc("POST /v1/follow", a.auth(a.follow))
+	mux.HandleFunc("POST /v1/profile", a.auth(a.profile))
 	return mux
 }
 
@@ -94,6 +95,8 @@ func (a *api) fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "blocking", err.Error())
 	case errors.Is(err, errActionBlocked):
 		writeErr(w, http.StatusTooManyRequests, "action_blocked", err.Error())
+	case errors.Is(err, errProfileRateLimited):
+		writeErr(w, http.StatusTooManyRequests, "rate_limited", err.Error())
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 		writeErr(w, http.StatusGatewayTimeout, "timeout", "tempo esgotado")
 	default:
@@ -248,6 +251,21 @@ func (a *api) follow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.mgr.Follow(r.Context(), body.FBID, body.Username)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (a *api) profile(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	res, err := a.mgr.Profile(r.Context(), body.Username)
 	if err != nil {
 		a.fail(w, err)
 		return

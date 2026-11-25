@@ -35,6 +35,12 @@ export async function instagramReadyTx(tx: Sql): Promise<boolean> {
   return ig.driver === 'sidecar' ? igState() === 'open' : true;
 }
 
+/** Live ig-sidecar session specifically (for reading profiles via /v1/profile; 'log' cannot scrape). */
+export async function igSidecarReadyTx(tx: Sql): Promise<boolean> {
+  const ig = await getIntegrationTx(tx, 'instagram');
+  return Boolean(ig && ig.driver === 'sidecar' && igState() === 'open');
+}
+
 /** Enabled email row + live credentials ('log' needs none; 'resend' needs its key). */
 export async function emailReadyTx(tx: Sql): Promise<boolean> {
   const em = await getIntegrationTx(tx, 'email');

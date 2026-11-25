@@ -195,7 +195,7 @@ function normalizeContacts(payload: Record<string, unknown>): boolean {
 export const createLeadTool = defineTool<CreateInput, Sql>({
   name: 'create_lead',
   description:
-    'Create a new lead (state=lead), only AFTER researching it. Requires findings (the 2-4 line dossier: what the business sells, size/channel signals, where each contact came from) and at least one contact channel. Pass fitScore/fitReason (ICP match) and intentScore/intentReason (buying intent). Self-dedupes on name+city/phone/instagram: a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
+    'Create a new lead (state=lead), only AFTER researching it (including following its bio/site links). Requires findings (the 2-4 line dossier: what the business sells, how it currently takes orders, size/channel signals, where each contact came from) and at least one contact channel. Fill website when known, and pass fitScore/fitReason (ICP match) and intentScore/intentReason (buying intent). Self-dedupes on name+city/phone/instagram: a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
   effect: 'write',
   input: s.object({
     name: s.string({ min: 1, max: 200 }),
@@ -203,7 +203,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
     findings: s
       .string({ max: 4000 })
       .describe(
-        'concise research dossier: what the business sells, owner first name if public, best single natural hook for a human opener, fit signals, and where each contact came from',
+        'concise research dossier: what the business sells, how it currently takes orders (verified from bio/links/site), owner first name if public, best single natural hook for a human opener, fit signals, and where each contact came from',
       ),
     sources: s
       .array(s.string({ max: 2000 }), { max: 20 })

@@ -7,15 +7,24 @@ import {
   contactFromUrl,
   contactsFromText,
   discoveryFor,
+  hostOf,
   isBrMobilePhone,
   isMapPointer,
   isProfileHubUrl,
+  isShortenerUrl,
   mapPointerName,
   pageKey,
   resolveMapPointer,
+  unwrapLink,
+  type DiscoveryProvider,
   type ReadPage,
   type ReadPagesResult,
 } from '../../../crm/channels/discovery.ts';
+import {
+  fetchInstagramProfile,
+  SidecarError,
+  type IgProfile,
+} from '../../../crm/channels/instagram.ts';
 import { MonidBudget, monidRun } from '../../../crm/channels/monid.ts';
 import {
   assessInstagramActivity,
@@ -34,9 +43,12 @@ import { counters, str, turn, type Ctx } from './shared.ts';
 
 /** a live conversation can't afford a rabbit hole: reply turns read at most this many pages */
 const REPLY_READ_PAGES_CAP = 2;
-/** a page's text as the model reads it; the rest is nav and contacts */
+/** a page's text as the model reads it; the rest is nav, outboundLinks and contacts */
 const PAGE_TEXT_MAX = 12_000;
 const PAGES_TEXT_TOTAL = 60_000;
+/** compact text budget for bio pages auto-read inside instagram_profile */
+const BIO_PAGE_TEXT_MAX = 2_500;
+const BIO_PAGES_TEXT_TOTAL = 6_000;
 const MONID_CAP_USD: Record<string, number> = { discovery: 0.25 };
 
 type PageResult = { page: ReadPage | null; error?: string };
@@ -65,10 +77,224 @@ function researchOf(ctx: Ctx): Research {
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Fetches 1..N URLs through the turn's page cache and chases link-in-bio hubs, URL shorteners
+ *  and Google Maps pointers (plus shorteners/maps found on chased hubs in wave 2). */
+async function fetchPagesWithChase(
+  ctx: Ctx,
+  rawUrls: string[],
+  goal: string,
+  opts: {
+    provider?: DiscoveryProvider;
+    maxChases?: number;
+    maxWave2Shorteners?: number;
+    enforceReplyCap?: boolean;
+  } = {},
+): Promise<{
+  pages: (ReadPage & { cached?: boolean })[];
+  errors: { url: string; error: string }[];
+  spent: number;
+}> {
+  const c = counters(ctx);
+  const cache = researchOf(ctx).pages;
+  const replyBound = (opts.enforceReplyCap ?? true) && turn(ctx.state).kind === 'reply';
+  let spent = 0;
+  const spend = (n: number) => {
+    c.pageReads += n;
+    spent += n;
+  };
+  // reserve-and-charge per real fetch: named map pointers are free (in-process)
+  const reserve = replyBound
+    ? async (): Promise<boolean> => {
+        if (c.pageReads >= REPLY_READ_PAGES_CAP) return false;
+        spend(1);
+        return true;
+      }
+    : undefined;
+  const urls = rawUrls.map((u) => u.trim()).filter(Boolean);
+  const missOut = new Map<string, Promise<PageResult>>();
+  const fetchable: string[] = [];
+  const mapDirects: string[] = [];
+  const queued = new Set<string>();
+  for (const url of urls) {
+    const id = pageKey(url) ?? url;
+    // validate before the cache short-circuit: pageKey drops the scheme
+    try {
+      assertFetchable(url);
+    } catch (e) {
+      missOut.set(url, Promise.resolve({ page: null, error: errText(e) }));
+      continue;
+    }
+    if (cache.has(id) || queued.has(id)) continue;
+    queued.add(id);
+    if (isMapPointer(url)) mapDirects.push(url);
+    else fetchable.push(url);
+  }
+  // reply's bound prices fetches, not calls: all-or-nothing before any fetch issues
+  if (replyBound && fetchable.length) {
+    if (c.pageReads + fetchable.length > REPLY_READ_PAGES_CAP)
+      throw new ToolError(
+        `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
+      );
+    spend(fetchable.length);
+  }
+  for (const url of mapDirects) {
+    const key = pageKey(url);
+    const p: Promise<PageResult> = resolveMapPointer(url, reserve)
+      .then((page): PageResult =>
+        page ? { page } : { page: null, error: 'map pointer did not resolve' },
+      )
+      .catch((e): PageResult => ({ page: null, error: errText(e) }))
+      .then((r) => {
+        // a failed resolve doesn't bank: a retry must reissue it
+        if (!r.page && key) cache.delete(key);
+        return r;
+      });
+    missOut.set(url, p);
+    if (key) cache.set(key, p);
+  }
+  const provider = opts.provider ?? (await discoveryFor(ctx.tx));
+  const readBatch = (list: string[]): Promise<ReadPagesResult> =>
+    provider.readPages(list, goal).catch((e: unknown) => ({
+      pages: [],
+      errors: list.map((url) => ({ url, error: errText(e) })),
+    }));
+  const pageFor = (res: ReadPagesResult, key: string | null) =>
+    res.pages.find((pg) => pageKey(pg.url) === key || pageKey(pg.finalUrl ?? '') === key);
+  if (fetchable.length) {
+    // one provider call for the whole miss batch
+    const batch = readBatch(fetchable);
+    for (const url of fetchable) {
+      const key = pageKey(url);
+      const p: Promise<PageResult> = batch.then((res) => {
+        const page = pageFor(res, key);
+        if (page) return { page };
+        if (key) cache.delete(key);
+        return {
+          page: null,
+          error: res.errors.find((er) => pageKey(er.url) === key)?.error ?? 'no result for url',
+        };
+      });
+      missOut.set(url, p);
+      if (key) cache.set(key, p);
+    }
+  }
+  const pages: (ReadPage & { cached?: boolean })[] = [];
+  const errs: { url: string; error: string }[] = [];
+  for (const url of urls) {
+    const key = pageKey(url);
+    // this url's own slot first: a rejection must never inherit a fetchable twin's page
+    const p = missOut.get(url) ?? (key ? cache.get(key) : undefined);
+    const out = p ? await p : null;
+    if (out?.page) {
+      const shared = key !== null && queued.has(key) && !missOut.has(url);
+      const fromCache = key !== null && !queued.has(key);
+      pages.push({ ...out.page, ...(shared || fromCache ? { cached: true } : {}) });
+    } else errs.push({ url, error: out?.error ?? 'no result for url' });
+  }
+  // one free hop on pointer-only links (link-in-bio hubs, URL shorteners, google-business)
+  const chaseOf: { url: string; from: string }[] = [];
+  const chaseSeen = new Set<string>();
+  for (const pg of pages)
+    for (const link of chaseLinks(pg)) {
+      const id = pageKey(link) ?? link;
+      if (cache.has(id) || chaseSeen.has(id)) continue;
+      chaseSeen.add(id);
+      chaseOf.push({ url: link, from: pg.url });
+    }
+  const chases: typeof chaseOf = [];
+  const maxChases = opts.maxChases ?? 4;
+  let slots = replyBound ? Math.max(0, REPLY_READ_PAGES_CAP - c.pageReads) : Infinity;
+  for (const ch of chaseOf) {
+    if (chases.length >= maxChases) break;
+    if (mapPointerName(ch.url) === null) {
+      try {
+        assertFetchable(ch.url);
+      } catch (e) {
+        errs.push({ url: ch.url, error: errText(e) });
+        continue;
+      }
+      if (slots <= 0) continue;
+      slots--;
+    }
+    chases.push(ch);
+  }
+  const hubChases = chases.filter((ch) => !isMapPointer(ch.url));
+  if (hubChases.length) {
+    if (replyBound) spend(hubChases.length);
+    const res = await readBatch(hubChases.map((ch) => ch.url));
+    for (const ch of hubChases) {
+      const key = pageKey(ch.url);
+      const page = pageFor(res, key);
+      if (page) {
+        pages.push({ ...page, chasedFrom: ch.from });
+        if (key) cache.set(key, Promise.resolve({ page }));
+      } else
+        errs.push({
+          url: ch.url,
+          error: res.errors.find((er) => pageKey(er.url) === key)?.error ?? 'no result for url',
+        });
+    }
+  }
+  // wave 2 on chased hubs: resolve shorteners (e.g. ig → bio hub → bit.ly → menu) and maps pointers
+  const maxWave2Shorteners = opts.maxWave2Shorteners ?? 3;
+  const wave2Shorteners: typeof chaseOf = [];
+  for (const pg of pages.filter((p) => p.chasedFrom))
+    for (const link of chaseLinks(pg)) {
+      if (!isShortenerUrl(link) || wave2Shorteners.length >= maxWave2Shorteners) continue;
+      const id = pageKey(link) ?? link;
+      if (cache.has(id) || chaseSeen.has(id)) continue;
+      try {
+        assertFetchable(link);
+      } catch (e) {
+        errs.push({ url: link, error: errText(e) });
+        continue;
+      }
+      if (slots <= 0) break;
+      slots--;
+      chaseSeen.add(id);
+      wave2Shorteners.push({ url: link, from: pg.url });
+    }
+  if (wave2Shorteners.length) {
+    if (replyBound) spend(wave2Shorteners.length);
+    const res = await readBatch(wave2Shorteners.map((ch) => ch.url));
+    for (const ch of wave2Shorteners) {
+      const key = pageKey(ch.url);
+      const page = pageFor(res, key);
+      if (page) {
+        pages.push({ ...page, chasedFrom: ch.from });
+        if (key) cache.set(key, Promise.resolve({ page }));
+      } else
+        errs.push({
+          url: ch.url,
+          error: res.errors.find((er) => pageKey(er.url) === key)?.error ?? 'no result for url',
+        });
+    }
+  }
+  // maps/google-business pointers captcha the fetch provider: resolve the 302 in-process
+  const mapWave = chases.filter((ch) => isMapPointer(ch.url));
+  for (const pg of pages.filter((p) => p.chasedFrom))
+    for (const link of chaseLinks(pg)) {
+      if (!isMapPointer(link) || mapWave.length >= 6) continue;
+      const id = pageKey(link) ?? link;
+      if (cache.has(id) || chaseSeen.has(id)) continue;
+      chaseSeen.add(id);
+      mapWave.push({ url: link, from: pg.url });
+    }
+  for (const ch of mapWave.slice(0, 6)) {
+    const key = pageKey(ch.url);
+    const page = await resolveMapPointer(ch.url, reserve).catch(() => null);
+    if (page) {
+      pages.push({ ...page, chasedFrom: ch.from });
+      if (key) cache.set(key, Promise.resolve({ page }));
+    } else errs.push({ url: ch.url, error: 'map pointer did not resolve' });
+  }
+  return { pages, errors: errs, spent };
+}
+
 export const webSearchTool = defineTool<{ query: string; purpose?: string | undefined }, Sql>({
   name: 'web_search',
   description:
-    'Search the web for prospects. Results come annotated: kind=contact already carries the parsed phone/whatsapp link from the URL; kind=profile is a social root (instagram profiles are worth a read_pages: the bio carries whatsapp + link-in-bio; facebook is login-walled); kind=site is the read_pages candidate; kind=listing is a directory/ordering platform. Snippet-carried phones/emails arrive pre-parsed. Emit 2-3 different-angled queries per step: they run in parallel.',
+    'Search the web for prospects. Results come annotated: kind=contact already carries the parsed phone/whatsapp link from the URL; kind=profile is a social root (inspect instagram profiles to read the bio and follow its links; facebook is login-walled); kind=site is the read_pages candidate; kind=listing is a directory, marketplace, or hosted ordering platform (pay attention to ordering-platform URLs like Brendi, Anota AI, Cardápio Web, Goomer — they reveal how the shop already takes orders). Snippet-carried phones/emails arrive pre-parsed. Emit 2-3 different-angled queries per step: they run in parallel.',
   effect: 'read',
   input: s.object({
     query: s.string({ min: 1, max: 300 }),
@@ -87,7 +313,7 @@ export const webSearchTool = defineTool<{ query: string; purpose?: string | unde
         ctx,
         results.flatMap((r) => [r.phone, r.whatsappLink, r.instagram]),
       ),
-      note: 'kind=contact já traz phone/whatsappLink da URL; kind=profile instagram vale read_pages (a bio entrega whatsapp + link-in-bio — facebook é login wall); kind=site é o que vale read_pages; listing = diretório/plataforma de pedido — evidência mais que fonte, EXCETO quando o título cita o nome do prospect pesquisado: aí read_pages vale (diretório carrega telefone/endereço). phone/email podem vir do snippet.',
+      note: 'kind=contact já traz phone/whatsappLink da URL; kind=profile instagram vale instagram_profile (ou read_pages) pra ler a bio e seguir os links dela — facebook é login wall; kind=site é o que vale read_pages; listing inclui diretórios, marketplaces (iFood/Rappi/aiqfome) E plataformas próprias de cardápio digital (Brendi, Anota AI, Cardápio Web, Goomer, etc.) — observe a URL/título pra saber como o negócio já recebe pedidos. Quando o título cita o prospect num diretório, read_pages traz telefone/endereço.',
     } as unknown as Json;
   },
 });
@@ -95,7 +321,7 @@ export const webSearchTool = defineTool<{ query: string; purpose?: string | unde
 export const readPagesTool = defineTool<{ urls: string[]; goal?: string | undefined }, Sql>({
   name: 'read_pages',
   description:
-    "Read pages: each page's markdown text (read it: contacts hide in prose, a bio, a footer mailto), foundContacts (phone/whatsapp/email/socials parsed from links, text, meta and redirects; phoneHints are partial numbers that need verification) and nav (contact-ish follow-ups). Link-in-bio hubs and google-business/maps pointers are chased one hop for free (marked chasedFrom). truncated:true = cut mid-render, the contact line may be past the fold. Up to 6 urls of one prospect per call; facebook is login-walled; a repeated URL returns its cached output.",
+    "Read pages: each page's markdown text (read it: contacts and ordering flows hide in prose, bios and menus), foundContacts (phone/whatsapp/email/socials parsed from links, text, meta and redirects; phoneHints are partial numbers), nav (same-host contact/catalog follow-ups and hubs), and outboundLinks (ALL external links on the page — digital menus, ordering platforms like Brendi/Anota AI/Cardápio Web/Goomer, marketplaces, PDFs, Google Forms, shorteners, external sites). Link-in-bio hubs (linktr.ee, *.pages.dev, *.canva.site, *.carrd.co, etc.), URL shorteners (bit.ly, w.app, contate.me…), and google-business/maps pointers are chased automatically (marked chasedFrom). truncated:true = cut mid-render. Up to 6 urls of one prospect per call; facebook is login-walled; repeated URLs return cached output.",
   effect: 'read',
   input: s.object({
     urls: s
@@ -104,166 +330,12 @@ export const readPagesTool = defineTool<{ urls: string[]; goal?: string | undefi
     goal: s.string({ max: 300 }).describe('what you are looking for').optional(),
   }),
   async run(ctx: Ctx, input) {
-    const c = counters(ctx);
-    const cache = researchOf(ctx).pages;
-    const replyBound = turn(ctx.state).kind === 'reply';
-    let spent = 0;
-    const spend = (n: number) => {
-      c.pageReads += n;
-      spent += n;
-    };
-    // reserve-and-charge per real fetch: named map pointers are free (in-process)
-    const reserve = replyBound
-      ? async (): Promise<boolean> => {
-          if (c.pageReads >= REPLY_READ_PAGES_CAP) return false;
-          spend(1);
-          return true;
-        }
-      : undefined;
-    const urls = input.urls.map((u) => u.trim()).filter(Boolean);
-    const missOut = new Map<string, Promise<PageResult>>();
-    const fetchable: string[] = [];
-    const mapDirects: string[] = [];
-    const queued = new Set<string>();
-    for (const url of urls) {
-      const id = pageKey(url) ?? url;
-      // validate before the cache short-circuit: pageKey drops the scheme
-      try {
-        assertFetchable(url);
-      } catch (e) {
-        missOut.set(url, Promise.resolve({ page: null, error: errText(e) }));
-        continue;
-      }
-      if (cache.has(id) || queued.has(id)) continue;
-      queued.add(id);
-      if (isMapPointer(url)) mapDirects.push(url);
-      else fetchable.push(url);
-    }
-    // reply's bound prices fetches, not calls: all-or-nothing before any fetch issues
-    if (replyBound && fetchable.length) {
-      if (c.pageReads + fetchable.length > REPLY_READ_PAGES_CAP)
-        throw new ToolError(
-          `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
-        );
-      spend(fetchable.length);
-    }
-    for (const url of mapDirects) {
-      const key = pageKey(url);
-      const p: Promise<PageResult> = resolveMapPointer(url, reserve)
-        .then((page): PageResult =>
-          page ? { page } : { page: null, error: 'map pointer did not resolve' },
-        )
-        .catch((e): PageResult => ({ page: null, error: errText(e) }))
-        .then((r) => {
-          // a failed resolve doesn't bank: a retry must reissue it
-          if (!r.page && key) cache.delete(key);
-          return r;
-        });
-      missOut.set(url, p);
-      if (key) cache.set(key, p);
-    }
-    const provider = await discoveryFor(ctx.tx);
-    const goal = input.goal ?? '';
-    const readBatch = (list: string[]): Promise<ReadPagesResult> =>
-      provider.readPages(list, goal).catch((e: unknown) => ({
-        pages: [],
-        errors: list.map((url) => ({ url, error: errText(e) })),
-      }));
-    const pageFor = (res: ReadPagesResult, key: string | null) =>
-      res.pages.find((pg) => pageKey(pg.url) === key || pageKey(pg.finalUrl ?? '') === key);
-    if (fetchable.length) {
-      // one provider call for the whole miss batch
-      const batch = readBatch(fetchable);
-      for (const url of fetchable) {
-        const key = pageKey(url);
-        const p: Promise<PageResult> = batch.then((res) => {
-          const page = pageFor(res, key);
-          if (page) return { page };
-          if (key) cache.delete(key);
-          return {
-            page: null,
-            error: res.errors.find((er) => pageKey(er.url) === key)?.error ?? 'no result for url',
-          };
-        });
-        missOut.set(url, p);
-        if (key) cache.set(key, p);
-      }
-    }
-    const pages: ReadPage[] = [];
-    const errs: { url: string; error: string }[] = [];
-    for (const url of urls) {
-      const key = pageKey(url);
-      // this url's own slot first: a rejection must never inherit a fetchable twin's page
-      const p = missOut.get(url) ?? (key ? cache.get(key) : undefined);
-      const out = p ? await p : null;
-      if (out?.page) {
-        const shared = key !== null && queued.has(key) && !missOut.has(url);
-        const fromCache = key !== null && !queued.has(key);
-        pages.push({ ...out.page, ...(shared || fromCache ? { cached: true } : {}) });
-      } else errs.push({ url, error: out?.error ?? 'no result for url' });
-    }
-    // one free hop on pointer-only links (link-in-bio hubs, google-business)
-    const chaseOf: { url: string; from: string }[] = [];
-    const chaseSeen = new Set<string>();
-    for (const pg of pages)
-      for (const link of chaseLinks(pg)) {
-        const id = pageKey(link) ?? link;
-        if (cache.has(id) || chaseSeen.has(id)) continue;
-        chaseSeen.add(id);
-        chaseOf.push({ url: link, from: pg.url });
-      }
-    const chases: typeof chaseOf = [];
-    let slots = replyBound ? Math.max(0, REPLY_READ_PAGES_CAP - c.pageReads) : Infinity;
-    for (const ch of chaseOf) {
-      if (chases.length >= 4) break;
-      if (mapPointerName(ch.url) === null) {
-        try {
-          assertFetchable(ch.url);
-        } catch (e) {
-          errs.push({ url: ch.url, error: errText(e) });
-          continue;
-        }
-        if (slots <= 0) continue;
-        slots--;
-      }
-      chases.push(ch);
-    }
-    const hubChases = chases.filter((ch) => !isMapPointer(ch.url));
-    if (hubChases.length) {
-      if (replyBound) spend(hubChases.length);
-      const res = await readBatch(hubChases.map((ch) => ch.url));
-      for (const ch of hubChases) {
-        const key = pageKey(ch.url);
-        const page = pageFor(res, key);
-        if (page) {
-          pages.push({ ...page, chasedFrom: ch.from });
-          if (key) cache.set(key, Promise.resolve({ page }));
-        } else
-          errs.push({
-            url: ch.url,
-            error: res.errors.find((er) => pageKey(er.url) === key)?.error ?? 'no result for url',
-          });
-      }
-    }
-    // maps/google-business pointers captcha the fetch provider: resolve the 302 in-process
-    const mapWave = chases.filter((ch) => isMapPointer(ch.url));
-    for (const pg of pages.filter((p) => p.chasedFrom))
-      for (const link of chaseLinks(pg)) {
-        if (!isMapPointer(link) || mapWave.length >= 6) continue;
-        const id = pageKey(link) ?? link;
-        if (cache.has(id) || chaseSeen.has(id)) continue;
-        chaseSeen.add(id);
-        mapWave.push({ url: link, from: pg.url });
-      }
-    for (const ch of mapWave.slice(0, 6)) {
-      const key = pageKey(ch.url);
-      const page = await resolveMapPointer(ch.url, reserve).catch(() => null);
-      if (page) {
-        pages.push({ ...page, chasedFrom: ch.from });
-        if (key) cache.set(key, Promise.resolve({ page }));
-      } else errs.push({ url: ch.url, error: 'map pointer did not resolve' });
-    }
-    // a turn's log row stays far under its 256 KB cap: the text shrinks to fit, nav and contacts stay
+    const {
+      pages,
+      errors: errs,
+      spent,
+    } = await fetchPagesWithChase(ctx, input.urls, input.goal ?? '');
+    // a turn's log row stays far under its 256 KB cap: the text shrinks to fit, nav/outboundLinks/contacts stay
     const each = Math.min(PAGE_TEXT_MAX, Math.floor(PAGES_TEXT_TOTAL / Math.max(1, pages.length)));
     const shown = pages.map((p) => {
       const closedSignal = detectClosedPhrase(`${p.title ?? ''}\n${p.text.slice(0, 2500)}`);
@@ -338,13 +410,65 @@ const igFrom = (o: Record<string, unknown>): string | null => {
   return m ? `@${m[1]}` : null;
 };
 
+const NON_READABLE_BIO_HOSTS = new Set([
+  'wa.me',
+  'whatsapp.com',
+  'instagram.com',
+  'facebook.com',
+  'fb.com',
+  'fb.me',
+  'tiktok.com',
+]);
+
+function isReadableBioUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const h = hostOf(raw);
+  if (!h) return false;
+  for (const skip of NON_READABLE_BIO_HOSTS) {
+    if (h === skip || h.endsWith(`.${skip}`)) return false;
+  }
+  return true;
+}
+
+function orderLinksFrom(r: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (raw: unknown) => {
+    const s = str(raw);
+    if (!s || !/^https?:\/\//i.test(s)) return;
+    const key = pageKey(s) ?? s;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(s);
+  };
+  for (const field of [r.orderBy, r.orderLinks, r.order_links]) {
+    if (!field) continue;
+    const items = Array.isArray(field) ? field : [field];
+    for (const item of items) {
+      if (typeof item === 'string') add(item);
+      else if (item && typeof item === 'object') {
+        const o = item as Record<string, unknown>;
+        add(o.orderUrl ?? o.order_url ?? o.url ?? o.link);
+      }
+      if (out.length >= 5) return out;
+    }
+  }
+  return out;
+}
+
 export const mapsLookupTool = defineTool<
   { query: string; city: string; limit?: number | undefined },
   Sql
 >({
   name: 'maps_lookup',
   description:
-    "Google Maps business lookup via monid (~$0.0045/result against the turn's monid cap). Returns business identity, phone, site, location, operational status (permanentlyClosed/temporarilyClosed), reviewsCount and opening hours. whatsappLikely indicates a Brazilian mobile number. Keep it as phone until a source or registration confirms WhatsApp.",
+    "Google Maps business lookup via monid (~$0.0045/result against the turn's monid cap). Returns business identity, phone, website, menuUrl/orderLinks (when listed), location, operational status (permanentlyClosed/temporarilyClosed), reviewsCount and opening hours. Inspect website/menuUrl/orderLinks to see how the shop takes orders today. whatsappLikely indicates a Brazilian mobile number; keep it as phone until a source or registration confirms WhatsApp.",
   effect: 'read',
   input: s.object({
     query: s.string({ min: 1, max: 200 }).describe("business/segment, e.g. 'padaria artesanal'"),
@@ -375,6 +499,8 @@ export const mapsLookupTool = defineTool<
       const phone = str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone);
       const instagram = igFrom(r);
       const rating = r.rating ?? r.totalScore;
+      const menuUrl = str(r.menu ?? r.menuUrl ?? r.menu_url ?? r.deliveryUrl ?? r.delivery_url);
+      const orderLinks = orderLinksFrom(r);
       const act = assessMapsActivity(r, ctx.now);
       if (act.status !== 'unknown' && act.status !== 'private') {
         const reason =
@@ -400,6 +526,8 @@ export const mapsLookupTool = defineTool<
         whatsappLikely: phone ? isBrMobilePhone(phone) : false,
         address: str(r.address ?? r.fullAddress ?? r.street),
         website: str(r.website),
+        ...(menuUrl ? { menuUrl } : {}),
+        ...(orderLinks.length ? { orderLinks } : {}),
         instagram,
         rating: typeof rating === 'number' ? rating : null,
         reviewsCount: act.reviewsCount,
@@ -447,44 +575,70 @@ export const mapsLookupTool = defineTool<
 export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
   name: 'instagram_profile',
   description:
-    "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers, public contact fields, AND activity freshness (lastPostAt, daysSinceLastPost, postsLast30d/90d, recent post captions, closed/paused warnings) so you can confirm the business is still operating.",
+    'Full Instagram profile via the connected ig-sidecar (no monid cost; paced and cached). Returns the complete biography, ALL link-in-bio URLs (externalUrl + externalUrls), category, followers, public contact fields, activity freshness (lastPostAt, daysSinceLastPost, postsLast30d/90d, recentPosts, closed/paused warnings), AND auto-reads up to 2 web bio links (including hubs/shorteners) into bioPages with their outboundLinks and contacts so you can see how the business actually receives orders today.',
   effect: 'read',
   input: s.object({
     handle: s.string({ min: 1, max: 100 }).describe('instagram @handle (with or without @)'),
   }),
   async run(ctx: Ctx, input) {
-    const apiKey = monidKey();
     const handle = input.handle.replace(/^@/, '').trim();
     if (!handle) throw new ToolError('handle vazio');
-    const res = await paid(ctx, 0.003, async () => {
-      const r = await monidRun(
-        { provider: 'apify', endpoint: '/apify/instagram-profile-scraper' },
-        { usernames: [handle] },
-        apiKey,
-      );
-      return { value: r.output, costUsd: r.costUsd || 0.003 * r.output.length };
-    });
-    const p = res.value[0];
-    if (!p)
-      return {
-        error: `perfil @${handle} não encontrado`,
-        spentUsd: res.spentUsd,
-        capUsd: res.capUsd,
-        monidUsd: res.costUsd,
-      };
+    let p: IgProfile | null;
+    try {
+      p = await fetchInstagramProfile(ctx.tx, handle);
+    } catch (e) {
+      if (e instanceof SidecarError) {
+        if (e.code === 'rate_limited') {
+          throw new ToolError(
+            `instagram_profile: limite temporário do Instagram atingido (${e.message}) — aguarde ou use maps_lookup/serp/read_pages`,
+          );
+        }
+        if (e.code === 'not_connected' || e.code === 'driver_inactive') {
+          throw new ToolError(
+            `instagram_profile: Instagram (ig-sidecar) não conectado (${e.message})`,
+          );
+        }
+        throw new ToolError(`instagram_profile: ${e.message}`);
+      }
+      throw new ToolError(`instagram_profile: ${errText(e)}`);
+    }
+    if (!p) return { error: `perfil @${handle} não encontrado` };
+
     const bio = str(p.biography) ?? '';
-    const externalUrl =
-      str(p.externalUrl) ?? str((p.externalUrls as { url?: string }[] | undefined)?.[0]?.url);
     const found = contactsFromText(bio);
-    let extIsHub = false;
-    if (externalUrl) {
+    const bioLinks: { url: string; title?: string }[] = [];
+    const bioSeen = new Set<string>();
+    const addBioLink = (raw: string | null | undefined, title?: string) => {
+      if (!raw) return;
+      const clean = unwrapLink(raw.trim());
+      if (!clean) return;
+      let parsed: URL;
       try {
-        const u = new URL(externalUrl);
+        parsed = new URL(clean);
+      } catch {
+        return;
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+      const key = pageKey(clean) ?? clean;
+      if (bioSeen.has(key)) return;
+      bioSeen.add(key);
+      bioLinks.push({ url: clean, ...(title?.trim() ? { title: title.trim() } : {}) });
+    };
+    if (Array.isArray(p.externalUrls)) {
+      for (const l of p.externalUrls) addBioLink(l?.url, l?.title);
+    }
+    addBioLink(p.externalUrl);
+    const externalUrl = bioLinks[0]?.url ?? null;
+
+    for (const link of bioLinks) {
+      try {
+        const u = new URL(link.url);
         const c = contactFromUrl(u);
-        if (c.phone) found.phones.push(c.phone);
-        if (c.whatsappLink) found.whatsappLinks.push(c.whatsappLink);
-        if (c.instagram) found.instagram.push(c.instagram);
-        extIsHub = isProfileHubUrl(u);
+        if (c.phone && !found.phones.includes(c.phone)) found.phones.push(c.phone);
+        if (c.whatsappLink && !found.whatsappLinks.includes(c.whatsappLink))
+          found.whatsappLinks.push(c.whatsappLink);
+        if (c.instagram && !found.instagram.includes(c.instagram))
+          found.instagram.push(c.instagram);
       } catch {
         /* not a url */
       }
@@ -492,20 +646,23 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
     for (const f of ['publicEmail', 'contactPhoneNumber', 'whatsappNumber'] as const) {
       const v = str(p[f]);
       if (!v) continue;
-      if (/@/.test(v)) found.emails.push(v);
-      else {
-        found.phones.push(v);
+      if (/@/.test(v)) {
+        if (!found.emails.includes(v)) found.emails.push(v);
+      } else {
+        if (!found.phones.includes(v)) found.phones.push(v);
         // Instagram's explicit whatsappNumber field is direct WhatsApp evidence for create_lead.
         if (f === 'whatsappNumber') {
           const digits = v.replace(/\D/g, '');
           if (digits.length >= 10 && digits.length <= 15) {
             const full = digits.length <= 11 ? `55${digits}` : digits;
-            found.whatsappLinks.push(`https://wa.me/${full}`);
+            const wa = `https://wa.me/${full}`;
+            if (!found.whatsappLinks.includes(wa)) found.whatsappLinks.push(wa);
           }
         }
       }
     }
-    const activity = assessInstagramActivity(p, ctx.now);
+
+    const activity = assessInstagramActivity(p as unknown as Record<string, unknown>, ctx.now);
     const username = str(p.username) ?? handle;
     const fullName = str(p.fullName);
     const liveness: LivenessSignal[] = [];
@@ -533,15 +690,107 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
           });
       }
     }
+
+    // Collect readable web links from bio_links + bio text hubs (excluding wa.me/social apps).
+    const readableBioUrls: string[] = [];
+    const readableSeen = new Set<string>();
+    const addReadable = (raw: string) => {
+      if (!isReadableBioUrl(raw)) return;
+      const key = pageKey(raw) ?? raw;
+      if (readableSeen.has(key)) return;
+      readableSeen.add(key);
+      readableBioUrls.push(raw);
+    };
+    for (const link of bioLinks) addReadable(link.url);
+    for (const hub of found.hubs) addReadable(hub);
+
+    // Best-effort auto-read of up to 2 bio web links when a real fetch provider is enabled,
+    // so link-in-bio hubs (linktr.ee, *.pages.dev, *.canva.site) and sites immediately surface
+    // their outboundLinks (ordering platforms, menus) and verified WhatsApp numbers.
+    const canRead = !workspaceOf(ctx.state.context.tenant)?.disabled.read_pages;
+    let bioPages: (ReadPage & { cached?: boolean; clipped?: boolean; closedSignal?: string })[] =
+      [];
+    let bioPageReads = 0;
+    if (canRead && activity.status !== 'closed' && readableBioUrls.length > 0) {
+      const provider = await discoveryFor(ctx.tx).catch(() => null);
+      if (provider && !provider.isMock) {
+        const res = await fetchPagesWithChase(
+          ctx,
+          readableBioUrls.slice(0, 2),
+          'bio link: contatos, cardápio e como o negócio recebe pedidos',
+          { provider, maxChases: 2, maxWave2Shorteners: 2 },
+        ).catch(() => null);
+        if (res && res.pages.length > 0) {
+          bioPageReads = res.spent;
+          const each = Math.min(
+            BIO_PAGE_TEXT_MAX,
+            Math.floor(BIO_PAGES_TEXT_TOTAL / res.pages.length),
+          );
+          bioPages = res.pages.map((pg) => {
+            const closedSignal = detectClosedPhrase(`${pg.title ?? ''}\n${pg.text.slice(0, 2500)}`);
+            const body =
+              pg.text.length > each
+                ? { ...pg, text: `${pg.text.slice(0, each)}\n[…]`, clipped: true }
+                : pg;
+            return closedSignal ? { ...body, closedSignal } : body;
+          });
+          for (const pg of res.pages) {
+            for (const ph of pg.foundContacts.phones)
+              if (!found.phones.includes(ph)) found.phones.push(ph);
+            for (const wa of pg.foundContacts.whatsappLinks)
+              if (!found.whatsappLinks.includes(wa)) found.whatsappLinks.push(wa);
+            for (const em of pg.foundContacts.emails)
+              if (!found.emails.includes(em)) found.emails.push(em);
+            for (const hint of pg.foundContacts.phoneHints)
+              if (!found.phoneHints.includes(hint)) found.phoneHints.push(hint);
+          }
+        }
+      }
+    }
+
     const next: string[] = [];
     // the hints name read_pages only where it is offered
-    const canRead = !workspaceOf(ctx.state.context.tenant)?.disabled.read_pages;
-    if (canRead && extIsHub && activity.status !== 'closed')
-      next.push(
-        `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
+    if (canRead && activity.status !== 'closed') {
+      const fetchedKeys = new Set(
+        bioPages.flatMap((pg) =>
+          [pageKey(pg.url), pageKey(pg.finalUrl ?? '')].filter((k): k is string => Boolean(k)),
+        ),
       );
-    else if (canRead && externalUrl && activity.status !== 'closed')
-      next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+      const unreadBioUrls = readableBioUrls.filter((u) => !fetchedKeys.has(pageKey(u) ?? u));
+      for (const url of unreadBioUrls.slice(0, 3)) {
+        let isHub = false;
+        try {
+          isHub = isProfileHubUrl(new URL(url));
+        } catch {
+          /* ignore */
+        }
+        if (isHub) {
+          next.push(
+            `externalUrl é hub — read_pages("${url}") entrega os links reais (cardápio/pedidos e wa.me moram lá)`,
+          );
+        } else {
+          next.push(`link da bio "${url}" — read_pages revela como recebe pedidos e contatos`);
+        }
+      }
+      if (bioPages.length > 0) {
+        const bioOutbound: string[] = [];
+        const obSeen = new Set<string>(fetchedKeys);
+        for (const pg of bioPages) {
+          for (const link of pg.outboundLinks ?? []) {
+            if (!isReadableBioUrl(link)) continue;
+            const key = pageKey(link) ?? link;
+            if (obSeen.has(key)) continue;
+            obSeen.add(key);
+            bioOutbound.push(link);
+          }
+        }
+        if (bioOutbound.length > 0) {
+          next.push(
+            `bioPages encontrou ${bioOutbound.length} link(s) externo(s) (${bioOutbound.slice(0, 4).join(', ')}) — confira como o negócio recebe pedidos hoje; se precisar ver detalhes, use read_pages`,
+          );
+        }
+      }
+    }
     if (found.phoneHints.length && !found.phones.length && activity.status !== 'closed')
       next.push(
         `phoneHints ${found.phoneHints.join(', ')} sem DDD — serp "${handle} ${found.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
@@ -574,10 +823,11 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
         fullName,
         biography: bio,
         externalUrl,
+        ...(bioLinks.length ? { externalUrls: bioLinks } : {}),
         followers: typeof p.followersCount === 'number' ? p.followersCount : null,
         category: str(p.businessCategoryName),
-        isPrivate: p.private === true || p.isPrivate === true,
-        isBusinessAccount: p.isBusinessAccount === true || p.isProfessionalAccount === true,
+        isPrivate: p.isPrivate === true,
+        isBusinessAccount: p.isBusinessAccount === true,
       },
       activity: {
         status: activity.status,
@@ -590,12 +840,11 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
         ...(activity.pausedSignal ? { pausedSignal: activity.pausedSignal } : {}),
       },
       ...(activity.recentPosts.length ? { recentPosts: activity.recentPosts } : {}),
+      ...(bioPages.length ? { bioPages } : {}),
       foundContacts: found,
       newContacts: contacts.length,
-      spentUsd: res.spentUsd,
-      capUsd: res.capUsd,
+      ...(bioPageReads > 0 ? { pageReads: bioPageReads } : {}),
       ...(next.length ? { next } : {}),
-      monidUsd: res.costUsd,
       contacts,
       liveness,
     } as unknown as Json;
@@ -605,7 +854,7 @@ export const instagramProfileTool = defineTool<{ handle: string }, Sql>({
 export const serpTool = defineTool<{ query: string }, Sql>({
   name: 'serp',
   description:
-    "One Google SERP via monid (~$0.001): the cheap follow-up round for a named prospect ('<nome> <cidade>' telefone/whatsapp). Snippets arrive phone-parsed; the result that names the prospect (even a directory: cylex, apontador, guia local) is worth reading in full.",
+    "One Google SERP via monid (~$0.001): the cheap follow-up round for a named prospect ('<nome> <cidade>' telefone/whatsapp/cardápio). Also reveals if the shop already has a digital menu or storefront not listed in its bio. Snippets arrive phone-parsed; the result that names the prospect (even a directory: cylex, apontador, guia local) is worth reading in full.",
   effect: 'read',
   input: s.object({ query: s.string({ min: 1, max: 300 }) }),
   async run(ctx: Ctx, input) {

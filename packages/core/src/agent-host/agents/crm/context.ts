@@ -24,6 +24,7 @@ import {
   unansweredTouchesTx,
   channelAvailabilityTx,
   emailReadyTx,
+  igSidecarReadyTx,
   instagramReadyTx,
   whatsappReadyTx,
 } from '../../../crm/guardrails.ts';
@@ -75,9 +76,9 @@ export interface Workspace {
   autoContact: { enabled: boolean; minScore: number };
 }
 
-const MONID_TOOLS = ['maps_lookup', 'instagram_profile', 'serp'];
+const MONID_TOOLS = ['maps_lookup', 'serp'];
 const DISCOVERY_TOOLS = ['web_search', 'read_pages'];
-const RESEARCH_TOOLS = [...DISCOVERY_TOOLS, ...MONID_TOOLS];
+const RESEARCH_TOOLS = [...DISCOVERY_TOOLS, ...MONID_TOOLS, 'instagram_profile'];
 
 export async function workspaceTx(tx: Sql): Promise<Workspace> {
   return controlTx(tx, async (c) => {
@@ -86,9 +87,10 @@ export async function workspaceTx(tx: Sql): Promise<Workspace> {
       ...(await getSettingTx<Partial<Guardrails>>(c, 'guardrails', {})),
     };
     const { instructions } = await agentSettingTx(c);
-    const [wa, ig, emailReady, memory] = [
+    const [wa, ig, igSidecar, emailReady, memory] = [
       await whatsappReadyTx(c),
       await instagramReadyTx(c),
+      await igSidecarReadyTx(c),
       await emailReadyTx(c),
       await hasMemoryTablesTx(c),
     ];
@@ -97,6 +99,7 @@ export async function workspaceTx(tx: Sql): Promise<Workspace> {
     const disabled: Record<string, string> = {};
     if (!process.env.MONID_API_KEY)
       for (const n of MONID_TOOLS) disabled[n] = 'MONID_API_KEY não configurada';
+    if (!igSidecar) disabled.instagram_profile = 'Instagram (ig-sidecar) não conectado';
     const { discoveryUnavailable } = await import('../../../crm/channels/discovery.ts');
     const why = await discoveryUnavailable(c, false);
     if (why) for (const n of DISCOVERY_TOOLS) disabled[n] = why;

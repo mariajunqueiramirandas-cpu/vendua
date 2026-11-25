@@ -20,7 +20,7 @@ export const LEAD_FIELDS = {
   fitScore: s
     .int({ min: 0, max: 10 })
     .describe(
-      '0–10 ICP fit + active operation: 0–3 off-ICP/closed/inactive; 4–5 plausible food shop with gaps or unconfirmed activity; 6 confirmed active food shop without a clear ordering gap yet; 7–8 confirmed active food shop with a concrete workflow fit (WhatsApp/DM orders, PDF/image menu, iFood dependency, no own link); 9–10 strong evidence of fit, activity and clear utility',
+      '0–10 ICP fit + active operation (after checking bio/site links): 0–3 off-ICP, closed/inactive, or already using an active own digital-menu/ordering platform (e.g. Brendi, Anota AI, Cardápio Web, Goomer, own checkout) with no clear gap; 4–5 plausible food shop with gaps or unconfirmed activity; 6 confirmed active food shop without a clear ordering gap yet; 7–8 confirmed active food shop with a concrete workflow fit (WhatsApp/DM orders, PDF/image menu, iFood dependency, verified no competing ordering platform covering it); 9–10 strong evidence of fit, activity and clear utility',
     )
     .optional(),
   fitReason: s
@@ -30,7 +30,7 @@ export const LEAD_FIELDS = {
   intentScore: s
     .int({ min: 0, max: 10 })
     .describe(
-      '0–10 observable pain / buying readiness: 0–2 no visible gap (already has own storefront or minimal info); 3–5 moderate workflow friction (orders via WhatsApp/DM without own link, PDF/image menu, iFood-only); 6–7 strong friction or growth signal (high-volume manual orders/encomendas on WhatsApp, reviews/comments asking for menu/prices, launching delivery); 8–10 explicit buyer intent (asked price/how to start, wants to switch/stop manual WhatsApp)',
+      '0–10 observable pain / buying readiness: 0–2 no visible gap (already uses own ordering platform/storefront covering orders or minimal info); 3–5 moderate workflow friction (orders via WhatsApp/DM without own link, PDF/image menu, iFood-only); 6–7 strong friction or growth signal (high-volume manual orders/encomendas on WhatsApp, reviews/comments asking for menu/prices, launching delivery); 8–10 explicit buyer intent (asked price/how to start, wants to switch/stop manual WhatsApp)',
     )
     .optional(),
   intentReason: s

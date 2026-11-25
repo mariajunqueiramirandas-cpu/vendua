@@ -21,9 +21,11 @@ type config struct {
 	Secret    string
 	EventsURL string
 	// http(s):// or socks5:// — Instagram flags logins from datacenter IPs
-	Proxy        string
-	MinSendGap   time.Duration
-	MinFollowGap time.Duration
+	Proxy              string
+	MinSendGap         time.Duration
+	MinFollowGap       time.Duration
+	MinProfileGap      time.Duration
+	MaxProfilesPerHour int
 }
 
 func loadConfig() (config, error) {
@@ -41,16 +43,30 @@ func loadConfig() (config, error) {
 	if cfg.MinFollowGap, err = envSeconds("IG_MIN_FOLLOW_GAP_SECONDS", 60); err != nil {
 		return cfg, err
 	}
+	if cfg.MinProfileGap, err = envSeconds("IG_MIN_PROFILE_GAP_SECONDS", 4); err != nil {
+		return cfg, err
+	}
+	if cfg.MaxProfilesPerHour, err = envInt("IG_MAX_PROFILES_PER_HOUR", 60); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
-func envSeconds(key string, def int) (time.Duration, error) {
+func envInt(key string, def int) (int, error) {
 	n := def
 	if v := os.Getenv(key); v != "" {
 		var err error
 		if n, err = strconv.Atoi(v); err != nil || n < 0 {
 			return 0, errors.New(key + " must be a non-negative integer")
 		}
+	}
+	return n, nil
+}
+
+func envSeconds(key string, def int) (time.Duration, error) {
+	n, err := envInt(key, def)
+	if err != nil {
+		return 0, err
 	}
 	return time.Duration(n) * time.Second, nil
 }

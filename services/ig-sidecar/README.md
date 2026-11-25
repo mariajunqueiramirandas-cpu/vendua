@@ -36,18 +36,19 @@ Core ◀─HMAC events── ig-sidecar   (inbound DMs, connection state, rotate
 
 ## API (all under `Authorization: Bearer $IG_SIDECAR_SECRET`)
 
-| Route                    | Body                        | Returns                                                  |
-| ------------------------ | --------------------------- | -------------------------------------------------------- |
-| `GET /v1/status`         |                             | `{state, error?, account?, login?}`                      |
-| `PUT /v1/session`        | `{session, sinceMs}`        | status — resumes a stored session                        |
-| `DELETE /v1/session`     |                             | status — forget the session                              |
-| `POST /v1/login/start`   | `{device?}`                 | step                                                     |
-| `POST /v1/login/submit`  | `{input: {fieldId: value}}` | step (`complete` carries `session`)                      |
-| `POST /v1/login/cookies` | `{cookies, device?}`        | step — JSON, cookie export, cURL or header               |
-| `POST /v1/login/cancel`  |                             | `{ok}`                                                   |
-| `POST /v1/resolve`       | `{username}`                | `{fbid, igid, username, name}`                           |
-| `POST /v1/send`          | `{fbid? , username?, text}` | `{messageId, threadId?, fbid}`                           |
-| `POST /v1/follow`        | `{fbid?, username?}`        | `{fbid, igid, username?, following, requested, already}` |
+| Route                    | Body                        | Returns                                                                                                        |
+| ------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/status`         |                             | `{state, error?, account?, login?}`                                                                            |
+| `PUT /v1/session`        | `{session, sinceMs}`        | status — resumes a stored session                                                                              |
+| `DELETE /v1/session`     |                             | status — forget the session                                                                                    |
+| `POST /v1/login/start`   | `{device?}`                 | step                                                                                                           |
+| `POST /v1/login/submit`  | `{input: {fieldId: value}}` | step (`complete` carries `session`)                                                                            |
+| `POST /v1/login/cookies` | `{cookies, device?}`        | step — JSON, cookie export, cURL or header                                                                     |
+| `POST /v1/login/cancel`  |                             | `{ok}`                                                                                                         |
+| `POST /v1/resolve`       | `{username}`                | `{fbid, igid, username, name}`                                                                                 |
+| `POST /v1/send`          | `{fbid? , username?, text}` | `{messageId, threadId?, fbid}`                                                                                 |
+| `POST /v1/follow`        | `{fbid?, username?}`        | `{fbid, igid, username?, following, requested, already}`                                                       |
+| `POST /v1/profile`       | `{username}`                | `{username, fullName?, biography, externalUrl?, externalUrls?, followersCount?, postsCount?, latestPosts?, …}` |
 
 `state` is one of `off`, `connecting`, `open`, or `error`. `error` means Instagram
 wants a human (`logged_out`, `challenge`, `checkpoint`, `consent`, `suspended`,
@@ -57,15 +58,17 @@ wants a human (`logged_out`, `challenge`, `checkpoint`, `consent`, `suspended`,
 
 ## Env
 
-| Var                         | Default | Notes                                                |
-| --------------------------- | ------- | ---------------------------------------------------- |
-| `IG_SIDECAR_SECRET`         | —       | unset = every call gets 503 (idle)                   |
-| `CORE_EVENTS_URL`           | —       | unset = events are only logged                       |
-| `IG_PROXY`                  | —       | `http://`/`socks5://`; datacenter IPs get challenged |
-| `IG_MIN_SEND_GAP_SECONDS`   | `20`    | account-wide pacing between DMs                      |
-| `IG_MIN_FOLLOW_GAP_SECONDS` | `60`    | account-wide pacing between follows                  |
-| `IG_SIDECAR_ADDR`           | `:8790` |                                                      |
-| `LOG_LEVEL`                 | `info`  |                                                      |
+| Var                          | Default | Notes                                                |
+| ---------------------------- | ------- | ---------------------------------------------------- |
+| `IG_SIDECAR_SECRET`          | —       | unset = every call gets 503 (idle)                   |
+| `CORE_EVENTS_URL`            | —       | unset = events are only logged                       |
+| `IG_PROXY`                   | —       | `http://`/`socks5://`; datacenter IPs get challenged |
+| `IG_MIN_SEND_GAP_SECONDS`    | `20`    | account-wide pacing between DMs                      |
+| `IG_MIN_FOLLOW_GAP_SECONDS`  | `60`    | account-wide pacing between follows                  |
+| `IG_MIN_PROFILE_GAP_SECONDS` | `4`     | account-wide pacing between live profile lookups     |
+| `IG_MAX_PROFILES_PER_HOUR`   | `60`    | rolling 1-hour cap on live profile lookups (0 = off) |
+| `IG_SIDECAR_ADDR`            | `:8790` |                                                      |
+| `LOG_LEVEL`                  | `info`  |                                                      |
 
 ## Dev
 
