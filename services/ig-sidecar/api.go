@@ -138,11 +138,12 @@ func (a *api) deleteSession(w http.ResponseWriter, _ *http.Request) {
 func (a *api) loginStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Device *types.InstagramLoginDevice `json:"device"`
+		Mode   string                      `json:"mode"` // "web" | "" (Android app login)
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	step, err := a.mgr.LoginStart(body.Device)
+	step, err := a.mgr.LoginStart(body.Device, body.Mode == "web")
 	if err != nil {
 		a.fail(w, err)
 		return

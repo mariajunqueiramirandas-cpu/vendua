@@ -260,9 +260,12 @@ people who never wrote first, and Instagram can challenge or restrict the accoun
 1. Set `IG_SIDECAR_SECRET` (one value — compose hands it to both services) and,
    ideally, `IG_PROXY` pointing at a static residential proxy in Brazil.
 2. CRM → config → conexões → instagram → **usar sidecar**, then **entrar com
-   usuário e senha**. The same card handles 2FA, approvals, and supported CAPTCHA challenges.
-   Meta's CAPTCHA widget only reports a solve to a page on a Meta domain, so the card can't
-   embed it: it hands staff a script to paste in an instagram.com tab's console (on a computer)
+   usuário e senha**. That logs in as Instagram's Android app (the sidecar keeps the app's
+   token with the cookies), so its checks work from a phone: 2FA codes, approvals and the
+   letters CAPTCHA, shown as an image in the card. If the app login hits Google's reCAPTCHA or
+   a step the card can't show, **entrar pelo site** retries as the website login. Meta's
+   reCAPTCHA widget only reports a solve to a page on a Meta domain, so the card can't embed
+   it: it hands staff a script to paste in an instagram.com tab's console (on a computer)
    that shows the CAPTCHA there, and the solved code is pasted back into the card.
    When Instagram requires verification in its app, open Instagram from the card and start
    a fresh login after verifying the account.

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ClipboardPaste, KeyRound, Loader2 } from 'lucide-react';
+import { ClipboardPaste, Globe, KeyRound, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, ApiError, type IgStatus, type IgStep } from '@/lib/api.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
@@ -14,6 +14,8 @@ const dark =
 const quiet = 'text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground';
 const foot = 'text-xs text-sidebar-muted';
 
+const CAPTCHA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+
 // errors the sidecar can't fix with a login — nothing to type, only ops can help
 const UNREACHABLE = new Set(['sidecar_unreachable', 'no_secret', 'sidecar_error']);
 const VERIFY_ON_INSTAGRAM = new Set([
@@ -25,7 +27,8 @@ const VERIFY_ON_INSTAGRAM = new Set([
 ]);
 
 type LoginAction =
-  | { type: 'start' | 'cancel' | 'cookies' }
+  | { type: 'start'; web?: boolean }
+  | { type: 'cancel' | 'cookies' }
   | { type: 'submit'; input?: Record<string, string> | undefined };
 
 /**
@@ -46,6 +49,8 @@ export function InstagramConnect({
 }) {
   const qc = useQueryClient();
   const [mode, setMode] = useState<'password' | 'cookies'>('password');
+  // which login the last start used: the Android app's (default) or the website's
+  const [flow, setFlow] = useState<'app' | 'web'>('app');
   const [values, setValues] = useState<Record<string, string>>({});
   const [cookies, setCookies] = useState('');
 
@@ -69,7 +74,7 @@ export function InstagramConnect({
     mutationFn: async (action: LoginAction) => {
       switch (action.type) {
         case 'start':
-          return (await api.igLoginStart()).step;
+          return (await api.igLoginStart(action.web ? 'web' : undefined)).step;
         case 'submit':
           return (await api.igLoginSubmit(action.input ?? values)).step;
         case 'cookies':
@@ -97,9 +102,17 @@ export function InstagramConnect({
     setValues({});
     setCookies('');
     setMode('password');
+    setFlow('app');
   }, [reset, resetSignal]);
 
   const cancelling = busy && variables?.type === 'cancel';
+  // an app login that failed can be retried as the website's (its reCAPTCHA needs a computer)
+  const appFailed =
+    !!error && flow === 'app' && (variables?.type === 'start' || variables?.type === 'submit');
+  const start = (web: boolean) => {
+    setFlow(web ? 'web' : 'app');
+    mutate({ type: 'start', web });
+  };
   const shown = ig?.login ?? null;
   const captcha = shown?.type === 'captcha' ? shown.captcha : undefined;
 
@@ -220,13 +233,19 @@ export function InstagramConnect({
         <>
           <div className="text-sm font-medium">entrar na conta do instagram da venduá</div>
           <p className={foot}>
-            o instagram pode pedir uma verificação, código de 2 fatores ou aprovação no app.
+            entra como o app do instagram: código, aprovação no app e captcha de letras dá para
+            resolver daqui, no celular também.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="agent" disabled={busy} onClick={() => mutate({ type: 'start' })}>
+            <Button variant="agent" disabled={busy} onClick={() => start(false)}>
               {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
               entrar com usuário e senha
             </Button>
+            {appFailed && (
+              <Button variant="ghost" className={quiet} disabled={busy} onClick={() => start(true)}>
+                <Globe /> entrar pelo site
+              </Button>
+            )}
             <Button
               variant="ghost"
               className={quiet}
@@ -358,6 +377,13 @@ function StepForm({
         </div>
       ) : (
         <>
+          {step.image && CAPTCHA_IMAGE.test(step.image) && (
+            <img
+              src={step.image}
+              alt="captcha do instagram: letras e números para digitar"
+              className="max-h-24 w-auto max-w-full self-start rounded-md bg-white p-1"
+            />
+          )}
           {step.code && (
             <div className="flex items-baseline gap-2.5">
               <span className={foot}>número</span>

@@ -130,6 +130,22 @@ describe('parseIgEvent', () => {
     });
     expect(e.type === 'message' && e.message.sentAt).toBeNull();
   });
+  test("a session keeps an app login's token only for its own account", () => {
+    const cookies = { sessionid: 's', csrftoken: 'c', ds_user_id: '42' };
+    const native = { authorization: 'Bearer IGT:2:x', user_id: '42', device: { device_id: 'd' } };
+    const kept = parseIgEvent({ type: 'session', session: { cookies, native } });
+    expect(kept.type === 'session' && kept.session.native).toEqual(native);
+    for (const bad of [
+      { ...native, user_id: '7' },
+      { ...native, authorization: '' },
+      'Bearer IGT:2:x',
+      [native],
+    ]) {
+      const e = parseIgEvent({ type: 'session', session: { cookies, native: bad } });
+      expect(e.type === 'session' && e.session.cookies).toEqual(cookies);
+      expect(e.type === 'session' && 'native' in e.session).toBe(false);
+    }
+  });
 });
 
 describe('guardrails — instagramColdDmsPerDay', () => {
@@ -440,6 +456,59 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
         status: 'draft',
       }),
     );
+  });
+
+  test('login start asks the sidecar for the app login unless the website is chosen', async () => {
+    await enable('sidecar');
+    const step = {
+      type: 'input' as const,
+      stepId: 'instagram.credentials',
+      instructions: 'Entre.',
+    };
+    const received: unknown[] = [];
+    const sidecar = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async (req) => {
+        switch (new URL(req.url).pathname) {
+          case '/v1/status':
+            return Response.json({ state: 'off', login: step });
+          case '/v1/login/start':
+            received.push(await req.json());
+            return Response.json(step);
+          default:
+            return new Response(null, { status: 404 });
+        }
+      },
+    });
+    const prevURL = process.env.IG_SIDECAR_URL;
+    process.env.IG_SIDECAR_URL = sidecar.url.origin;
+    try {
+      const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
+      const start = (body?: string) =>
+        app.request('/control/v1/ig/login/start', {
+          method: 'POST',
+          headers: {
+            'x-vendua-control': 'ctl-secret',
+            'content-type': 'application/json',
+            'idempotency-key': crypto.randomUUID(),
+          },
+          ...(body === undefined ? {} : { body }),
+        });
+      expect((await start()).status).toBe(200);
+      expect((await start(JSON.stringify({ mode: 'app' }))).status).toBe(200);
+      expect((await start(JSON.stringify({ mode: 'web' }))).status).toBe(200);
+      expect((await start(JSON.stringify({ mode: 'desktop' }))).status).toBe(422);
+      expect(received.map((b) => (b as { mode?: string }).mode)).toEqual([
+        undefined,
+        undefined,
+        'web',
+      ]);
+    } finally {
+      sidecar.stop();
+      if (prevURL === undefined) delete process.env.IG_SIDECAR_URL;
+      else process.env.IG_SIDECAR_URL = prevURL;
+    }
   });
 
   test('relays a CAPTCHA response and reads the live wizard after the step ends', async () => {

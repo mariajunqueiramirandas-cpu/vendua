@@ -545,6 +545,8 @@ export interface IgStep {
   instructions: string;
   fields?: { id: string; name: string; type: string; options?: string[] }[];
   captcha?: IgCaptcha;
+  /** the Android login's letters captcha (a data: URL) */
+  image?: string;
   /** number to tap on the device approving the login */
   code?: string;
   /** a wait step that can go back to choosing another verification method */
@@ -793,7 +795,12 @@ const apiBase = {
     }),
   waLogout: () => req<{ ok: true }>('/wa/logout', { method: 'POST' }),
   igStatus: () => req<IgStatus>('/ig/status'),
-  igLoginStart: () => req<{ step: IgStep }>('/ig/login/start', { method: 'POST' }),
+  /** the Android app's login unless `web` asks for the website's */
+  igLoginStart: (mode?: 'web') =>
+    req<{ step: IgStep }>('/ig/login/start', {
+      method: 'POST',
+      ...(mode ? { body: JSON.stringify({ mode }) } : {}),
+    }),
   igLoginSubmit: (input: Record<string, string>) =>
     req<{ step: IgStep }>('/ig/login/submit', { method: 'POST', body: JSON.stringify({ input }) }),
   igLoginCookies: (cookies: string) =>
