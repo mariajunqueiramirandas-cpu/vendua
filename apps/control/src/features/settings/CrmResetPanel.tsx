@@ -18,9 +18,14 @@ const many = (n: number, one: string, more: string) => `${num(n)} ${n === 1 ? on
 function goes(c: CrmResetCounts | undefined): string {
   const work = 'a fila, os turnos e as caçadas dos agentes';
   if (!c)
-    return `todo lead que não virou loja, com as conversas; a memória inteira; campanhas e briefs de descoberta; ${work}`;
+    return `todos os leads com conversas e tarefas, a agenda, a memória inteira, campanhas e briefs de descoberta; ${work}`;
   const parts = [
-    `${many(c.leads, 'lead', 'leads')} com ${many(c.conversations, 'conversa', 'conversas')}`,
+    `${many(c.leads, 'lead', 'leads')} com ${many(c.conversations, 'conversa', 'conversas')}` +
+      (c.storeLeads
+        ? ` (${c.storeLeads === 1 ? '1 virou loja' : `${num(c.storeLeads)} viraram loja`}: a loja continua)`
+        : ''),
+    c.meetings &&
+      `${many(c.meetings, 'reunião', 'reuniões')} (o que já foi pro Google Agenda fica lá)`,
     c.memories && many(c.memories, 'memória', 'memórias'),
     c.campaigns && many(c.campaigns, 'campanha', 'campanhas'),
     c.briefs && many(c.briefs, 'brief de descoberta', 'briefs de descoberta'),
@@ -28,19 +33,12 @@ function goes(c: CrmResetCounts | undefined): string {
   return `${parts.filter(Boolean).join(', ')}; ${work}`;
 }
 
-function stays(c: CrmResetCounts | undefined): string {
-  const fixed = 'conexões (WhatsApp, Instagram, Telegram), limites, autonomia, lojas e eventos';
-  if (!c) return `leads que viraram loja (o agente esquece eles), calls já marcadas, ${fixed}`;
-  const parts = [
-    c.keptLeads &&
-      `${many(c.keptLeads, 'lead que virou loja', 'leads que viraram loja')} (o agente esquece ${c.keptLeads === 1 ? 'ele' : 'eles'})`,
-    c.meetingsKept && many(c.meetingsKept, 'call já marcada', 'calls já marcadas'),
-    fixed,
-  ];
-  return parts.filter(Boolean).join(', ');
-}
+const RESETS =
+  'toda a configuração do agente: autonomia, voz e instruções, áudio, limites e descoberta. Ele volta desligado; ligue em Agente → Configurar quando estiver pronto';
+const STAYS =
+  'lojas e assinaturas, conexões (WhatsApp, Instagram, Telegram), equipe, horários de reunião e o histórico de eventos';
 
-/** Staff zero the CRM: leads, memory and the sales and discovery agents start over. */
+/** Staff zero the whole sales side: leads, agenda, memory and the agent start over. */
 export function CrmResetPanel() {
   const [open, setOpen] = useState(false);
   return (
@@ -49,8 +47,8 @@ export function CrmResetPanel() {
         <div className="min-w-0 flex-1 basis-56">
           <div className="text-[13px] font-medium">zerar o CRM</div>
           <p className="text-xs text-muted-foreground">
-            leads, memória e os agentes de vendas e de descoberta voltam do zero. lojas e conexões
-            ficam.
+            toda a parte de vendas volta do zero: leads, conversas, agenda, memória e o agente, que
+            volta desligado. lojas e conexões ficam.
           </p>
         </div>
         <Button variant="destructive-outline" size="sm" onClick={() => setOpen(true)}>
@@ -83,8 +81,8 @@ function ConfirmDialog({ onClose }: { onClose: () => void }) {
     onSuccess: (res) => {
       toast.success('CRM zerado', {
         description: res.leads
-          ? `${many(res.leads, 'lead apagado', 'leads apagados')} — os agentes começam do zero`
-          : 'os agentes começam do zero',
+          ? `${many(res.leads, 'lead apagado', 'leads apagados')} — o agente fica desligado até vocês ligarem`
+          : 'o agente fica desligado até vocês ligarem',
       });
       // every screen read something that just went
       void qc.invalidateQueries();
@@ -106,7 +104,7 @@ function ConfirmDialog({ onClose }: { onClose: () => void }) {
     >
       <form onSubmit={submit} className="flex flex-col gap-3">
         <p className="text-sm">
-          Os agentes de vendas e de descoberta voltam do zero, com as instruções padrão. Quem mandar
+          Hoje, Pipeline, Inbox, Agenda e Agente voltam vazios, como no primeiro dia. Quem mandar
           mensagem depois entra como lead novo, sem histórico.
         </p>
         <dl
@@ -119,11 +117,11 @@ function ConfirmDialog({ onClose }: { onClose: () => void }) {
           </div>
           <div>
             <dt className="font-medium">volta ao padrão</dt>
-            <dd className="text-muted-foreground">instruções de venda e a voz do agente</dd>
+            <dd className="text-muted-foreground">{RESETS}</dd>
           </div>
           <div>
             <dt className="font-medium">mantém</dt>
-            <dd className="text-muted-foreground tnum">{stays(counts)}</dd>
+            <dd className="text-muted-foreground">{STAYS}</dd>
           </div>
         </dl>
         {preview.isError && (

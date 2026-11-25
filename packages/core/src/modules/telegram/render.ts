@@ -393,20 +393,16 @@ function leadUnsubscribed(ev: Ev<'lead.unsubscribed'>, ctx: RenderCtx): Rendered
 }
 
 function crmReset(ev: Ev<'crm.reset'>, ctx: RenderCtx): Rendered {
-  const { leads, keptLeads } = ev.data;
+  const { leads } = ev.data;
   const title = '🧹 CRM zerado';
   return {
     card: card(ev, {
       title,
       body: [
-        `a equipe zerou o CRM: ${leads === 1 ? '1 lead apagado' : `${leads} leads apagados`}, memória, fila e instruções dos agentes de volta ao começo`,
-        keptLeads === 1
-          ? '1 lead que virou loja ficou'
-          : keptLeads
-            ? `${keptLeads} leads que viraram loja ficaram`
-            : null,
+        `a equipe zerou a parte de vendas: ${leads === 1 ? '1 lead apagado' : `${leads} leads apagados`}, com conversas, agenda e memória`,
+        'o agente voltou à configuração padrão e está desligado até alguém ligar',
       ],
-      buttons: row(linkButton('abrir CRM', ctx.crm('/pipeline'))),
+      buttons: row(linkButton('configurar agente', ctx.crm('/agente/configurar'))),
     }),
     summary: title,
   };

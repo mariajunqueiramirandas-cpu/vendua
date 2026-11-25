@@ -7,13 +7,11 @@ import type { Sql } from '../platform/db.ts';
 import { bodyJson, HttpError, str } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { PLATFORM_TENANT_ID, type Tenant } from '../platform/tenancy.ts';
-import { resetInstructionsTx } from './policy.ts';
 
-// Staff zero the CRM: the sales agent, the discovery agent and the rest of the CRM's agents start
-// over. Every lead goes with its conversations, except the ones that became a store: those stay,
-// and the agents forget them like the rest. The agents' memory, queues, turns, campaigns, hunts and
-// briefs go, and the sales instructions and pitch go back to the defaults. Connections, limits,
-// autonomy, upcoming calls, stores and the team's history stay.
+// Staff zero the whole sales side (the CRM's Vendas: Hoje, Pipeline, Inbox, Agenda, Agente): every
+// lead with its conversations and tasks, every call, the agents' memory, queues, turns, campaigns,
+// hunts and briefs, and the agent's whole setup back to the defaults, switched off. Stores (a lead
+// that became one only loses its CRM card), connections, the team and staff history stay.
 //
 // The platform tenant is the CRM's workspace (migration 0131), so its rows go the way a store's
 // content goes in a store reset (RESET_WIPES). Every platform table (no tenant_id) is named below
@@ -36,6 +34,7 @@ export const CRM_RESET_WIPES = [
   'crm_campaign_hunts',
   'crm_campaigns',
   'discovery_briefs',
+  'meetings',
   'agent_wakeups',
   'agent_inbox',
   'agent_run_steps',
@@ -45,7 +44,7 @@ export const CRM_RESET_WIPES = [
 
 /** reset row by row in `resetCrmTx` */
 export const CRM_RESET_OWN_STEPS = [
-  // the leads that became a store stay with their conversations; the rest cascade with their lead
+  // every lead; its conversations, tasks and history cascade
   'leads',
   'lead_threads',
   'lead_messages',
@@ -53,11 +52,9 @@ export const CRM_RESET_OWN_STEPS = [
   'lead_activities',
   'lead_state_history',
   'lead_tasks',
-  // a call still ahead stays on the agenda
-  'meetings',
-  // instructions and pitch back to the defaults
+  // the agent's setup back to the defaults, switched off (`resetAgentSetupTx`)
   'control_settings',
-  // the CRM sends still queued for the gateway, of the messages that went
+  // the CRM sends still queued for the gateway
   'platform_wa_outbox',
 ] as const;
 
@@ -122,35 +119,51 @@ export function unclassifiedPlatform(tables: string[]): string[] {
 }
 
 export interface CrmResetCounts {
-  /** leads that go, with their conversations */
   leads: number;
-  /** leads that became a store: they stay, forgotten by the agents */
-  keptLeads: number;
+  /** of those, the ones that became a store (the store stays) */
+  storeLeads: number;
   conversations: number;
+  meetings: number;
   /** learnings, debriefs, facts about leads and the runtime's memory */
   memories: number;
   campaigns: number;
   briefs: number;
-  /** calls still ahead with leads that go: they stay on the agenda */
-  meetingsKept: number;
 }
 
 async function countsTx(tx: Sql): Promise<CrmResetCounts> {
   const [r] = await tx<CrmResetCounts[]>`
     select
-      (select count(*)::int from leads where tenant_id is null) as leads,
-      (select count(*)::int from leads where tenant_id is not null) as "keptLeads",
-      (select count(*)::int from lead_threads t join leads l on l.id = t.lead_id
-        where l.tenant_id is null) as conversations,
+      (select count(*)::int from leads) as leads,
+      (select count(*)::int from leads where tenant_id is not null) as "storeLeads",
+      (select count(*)::int from lead_threads) as conversations,
+      (select count(*)::int from meetings) as meetings,
       (select count(*)::int from agent_memory_items)
         + (select count(*)::int from lead_facts)
         + (select count(*)::int from agent_memory where tenant_id = ${PLATFORM_TENANT_ID})
         as memories,
       (select count(*)::int from crm_campaigns) as campaigns,
-      (select count(*)::int from discovery_briefs) as briefs,
-      (select count(*)::int from meetings m join leads l on l.id = m.lead_id
-        where l.tenant_id is null and m.status = 'scheduled' and m.ends_at > now()) as "meetingsKept"`;
+      (select count(*)::int from discovery_briefs) as briefs`;
   return r!;
+}
+
+/**
+ * Agente → Configurar back to the defaults, switched off until staff turn it on: the default level
+ * is autopilot, and nobody has told the agent what to sell yet. Numbers in the retired
+ * guardrails.ignoredPhones are still honored (blockedPhonesTx), so they stay.
+ */
+async function resetAgentSetupTx(tx: Sql): Promise<void> {
+  await tx`
+    insert into control_settings (key, value) values ('agent', ${tx.json({ level: 'off' })})
+    on conflict (key) do update set value = excluded.value`;
+  const [g] = await tx<{ phones: unknown }[]>`
+    select value->'ignoredPhones' as phones from control_settings where key = 'guardrails'`;
+  if (Array.isArray(g?.phones) && g.phones.length)
+    await tx`
+      update control_settings set value = ${tx.json({ ignoredPhones: g.phones })}
+      where key = 'guardrails'`;
+  else await tx`delete from control_settings where key = 'guardrails'`;
+  // agent_memory: the retired v1 memory panel's facts
+  await tx`delete from control_settings where key in ('pitch', 'agent_memory')`;
 }
 
 /** The reset itself, inside a control transaction (the claim's). */
@@ -181,46 +194,15 @@ export async function resetCrmTx(
     if (!IDENT.test(t)) throw new Error(`crm reset: odd table name ${t}`);
     rows += (await tx.unsafe(`delete from "${t}"`)).count;
   }
+  // threads, messages, tasks, activities and history cascade; a store only loses its CRM card
+  rows += (await tx`delete from leads`).count;
+  // the gateway would still deliver what it queued for messages that are gone
+  rows += (await tx`delete from platform_wa_outbox where purpose = 'crm' and status = 'pending'`)
+    .count;
 
-  // the leads that stay: nothing of the agents' left to send, nor planned
-  rows += (
-    await tx`
-      update lead_messages set status = 'rejected', error = 'CRM zerado pela equipe',
-        updated_at = now()
-      where direction = 'out' and author = 'agent' and status in ('draft', 'queued')
-        and thread_id in (
-          select t.id from lead_threads t join leads l on l.id = t.lead_id
-          where l.tenant_id is not null)`
-  ).count;
-  await tx`
-    update leads set agent_plan = default, intent_score = null, intent_reason = null,
-      next_action_at = null, next_action_source = default, updated_at = now()
-    where tenant_id is not null`;
+  await resetAgentSetupTx(tx);
 
-  rows += (
-    await tx`
-      delete from meetings m using leads l
-      where l.id = m.lead_id and l.tenant_id is null
-        and not (m.status = 'scheduled' and m.ends_at > now())`
-  ).count;
-  // threads, messages, tasks, activities and history cascade; a call kept above loses its lead
-  rows += (await tx`delete from leads where tenant_id is null`).count;
-  // a message that went can't be sent: the gateway would still deliver what it queued
-  rows += (
-    await tx`
-      delete from platform_wa_outbox o
-      where o.purpose = 'crm' and o.status = 'pending' and o.ref is not null
-        and not exists (select 1 from lead_messages m where m.id::text = o.ref)`
-  ).count;
-
-  await resetInstructionsTx(tx, 'all');
-  // the retired v1 memory panel's facts
-  await tx`delete from control_settings where key = 'agent_memory'`;
-
-  await recordStaffEventTx(tx, 'crm.reset', {
-    leads: counts.leads,
-    keptLeads: counts.keptLeads,
-  });
+  await recordStaffEventTx(tx, 'crm.reset', { leads: counts.leads });
   return { ...counts, resetAt, rows };
 }
 
@@ -249,10 +231,7 @@ export function mountCrmReset(o: {
       });
     const res = await claimControl(sql, o.requireIdemKey(c), async (tx) => {
       const out = await resetCrmTx(tx);
-      rlog.warn(
-        { leads: out.leads, keptLeads: out.keptLeads, rows: out.rows },
-        'crm reset by staff',
-      );
+      rlog.warn({ leads: out.leads, rows: out.rows }, 'crm reset by staff');
       return { status: 200, body: out };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');

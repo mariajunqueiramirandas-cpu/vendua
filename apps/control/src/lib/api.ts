@@ -593,17 +593,16 @@ export interface IgStatus {
   /** a login the sidecar still holds open — the card resumes it */
   login?: IgStep | null;
 }
-/** POST /crm/reset (Core's crm/reset.ts): what goes and what stays */
+/** POST /crm/reset (Core's crm/reset.ts): what zeroing the sales side takes */
 export interface CrmResetCounts {
   leads: number;
-  /** became a store: they stay, the agents forget them */
-  keptLeads: number;
+  /** of those, the ones that became a store (the store stays) */
+  storeLeads: number;
   conversations: number;
+  meetings: number;
   memories: number;
   campaigns: number;
   briefs: number;
-  /** calls still ahead with leads that go: they stay on the agenda */
-  meetingsKept: number;
 }
 
 export interface ChannelHealth {
