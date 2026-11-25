@@ -6,13 +6,7 @@ import { HttpError, UUID_RE } from '../platform/http.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
-import {
-  DEFAULT_GUARDRAILS,
-  getSettingTx,
-  putSettingTx,
-  validateSetting,
-  type Guardrails,
-} from '../modules/integrations.ts';
+import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { CRM_CAMPAIGN_ID, CAMPAIGN_SUBJECT, requestCampaignTx } from './dispatch.ts';
 import {
@@ -23,7 +17,7 @@ import {
   whatsappColdBudgetTx,
   whatsappReadyTx,
 } from './guardrails.ts';
-import { agentSettingTx, type AutonomyLevel } from './policy.ts';
+import { agentSettingTx, patchAgentSettingTx, type AutonomyLevel } from './policy.ts';
 import { crmOfferTx } from './signup.ts';
 
 // Autonomous Campaign Mode (`crm-campaign` actor on Agent Runtime v3):
@@ -355,14 +349,10 @@ export async function startCampaign(
     }
 
     if (input.enableAutopilot) {
-      const cur = await agentSettingTx(tx);
-      const next = {
-        ...cur,
-        level: 'autopilot' as AutonomyLevel,
-        jobs: { ...cur.jobs, reply: true, outreach: true, discovery: true },
-      };
-      validateSetting('agent', next);
-      await putSettingTx(tx, 'agent', next);
+      await patchAgentSettingTx(tx, {
+        level: 'autopilot',
+        jobs: { reply: true, outreach: true, discovery: true },
+      });
     }
 
     const expiresAt = new Date(Date.now() + maxDays * 86_400_000);

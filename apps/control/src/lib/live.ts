@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { QueryClient } from '@tanstack/react-query';
+import type { QueryClient, QueryFilters } from '@tanstack/react-query';
 import { onControlEvent, type ControlEventType } from './events.ts';
 
 const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
@@ -44,6 +44,14 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
   'draft.change': ['approvals', 'threads', 'thread', 'stats', 'leads'],
   'meeting.change': ['meetings', 'meetings-status', 'campaigns', 'campaign'],
   'channel.health': ['channel-health', 'integrations', 'campaigns', 'campaign'],
+  'settings.change': [
+    'settings',
+    'agent-config',
+    'lead-autonomy',
+    'routines',
+    'campaigns',
+    'campaign',
+  ],
   // 'lead' so a lead's loja card follows its provisioning
   'fleet.change': [
     'fleet-status',
@@ -61,6 +69,15 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
   ],
 };
 
+export async function refreshAgentSettings(client: QueryClient) {
+  const filters: QueryFilters = {
+    predicate: (q) => REFRESH['settings.change'].includes(String(q.queryKey[0])),
+  };
+  // A fetch already in progress may have read the setting before the change committed.
+  await client.cancelQueries(filters);
+  await client.invalidateQueries(filters);
+}
+
 /** Turns the payload-free SSE triggers into cache invalidations. */
 export function useLiveInvalidation(client: QueryClient, enabled: boolean) {
   useEffect(() => {
@@ -72,6 +89,10 @@ export function useLiveInvalidation(client: QueryClient, enabled: boolean) {
     const offs = (Object.keys(REFRESH) as (keyof typeof REFRESH)[]).map((type) =>
       onControlEvent(type, (e) => {
         if (e.type === 'sync') return;
+        if (type === 'settings.change') {
+          void refreshAgentSettings(client);
+          return;
+        }
         const roots = new Set(REFRESH[type]);
         void client.invalidateQueries({
           predicate: (q) => roots.has(String(q.queryKey[0])),

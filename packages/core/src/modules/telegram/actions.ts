@@ -3,7 +3,7 @@ import { log } from '../../platform/log.ts';
 import {
   AGENT_JOBS,
   AUTONOMY_LEVELS,
-  agentSettingTx,
+  patchAgentSetting,
   type AgentJob,
   type AutonomyLevel,
 } from '../../crm/policy.ts';
@@ -35,7 +35,6 @@ import {
   savePrompt,
   setLeadAgentState,
   triggerBoardRun,
-  updateAgentConfig,
   type PromptKind,
 } from './manager-ops.ts';
 import { TelegramError, type TelegramClient } from './rest.ts';
@@ -188,8 +187,8 @@ export async function runCallback(
     if (al) {
       const level = al[1] as AutonomyLevel;
       if (!AUTONOMY_LEVELS.includes(level)) return;
-      await updateAgentConfig(c.sql, { level, idemKey: key });
-      await answerToast(client, click.callbackId, `autonomia: ${label('autonomy', level)}`);
+      const { body } = await patchAgentSetting(c.sql, { level }, key);
+      await answerToast(client, click.callbackId, `autonomia: ${label('autonomy', body.level)}`);
       await editThis(client, click, await agenteView(c));
       return;
     }
@@ -198,13 +197,15 @@ export async function runCallback(
     if (aj) {
       const job = aj[1] as AgentJob;
       if (!AGENT_JOBS.includes(job)) return;
-      const cur = await controlTx(c.sql, agentSettingTx);
-      const nextOn = !cur.jobs[job];
-      await updateAgentConfig(c.sql, { jobs: { [job]: nextOn }, idemKey: key });
+      const { body } = await patchAgentSetting(
+        c.sql,
+        (agent) => ({ jobs: { [job]: !agent.jobs[job] } }),
+        key,
+      );
       await answerToast(
         client,
         click.callbackId,
-        `${label('agentJob', job)}: ${nextOn ? 'ligado' : 'desligado'}`,
+        `${label('agentJob', job)}: ${body.jobs[job] ? 'ligado' : 'desligado'}`,
       );
       await editThis(client, click, await agenteView(c));
       return;

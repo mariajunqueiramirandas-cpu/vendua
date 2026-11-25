@@ -1056,6 +1056,12 @@ export interface AgentConfig {
   voice: { replies: boolean; proactive: boolean; speechVoice: string };
 }
 
+export const AGENT_CONFIG_GROUPS = ['jobs', 'schedule', 'newLeadMode', 'voice'] as const;
+type AgentConfigGroup = (typeof AGENT_CONFIG_GROUPS)[number];
+export type AgentConfigPatch = Partial<Omit<AgentConfig, AgentConfigGroup>> & {
+  [K in AgentConfigGroup]?: Partial<AgentConfig[K]>;
+};
+
 export interface AgentPitch {
   product: string;
   offer: string;
@@ -1238,7 +1244,9 @@ export interface StartCampaignPayload {
 
 const agentV2 = {
   /** the `agent` setting with defaults applied; the Studio writes via putSetting. */
-  agentConfig: () => req<AgentConfig>('/agent/config'),
+  agentConfig: (signal: AbortSignal) => req<AgentConfig>('/agent/config', { signal }),
+  patchAgentConfig: (patch: AgentConfigPatch) =>
+    req<AgentConfig>('/agent/config', { method: 'PATCH', body: JSON.stringify(patch) }),
   resetAgentInstructions: (scope: ResetInstructionsScope = 'all') =>
     req<{ scope: ResetInstructionsScope; config: AgentConfig; pitch: AgentPitch }>(
       '/agent/reset-instructions',

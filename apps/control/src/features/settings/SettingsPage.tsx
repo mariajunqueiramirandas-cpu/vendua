@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowUpRight } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { errorMessage } from '@/lib/query.ts';
-import { useIntegrations } from '@/lib/queries.ts';
+import { useAgentConfig, useIntegrations } from '@/lib/queries.ts';
 import { Page } from '@/components/Page.tsx';
 import { tabTriggerClass } from '@/components/ui/controls.tsx';
 import { TzList } from './bits.tsx';
@@ -42,6 +42,7 @@ export default function SettingsPage() {
 
   const integQ = useIntegrations();
   const settingsQ = useSettingsMap();
+  const agentQ = useAgentConfig();
   const waQ = useWaQr();
   const igQ = useIgStatus();
   const mQ = useMeetingsStatus();
@@ -85,13 +86,14 @@ export default function SettingsPage() {
   // 'err' = the status probe itself failed — report it instead of guessing
   const mStatus = mQ.isError ? 'err' : (mQ.data ?? null);
   // gate on first answers so empty defaults don't read as 'não configurado'
-  const loading = integQ.isPending || settingsQ.isPending || mQ.isPending;
+  const loading = integQ.isPending || settingsQ.isPending || agentQ.isPending || mQ.isPending;
 
   const r = computeReadiness({
     integrations,
     integErr: integQ.isError,
     settings,
     setErr: settingsQ.isError,
+    autoLevel: agentQ.isError ? null : (agentQ.data?.level ?? null),
     wa,
     ig: igQ.data ?? null,
     mStatus,

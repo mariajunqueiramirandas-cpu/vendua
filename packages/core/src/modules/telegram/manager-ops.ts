@@ -17,14 +17,13 @@ import {
   AGENT_INSTRUCTIONS_MAX,
   AGENT_JOBS,
   AUTONOMY_LEVELS,
-  agentSettingTx,
+  patchAgentSetting,
   type AgentJob,
   type AutonomyLevel,
 } from '../../crm/policy.ts';
 import { deleteMemoryItem, rememberTx } from '../agent-memory.ts';
 import { claimControl, controlTx } from '../control.ts';
 import { emitControlEvent } from '../control-events.ts';
-import { putSetting, validateSetting } from '../integrations.ts';
 import { updateLeadTx } from '../leads.ts';
 import { recordStaffEventTx } from '../staff-events.ts';
 import {
@@ -447,40 +446,6 @@ export async function teachRule(
   return { ...res.body, replayed: res.replayed };
 }
 
-/** Updates global `settings.agent` (autonomy preset, job switches, or global instructions). */
-export async function updateAgentConfig(
-  sql: Sql,
-  input: {
-    level?: AutonomyLevel;
-    jobs?: Partial<Record<AgentJob, boolean>>;
-    instructions?: string;
-    idemKey: string;
-  },
-): Promise<{
-  level: AutonomyLevel;
-  jobs: Record<AgentJob, boolean>;
-  instructions: string;
-  replayed: boolean;
-}> {
-  const cur = await controlTx(sql, agentSettingTx);
-  const next = {
-    ...cur,
-    ...(input.level !== undefined ? { level: input.level } : {}),
-    ...(input.jobs ? { jobs: { ...cur.jobs, ...input.jobs } } : {}),
-    ...(input.instructions !== undefined
-      ? { instructions: input.instructions.trim().slice(0, AGENT_INSTRUCTIONS_MAX) }
-      : {}),
-  };
-  validateSetting('agent', next);
-  const res = await putSetting(sql, 'agent', next, input.idemKey);
-  return {
-    level: next.level,
-    jobs: next.jobs,
-    instructions: next.instructions,
-    replayed: res.replayed,
-  };
-}
-
 /** Wakes the weekly strategist or launches a one-off discovery hunt. */
 export async function triggerBoardRun(
   sql: Sql,
@@ -640,6 +605,8 @@ export type ProposalKind =
   | 'board_run'
   | 'start_campaign';
 
+export const CAMPAIGN_AUTOPILOT_CONFIRMATION = 'também liga piloto automático';
+
 export interface ProposalRow {
   id: string;
   chat_id: string;
@@ -757,6 +724,8 @@ export async function decideProposal(
 
   // Execute the proposed mutation via the exact same CRM helpers
   const p = cur.payload ?? {};
+  // Different taps on the same card must never reapply its settings after a later edit.
+  const proposalKey = `telegram:proposal:${cur.id}`;
   let resultText = 'feito';
   let syncedAnchor: string | undefined;
   try {
@@ -772,15 +741,17 @@ export async function decideProposal(
               ),
             ) as Partial<Record<AgentJob, boolean>>)
           : undefined;
-      const u = await updateAgentConfig(sql, {
-        ...(level ? { level } : {}),
-        ...(jobs && Object.keys(jobs).length ? { jobs } : {}),
-        idemKey: `${input.idemKey}:autonomy`,
-      });
-      resultText = `autonomia: ${label('autonomy', u.level)}`;
+      const { body } = await patchAgentSetting(
+        sql,
+        { ...(level ? { level } : {}), ...(jobs && Object.keys(jobs).length ? { jobs } : {}) },
+        proposalKey,
+      );
+      resultText = `autonomia: ${label('autonomy', body.level)}`;
     } else if (cur.kind === 'update_instructions') {
-      const instructions = String(p.instructions ?? '');
-      await updateAgentConfig(sql, { instructions, idemKey: `${input.idemKey}:instr` });
+      const instructions = String(p.instructions ?? '')
+        .trim()
+        .slice(0, AGENT_INSTRUCTIONS_MAX);
+      await patchAgentSetting(sql, { instructions }, proposalKey);
       resultText = 'instruções globais atualizadas';
     } else if (cur.kind === 'delete_rule') {
       const memoryId = String(p.memoryId ?? '');
@@ -825,6 +796,10 @@ export async function decideProposal(
         kind === 'discovery' ? 'descoberta iniciada' : 'revisão do estrategista iniciada';
     } else if (cur.kind === 'start_campaign') {
       const { startCampaign } = await import('../../crm/campaigns.ts');
+      // Some older cards stored the option when it was absent from the confirmation text.
+      const enableAutopilot =
+        p.enableAutopilot === true &&
+        cur.lines.some((line) => line.startsWith(CAMPAIGN_AUTOPILOT_CONFIRMATION));
       const created = await startCampaign(sql, {
         title: String(p.title ?? 'Campanha autônoma'),
         objective: String(p.objective ?? cur.title),
@@ -844,10 +819,10 @@ export async function decideProposal(
         ...(typeof p.allowExistingLeads === 'boolean'
           ? { allowExistingLeads: p.allowExistingLeads }
           : {}),
-        ...(p.enableAutopilot === true ? { enableAutopilot: true } : {}),
+        ...(enableAutopilot ? { enableAutopilot: true } : {}),
         by: input.by,
         chatId: cur.chat_id,
-        idemKey: `${input.idemKey}:campaign`,
+        idemKey: proposalKey,
       });
       resultText = `campanha "${created.campaign.title}" iniciada`;
     }

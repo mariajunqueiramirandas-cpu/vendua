@@ -37,9 +37,9 @@ export const LEVELS: {
   {
     key: 'autopilot',
     label: AUTONOMY_LABEL.autopilot,
-    tag: 'envia tudo direto',
-    sends: 'tudo sai sem aprovação — horário de silêncio e limites continuam valendo',
-    queue: 'fila vazia — nada espera você',
+    tag: 'envios automáticos',
+    sends: 'envios automáticos seguem o modo do lead, o horário de silêncio e os limites',
+    queue: 'rascunhos existentes e mensagens de leads em modo rascunho aguardam aprovação',
   },
 ];
 
@@ -72,7 +72,7 @@ export function AutonomyPanel({
   value,
   onChange,
 }: {
-  liveLevel: AutonomyLevel;
+  liveLevel: AutonomyLevel | null;
   value: AgentConfig;
   onChange: (patch: Partial<AgentConfig>) => void;
 }) {
@@ -99,7 +99,7 @@ export function AutonomyPanel({
               liveLevel === 'off' ? 'default' : liveLevel === 'supervised' ? 'agent' : 'warn'
             }
           >
-            no ar: {AUTONOMY_LABEL[liveLevel]}
+            {liveLevel ? `no ar: ${AUTONOMY_LABEL[liveLevel]}` : 'falha ao ler modo atual'}
           </Badge>
         </div>
       }

@@ -1,7 +1,15 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type AgentConfig, type AgentPitch, type ResetInstructionsScope } from '@/lib/api.ts';
+import {
+  AGENT_CONFIG_GROUPS,
+  api,
+  type AgentConfig,
+  type AgentConfigPatch,
+  type AgentPitch,
+  type ResetInstructionsScope,
+} from '@/lib/api.ts';
+import { refreshAgentSettings } from '@/lib/live.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
 
 type SettingsRes = { settings: { key: string; value: unknown }[] };
@@ -75,28 +83,69 @@ export function useSaveSetting() {
   return { save, pending: m.isPending };
 }
 
+export function withAgentEdits(config: AgentConfig, changes: AgentConfigPatch): AgentConfig {
+  return {
+    ...config,
+    ...changes,
+    jobs: { ...config.jobs, ...changes.jobs },
+    schedule: { ...config.schedule, ...changes.schedule },
+    newLeadMode: { ...config.newLeadMode, ...changes.newLeadMode },
+    voice: { ...config.voice, ...changes.voice },
+  };
+}
+
+function changedFields<T extends object>(before: T, after: T): Partial<T> {
+  const changes: Partial<T> = {};
+  for (const key of Object.keys(after) as (keyof T)[]) {
+    if (after[key] !== before[key]) changes[key] = after[key];
+  }
+  return changes;
+}
+
+export function changedAgentFields(before: AgentConfigPatch, after: AgentConfigPatch) {
+  const changes = changedFields(before, after);
+  for (const key of AGENT_CONFIG_GROUPS) {
+    const group = changes[key];
+    if (!group) continue;
+    const fields = changedFields(before[key] ?? {}, group);
+    if (Object.keys(fields).length) Object.assign(changes, { [key]: fields });
+    else delete changes[key];
+  }
+  return changes;
+}
+
+export function useSaveAgentConfig() {
+  const qc = useQueryClient();
+  const m = useMutation({
+    scope: { id: 'settings-put' },
+    mutationFn: api.patchAgentConfig,
+    onSuccess: async () => {
+      await refreshAgentSettings(qc);
+      toast.success('agente salvo');
+    },
+    onError: (e) => {
+      toast.error(`agente: ${errorMessage(e)}`);
+      void refreshAgentSettings(qc);
+    },
+  });
+  return {
+    saveAgentConfig: (patch: AgentConfigPatch) =>
+      m.mutateAsync(patch).then(
+        () => true,
+        () => false,
+      ),
+    savingAgentConfig: m.isPending,
+  };
+}
+
 export function useResetAgentInstructions() {
   const qc = useQueryClient();
   const m = useMutation({
     scope: { id: 'settings-put' },
     mutationFn: (scope: ResetInstructionsScope = 'all') => api.resetAgentInstructions(scope),
-    onSuccess: async (res) => {
-      await Promise.all([
-        qc.cancelQueries({ queryKey: qk.settings() }),
-        qc.cancelQueries({ queryKey: qk.agentConfig() }),
-      ]);
-      qc.setQueryData<AgentConfig>(qk.agentConfig(), res.config);
-      qc.setQueryData<SettingsRes>(qk.settings(), (old) => {
-        const rows = old?.settings ?? [];
-        const upsert = (list: { key: string; value: unknown }[], key: string, value: unknown) =>
-          list.some((s) => s.key === key)
-            ? list.map((s) => (s.key === key ? { key, value } : s))
-            : [...list, { key, value }];
-        return { settings: upsert(upsert(rows, 'agent', res.config), 'pitch', res.pitch) };
-      });
+    onSuccess: async () => {
+      await refreshAgentSettings(qc);
       toast.success('voz e instruções restauradas para o padrão — memória e leads mantidos');
-      for (const queryKey of [qk.settings(), qk.agentConfig()])
-        void qc.invalidateQueries({ queryKey });
     },
     onError: (e) => {
       toast.error(`restaurar instruções: ${errorMessage(e)}`);

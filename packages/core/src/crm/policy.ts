@@ -1,6 +1,7 @@
-import type { Sql } from '../platform/db.ts';
+import { afterCommit, type Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { claimControl, type ClaimResult } from '../modules/control.ts';
+import { emitControlEvent } from '../modules/control-events.ts';
 import {
   DEFAULT_GUARDRAILS,
   DEFAULT_AGENT_RULES,
@@ -10,6 +11,8 @@ import {
   getPitchTx,
   getSettingTx,
   phoneIsIgnored,
+  putSettingTx,
+  validateSetting,
   type Guardrails,
   type Pitch,
 } from '../modules/integrations.ts';
@@ -61,6 +64,13 @@ export interface AgentSetting {
   voice: AgentVoice;
 }
 
+const AGENT_SETTING_GROUPS = ['jobs', 'schedule', 'newLeadMode', 'voice'] as const;
+type AgentSettingGroup = (typeof AGENT_SETTING_GROUPS)[number];
+export type AgentSettingPatch = Partial<Omit<AgentSetting, AgentSettingGroup>> & {
+  [K in AgentSettingGroup]?: Partial<AgentSetting[K]>;
+};
+type AgentSettingUpdate = AgentSettingPatch | ((current: AgentSetting) => AgentSettingPatch);
+
 export interface AgentVoice {
   /** a lead's voice note is answered with one */
   replies: boolean;
@@ -72,8 +82,12 @@ export interface AgentVoice {
 
 export const DEFAULT_AGENT_VOICE: AgentVoice = { replies: true, proactive: true, speechVoice: '' };
 
+function settingObject(v: unknown): Record<string, unknown> {
+  return (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+}
+
 function voiceOf(v: unknown): AgentVoice {
-  const o = (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  const o = settingObject(v);
   return {
     replies: o.replies !== false,
     proactive: o.proactive !== false,
@@ -86,7 +100,7 @@ function voiceOf(v: unknown): AgentVoice {
 
 // Normalizes a stored row: bad/missing fields fall back to defaults so a hand-edited row can't poison policy.
 export function normalizeAgent(v: unknown): AgentSetting {
-  const o = (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  const o = settingObject(v);
   const j = (o.jobs && typeof o.jobs === 'object' ? o.jobs : {}) as Record<string, unknown>;
   const usd = Number(o.weeklyDiscoveryUsd);
   const sc = (o.schedule && typeof o.schedule === 'object' ? o.schedule : {}) as Record<
@@ -124,6 +138,39 @@ export async function agentSettingTx(tx: Sql): Promise<AgentSetting> {
   return normalizeAgent(await getSettingTx<unknown>(tx, 'agent', {}));
 }
 
+export async function patchAgentSettingTx(
+  tx: Sql,
+  update: AgentSettingUpdate,
+): Promise<AgentSetting> {
+  // Lock the row before deriving a patch, including on a workspace with no stored settings yet.
+  await tx`insert into control_settings (key, value) values ('agent', '{}') on conflict do nothing`;
+  const [row] = await tx<{ value: unknown }[]>`
+    select value from control_settings where key = 'agent' for update
+  `;
+  const current = settingObject(row?.value);
+  const patch = typeof update === 'function' ? update(normalizeAgent(current)) : update;
+  validateSetting('agent', patch, { partialAgent: true });
+  const next: Record<string, unknown> = { ...current, ...patch };
+  for (const key of AGENT_SETTING_GROUPS) {
+    if (patch[key]) next[key] = { ...settingObject(current[key]), ...patch[key] };
+  }
+  await putSettingTx(tx, 'agent', next);
+  return normalizeAgent(next);
+}
+
+export async function patchAgentSetting(
+  sql: Sql,
+  update: AgentSettingUpdate,
+  idemKey: string,
+): Promise<ClaimResult<AgentSetting>> {
+  // Keep the saved response shape for Telegram callbacks that an older Core already handled.
+  const res = await claimControl(sql, idemKey, async (tx) => ({
+    status: 200,
+    body: { key: 'agent', value: await patchAgentSettingTx(tx, update) },
+  }));
+  return { ...res, body: res.body.value };
+}
+
 export const RESET_INSTRUCTION_SCOPES = ['all', 'instructions', 'pitch'] as const;
 export type ResetInstructionsScope = (typeof RESET_INSTRUCTION_SCOPES)[number];
 
@@ -148,6 +195,7 @@ export async function resetAgentInstructions(
     if (scope === 'all' || scope === 'pitch') {
       await tx`delete from control_settings where key = 'pitch'`;
     }
+    afterCommit(tx, () => emitControlEvent('settings.change'));
     return {
       status: 200,
       body: {
