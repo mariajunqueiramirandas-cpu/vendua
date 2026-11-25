@@ -57,8 +57,14 @@ describe('foundLeads', () => {
 });
 
 describe('stream lines', () => {
-  test('create_lead says + lead and the auto contact', () => {
+  test('create_lead says + lead and the auto contact, or low-fit tracked record', () => {
     expect(outHint(createdStep)).toBe('+ lead · contato auto');
+    expect(
+      outHint({
+        ...createdStep,
+        out: { ...createdStep.out, firstContactQueued: false, lowFit: true },
+      }),
+    ).toBe('+ registro (fit baixo)');
   });
 
   test('book shows the prospect, its verdict and the channels found', () => {

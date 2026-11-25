@@ -40,7 +40,7 @@ const TRANSPORT = new Set(['sidecar_unreachable', 'not_connected', 'no_secret', 
 const FBID_RE = /^\d{1,40}$/;
 
 /** Queues a follow of a lead's Instagram handle, in the tx that gave the lead it. A handle
- *  already queued or done is left alone; sim, archived and unsubscribed leads are skipped. */
+ *  already queued or done is left alone; sim, archived, unsubscribed and low-fit (<= 3) leads are skipped. */
 export async function queueIgFollowTx(tx: Sql, leadId: string, raw: unknown): Promise<void> {
   const handle = typeof raw === 'string' ? instagramHandle(raw) : null;
   if (!handle) return;
@@ -49,6 +49,7 @@ export async function queueIgFollowTx(tx: Sql, leadId: string, raw: unknown): Pr
     select ${handle}, l.id from leads l
     where l.id = ${leadId} and l.source is distinct from 'sim'
       and l.archived_at is null and l.unsubscribed_at is null
+      and (l.fit_score is null or l.fit_score > 3)
     on conflict (handle) do nothing`;
 }
 

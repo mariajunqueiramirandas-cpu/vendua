@@ -17,6 +17,7 @@ import {
 import { whatsappRegistered } from '../src/crm/channels/whatsapp.ts';
 import { applyIgEvent } from '../src/crm/channels/instagram.ts';
 import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
+import { applyCrm, EMPTY_TURN, type CrmCustom } from '../src/agent-host/agents/crm/shared.ts';
 import { DISCOVERY_TOOLS } from '../src/agent-host/agents/crm/discovery.ts';
 import { CRM_STATES } from '../src/agent-host/agents/crm/index.ts';
 import {
@@ -229,6 +230,8 @@ describe('scoring & liveness prompts', () => {
     expect(p).toContain('outboundLinks');
     expect(p).toContain('bioPages');
     expect(p).toContain('Brendi');
+    expect(p).toContain('concorrente');
+    expect(p).toContain('não contam pra META');
     expect(p).toContain('iFood');
     expect(p).toContain('## Verificação de negócio ativo');
     expect(p).toContain('180 dias');
@@ -261,6 +264,36 @@ describe('scoring & liveness prompts', () => {
       },
     );
     expect(p).toContain('Atualize fitScore/intentScore');
+  });
+
+  test('applyCrm fold keeps lowFit tracked-only leads out of leadsCreated while tracking leadId', () => {
+    const init = { turn: { ...EMPTY_TURN, kind: 'discovery' as const } } as unknown as Parameters<
+      typeof applyCrm
+    >[0];
+    const afterLow = applyCrm(init, {
+      type: 'tool.returned',
+      payload: {
+        name: 'create_lead',
+        ok: true,
+        data: { leadId: 'lead-brendi', created: true, lowFit: true },
+      },
+    } as unknown as Parameters<typeof applyCrm>[1]) as unknown as CrmCustom;
+    expect(afterLow.turn.leads).toEqual(['lead-brendi']);
+    expect(afterLow.turn.leadsCreated).toBe(0);
+
+    const afterQualified = applyCrm(
+      afterLow as unknown as Parameters<typeof applyCrm>[0],
+      {
+        type: 'tool.returned',
+        payload: {
+          name: 'create_lead',
+          ok: true,
+          data: { leadId: 'lead-real', created: true },
+        },
+      } as unknown as Parameters<typeof applyCrm>[1],
+    ) as unknown as CrmCustom;
+    expect(afterQualified.turn.leads).toEqual(['lead-brendi', 'lead-real']);
+    expect(afterQualified.turn.leadsCreated).toBe(1);
   });
 });
 
@@ -490,6 +523,75 @@ describe.skipIf(!OWNER_URL)('discovery liveness gate + backlog sweep (db)', () =
     const [row] = await b.sql<{ whatsapp_verified: boolean }[]>`
       select whatsapp_verified from leads where id = ${created.leadId}`;
     expect(row!.whatsapp_verified).toBe(true);
+  });
+
+  test('low-fit competitor lead is saved with tags for cross-run dedupe without autocontact, IG follow, or burning META', async () => {
+    await b.settings('autopilot', { discoveryContactMinScore: 7 });
+    const handle = `brendi_${b.nonce}`;
+    const { outcomes } = await b.runTools(
+      [
+        [
+          'create_lead',
+          {
+            name: `Confeitaria Brendi ${b.nonce}`,
+            instagram: `@${handle}`,
+            website: 'https://menu.brendi.com.br/confeitaria-brendi',
+            tags: ['concorrente', 'brendi'],
+            fitScore: 2,
+            fitReason: 'já opera delivery e cardápio ativo na Brendi',
+            intentScore: 0,
+            intentReason: 'sem lacuna observada',
+            findings:
+              'Confeitaria ativa em Cabo Frio; link da bio leva ao cardápio digital ativo na Brendi.',
+          },
+        ],
+        ['search_leads', { q: `Confeitaria Brendi ${b.nonce}` }],
+        [
+          'create_lead',
+          {
+            name: `Doceria Sem Link ${b.nonce}`,
+            email: `semlink-${b.nonce}@example.com`,
+            fitScore: 8,
+            intentScore: 5,
+            findings:
+              'Doceria ativa em Cabo Frio recebendo encomendas manualmente pelo WhatsApp sem link próprio.',
+          },
+        ],
+      ],
+      { kind: 'discovery', payload: { query: 'confeitarias', target: 1 } },
+    );
+    const out0 = outcomes[0];
+    if (!out0 || 'blocked' in out0) throw new Error('expected unblocked low-fit create_lead');
+    const low = out0.data as {
+      leadId: string;
+      lowFit?: boolean;
+      firstContactQueued?: boolean;
+      leadsCreated: number;
+    };
+    b.mine.add(low.leadId);
+    expect(low.lowFit).toBe(true);
+    expect(low.firstContactQueued).toBeUndefined();
+    expect(low.leadsCreated).toBe(0);
+
+    // Low-fit tracked leads never spend Instagram follow budget.
+    const [follow] = await b.sql<{ handle: string }[]>`
+      select handle from ig_follows where handle = ${handle}`;
+    expect(follow).toBeUndefined();
+
+    // Future runs immediately see fitScore + tags in search_leads.
+    const out1 = outcomes[1];
+    if (!out1 || 'blocked' in out1) throw new Error('expected unblocked search_leads');
+    const hits = (out1.data as { matches: { fitScore: number | null; tags: string[] }[] }).matches;
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.fitScore).toBe(2);
+    expect(hits[0]!.tags).toEqual(expect.arrayContaining(['descoberto', 'concorrente', 'brendi']));
+
+    // Because the low-fit lead did not consume target=1, the qualified lead still fits in META.
+    const out2 = outcomes[2];
+    if (!out2 || 'blocked' in out2) throw new Error('expected unblocked qualified create_lead');
+    const qual = out2.data as { leadId: string; leadsCreated: number };
+    b.mine.add(qual.leadId);
+    expect(qual.leadsCreated).toBe(1);
   });
 
   test('sweepOutreachBacklog queues first contact for eligible untouched leads once (idempotent)', async () => {

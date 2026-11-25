@@ -279,7 +279,7 @@ export function applyCrm(prev: Json, e: AgentEvent): Json {
       // create_lead: the lead it filed or merged into is now this turn's to touch
       if (typeof d.leadId === 'string' && !c.turn.leads.includes(d.leadId))
         c.turn.leads = [...c.turn.leads, d.leadId];
-      if (d.created === true) c.turn.leadsCreated += 1;
+      if (d.created === true && d.lowFit !== true) c.turn.leadsCreated += 1;
       if (name === 'book' && d.entry && typeof d.entry === 'object') {
         const e = d.entry as unknown as BookEntry;
         const key = e.name.toLowerCase();
