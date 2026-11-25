@@ -4,7 +4,13 @@ import postgres from 'postgres';
 import { Hono } from 'hono';
 import { mountAgentRuntimeAi } from '../src/agent-host/control-ai.ts';
 import { validateSetting } from '../src/modules/integrations.ts';
-import { mediaProviders, phrasesHeader, type MediaRoute } from '../src/vendedor/media.ts';
+import {
+  mediaProviders,
+  phrasesHeader,
+  speakable,
+  ttsStatus,
+  type MediaRoute,
+} from '../src/vendedor/media.ts';
 import { migrate } from '../src/platform/db.ts';
 
 // Voice-note transcription through the self-hosted STT sidecar (services/stt, ADR 0037).
@@ -128,6 +134,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('media transcribe via sidecar (d
       routes: { transcribe: [SIDECAR] },
       saved: true,
       sidecar: { configured: true, reachable: true, model: 'parakeet-tdt-0.6b-v3' },
+      tts: { configured: false, reachable: false, model: null, voice: null, voices: [] },
       providers: [{ id: 'openai', configured: true, secretName: 'OPENAI_API_KEY' }],
     });
     // configured but down: a closed port answers nothing
@@ -140,6 +147,168 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('media transcribe via sidecar (d
 });
 
 const SIDECAR: MediaRoute = { provider: 'sidecar', model: 'parakeet-tdt-0.6b-v3', zdr: true };
+const TTS: MediaRoute = { provider: 'sidecar', model: 'phonon-40m-pt', zdr: true };
+
+// Spoken replies through fSpeech, the self-hosted TTS sidecar (ADR 0048).
+describe.skipIf(!process.env.TEST_DATABASE_URL)('media speak via the TTS sidecar (db)', () => {
+  const sql = postgres(process.env.TEST_DATABASE_URL!);
+  const KEY = 'agent_runtime.media_routes';
+  const seen: { auth: string | null; body: Record<string, unknown> }[] = [];
+  const VOICES = [
+    { id: 'rafaela', name: 'Rafaela', gender: 'female', age: 'young', description: 'Alegre.' },
+    { id: 'kaua', name: 'Kauã', gender: 'male', age: 'young_adult', description: null },
+    { id: 'Não Vale', name: 'x' },
+  ];
+  let reply: (body: Record<string, unknown>) => Response = (body) =>
+    new Response(new Uint8Array([79, 103, 103, 83]), {
+      headers: {
+        'content-type': body.format === 'mp3' ? 'audio/mpeg' : 'audio/ogg; codecs=opus',
+        'x-tts-seconds': '4.380',
+        'x-tts-voice': String(body.voice ?? 'rafaela'),
+      },
+    });
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (new URL(req.url).pathname === '/healthz')
+        return Response.json({
+          ok: true,
+          model: 'phonon-40m-pt-balanced.fspeech',
+          voice: 'rafaela',
+          voices: VOICES,
+        });
+      const body = (await req.json()) as Record<string, unknown>;
+      seen.push({ auth: req.headers.get('authorization'), body });
+      return reply(body);
+    },
+  });
+  const env = { TTS_URL: `http://127.0.0.1:${server.port}/`, TTS_SECRET: 'tts-s3cret' };
+  let prior: unknown;
+
+  const setRoutes = async (value: { speak?: MediaRoute[] } | null) => {
+    await sql`delete from control_settings where key = ${KEY}`;
+    if (value)
+      await sql`insert into control_settings (key, value) values (${KEY}, ${sql.json(value as never)})`;
+  };
+
+  beforeAll(async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    prior = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = ${KEY}`
+    )[0]?.value;
+  });
+  afterAll(async () => {
+    await setRoutes((prior as never) ?? null);
+    server.stop(true);
+    await sql.end();
+  });
+
+  test("no speak route: the configured sidecar speaks, in the store's voice", async () => {
+    await setRoutes(null);
+    seen.length = 0;
+    const m = mediaProviders(sql, env);
+    expect(await m.canSpeak!()).toBe(true);
+    const s = await m.speak('Seu pedido saiu para entrega.', { voice: 'kaua' });
+    expect(s).toEqual({
+      bytes: new Uint8Array([79, 103, 103, 83]),
+      mime: 'audio/ogg; codecs=opus',
+      seconds: 4,
+    });
+    expect(seen).toEqual([
+      {
+        auth: 'Bearer tts-s3cret',
+        body: { text: 'Seu pedido saiu para entrega.', format: 'ogg', voice: 'kaua' },
+      },
+    ]);
+    // what goes to the voice is the words, not the marks
+    await m.speak('Pronto, **pausei** o *pudim*.');
+    expect(seen.at(-1)!.body.text).toBe('Pronto, pausei o pudim.');
+    seen.length = 1;
+    // the browser format, and no voice: the sidecar's default
+    const mp3 = await m.speak('Pedido 42 pronto.', { format: 'mp3' });
+    expect(mp3?.mime).toBe('audio/mpeg');
+    expect(seen[1]!.body).toEqual({ text: 'Pedido 42 pronto.', format: 'mp3' });
+  });
+
+  test('a voice the model no longer has falls back to the default, not to text', async () => {
+    await setRoutes(null);
+    seen.length = 0;
+    reply = (body) =>
+      body.voice
+        ? Response.json({ error: 'unknown_voice' }, { status: 400 })
+        : new Response(new Uint8Array([1]), { headers: { 'x-tts-seconds': '1.2' } });
+    const s = await mediaProviders(sql, env).speak('Oi!', { voice: 'antiga' });
+    expect(s?.seconds).toBe(1);
+    expect(seen.map((x) => x.body.voice ?? null)).toEqual(['antiga', null]);
+  });
+
+  test('failures, bad input and no sidecar: null, and the reply goes as text', async () => {
+    await setRoutes(null);
+    seen.length = 0;
+    reply = () => Response.json({ error: 'overloaded' }, { status: 503 });
+    expect(await mediaProviders(sql, env).speak('Oi!')).toBeNull();
+    expect(seen).toHaveLength(1);
+    // too long for the sidecar, empty, or a voice id that isn't one: nothing is sent
+    expect(await mediaProviders(sql, env).speak('a'.repeat(2001))).toBeNull();
+    expect(await mediaProviders(sql, env).speak('   ')).toBeNull();
+    expect(seen).toHaveLength(1);
+    await mediaProviders(sql, env).speak('Oi!', { voice: '../etc' });
+    expect(seen[1]!.body.voice).toBeUndefined();
+    // off without its secret
+    const off = mediaProviders(sql, { TTS_URL: env.TTS_URL });
+    expect(await off.canSpeak!()).toBe(false);
+    expect(await off.speak('Oi!')).toBeNull();
+    expect(seen).toHaveLength(2);
+  });
+
+  test('staff routes win: an OpenAI-only list never reaches the sidecar', async () => {
+    await setRoutes({ speak: [{ provider: 'openai', model: 'gpt-4o-mini-tts', zdr: true }] });
+    seen.length = 0;
+    const m = mediaProviders(sql, env);
+    expect(await m.canSpeak!()).toBe(false); // no OPENAI_API_KEY here
+    expect(await m.speak('Oi!')).toBeNull();
+    expect(seen).toHaveLength(0);
+    await setRoutes({ speak: [{ ...TTS, voice: 'kaua' }] });
+    reply = () => new Response(new Uint8Array([2]), { headers: { 'x-tts-seconds': '2' } });
+    await mediaProviders(sql, env).speak('Oi!');
+    expect(seen[0]!.body.voice).toBe('kaua'); // the route's voice when the store has none
+  });
+
+  test("status: the sidecar's voices, malformed ones dropped", async () => {
+    const st = await ttsStatus(env);
+    expect(st).toEqual({
+      configured: true,
+      reachable: true,
+      model: 'phonon-40m-pt-balanced.fspeech',
+      voice: 'rafaela',
+      voices: [
+        { id: 'rafaela', name: 'Rafaela', gender: 'female', age: 'young', description: 'Alegre.' },
+        { id: 'kaua', name: 'Kauã', gender: 'male', age: 'young_adult', description: null },
+      ],
+    });
+    expect(await ttsStatus({})).toMatchObject({ configured: false, voices: [] });
+    expect(await ttsStatus({ TTS_URL: 'http://127.0.0.1:9', TTS_SECRET: 's' })).toMatchObject({
+      configured: true,
+      reachable: false,
+    });
+  });
+});
+
+describe('what is said out loud', () => {
+  test('written-only marks go, the words stay', () => {
+    expect(speakable('Pausei o **Pudim de Leite**. Veja em [Cardápio](/cardapio).')).toBe(
+      'Pausei o Pudim de Leite. Veja em Cardápio.',
+    );
+    expect(speakable('Seu pedido *saiu* para _entrega_, ~ontem~ hoje. Código `A1`.')).toBe(
+      'Seu pedido saiu para entrega, ontem hoje. Código A1.',
+    );
+    expect(speakable('Ficou assim:\n- pudim, R$ 45\n• brigadeiro\n2) bolo')).toBe(
+      'Ficou assim:\npudim, R$ 45\nbrigadeiro\nbolo',
+    );
+    // a lone mark, a math star, a word with an underscore: left alone
+    expect(speakable('2 * 3 = 6, nome_do_produto, 5*')).toBe('2 * 3 = 6, nome_do_produto, 5*');
+  });
+});
 
 describe('media routes, as the CRM saves them', () => {
   const field = (value: unknown) => {
@@ -160,6 +329,7 @@ describe('media routes, as the CRM saves them', () => {
         speak: [{ provider: 'openai', model: 'gpt-4o-mini-tts', zdr: true, voice: 'alloy' }],
       }),
     ).toBeNull();
+    expect(field({ speak: [TTS, { ...TTS, voice: 'rafaela' }] })).toBeNull();
   });
 
   test('bad shapes name their field', () => {
@@ -170,7 +340,8 @@ describe('media routes, as the CRM saves them', () => {
     expect(field({ transcribe: [{ ...SIDECAR, provider: 'whisper' }] })).toBe(
       'transcribe.0.provider',
     );
-    expect(field({ speak: [{ ...SIDECAR }] })).toBe('speak.0.provider');
+    expect(field({ speak: [{ ...SIDECAR, provider: 'elevenlabs' }] })).toBe('speak.0.provider');
+    expect(field({ speak: [{ ...TTS, voice: 'Kauã' }] })).toBe('speak.0.voice');
     expect(field({ transcribe: [SIDECAR, { ...SIDECAR, model: '' }] })).toBe('transcribe.1.model');
     expect(field({ transcribe: [{ ...SIDECAR, model: 'a b' }] })).toBe('transcribe.0.model');
     expect(field({ transcribe: [{ ...SIDECAR, zdr: 'yes' }] })).toBe('transcribe.0.zdr');

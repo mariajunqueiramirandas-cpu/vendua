@@ -841,6 +841,7 @@ export function validateSetting(key: string, value: unknown): void {
           'weeklyDiscoveryUsd',
           'schedule',
           'newLeadMode',
+          'voice',
         ].includes(f)
       )
         throw bad(f, 'is not an agent field');
@@ -863,6 +864,18 @@ export function validateSetting(key: string, value: unknown): void {
       (typeof v.instructions !== 'string' || v.instructions.length > 8000)
     ) {
       throw bad('instructions', 'must be a string (≤8000 chars)');
+    }
+    if (v.voice !== undefined) {
+      const o = v.voice;
+      if (!o || typeof o !== 'object' || Array.isArray(o)) throw bad('voice', 'must be an object');
+      for (const [k, x] of Object.entries(o as Record<string, unknown>)) {
+        if (k === 'replies' || k === 'proactive') {
+          if (typeof x !== 'boolean') throw bad(`voice.${k}`, 'must be a boolean');
+        } else if (k === 'speechVoice') {
+          if (typeof x !== 'string' || (x !== '' && !/^[a-z0-9-]{1,40}$/.test(x)))
+            throw bad('voice.speechVoice', 'must be a voice id or empty');
+        } else throw bad(`voice.${k}`, 'is not a voice field');
+      }
     }
     if (v.newLeadMode !== undefined) {
       const m = v.newLeadMode;

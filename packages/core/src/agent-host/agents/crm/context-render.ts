@@ -72,6 +72,8 @@ export interface TranscriptMessage {
   author: string;
   created_at: string | Date;
   channel?: string;
+  /** a voice note (an inbound one's body already starts with "[áudio]") */
+  audio?: boolean;
 }
 
 const STATUS_NOTE: Record<string, string> = {
@@ -106,7 +108,11 @@ function transcriptEntries(
           : m.author === 'system'
             ? 'SISTEMA'
             : 'VENDUÁ (agente)';
-    const notes = [opts.tagChannel && m.channel, STATUS_NOTE[m.status]].filter(Boolean);
+    const notes = [
+      opts.tagChannel && m.channel,
+      m.direction === 'out' && m.audio && 'em áudio',
+      STATUS_NOTE[m.status],
+    ].filter(Boolean);
     const body = (m.body ?? '').trim() || '(vazio)';
     return `[${stamp(m.created_at, tz)}] ${who}${notes.length ? ` (${notes.join(', ')})` : ''}: ${body}`;
   });

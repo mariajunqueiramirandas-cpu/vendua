@@ -75,6 +75,7 @@ export const qk = {
     why: (id: string, messageId: string) => ['vendedor', 'why', id, messageId] as const,
     suggestions: (id: string) => ['vendedor', 'suggestions', id] as const,
     settings: ['vendedor', 'settings'] as const,
+    voices: ['vendedor', 'voices'] as const,
     knowledge: ['vendedor', 'knowledge'] as const,
     ensaio: ['vendedor', 'ensaio'] as const,
     clienteOculto: ['vendedor', 'cliente-oculto'] as const,

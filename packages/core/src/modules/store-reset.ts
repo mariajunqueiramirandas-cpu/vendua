@@ -83,6 +83,7 @@ export const RESET_WIPES = [
   'combo_slot_items',
   'combo_slots',
   'copilot_actions',
+  'copilot_audio',
   'copilot_media',
   'copilot_media_calls',
   'copilot_messages',

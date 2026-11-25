@@ -1,7 +1,7 @@
 import type { Context, Hono } from 'hono';
 import { customerRowsTx, roundUsd } from '../modules/control-customers.ts';
 import { controlTx } from '../modules/control.ts';
-import { sidecarStatus } from '../vendedor/media.ts';
+import { sidecarStatus, ttsStatus } from '../vendedor/media.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { AGENTS } from './agents/index.ts';
@@ -97,23 +97,31 @@ export function mountAgentRuntimeAi(o: {
     });
   });
 
-  // CRM "IA > Voz": the transcription routes (vendedor/media.ts), the STT sidecar's state and the
+  // CRM "IA > Voz": the voice routes (vendedor/media.ts), the STT and TTS sidecars' state and the
   // cloud keys a route can use.
   app.get('/control/v1/ai/voice', async (c) => {
     controlGate(c);
-    const [rows, sidecar] = await Promise.all([
+    const [rows, sidecar, tts] = await Promise.all([
       controlTx(
         sql,
         (tx) => tx<{ value: Record<string, unknown> }[]>`
           select value from control_settings where key = 'agent_runtime.media_routes'`,
       ),
       sidecarStatus(env),
+      ttsStatus(env),
     ]);
     c.header('cache-control', 'no-store');
     return c.json({
       routes: rows[0]?.value ?? {},
       saved: rows.length > 0,
       sidecar,
+      tts: {
+        configured: tts.configured,
+        reachable: tts.reachable,
+        model: tts.model,
+        voice: tts.voice,
+        voices: tts.voices.map((v) => ({ id: v.id, name: v.name, gender: v.gender, age: v.age })),
+      },
       providers: [{ id: 'openai', configured: !!env.OPENAI_API_KEY, secretName: 'OPENAI_API_KEY' }],
     });
   });

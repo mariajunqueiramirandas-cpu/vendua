@@ -1,4 +1,5 @@
 import { ingestInbound } from '../crm/inbound.ts';
+import { AUDIO_MARK, hearLeadVoiceNote } from '../crm/voice.ts';
 import { phoneIsIgnored } from '../modules/integrations.ts';
 import { controlTx } from '../modules/control.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
@@ -78,13 +79,16 @@ async function toCrm(d: InboxDeps, row: InboxRow) {
     return;
   }
   if (!row.from_jid || row.body == null) return;
+  // a lead's voice note reaches the sales agent as its transcript (crm/voice.ts)
+  const heard = row.kind === 'message' ? await leadVoiceFromInbox(d, row) : null;
   const common = {
     channel: 'whatsapp' as const,
     from: row.from_jid,
     ...(row.push_name ? { fromName: row.push_name } : {}),
     ...(row.alt_jid ? { fromAlias: row.alt_jid } : {}),
-    body: waBody(row.body),
+    body: waBody(heard ?? row.body),
     providerMessageId: row.provider_id,
+    ...(heard ? { audio: true } : {}),
   };
   if (row.kind === 'history')
     await ingestInbound(d.jobsSql, {
@@ -94,6 +98,19 @@ async function toCrm(d: InboxDeps, row: InboxRow) {
       historical: true,
     });
   else await ingestInbound(d.jobsSql, common);
+}
+
+/** The transcript of a voice note the gateway stored, or null when the row isn't one. */
+export async function leadVoiceFromInbox(d: InboxDeps, row: InboxRow): Promise<string | null> {
+  if (row.body === AUDIO_NOT_FETCHED) return AUDIO_MARK;
+  if (!row.media_id) return null;
+  const [m] = await controlTx(
+    d.jobsSql,
+    (tx) => tx<{ mime: string; bytes: Buffer }[]>`
+      select mime, bytes from platform_wa_media where id = ${row.media_id}`,
+  );
+  if (!m?.mime.startsWith('audio/')) return null;
+  return hearLeadVoiceNote(d.jobsSql, new Uint8Array(m.bytes), m.mime, d.media ?? null);
 }
 
 async function consumeIntake(

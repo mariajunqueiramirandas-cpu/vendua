@@ -29,6 +29,8 @@ import {
   toWhatsApp,
 } from '../src/platform-whatsapp/dua-text.ts';
 import { claimInboxRow, consumeRow, socketMessageToInbox } from '../src/platform-whatsapp/inbox.ts';
+import { duaVoicePass } from '../src/platform-whatsapp/voice.ts';
+import type { MediaProviders } from '../src/vendedor/media.ts';
 
 // Duá by WhatsApp (docs/features/dua-no-whatsapp.md §5): a merchant's message to Venduá's number
 // reaches their Copilot conversation; the reply and its cards go back as text; a "SIM" is matched
@@ -664,6 +666,100 @@ describe.skipIf(!OWNER_URL)('Duá by WhatsApp (db)', () => {
       if (prev === undefined) delete process.env.WA_PLATFORM_TRANSPORT;
       else process.env.WA_PLATFORM_TRANSPORT = prev;
     }
+  });
+
+  test('a voice note is answered with one: the reply waits for its voice note, then carries it', async () => {
+    const s = await store();
+    const note = async () =>
+      (
+        await sql<{ id: string }[]>`
+          insert into platform_wa_media (session, mime, bytes, seconds)
+          values ('vendua', 'audio/ogg; codecs=opus', ${Buffer.from([1, 2, 3])}, 4) returning id`
+      )[0]!.id;
+    const said: { text: string; format: string | undefined }[] = [];
+    let speaking = true;
+    const voice: MediaProviders = {
+      transcribe: async () => null,
+      speak: async (text, o) => {
+        said.push({ text, format: o?.format });
+        return speaking
+          ? {
+              bytes: new Uint8Array([79, 103, 103, 83]),
+              mime: 'audio/ogg; codecs=opus',
+              seconds: 3,
+            }
+          : null;
+      },
+    };
+    const outRow = (ph: string) =>
+      sql<{ id: string; body: string; voice: string | null; media_id: string | null }[]>`
+        select id, body, voice, media_id from platform_wa_outbox
+        where to_jid in (${`55${ph}@s.whatsapp.net`}, ${`55${ph}`}) and purpose = 'dua'
+        order by created_at desc, id desc limit 1`.then((r) => r[0]!);
+
+    heard = { text: 'como foram as vendas hoje?', confidence: 0.92 };
+    await inbound(s.phone, '[áudio]', { media_id: await note() });
+    await settle(runtime([reply('Hoje foram **12 pedidos** até agora.')]), s.tenantId);
+    const held = await outRow(s.phone);
+    expect(held).toMatchObject({
+      body: 'Hoje foram *12 pedidos* até agora.',
+      voice: 'pending',
+      media_id: null,
+    });
+    // in the admin the same reply has its listen control
+    const spokenItem = (await view(s)).items
+      .filter((i) => i.type === 'message' && i.author === 'dua')
+      .at(-1);
+    expect(spokenItem).toMatchObject({
+      audio: expect.stringMatching(/\/copilot\/messages\/.+\/audio$/),
+    });
+
+    expect(await duaVoicePass(appSql, voice)).toBeGreaterThan(0);
+    expect(said.filter((x) => x.text === held.body)).toEqual([{ text: held.body, format: 'ogg' }]);
+    const ready = await outRow(s.phone);
+    expect([ready.id, ready.voice, typeof ready.media_id]).toEqual([held.id, null, 'string']);
+    const [m] = await sql<{ mime: string; seconds: number }[]>`
+      select mime, seconds from platform_wa_media where id = ${ready.media_id}`;
+    expect(m).toEqual({ mime: 'audio/ogg; codecs=opus', seconds: 3 });
+    // nothing left for the next pass
+    said.length = 0;
+    await duaVoicePass(appSql, voice);
+    expect(said.filter((x) => x.text === held.body)).toHaveLength(0);
+
+    // typed: text, never held
+    await inbound(s.phone, 'e ontem?');
+    await settle(runtime([reply('Ontem foram 8.')]), s.tenantId);
+    expect(await outRow(s.phone)).toMatchObject({ body: 'Ontem foram 8.', voice: null });
+    expect((await view(s)).items.at(-1)).toMatchObject({ author: 'dua', audio: null });
+
+    // a reply with a card stays text: SIM answers a card someone read
+    await inbound(s.phone, '[áudio]', { media_id: await note() });
+    await settle(
+      runtime([
+        tools(call('propose_pause', { minutes: 30, message: 'Cozinha cheia!' })),
+        reply('Preparei a pausa.'),
+      ]),
+      s.tenantId,
+    );
+    expect((await outRow(s.phone)).voice).toBeNull();
+
+    // no voice to be had: the text goes, at once
+    speaking = false;
+    await inbound(s.phone, '[áudio]', { media_id: await note() });
+    await settle(runtime([reply('Tudo certo por aqui.')]), s.tenantId);
+    expect((await outRow(s.phone)).voice).toBe('pending');
+    await duaVoicePass(appSql, voice);
+    expect(await outRow(s.phone)).toMatchObject({ voice: null, media_id: null });
+    // and a row older than the senders' hold is left to them
+    speaking = true;
+    await inbound(s.phone, '[áudio]', { media_id: await note() });
+    await settle(runtime([reply('Mais uma.')]), s.tenantId);
+    const late = await outRow(s.phone);
+    await sql`update platform_wa_outbox set created_at = now() - interval '2 minutes' where id = ${late.id}`;
+    said.length = 0;
+    await duaVoicePass(appSql, voice);
+    expect(said.filter((x) => x.text === 'Mais uma.')).toHaveLength(0);
+    await sql`update platform_wa_outbox set voice = null where id = ${late.id}`;
   });
 
   test('a photo is read and joins the conversation with its caption; one it couldn’t see is said so', async () => {

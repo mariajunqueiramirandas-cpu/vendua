@@ -332,6 +332,8 @@ export function chatErrorWords(code: string, kind: SendKind = 'text'): string {
  * rereads the cart, so `useCart()` shows what it changed. Never throws: `send` resolves false
  * and `error`/`message` say why. Kernel 1.24: `sendVoice` / `sendPhoto` send a voice message or a
  * photo (base64-encoded here) when `media` says Core takes it, with the same semantics.
+ * Kernel 1.31: `loadAudio(id)` fetches the sound of a reply with `audio` (null when there's none
+ * right now).
  */
 export function useStoreChat(opts: { live?: boolean } = {}): {
   /** the store has the chat on (`StoreProfile.chat`) */
@@ -350,6 +352,9 @@ export function useStoreChat(opts: { live?: boolean } = {}): {
   sendVoice: (audio: Blob, seconds: number) => Promise<boolean>;
   /** Kernel 1.24 — a photo (JPEG, PNG or WebP, at most 2 MB) with an optional caption */
   sendPhoto: (image: Blob, caption?: string) => Promise<boolean>;
+  /** Kernel 1.31 — the sound of a reply said out loud (`StoreChatMessage.audio`), or null when
+   *  Core has none right now; never throws */
+  loadAudio: (messageId: string) => Promise<Blob | null>;
   sending: boolean;
   /** the last send failure (cleared by the next send) or read failure */
   error: QueryError | undefined;
@@ -380,6 +385,10 @@ export function useStoreChat(opts: { live?: boolean } = {}): {
       on ? feed.sendPhoto(image, caption) : Promise.resolve(false),
     [feed, on],
   );
+  const loadAudio = useCallback(
+    (messageId: string) => api.chatAudio(messageId).catch(() => null),
+    [api],
+  );
   const refetch = useCallback(() => void feed.refresh(), [feed]);
   const error = s.sendError ?? s.error;
   const available = on && s.view?.available !== false;
@@ -393,6 +402,7 @@ export function useStoreChat(opts: { live?: boolean } = {}): {
     media: available ? (s.view?.media ?? profile!.media ?? TEXT_ONLY) : TEXT_ONLY,
     sendVoice,
     sendPhoto,
+    loadAudio,
     sending: s.sending,
     error,
     message: error ? chatErrorWords(error.code, s.sendError ? s.sendKind : 'text') : null,

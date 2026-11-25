@@ -167,6 +167,10 @@ export interface SlotProps {
     onSendPhoto?: (image: Blob, caption?: string) => Promise<boolean>;
     /** Kernel 1.24 — the longest voice message to record (60) */
     maxVoiceSeconds?: number;
+    /** Kernel 1.31 — the sound of a message with `audio` (a reply to a voice message, said out
+     *  loud), or null when there's none right now. The default shows "Ouvir" on such a reply and
+     *  plays it by itself once when it answers a voice message just sent from this chat */
+    onLoadAudio?: (messageId: string) => Promise<Blob | null>;
   } & StoreTime &
     StoreWords;
   'checkout.Layout': {

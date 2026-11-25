@@ -7,6 +7,7 @@ import {
   type ProposalRow,
 } from '../../../modules/telegram/manager-ops.ts';
 import type { Sql } from '../../../platform/db.ts';
+import { MAX_SPEAK_CHARS } from '../../../vendedor/media.ts';
 
 // Shared constants and transactional Telegram outbox transport for the `crm-manager` agent
 // (ADR 0047). Its actors live under Venduá's platform tenant (`subject.kind = 'telegram_staff'`,
@@ -32,14 +33,25 @@ export const telegramManagerTransport: Transport<Sql> = {
   async send(tx: FencedTx<Sql>, msg: OutboundMessage) {
     const chatId = msg.subject.id;
     const step = `${msg.actorId}:${msg.turnId}:${msg.step}`;
-    const html = msg.text.trim() ? markdownToTelegramHtml(msg.text.trim()).slice(0, 4096) : '';
+    const plain = msg.text.trim();
+    const html = plain ? markdownToTelegramHtml(plain).slice(0, 4096) : '';
+    // a voice note is answered with one too (the text and its buttons still follow it)
+    const heard = plain
+      ? await tx.host<{ voice: boolean }[]>`
+          select exists (
+            select 1 from agent_mailbox
+            where actor_id = ${msg.actorId} and consumed_by_turn = ${msg.turnId}
+              and kind = 'message.inbound' and payload ->> 'voice' = 'true'
+          ) as voice`
+      : [];
+    const speak = heard[0]?.voice && plain.length <= MAX_SPEAK_CHARS ? plain : null;
 
     return controlTx(tx.host, async (c) => {
       let outboxId: string | null = null;
       if (html) {
         const inserted = await c<{ id: string }[]>`
-          insert into telegram_dm_outbox (chat_id, text, buttons, agent_step)
-          values (${chatId}, ${html}, '[]'::jsonb, ${step})
+          insert into telegram_dm_outbox (chat_id, text, buttons, agent_step, speak)
+          values (${chatId}, ${html}, '[]'::jsonb, ${step}, ${speak})
           on conflict (agent_step) do nothing
           returning id
         `;

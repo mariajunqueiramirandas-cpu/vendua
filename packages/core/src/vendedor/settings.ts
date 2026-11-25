@@ -1,6 +1,7 @@
 import { HttpError } from '../platform/http.ts';
 import { planHas } from '../modules/billing/plans.ts';
 import type { Sql } from '../platform/db.ts';
+import { SPEECH_VOICE } from './media.ts';
 
 // The merchant's controls (sales-agent.md §5). Defaults are the design's recommendations
 // (§10 open decision 3), not owner decisions: change them here when the owner rules.
@@ -39,6 +40,8 @@ export interface StoreAgentSettings {
   };
   pixOnlyAfterCancels: number | null;
   voiceReplies: boolean;
+  /** the voice he speaks those replies in (a TTS sidecar voice id); '' is the platform's default */
+  speechVoice: string;
   /** the chat on the store's own site (V4); off until the merchant turns it on */
   webChat: boolean;
 }
@@ -62,6 +65,7 @@ export const DEFAULT_SETTINGS: StoreAgentSettings = {
   incentives: null,
   pixOnlyAfterCancels: null,
   voiceReplies: false,
+  speechVoice: '',
   webChat: false,
 };
 
@@ -344,6 +348,14 @@ export function parseSettingsPatch(
       case 'voiceReplies':
         mark(k);
         next.voiceReplies = bool(v, k);
+        break;
+      // checked for shape only: the voices are the sidecar's, and one it no longer has falls back
+      // to its default when spoken (vendedor/media.ts)
+      case 'speechVoice':
+        if (typeof v !== 'string' || (v !== '' && !SPEECH_VOICE.test(v)))
+          bad(k, 'speechVoice must be a voice id or empty');
+        mark(k);
+        next.speechVoice = v;
         break;
       case 'webChat':
         mark(k);

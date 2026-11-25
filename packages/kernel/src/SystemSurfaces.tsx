@@ -177,6 +177,7 @@ function ChatSurface({
       onSendVoice={chat.sendVoice}
       onSendPhoto={chat.sendPhoto}
       maxVoiceSeconds={CHAT_VOICE_MAX_SECONDS}
+      onLoadAudio={chat.loadAudio}
       sending={chat.sending}
       {...(chat.message ? { error: chat.message } : {})}
       unread={open ? 0 : Math.max(0, replies - (seen ?? replies))}

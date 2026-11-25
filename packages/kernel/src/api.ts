@@ -129,6 +129,9 @@ export interface StoreChatMessage {
   /** Kernel 1.24 — a voice message (`body` = its transcript, '' until Core heard it) or a photo
    *  (`body` = its caption, '' when none; the photo itself isn't served back). Absent = text. */
   kind?: 'text' | 'voice' | 'image';
+  /** Kernel 1.31 — the reply to a voice message, said out loud: `api.chatAudio(id)` fetches its
+   *  sound (the text stays the message). Absent = text only. */
+  audio?: boolean;
 }
 
 /** Kernel 1.24 — what the chat takes besides text. */
@@ -1791,6 +1794,30 @@ export function createApi(baseUrl = '') {
         body: JSON.stringify(media),
       });
     },
+    /** Kernel 1.31 — the sound of a reply said out loud (`StoreChatMessage.audio`), as an MP3
+     *  blob of this cart session's chat; Core makes it the first time it's asked for, so it may
+     *  take a second or two. 404 NOT_FOUND (not one said out loud, or another session's),
+     *  503 SPEECH_UNAVAILABLE, 429 RATE_LIMITED. */
+    chatAudio: async (messageId: string): Promise<Blob> => {
+      let res: Response;
+      try {
+        res = await fetch(co(`/chat/messages/${encodeURIComponent(messageId)}/audio`), {
+          headers: auth(),
+        });
+      } catch {
+        throw new ApiError(0, 'NETWORK_ERROR', 'could not reach the store backend');
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
+        throw new ApiError(
+          res.status,
+          body?.error?.code ?? 'INTERNAL',
+          body?.error?.message ?? res.statusText,
+          body?.error?.details,
+        );
+      }
+      return res.blob();
+    },
     /** Kernel 1.26 — "me lembre do meu pedido de sempre", sent after the order is placed: Core
      *  takes the phone from that order, never from this call (only when
      *  `StoreProfile.usualReminder`). 409 REMINDER_OFF / ORDER_REQUIRED, 422 INVALID_PHONE */
@@ -2068,6 +2095,8 @@ export const ERROR_CODES = [
   // Kernel 1.24 — a voice message or photo in a format Core doesn't take (too large is
   // PAYLOAD_TOO_LARGE, above)
   'UNSUPPORTED_MEDIA',
+  // Kernel 1.31 — a chat reply's sound can't be made right now (the text is still there)
+  'SPEECH_UNAVAILABLE',
   // Kernel 1.21 — the bag reminder: the store doesn't offer it; the phone isn't one
   'REMINDER_OFF',
   'INVALID_PHONE',

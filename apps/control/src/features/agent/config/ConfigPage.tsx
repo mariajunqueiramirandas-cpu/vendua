@@ -24,10 +24,12 @@ import { guardrailsOf, LimitsPanel } from './LimitsPanel.tsx';
 import { MemoryPanel } from './MemoryPanel.tsx';
 import { ReadinessBar } from './ReadinessBar.tsx';
 import { VoicePanel, type VoiceDraft } from './VoicePanel.tsx';
+import { AudioPanel } from './AudioPanel.tsx';
 
 const ANCHORS = [
   { key: 'autonomia', label: 'autonomia', id: 'sec-autonomia' },
   { key: 'voz', label: 'voz e instruções', id: 'sec-voz' },
+  { key: 'audio', label: 'áudio', id: 'sec-audio' },
   { key: 'limites', label: 'limites e ritmo', id: 'sec-limites' },
   { key: 'descoberta', label: 'descoberta', id: 'sec-descoberta' },
   { key: 'memoria', label: 'memória', id: 'sec-memoria' },
@@ -211,6 +213,13 @@ function ConfigForm({
           onReset={() => void resetCustomInstructions()}
           resetting={resetting}
           busy={pending}
+        />
+      </section>
+
+      <section id="sec-audio" className="scroll-mt-4">
+        <AudioPanel
+          value={agent.edit.voice ?? { replies: true, proactive: true, speechVoice: '' }}
+          onChange={(voice) => setAgent({ voice })}
         />
       </section>
 

@@ -1,6 +1,7 @@
 # ADR 0045: Replies can be spoken, on our own hardware
 
-- Status: Accepted (service built 2026-10-16, `services/tts`; not yet called by Core)
+- Status: Superseded by [ADR 0048](0048-fspeech.md) (2026-11-25): fSpeech replaced Pocket TTS, and
+  `services/tts` was removed before Core ever called it
 - Date: 2026-10-16
 
 ## Context

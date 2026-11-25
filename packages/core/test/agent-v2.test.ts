@@ -43,7 +43,17 @@ describe('agent v2 — pure', () => {
       weeklyDiscoveryUsd: 0,
       schedule: { discoveryHour: 9, weeklyDay: 1, weeklyHour: 8 },
       newLeadMode: { inbound: 'auto', discovery: 'auto' },
+      voice: { replies: true, proactive: true, speechVoice: '' },
     });
+    // voice notes: only an explicit false switches them off; a bad voice id is the default voice
+    expect(normalizeAgent({ voice: { proactive: false, speechVoice: 'Kauã' } }).voice).toEqual({
+      replies: true,
+      proactive: false,
+      speechVoice: '',
+    });
+    expect(normalizeAgent({ voice: { speechVoice: 'manuela-lu' } }).voice.speechVoice).toBe(
+      'manuela-lu',
+    );
     expect(
       normalizeAgent({ newLeadMode: { inbound: 'draft', discovery: 'yolo' } }).newLeadMode,
     ).toEqual({ inbound: 'draft', discovery: 'auto' });

@@ -16,6 +16,8 @@ interface Row {
   id: string;
   to_jid: string;
   body: string;
+  /** a voice note sent in place of the body (0150) */
+  media_id: string | null;
 }
 
 export async function pumpSocketOnce(sql: Sql, limit = 20): Promise<number> {
@@ -31,6 +33,8 @@ export async function pumpSocketOnce(sql: Sql, limit = 20): Promise<number> {
       const [next] = await tx<{ id: string; purpose: string; ref: string | null }[]>`
         select id, purpose, ref from platform_wa_outbox
         where status = 'pending' and next_attempt_at <= now()
+          -- a voice note being made (voice.ts): held a minute at most
+          and (voice is null or created_at < now() - interval '1 minute')
         order by array_position(array['otp', 'dua', 'notice', 'crm'], purpose), created_at
         limit 1 for update skip locked`;
       if (!next) return null;
@@ -38,7 +42,7 @@ export async function pumpSocketOnce(sql: Sql, limit = 20): Promise<number> {
       const [claimed] = await tx<Row[]>`
         update platform_wa_outbox set status = 'sending', attempts = attempts + 1,
           lease_until = now() + interval '2 minutes'
-        where id = ${next.id} returning id, to_jid, body`;
+        where id = ${next.id} returning id, to_jid, body, media_id`;
       return claimed;
     });
     if (!row) break;
@@ -46,7 +50,22 @@ export async function pumpSocketOnce(sql: Sql, limit = 20): Promise<number> {
     let waId: string | null = null;
     let error: string | null = null;
     try {
-      waId = await sendWhatsApp(sql, wa, row.to_jid, row.body);
+      const [voice] = row.media_id
+        ? await controlTx(
+            sql,
+            (tx) => tx<{ mime: string; bytes: Buffer; seconds: number | null }[]>`
+              select mime, bytes, seconds from platform_wa_media where id = ${row.media_id}`,
+          )
+        : [];
+      waId = await sendWhatsApp(
+        sql,
+        wa,
+        row.to_jid,
+        row.body,
+        voice
+          ? { bytes: new Uint8Array(voice.bytes), mime: voice.mime, seconds: voice.seconds ?? 0 }
+          : null,
+      );
     } catch (e) {
       error = String((e as Error)?.message ?? e).slice(0, 200);
       pumpLog.warn({ err: error, id: row.id }, 'platform whatsapp send failed');

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
-import { AlertTriangle, Bot, Check, CheckCheck, Clock } from 'lucide-react';
+import { AlertTriangle, Bot, Check, CheckCheck, Clock, Mic } from 'lucide-react';
 import type { Message, ThreadView } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { EmptyState } from '@/components/common.tsx';
@@ -86,6 +86,10 @@ export function MessageList({ view }: { view: ThreadView }) {
   );
 }
 
+// a lead's heard voice note: the badge says it's audio, so the body drops its plain "[áudio] " mark
+const shown = (m: Message) =>
+  m.audio && m.direction === 'in' && m.body.startsWith('[áudio] ') ? m.body.slice(8) : m.body;
+
 function Bubble({ m }: { m: Message }) {
   const out = m.direction === 'out';
   const draft = m.status === 'draft';
@@ -107,6 +111,14 @@ function Bubble({ m }: { m: Message }) {
       {m.status === 'failed' && <Badge variant="bad">falhou</Badge>}
       {m.status === 'rejected' && <Badge>rejeitado</Badge>}
       {m.subject && out && <span className="min-w-0 truncate">{m.subject}</span>}
+      {m.audio && (
+        <span
+          className="inline-flex items-center gap-0.5"
+          title={out ? 'enviada como áudio' : 'áudio transcrito'}
+        >
+          <Mic className="size-3" aria-hidden /> áudio
+        </span>
+      )}
       <span className="tnum">{time(m.createdAt)}</span>
       {out && <StatusIcon status={m.status} />}
     </div>
@@ -141,7 +153,7 @@ function Bubble({ m }: { m: Message }) {
           </DraftActions>
         ) : (
           <>
-            <p className="whitespace-pre-line">{m.body}</p>
+            <p className="whitespace-pre-line">{shown(m)}</p>
             {meta}
             {error}
           </>

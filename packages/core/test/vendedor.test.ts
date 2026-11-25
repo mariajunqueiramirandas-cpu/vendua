@@ -11,7 +11,7 @@ import { scriptedAdapter } from '@vendua/agent-runtime/testing';
 import { vendedor } from '../src/agent-host/agents/vendedor/index.ts';
 import { vendedorOnboarding } from '../src/agent-host/agents/vendedor-onboarding/index.ts';
 import { dispatchTx } from '../src/agent-host/dispatch.ts';
-import { outboxPass, recoveryPass } from '../src/vendedor/sweeper.ts';
+import { outboxPass, recoveryPass, voicePass } from '../src/vendedor/sweeper.ts';
 import { hostHooks } from '../src/agent-host/hooks.ts';
 import { pgMemory } from '../src/agent-host/store/memory.ts';
 import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
@@ -959,6 +959,44 @@ describe.skipIf(!OWNER_URL)('the Vendedor on Postgres', () => {
     expect(heard).toBe(0);
     await voiceNote(await thread(tenantId, '11922221112'));
     expect(heard).toBe(1);
+  });
+
+  test("a voice reply is spoken in the store's voice and sent as a voice note", async () => {
+    const tenantId = await store();
+    await sql`update store_agent set settings = settings || ${sql.json({ voiceReplies: true, speechVoice: 'kaua' })}
+      where tenant_id = ${tenantId}`;
+    const threadId = await thread(tenantId, '11955556666');
+    const heard: { text: string; voice: string | undefined }[] = [];
+    const media = {
+      transcribe: async () => null,
+      speak: async (text: string, opts?: { voice?: string }) => (
+        heard.push({ text, voice: opts?.voice }),
+        { bytes: new Uint8Array([79, 103, 103, 83]), mime: 'audio/ogg; codecs=opus', seconds: 3 }
+      ),
+    };
+    const [m] = await sql<{ id: string }[]>`
+      insert into shopper_messages (tenant_id, thread_id, author, kind, body, meta, status)
+      values (${tenantId}, ${threadId}, 'agent', 'text', 'Seu pedido já saiu!',
+              ${sql.json({ voice: 'pending' })}, 'queued') returning id`;
+    expect(await voicePass(app, media as never)).toBeGreaterThanOrEqual(1);
+    expect(heard).toContainEqual({ text: 'Seu pedido já saiu!', voice: 'kaua' });
+    const [row] = await sql<{ kind: string; voice: string; seconds: number; out: number }[]>`
+      select m.kind, m.meta ->> 'voice' as voice, md.seconds,
+        (select count(*)::int from store_wa_messages w where w.shopper_message_id = m.id and w.media_id = md.id) as out
+      from shopper_messages m join shopper_media md on md.message_id = m.id where m.id = ${m!.id}`;
+    expect(row).toEqual({ kind: 'audio', voice: 'sent', seconds: 3, out: 1 });
+
+    // no voice: the reply still goes, as text
+    const [t2] = await sql<{ id: string }[]>`
+      insert into shopper_messages (tenant_id, thread_id, author, kind, body, meta, status)
+      values (${tenantId}, ${threadId}, 'agent', 'text', 'Mais alguma coisa?',
+              ${sql.json({ voice: 'pending' })}, 'queued') returning id`;
+    await voicePass(app, { transcribe: async () => null, speak: async () => null } as never);
+    const [r2] = await sql<{ kind: string; voice: string; out: number }[]>`
+      select kind, meta ->> 'voice' as voice,
+        (select count(*)::int from store_wa_messages w where w.shopper_message_id = ${t2!.id} and w.media_id is null) as out
+      from shopper_messages where id = ${t2!.id}`;
+    expect(r2).toEqual({ kind: 'text', voice: 'fallback', out: 1 });
   });
 
   test('a summary card the thread no longer holds never goes out', async () => {

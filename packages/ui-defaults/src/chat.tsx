@@ -25,7 +25,8 @@ import {
 // system.Chat — the store's assistant on the site (Kernel 1.18): a launcher in the bottom
 // corner and the conversation as a modal dialog. The Kernel reads, polls and sends; this only
 // shows it, keeps focus where it belongs and announces replies. Kernel 1.24: a voice message
-// (the mic, while the field is empty) and a photo (the composer's text is its caption).
+// (the mic, while the field is empty) and a photo (the composer's text is its caption). Kernel
+// 1.31: a reply to a voice message has "Ouvir", and plays by itself when it answers one.
 
 type Props = SlotProps['system.Chat'];
 
@@ -96,6 +97,114 @@ function MediaTag({ kind }: { kind: 'voice' | 'image' }) {
   );
 }
 
+const SPEAKER = 'M4 9.5v5h3.5l4.5 4v-13l-4.5 4ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11';
+const PAUSE = 'M9 6v12M15 6v12';
+const SPEAKER_OFF = 'M4 9.5v5h3.5l4.5 4v-13l-4.5 4ZM16 10l4 4M20 10l-4 4';
+
+/** Kernel 1.31 — a reply said out loud: its sound is asked for on the first play (Core makes it
+ *  then), and one plays at a time */
+function Listen({
+  id,
+  load,
+  autoplay,
+  onAutoplay,
+  claim,
+}: {
+  id: string;
+  load: (id: string) => Promise<Blob | null>;
+  /** the answer to a voice message just sent from this chat: plays by itself, once */
+  autoplay: boolean;
+  onAutoplay: (id: string) => void;
+  /** this one starts: the one playing stops */
+  claim: (a: HTMLAudioElement) => void;
+}) {
+  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'failed'>('idle');
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const url = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      audio.current?.pause();
+      if (url.current) URL.revokeObjectURL(url.current);
+    },
+    [],
+  );
+  const play = async () => {
+    if (state === 'loading') return;
+    if (state === 'playing') {
+      audio.current?.pause();
+      return;
+    }
+    // the element is made in the tap: a browser that plays only from one keeps it playable
+    if (!audio.current) {
+      const a = new Audio();
+      a.onended = () => setState('idle');
+      a.onpause = () => setState((st) => (st === 'playing' ? 'idle' : st));
+      audio.current = a;
+    }
+    const a = audio.current;
+    try {
+      if (!url.current) {
+        setState('loading');
+        const blob = await load(id);
+        if (!blob) throw new Error('no sound');
+        url.current = URL.createObjectURL(blob);
+        a.src = url.current;
+      }
+      claim(a);
+      await a.play();
+      setState('playing');
+    } catch (err) {
+      // the sound is here but the browser waits for a tap (it took too long to come, or this
+      // played by itself): the next tap plays it at once
+      if (url.current && (err as { name?: string })?.name === 'NotAllowedError') {
+        setState('idle');
+        return;
+      }
+      if (url.current) URL.revokeObjectURL(url.current);
+      url.current = null;
+      setState('failed');
+    }
+  };
+  useEffect(() => {
+    if (!autoplay) return;
+    onAutoplay(id);
+    void play();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoplay]);
+  const words =
+    state === 'playing'
+      ? 'Pausar'
+      : state === 'loading'
+        ? 'Carregando…'
+        : state === 'failed'
+          ? 'Áudio indisponível'
+          : 'Ouvir';
+  return (
+    <button
+      type="button"
+      className="v-chat-listen"
+      data-part="listen"
+      data-state={state}
+      aria-pressed={state === 'playing'}
+      aria-busy={state === 'loading' || undefined}
+      aria-label={
+        state === 'playing'
+          ? 'Pausar o áudio da resposta'
+          : state === 'failed'
+            ? 'Áudio indisponível agora. Tentar de novo'
+            : 'Ouvir a resposta em áudio'
+      }
+      onClick={() => void play()}
+    >
+      <Glyph
+        d={state === 'playing' ? PAUSE : state === 'failed' ? SPEAKER_OFF : SPEAKER}
+        size={18}
+      />
+      {words}
+    </button>
+  );
+}
+
 /** the composer's voice message: being recorded, or recorded and not sent yet (a failed send) */
 type Voice =
   { phase: 'starting' } | { phase: 'recording' } | { phase: 'held'; blob: Blob; seconds: number };
@@ -135,6 +244,7 @@ export function StoreChat({
   onSendVoice,
   onSendPhoto,
   maxVoiceSeconds = 60,
+  onLoadAudio,
 }: Props) {
   const id = useId();
   const launcherRef = useRef<HTMLButtonElement>(null);
@@ -155,6 +265,19 @@ export function StoreChat({
   live.current = open;
   const [voice, setVoice] = useState<Voice | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  /** the messages there when the last voice message went: a reply said out loud after them
+   *  answers it */
+  const answersTo = useRef<Set<string> | null>(null);
+  const autoplayed = useRef(new Set<string>());
+  const playing = useRef<HTMLAudioElement | null>(null);
+  const claim = (a: HTMLAudioElement) => {
+    if (playing.current && playing.current !== a) playing.current.pause();
+    playing.current = a;
+  };
+  const markAutoplayed = (mid: string) => {
+    autoplayed.current.add(mid);
+    answersTo.current = null;
+  };
   const [photo, setPhoto] = useState<{ blob: Blob; url: string } | null>(null);
   const [reading, setReading] = useState(false);
   /** a line of this UI's own (the mic refused, a photo it can't open); the Kernel's `error` else */
@@ -202,7 +325,12 @@ export function StoreChat({
   };
   const sendTake = async (blob: Blob, seconds: number) => {
     setVoice({ phase: 'held', blob, seconds });
-    if (await onSendVoice!(blob, seconds)) setVoice(null);
+    // what's in the conversation now: the reply said out loud that comes after it plays itself
+    const before = new Set(messages.map((m) => m.id));
+    if (await onSendVoice!(blob, seconds)) {
+      setVoice(null);
+      answersTo.current = before;
+    }
   };
   const finishVoice = async () => {
     const r = recording.current;
@@ -264,8 +392,10 @@ export function StoreChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasVoice]);
 
-  // closing the chat (or leaving the page) drops a recording and frees the mic
+  // closing the chat (or leaving the page) drops a recording and frees the mic, and stops a
+  // reply being heard
   useEffect(() => {
+    if (!open) playing.current?.pause();
     if (!open && (recording.current || voice?.phase === 'starting')) cancelVoice();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -363,6 +493,18 @@ export function StoreChat({
       void submit();
     }
   };
+  const listenOn = !!onLoadAudio;
+  const sinceVoice = answersTo.current;
+  const autoplayId =
+    open && sinceVoice
+      ? messages.find(
+          (m) =>
+            m.audio &&
+            m.author !== 'shopper' &&
+            !sinceVoice.has(m.id) &&
+            !autoplayed.current.has(m.id),
+        )?.id
+      : undefined;
   const empty = !text.trim();
   const left = maxLength - text.length;
   const showMic = voiceOn && empty && !photo;
@@ -500,6 +642,15 @@ export function StoreChat({
                   <p className="v-chat-bubble" data-part="body">
                     {kind ? <MediaTag kind={kind} /> : null}
                     {m.body ? <Body text={m.body} resolveLink={resolveLink} /> : null}
+                    {listenOn && m.audio && m.author !== 'shopper' ? (
+                      <Listen
+                        id={m.id}
+                        load={onLoadAudio!}
+                        autoplay={m.id === autoplayId}
+                        onAutoplay={markAutoplayed}
+                        claim={claim}
+                      />
+                    ) : null}
                   </p>
                   <time className={end ? 'v-chat-time' : 'v-sr'} data-part="time" dateTime={m.at}>
                     {formatTime(m.at, zone)}

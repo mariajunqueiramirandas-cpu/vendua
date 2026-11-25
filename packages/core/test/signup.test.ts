@@ -121,8 +121,14 @@ describe('signup units', () => {
     expect(token).toHaveLength(38);
     expect(verifyCrmSignupToken(token, 'sec')).toBe(leadId);
     expect(verifyCrmSignupToken(token, 'wrong')).toBeNull();
+    // tamper inside the MAC: the last of 38 base64url chars carries 2 padding bits, so 'A' → 'B'
+    // there decodes to the same bytes (and the test failed whenever a token ended in 'A')
+    const at = 30;
     expect(
-      verifyCrmSignupToken(`${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`, 'sec'),
+      verifyCrmSignupToken(
+        `${token.slice(0, at)}${token[at] === 'A' ? 'B' : 'A'}${token.slice(at + 1)}`,
+        'sec',
+      ),
     ).toBeNull();
     expect(
       verifyCrmSignupToken(crmSignupToken(leadId, 'sec', Date.now() - 31 * 86_400_000), 'sec'),

@@ -19,11 +19,15 @@ import {
   checkKey,
   idempotencyFingerprint,
   uuidParam,
+  windowCounter,
 } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { isObj, need, oneOf, optText, text, type AdminDeps, type Merchant } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
+
+/** each spoken reply is made once; this bounds a runaway client making new ones */
+const allowAudio = windowCounter({ windowMs: 60_000, max: 20 });
 
 // Duá Copilot in the admin (ADR 0034). Each person has their own conversation; a message is a
 // mailbox row for the copilot agent, written in the same transaction (the one producer, ADR
@@ -47,14 +51,22 @@ export function mountCopilot(d: AdminDeps) {
   const { read, write } = handlers(d);
   const gate = (tx: Sql, tenantId: string) => requireFeature(tx, tenantId, 'copilot');
   const { media, gateway } = d.copilotMedia;
-  // the screen offers the mic and the camera only when Core can hear and see
-  const view = async (tx: Sql, t: Tenant, m: Merchant) => ({
-    ...(await copilotView(tx, t.id, m)),
-    media: {
-      voice: !!media && ((await media.canTranscribe?.()) ?? true),
-      image: !!gateway,
-    },
-  });
+  // the screen offers the mic and the camera only when Core can hear and see, and a reply's
+  // "ouvir" only when it can speak
+  const view = async (tx: Sql, t: Tenant, m: Merchant) => {
+    const v = await copilotView(tx, t.id, m);
+    const speech = !!media && ((await media.canSpeak?.()) ?? true);
+    return {
+      ...v,
+      items: speech
+        ? v.items
+        : v.items.map((i) => (i.type === 'message' && i.audio ? { ...i, audio: null } : i)),
+      media: {
+        voice: !!media && ((await media.canTranscribe?.()) ?? true),
+        image: !!gateway,
+      },
+    };
+  };
 
   admin.get(
     '/copilot',
@@ -166,6 +178,50 @@ export function mountCopilot(d: AdminDeps) {
     c.header('cache-control', 'private, max-age=86400');
     c.header('x-content-type-options', 'nosniff');
     return c.body(row.bytes as unknown as ArrayBuffer);
+  });
+
+  // Duá's reply to a voice message, said out loud: made the first time it's played (outside any
+  // tx), then kept for that person (copilot_audio). MP3: every browser and webview plays it.
+  admin.get('/copilot/messages/:id/audio', async (c) => {
+    const m = need(c, 'manager');
+    const t = c.get('tenant');
+    const id = uuidParam(c, 'id');
+    const found = await withTenant(d.sql, t.id, async (tx) => {
+      await gate(tx, t.id);
+      const [r] = await tx<
+        { body: string; bytes: Uint8Array | null; mime: string | null; seconds: number | null }[]
+      >`
+        select c.body, a.bytes, a.mime, a.seconds from copilot_messages c
+        left join copilot_audio a on a.message_id = c.id
+        where c.tenant_id = ${t.id} and c.id = ${id} and c.user_id = ${m.userId}
+          and c.author = 'dua' and c.speak`;
+      return r;
+    });
+    if (!found) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    let sound = found.bytes
+      ? { bytes: found.bytes, mime: found.mime!, seconds: found.seconds ?? 0 }
+      : null;
+    if (!sound) {
+      if (!allowAudio(`${t.id}|${m.userId}`))
+        throw new HttpError(429, 'RATE_LIMITED', 'too many replies to hear — wait a minute');
+      const s = media ? await media.speak(found.body, { format: 'mp3' }).catch(() => null) : null;
+      if (!s)
+        throw new HttpError(503, 'SPEECH_UNAVAILABLE', 'a voz do Duá não está disponível agora');
+      sound = s;
+      await withTenant(
+        d.sql,
+        t.id,
+        (tx) => tx`
+        insert into copilot_audio (message_id, tenant_id, user_id, mime, bytes, seconds)
+        values (${id}, ${t.id}, ${m.userId}, ${s.mime}, ${Buffer.from(s.bytes)}, ${Math.min(600, s.seconds)})
+        on conflict (message_id) do nothing`,
+      );
+    }
+    c.header('content-type', sound.mime);
+    c.header('cache-control', 'private, max-age=86400');
+    c.header('x-content-type-options', 'nosniff');
+    c.header('x-speech-seconds', String(sound.seconds));
+    return c.body(sound.bytes as unknown as ArrayBuffer);
   });
 
   admin.post(

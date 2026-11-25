@@ -25,6 +25,7 @@ import { deliverDmOutbox, pruneManagerTablesTx } from './manager-ops.ts';
 import { render, type EventRow, type RenderCtx } from './render.ts';
 import { TelegramError, telegramClient, type TelegramClient, type TelegramFetch } from './rest.ts';
 import { storeSnapshot, storeUrl, type StoreSnapshot } from './snapshot.ts';
+import type { MediaProviders } from '../../vendedor/media.ts';
 
 // The `telegram` scheduler job (ADR 0047): claims due staff events in id order, renders them and
 // sends (or edits) them in every linked team member's Telegram DM. A pass is budgeted so the job
@@ -47,6 +48,8 @@ export interface DeliverOpts {
   fetch?: TelegramFetch;
   budgetMs?: number;
   batch?: number;
+  /** speaks the manager's voice replies (default: this process's TTS routes) */
+  media?: MediaProviders | null;
 }
 
 export interface DeliverResult {
@@ -496,7 +499,10 @@ export async function deliverStaffEvents(sql: Sql, opts: DeliverOpts = {}): Prom
   const client = telegramClient(ctx.app.app.token, opts.fetch);
   await ensureCommands(sql, ctx, client);
   // Interactive manager chat replies go out ahead of bulk staff event notifications
-  const dm = await deliverDmOutbox(sql, { ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+  const dm = await deliverDmOutbox(sql, {
+    ...(opts.fetch ? { fetch: opts.fetch } : {}),
+    ...(opts.media !== undefined ? { media: opts.media } : {}),
+  });
   if (dm.retryInMs) return { n: dm.n, retryInMs: dm.retryInMs };
   const staff = await controlTx(sql, staffConfigTx);
   const recipients = linkedTelegramMembers(staff);

@@ -212,7 +212,17 @@ async function outboxRow(
 export async function voicePass(sql: Sql, media: MediaProviders | null): Promise<number> {
   const due = await controlTx(
     sql,
-    (tx) => tx<{ id: string; tenant_id: string; thread_id: string; body: string; tries: number }[]>`
+    (tx) =>
+      tx<
+        {
+          id: string;
+          tenant_id: string;
+          thread_id: string;
+          body: string;
+          tries: number;
+          voice: string | null;
+        }[]
+      >`
       update shopper_messages set meta = meta || jsonb_build_object('voice', 'working', 'voiceAt', now(),
         'voiceTries', coalesce((meta ->> 'voiceTries')::int, 0) + 1)
       where id = any(array(select id from shopper_messages
@@ -220,11 +230,16 @@ export async function voicePass(sql: Sql, media: MediaProviders | null): Promise
                       -- a claim whose worker died: the reply still goes, as voice or as text
                       or (meta ->> 'voice' = 'working' and (meta ->> 'voiceAt')::timestamptz < now() - interval '2 minutes')
                    order by created_at limit 5 for update skip locked))
-      returning id, tenant_id, thread_id, body, (meta ->> 'voiceTries')::int as tries`,
+      returning id, tenant_id, thread_id, body, (meta ->> 'voiceTries')::int as tries,
+        (select a.settings ->> 'speechVoice' from store_agent a
+          where a.tenant_id = shopper_messages.tenant_id) as voice`,
   );
   for (const m of due) {
     // a reply whose speaking keeps killing the worker goes as text
-    const spoken = media && m.tries <= 3 ? await media.speak(m.body).catch(() => null) : null;
+    const spoken =
+      media && m.tries <= 3
+        ? await media.speak(m.body, { voice: m.voice || undefined }).catch(() => null)
+        : null;
     await withTenant(sql, m.tenant_id, async (tx) => {
       const [t] = await tx<{ address: string; phone: string | null }[]>`
         select address, phone from shopper_threads where id = ${m.thread_id}`;

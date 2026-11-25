@@ -321,7 +321,7 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
     const rows = await c<(TranscriptMessage & { subject: string | null; thread_id: string })[]>`
       select * from (
         select m.direction, m.body, m.status, m.author, m.created_at, t.channel, t.subject,
-               t.id::text as thread_id
+               t.id::text as thread_id, m.audio
         from lead_messages m join lead_threads t on t.id = m.thread_id
         where t.lead_id = ${leadId}
         order by m.created_at desc, m.id desc limit ${CTX.messages}

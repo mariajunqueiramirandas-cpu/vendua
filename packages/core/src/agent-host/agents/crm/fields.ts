@@ -52,6 +52,13 @@ export const MESSAGE_BODY = s
     'the message exactly as the lead will read it: warm, plain spoken Portuguese, sized like a real chat message (1-3 short lines on whatsapp/instagram), at most one genuine question, no sales clichés, no dossier dumps, no markdown, bullets or em dashes',
   );
 
+export const MESSAGE_AUDIO = s
+  .boolean()
+  .describe(
+    'WhatsApp only: ask to send it as a voice note. A lead who sent a voice note already gets one back without asking. Granted at most once a day per lead, only after they have written, never with a link and never long; the result says whether it went as audio',
+  )
+  .optional();
+
 export const MESSAGE_SUBJECT = s
   .string({ max: 200 })
   .describe('email only: short and plain, the way a person titles an email')

@@ -27,7 +27,8 @@ import {
   messageStyleIssues,
   normalizeMessageBody,
 } from '../../../crm/style.ts';
-import { MESSAGE_BODY, MESSAGE_SUBJECT } from './fields.ts';
+import { MESSAGE_AUDIO, MESSAGE_BODY, MESSAGE_SUBJECT } from './fields.ts';
+import { markVoiceTx } from '../../../crm/voice.ts';
 import { crm, emitAfter, leadOf, refusals, turn, type Ctx } from './shared.ts';
 
 // The lead agent's only ways to reach a person. A message is a lead_messages row written in the
@@ -61,7 +62,12 @@ const TEMPLATE_FAILURE = {
 };
 
 export const draftMessageTool = defineTool<
-  { channel?: string | undefined; body: string; subject?: string | undefined },
+  {
+    channel?: string | undefined;
+    body: string;
+    subject?: string | undefined;
+    audio?: boolean | undefined;
+  },
   Sql
 >({
   name: 'draft_message',
@@ -72,6 +78,7 @@ export const draftMessageTool = defineTool<
     channel: s.enum(['email', 'whatsapp', 'instagram', 'manual']).optional(),
     body: MESSAGE_BODY,
     subject: MESSAGE_SUBJECT,
+    audio: MESSAGE_AUDIO,
   }),
   run: (ctx: Ctx, input) =>
     refusals(async () => {
@@ -100,7 +107,13 @@ export const draftMessageTool = defineTool<
           status: 'draft',
           agentRunId: ctx.turnId,
         });
-        return { ...composed.body, channel: pick.channel, via: pick.via };
+        const audio = await markVoiceTx(
+          tx,
+          composed.body.message,
+          pick.channel,
+          input.audio === true,
+        );
+        return { ...composed.body, channel: pick.channel, via: pick.via, audio };
       });
       if (!('blocked' in out)) {
         emitAfter(ctx, 'draft.change', out.thread.id);
@@ -245,7 +258,12 @@ export function checkCommercialMessage(c: CommercialCheckInput): string | null {
 }
 
 export const sendMessageTool = defineTool<
-  { channel?: string | undefined; body: string; subject?: string | undefined },
+  {
+    channel?: string | undefined;
+    body: string;
+    subject?: string | undefined;
+    audio?: boolean | undefined;
+  },
   Sql
 >({
   name: 'send_message',
@@ -256,6 +274,7 @@ export const sendMessageTool = defineTool<
     channel: s.enum(['email', 'whatsapp', 'instagram']).optional(),
     body: MESSAGE_BODY,
     subject: MESSAGE_SUBJECT,
+    audio: MESSAGE_AUDIO,
   }),
   run: async (ctx: Ctx, input) => {
     const offerText = workspaceOf(ctx.state.context.tenant)?.pitch.offer ?? '';
@@ -394,7 +413,12 @@ export const sendSignupLinkTool = defineTool<
 
 function composeAgentSend(
   ctx: Ctx,
-  input: { channel?: string | undefined; body: string; subject?: string | undefined },
+  input: {
+    channel?: string | undefined;
+    body: string;
+    subject?: string | undefined;
+    audio?: boolean | undefined;
+  },
 ): Promise<Json> {
   return refusals(async () => {
     const leadId = leadOf(ctx);
@@ -451,9 +475,16 @@ function composeAgentSend(
         agentRunId: ctx.turnId,
         ...(verdict.retryAt ? { sendAfter: verdict.retryAt } : {}),
       });
+      const audio = await markVoiceTx(
+        tx,
+        composed.body.message,
+        pick.channel,
+        input.audio === true,
+      );
       if (!drafted) await notifyOutbox(tx);
       return {
         ...composed.body,
+        audio,
         draftFallback: drafted,
         ...(verdict.retryAt ? { retryAt: verdict.retryAt.toISOString() } : {}),
         channel: pick.channel,

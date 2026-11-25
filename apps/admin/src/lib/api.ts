@@ -23,6 +23,8 @@ export class ApiError extends Error {
 type Init = RequestInit & {
   idem?: string;
   raw?: boolean;
+  /** the body as a Blob (audio Core makes) */
+  blob?: boolean;
   timeoutMs?: number;
   /** may issue a plan Pix: waits briefly for Mercado Pago's fingerprint */
   pix?: boolean;
@@ -53,7 +55,7 @@ export function advanceSessionEpoch() {
 }
 
 async function req<T>(path: string, init: Init = {}): Promise<T> {
-  const { idem, raw, timeoutMs, pix, ...rest } = init;
+  const { idem, raw, blob, timeoutMs, pix, ...rest } = init;
   const caller = rest.signal;
   caller?.throwIfAborted();
   const epoch = sessionEpoch;
@@ -136,7 +138,7 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
     const ct = res.headers.get('content-type') ?? '';
     let out: unknown;
     try {
-      out = await (ct.includes('json') ? res.json() : res.text());
+      out = await (blob ? res.blob() : ct.includes('json') ? res.json() : res.text());
     } catch {
       // the connection died mid-body: Core answered, but we can't know what
       throw lost();
@@ -2139,6 +2141,26 @@ export interface StoreAgentSettings {
   };
   pixOnlyAfterCancels: number | null;
   voiceReplies: boolean;
+  /** the voice his audio replies use ('' = Venduá's default); one of `VoiceList.voices` */
+  speechVoice: string;
+}
+
+/** A voice the store's spoken replies can use (Core's TTS sidecar, ADR 0048). */
+export interface SpeechVoice {
+  id: string;
+  name: string;
+  gender: 'female' | 'male' | null;
+  /** young | young_adult | adult | middle_age | older */
+  age: string | null;
+  description: string | null;
+}
+
+export interface VoiceList {
+  /** a voice can speak now; off, the switch explains instead of offering the voices */
+  available: boolean;
+  /** the voice used while the store picked none */
+  default: string | null;
+  voices: SpeechVoice[];
 }
 
 export interface WaitingRow {
@@ -2576,6 +2598,8 @@ export interface CopilotMessage {
   voice?: boolean;
   /** a photo the person sent: a same-origin URL (cookie auth); the text is its caption */
   image: string | null;
+  /** Duá's reply to a voice message, said out loud: an /admin/v1 path (session auth) */
+  audio?: string | null;
 }
 
 export type CopilotItem =
@@ -2838,6 +2862,15 @@ export interface PdvSettings {
 }
 
 export const api = {
+  /** a kitchen or pickup announcement spoken in the store's voice (MP3) */
+  speech: (text: string, signal?: AbortSignal) =>
+    req<Blob>('/speech', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+      blob: true,
+      timeoutMs: 8000,
+      ...(signal ? { signal } : {}),
+    }),
   auth: {
     start: (phone: string) =>
       send<{ sent: boolean; devCode?: string; expiresAt: string }>('POST', '/auth/otp/start', {
@@ -3610,6 +3643,10 @@ export const api = {
     settings: () => get<VendedorSettings>('/vendedor/settings'),
     updateSettings: (patch: VendedorSettingsPatch) =>
       send<VendedorSettings>('PATCH', '/vendedor/settings', patch),
+    voices: () => get<VoiceList>('/vendedor/voices'),
+    /** the store's greeting in that voice: a src for <audio> (the session rides along) */
+    voiceSample: (id: string) =>
+      platform.http.privateMedia(`/admin/v1/vendedor/voices/${encodeURIComponent(id)}/sample`),
 
     knowledge: () => get<Knowledge>('/vendedor/knowledge'),
     previewRule: (text: string) =>

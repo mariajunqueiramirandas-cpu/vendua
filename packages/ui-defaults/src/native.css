@@ -833,6 +833,74 @@
   .v-chat-media svg {
     flex: none;
   }
+  .v-chat-listen {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    min-height: 36px;
+    margin-top: 8px;
+    padding: 0 14px 0 10px;
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 14%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 8%, var(--v-color-surface, #fff));
+    color: var(--v-color-text, #1c1b1a);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* a 44px target around a lighter pill */
+  .v-chat-listen::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+  }
+  .v-chat-listen svg {
+    flex: none;
+  }
+  .v-chat-listen[data-state='playing'] {
+    border-color: transparent;
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+  }
+  .v-chat-listen[data-state='loading'] {
+    cursor: progress;
+  }
+  .v-chat-listen[data-state='loading'] svg {
+    animation: v-chat-rec 1.2s ease-in-out infinite;
+  }
+  .v-chat-listen[data-state='failed'] {
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-chat-listen:active {
+    background: color-mix(
+      in srgb,
+      var(--v-color-accent, #3f5e4e) 16%,
+      var(--v-color-surface, #fff)
+    );
+  }
+  .v-chat-listen[data-state='playing']:active {
+    background: var(--v-color-accent, #3f5e4e);
+  }
+  .v-chat-listen:focus-visible {
+    outline: 2px solid var(--v-color-accent, #3f5e4e);
+    outline-offset: 2px;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .v-chat-listen:hover:not([data-state='playing']) {
+      background: color-mix(
+        in srgb,
+        var(--v-color-accent, #3f5e4e) 14%,
+        var(--v-color-surface, #fff)
+      );
+    }
+  }
   .v-chat-icon-btn {
     flex: none;
     display: grid;
@@ -933,7 +1001,8 @@
     color: var(--v-color-muted, #6e6a64);
   }
   @media (prefers-reduced-motion: reduce) {
-    .v-chat-rec-dot {
+    .v-chat-rec-dot,
+    .v-chat-listen[data-state='loading'] svg {
       animation: none;
     }
     .v-chat-launcher,
