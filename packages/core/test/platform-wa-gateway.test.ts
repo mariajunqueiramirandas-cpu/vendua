@@ -5,6 +5,7 @@ import pino from 'pino';
 import postgres from 'postgres';
 import { recordChannelState } from '../src/modules/system-events.ts';
 import { crmAuthRows, cutover } from '../src/platform-whatsapp/cutover-cli.ts';
+import { enqueuePlatformWa } from '../src/platform-whatsapp/outbox.ts';
 import { migrate } from '../src/platform/db.ts';
 import { unseal } from '../src/platform/secrets.ts';
 import {
@@ -22,6 +23,7 @@ import {
 import type {
   ConnectionUpdate,
   Creds,
+  OutContent,
   SocketKeys,
   WaRuntime,
   WaSocket,
@@ -162,13 +164,22 @@ class FakeSocket implements WaSocket {
   async onWhatsApp(...jids: string[]) {
     return jids.map((jid) => ({ jid, exists: this.world.registered.has(jid) }));
   }
-  async sendMessage(jid: string, content: { text: string }, opts?: { messageId?: string }) {
+  async sendMessage(
+    jid: string,
+    content: Parameters<WaSocket['sendMessage']>[1],
+    opts?: { messageId?: string },
+  ) {
     if (this.failNext) {
       const e = this.failNext;
       this.failNext = null;
       throw e;
     }
-    this.world.outbox.push({ jid, text: content.text, id: opts?.messageId, at: Date.now() });
+    if ('audio' in content) {
+      if (!Buffer.isBuffer(content.audio)) throw new TypeError('Baileys audio requires a Buffer');
+      this.world.voiceNotes.push({ jid, content, id: opts?.messageId });
+    } else if ('text' in content) {
+      this.world.outbox.push({ jid, text: content.text, id: opts?.messageId, at: Date.now() });
+    }
     return { key: { id: opts?.messageId ?? 'x' } };
   }
   async updateMediaMessage<M>(m: M) {
@@ -190,6 +201,7 @@ class FakeWorld {
   registered = new Set<string>();
   lids = new Map<string, string>();
   outbox: { jid: string; text: string; id?: string | undefined; at: number }[] = [];
+  voiceNotes: { jid: string; content: OutContent; id: string | undefined }[] = [];
   media = new Uint8Array([1, 2, 3]);
   user: WaSocket['user'] = undefined;
   syncHistory: boolean[] = [];
@@ -587,6 +599,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
       expect(r.sent_at).not.toBeNull();
       expect(r.attempts).toBe(1);
     }
+  });
+
+  test('outbox: a CRM voice note reaches the socket as a Buffer on the first attempt', async () => {
+    const bytes = new Uint8Array([79, 103, 103, 83]);
+    const mime = 'audio/ogg; codecs=opus';
+    const { id } = await enqueuePlatformWa(appSql, {
+      session: S,
+      to: shopperPn,
+      purpose: 'crm',
+      body: 'Oi! Te explico já.',
+      dedupeKey: `${nonce}:crm-voice`,
+      voice: { bytes, mime, seconds: 3 },
+    });
+
+    gw.pump(S);
+    const voiceRow = async () => (await outbox()).find((r) => r.id === id)!;
+    await until(async () => {
+      const r = await voiceRow();
+      return r.attempts > 0 && r.status !== 'sending';
+    });
+    expect(await voiceRow()).toMatchObject({ status: 'sent', attempts: 1, error: null });
+    expect(world.voiceNotes.at(-1)).toEqual({
+      jid: shopperPn,
+      id: messageIdFor(id),
+      content: { audio: Buffer.from(bytes), ptt: true, mimetype: mime, seconds: 3 },
+    });
   });
 
   test('outbox: a failed send retries with the same wa_id; not on WhatsApp fails at once; expired never goes', async () => {
