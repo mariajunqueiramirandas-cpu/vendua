@@ -43,6 +43,7 @@ function lazy<T extends ComponentType>(load: () => Promise<{ default: T }>) {
 const OverviewPage = lazy(() => import('@/features/overview/OverviewPage.tsx'));
 const HomePage = lazy(() => import('@/features/home/HomePage.tsx'));
 const PipelinePage = lazy(() => import('@/features/pipeline/PipelinePage.tsx'));
+const CleanupPage = lazy(() => import('@/features/pipeline/CleanupPage.tsx'));
 const LeadPage = lazy(() => import('@/features/lead/LeadPage.tsx'));
 const ReportsPage = lazy(() => import('@/features/reports/ReportsPage.tsx'));
 const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage.tsx'));
@@ -96,7 +97,7 @@ function LegacyStudio() {
 
 /** Header of the page being loaded, so only its content area shows a skeleton. */
 function chrome(path: string): { title: string; tabs?: PageTab[]; back?: string } {
-  if (path.startsWith('/pipeline/relatorios') || path.startsWith('/pipeline/analytics'))
+  if (['/pipeline/relatorios', '/pipeline/analytics', '/pipeline/limpeza'].includes(path))
     return { title: 'Pipeline', tabs: PIPELINE_TABS };
   if (path.startsWith('/pipeline/')) return { title: 'Lead', back: '/pipeline' };
   if (path.startsWith('/pipeline')) return { title: 'Pipeline', tabs: PIPELINE_TABS };
@@ -148,6 +149,7 @@ export function AppRoutes() {
         <Route path="/" element={<OverviewPage />} />
         <Route path="/vendas" element={<HomePage />} />
         <Route path="/pipeline" element={<PipelinePage />} />
+        <Route path="/pipeline/limpeza" element={<CleanupPage />} />
         <Route path="/pipeline/relatorios" element={<ReportsPage />} />
         <Route path="/pipeline/analytics" element={<AnalyticsPage />} />
         <Route path="/pipeline/:id" element={<LeadPage />} />

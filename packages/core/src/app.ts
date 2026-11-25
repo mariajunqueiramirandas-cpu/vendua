@@ -277,6 +277,12 @@ import { mountControlBilling } from './modules/control-billing.ts';
 import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
 import { mountAgentRuntimeAi } from './agent-host/control-ai.ts';
 import { mountCampaignRoutes } from './crm/campaign-routes.ts';
+import {
+  archiveReviewedLeads,
+  parseCleanupArchive,
+  parseCleanupReview,
+  reviewLeadsForCleanup,
+} from './crm/lead-cleanup.ts';
 import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountInstanceReset } from './modules/instance-reset.ts';
 import { mountStoreReset } from './modules/store-reset.ts';
@@ -1653,6 +1659,23 @@ export function createApp({
     return c.json({ groups: await findDuplicates(sql) });
   });
 
+  app.post('/control/v1/leads/cleanup/review', async (c) => {
+    controlGate(c);
+    const filter = parseCleanupReview(await bodyJson(c));
+    return c.json(await reviewLeadsForCleanup(sql, ears.gateway, filter, c.req.raw.signal));
+  });
+
+  app.post('/control/v1/leads/cleanup/archive', async (c) => {
+    controlGate(c);
+    const res = await archiveReviewedLeads(
+      sql,
+      parseCleanupArchive(await bodyJson(c)),
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
   app.get('/control/v1/stats', async (c) => {
     controlGate(c);
     const stats = await leadStats(sql);
@@ -2864,7 +2887,7 @@ export function createApp({
     });
   });
 
-  // Sidecar → Core events (inbound DMs, connection state, rotated cookies), HMAC-signed
+  // Sidecar → Core events (inbound DMs, read receipts, connection state, rotated cookies), HMAC-signed
   // with the sidecar secret; a uniform 404 for anything unsigned hides the route.
   let igEventBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/ig/events', async (c) => {

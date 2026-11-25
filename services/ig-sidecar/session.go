@@ -195,9 +195,11 @@ func (m *Manager) launch(cli *instameow.Client, viewer *types.PolarisViewer, mai
 	m.setStateLocked(stateConnecting, nil)
 	m.mu.Unlock()
 
-	cli.SetEventHandler(m.handler(gen))
+	reads := make(chan readRequest, 100)
+	cli.SetEventHandler(m.handler(gen, reads))
 	go m.run(ctx, gen, cli, viewer, mailbox)
 	go m.cookieTicker(ctx, gen)
+	go m.runReadReceipts(ctx, gen, cli, reads)
 }
 
 // stopLocked tears down the live client; Disconnect waits on the socket loop, so never inline.
@@ -406,7 +408,7 @@ func (m *Manager) cookieTicker(ctx context.Context, gen uint64) {
 	}
 }
 
-func (m *Manager) handler(gen uint64) instameow.EventHandler {
+func (m *Manager) handler(gen uint64, reads chan<- readRequest) instameow.EventHandler {
 	return func(ctx context.Context, raw slidetypes.ClientEvent) error {
 		if !m.current(gen) {
 			// a replaced client must stop reconnecting
@@ -433,13 +435,16 @@ func (m *Manager) handler(gen uint64) instameow.EventHandler {
 				m.fail(gen, e)
 			}
 		case *slidetypes.Delta:
-			if nm, ok := evt.Data.(*slidetypes.NewMessageEvent); ok && nm.Message != nil {
+			switch data := evt.Data.(type) {
+			case *slidetypes.NewMessageEvent:
 				m.mu.Lock()
 				cli := m.client
 				m.mu.Unlock()
-				if cli != nil {
-					m.forward(ctx, gen, cli, cmp.Or(evt.ThreadIGID, nm.Message.ThreadFBID), nm.Message)
+				if cli != nil && data.Message != nil {
+					m.forward(ctx, gen, cli, cmp.Or(evt.ThreadIGID, data.Message.ThreadFBID), data.Message)
 				}
+			case *slidetypes.ReadReceiptEvent:
+				m.queueReadReceipt(gen, reads, evt.ThreadIGID, data.ReadReceipt)
 			}
 		}
 		return nil
@@ -513,9 +518,9 @@ const maxCatchUpThreads = 25
 func (m *Manager) catchUp(ctx context.Context, gen uint64, cli *instameow.Client, mailbox *slidetypes.Mailbox) {
 	m.mu.Lock()
 	since := m.lastInboundMS
+	own := m.ownFBID
 	m.mu.Unlock()
-	// first connect after login has no floor — importing the whole inbox as leads isn't wanted
-	if since <= 0 || mailbox == nil {
+	if mailbox == nil {
 		return
 	}
 	var threads []*slidetypes.ThreadInfo
@@ -532,11 +537,15 @@ func (m *Manager) catchUp(ctx context.Context, gen uint64, cli *instameow.Client
 	var fresh []*slidetypes.ThreadInfo
 	seen := map[string]bool{}
 	for _, t := range threads {
-		if t.IsGroup || seen[t.ThreadFBID] || t.LastActivityTimestampMS.UnixMilli() <= since {
+		if t.IsGroup || seen[t.ThreadFBID] {
 			continue
 		}
 		seen[t.ThreadFBID] = true
-		fresh = append(fresh, t)
+		m.forwardSeen(gen, t, own, nil)
+		// First connect has no inbound floor. Receipts only update already known messages.
+		if since > 0 && t.LastActivityTimestampMS.UnixMilli() > since {
+			fresh = append(fresh, t)
+		}
 	}
 	slices.SortFunc(fresh, func(a, b *slidetypes.ThreadInfo) int {
 		return a.LastActivityTimestampMS.Compare(b.LastActivityTimestampMS.Time)
@@ -560,6 +569,7 @@ func (m *Manager) catchUp(ctx context.Context, gen uint64, cli *instameow.Client
 		if full.IsGroup || full.SlideMessages == nil {
 			continue
 		}
+		m.forwardSeen(gen, full, own, nil)
 		var msgs []*slidetypes.Message
 		for _, e := range full.SlideMessages.Edges {
 			if e.Node != nil && e.Node.TimestampMS.UnixMilli() > since {

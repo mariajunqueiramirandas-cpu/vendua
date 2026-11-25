@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { ingestInbound } from '../src/crm/inbound.ts';
-import { dispatchMessage } from '../src/crm/send.ts';
+import { dispatchMessage, finalizeSentTx } from '../src/crm/send.ts';
 import {
   channelAvailabilityTx,
   instagramColdCapTx,
@@ -626,12 +626,53 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
       },
     });
     expect(msg.status).toBe(201);
-    const body = (await msg.json()) as { leadId: string; leadCreated: boolean };
+    const body = (await msg.json()) as { leadId: string; threadId: string; leadCreated: boolean };
     expect(body.leadCreated).toBe(true);
     const lead = (
       await sql<{ instagram: string }[]>`select instagram from leads where id = ${body.leadId}`
     )[0]!;
     expect(lead.instagram).toBe(`@ig${nonce}g`);
+
+    const sentId = `mid-seen-${nonce}`;
+    const racingId = `mid-before-finalize-${nonce}`;
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, provider_message_id)
+      values (${body.threadId}, 'out', 'staff', 'Olá!', 'sent', ${`instagram:${sentId}`})`;
+    const [racing] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${body.threadId}, 'out', 'staff', 'Outro envio', 'sending') returning id`;
+    const seen = { type: 'seen', messageIds: [sentId, racingId, `mid-g1-${nonce}`] };
+    expect((await post(seen, { sign: false })).status).toBe(404);
+    expect((await post(seen)).status).toBe(200);
+    expect((await post(seen)).status).toBe(200);
+    await controlTx(sql, (tx) =>
+      finalizeSentTx(
+        tx,
+        {
+          messageId: racing!.id,
+          threadId: body.threadId,
+          channel: 'instagram',
+          leadId: body.leadId,
+          sendingAt: new Date().toISOString(),
+          author: 'staff',
+        },
+        racingId,
+        null,
+        new Set(),
+        new Set(),
+      ),
+    );
+    const conversation = await app.request(`/control/v1/threads/${body.threadId}`, {
+      headers: { 'x-vendua-control': 'ctl-secret' },
+    });
+    expect(conversation.status).toBe(200);
+    const view = (await conversation.json()) as { messages: { body: string; seen: boolean }[] };
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ body: 'quero saber o preço', seen: false }),
+        expect.objectContaining({ body: 'Olá!', seen: true }),
+        expect.objectContaining({ body: 'Outro envio', seen: true }),
+      ]),
+    );
 
     expect((await post({ type: 'message', message: { id: 'x' } })).status).toBe(422);
 

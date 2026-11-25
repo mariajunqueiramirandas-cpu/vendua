@@ -74,16 +74,29 @@ export interface WaKey {
   fromMe?: boolean | null;
 }
 
+export interface WaStatusUpdate {
+  key?: WaKey;
+  update?: { status?: number | null };
+}
+
+export function outboundReceipts(updates: WaStatusUpdate[]): Receipt[] {
+  const receipts: Receipt[] = [];
+  for (const { key, update } of updates) {
+    // proto WebMessageInfo.Status: 3 delivered, 4 read, 5 played
+    const status = update?.status ?? 0;
+    if (!key?.fromMe || !key.id || status < 3) continue;
+    receipts.push({ waId: key.id, status: status >= 4 ? 'read' : 'delivered' });
+  }
+  return receipts;
+}
+
 /** The slice of a baileys socket the gateway uses — tests drive a fake with the same shape. */
 export interface WaSocket {
   ev: {
     on(event: 'connection.update', cb: (u: ConnectionUpdate) => void): void;
     on(event: 'creds.update', cb: () => void): void;
     on(event: 'messages.upsert', cb: (m: { type: string; messages: WaMessage[] }) => void): void;
-    on(
-      event: 'messages.update',
-      cb: (u: { key?: WaKey; update?: { status?: number | null } }[]) => void,
-    ): void;
+    on(event: 'messages.update', cb: (u: WaStatusUpdate[]) => void): void;
     on(event: 'messaging-history.set', cb: (h: HistorySet) => void): void;
     on(event: 'lid-mapping.update', cb: (m: { lid?: string; pn?: string }) => void): void;
     on(
@@ -480,13 +493,7 @@ export class StoreSession {
     });
     sock.ev.on('messages.update', (updates) => {
       if (this.sock !== sock) return;
-      const out: Receipt[] = [];
-      for (const u of updates) {
-        // proto WebMessageInfo.Status: 3 delivered, 4 read, 5 played
-        const st = u.update?.status ?? 0;
-        if (!u.key?.fromMe || !u.key.id || st < 3) continue;
-        out.push({ waId: u.key.id, status: st >= 4 ? 'read' : 'delivered' });
-      }
+      const out = outboundReceipts(updates);
       if (out.length) this.hooks.onReceipts(out);
     });
   }

@@ -9,7 +9,14 @@ import { cachedPlatformIdentity, cachedPlatformState } from '../../platform-what
 import { platformTransport, VENDUA_SESSION } from '../../platform-whatsapp/transport.ts';
 import { parseContent } from '../../store-whatsapp/content.ts';
 import { baileysRuntime } from '../../store-whatsapp/runtime.ts';
-import type { WaMessage, WaRuntime, WaSocket } from '../../store-whatsapp/session.ts';
+import {
+  outboundReceipts,
+  type WaMessage,
+  type WaRuntime,
+  type WaSocket,
+  type WaStatusUpdate,
+} from '../../store-whatsapp/session.ts';
+import { recordMessageSeen } from '../message-seen.ts';
 
 const waLog = log.child({ mod: 'whatsapp' });
 
@@ -64,6 +71,7 @@ interface BaileysSocket {
       }) => void,
     ): void;
     on(event: 'creds.update', cb: () => void): void;
+    on(event: 'messages.update', cb: (u: WaStatusUpdate[]) => void): void;
     on(event: 'lid-mapping.update', cb: (m: { lid?: string; pn?: string }) => void): void;
     on(
       event: 'messages.upsert',
@@ -487,6 +495,16 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     const snapshot = { ...creds };
     if (!pairingConfirmed(snapshot)) delete snapshot.me;
     void auth.write('creds', 'main', snapshot);
+  });
+  sock.ev.on('messages.update', (updates) => {
+    if (socket !== sock) return;
+    const ids = outboundReceipts(updates)
+      .filter((r) => r.status === 'read')
+      .map((r) => r.waId);
+    if (ids.length)
+      void recordMessageSeen(sql, 'whatsapp', ids).catch((err) =>
+        waLog.warn({ err }, 'read receipts not saved'),
+      );
   });
   sock.ev.on('connection.update', (u) => {
     if (socket !== sock) return; // stale socket — a replacement owns globals

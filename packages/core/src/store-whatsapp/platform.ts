@@ -1,4 +1,5 @@
 import { prepareCrmGatewayTx } from '../crm/delivery-policy.ts';
+import { CRM_SEEN_SUFFIX, recordMessageSeenTx } from '../crm/message-seen.ts';
 import { AUDIO_NOT_FETCHED } from '../platform-whatsapp/dua-text.ts';
 import { hostname } from 'node:os';
 import type { Logger } from 'pino';
@@ -16,6 +17,7 @@ import { MAX_AUDIO_SECONDS, MAX_IMAGE_BYTES, MAX_MEDIA_BYTES } from './content.t
 import type { HistorySet } from './history.ts';
 import {
   finishPlatformWipe,
+  heldPlatformTx,
   inboxHas,
   platformHousekeeping,
   platformMessageText,
@@ -368,7 +370,18 @@ export class PlatformGateway {
             .catch(failed('inbound not saved'));
         },
         onTyping: () => undefined,
-        onReceipts: () => undefined,
+        onReceipts: (receipts) => {
+          const ids = receipts.filter((r) => r.status === 'read').map((r) => r.waId);
+          if (!ids.length) return;
+          void controlTx(sql, async (tx) => {
+            await heldPlatformTx(tx, name, fence, 'share');
+            const threads = await recordMessageSeenTx(tx, 'whatsapp', ids);
+            if (threads.length) {
+              await tx`select pg_notify('vendua_platform_wa_out', id || ${CRM_SEEN_SUFFIX})
+                from unnest(${threads}::text[]) as seen(id)`;
+            }
+          }).catch(failed('read receipts not saved'));
+        },
         onLeaseLost: lost,
         messageText: (waId) => platformMessageText(sql, name, waId),
         wipe: () => wipePlatformFenced(sql, name, fence),

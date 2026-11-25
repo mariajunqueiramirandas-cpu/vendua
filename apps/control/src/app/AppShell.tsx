@@ -442,7 +442,9 @@ function SalesSubNav({ badges }: { badges: Record<string, number> }) {
   const thread = useMatch('/inbox/:threadId');
   const run = useMatch('/agente/operacao/:id');
   const detail =
-    !!thread || !!run || (!!lead && !['relatorios', 'analytics'].includes(lead.params.id ?? ''));
+    !!thread ||
+    !!run ||
+    (!!lead && !['relatorios', 'analytics', 'limpeza'].includes(lead.params.id ?? ''));
   if (!isSalesPath(pathname) || detail) return null;
   return (
     <nav

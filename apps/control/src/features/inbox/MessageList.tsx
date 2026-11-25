@@ -128,7 +128,14 @@ function Bubble({ m }: { m: Message }) {
         </span>
       )}
       <span className="tnum">{time(m.createdAt)}</span>
-      {out && <StatusIcon status={m.status} />}
+      {out &&
+        (m.seen ? (
+          <span className="inline-flex items-center gap-0.5" title="leitura confirmada">
+            <CheckCheck className="size-3" aria-hidden /> visualizado
+          </span>
+        ) : (
+          <StatusIcon status={m.status} />
+        ))}
     </div>
   );
   const error = bad && m.error && (

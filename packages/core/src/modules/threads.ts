@@ -69,6 +69,7 @@ export interface MessageRow {
   audio?: boolean;
   /** the lead's machine answering our send, not a person: the agent's mark_auto_reply (0152) */
   auto_reply?: boolean;
+  seen_at?: string | null;
   created_at: string;
 }
 
@@ -101,6 +102,7 @@ export function messageJson(row: MessageRow) {
     approvedAt: row.approved_at,
     audio: row.audio === true,
     autoReply: row.auto_reply === true,
+    seen: row.seen_at != null,
     createdAt: row.created_at,
   };
 }

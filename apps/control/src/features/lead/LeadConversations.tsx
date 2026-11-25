@@ -74,6 +74,7 @@ function ThreadPreview({
                 <p className="line-clamp-4 break-words whitespace-pre-wrap">{m.body}</p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {m.direction === 'out' ? m.author : 'lead'}
+                  {m.seen ? ' · visualizado' : ''}
                   {m.status === 'draft' ? ' · rascunho' : ''} · {rel(m.createdAt)}
                 </p>
               </div>

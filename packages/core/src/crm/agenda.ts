@@ -87,7 +87,7 @@ export function parseWakeupAt(v: unknown, now = Date.now()): Date | string {
   return new Date(t);
 }
 
-const lockLead = (tx: Sql, leadId: string) =>
+export const lockLeadAgendaTx = (tx: Sql, leadId: string) =>
   tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + leadId}))`;
 
 /** Pending timers of the lead's actor matching `which`, removed before they fire. */
@@ -146,7 +146,7 @@ export async function scheduleTimerTx(
     floor?: boolean;
   },
 ): Promise<{ wakeup: { id: string; at: string }; replaced: string | null } | { error: string }> {
-  await lockLead(tx, input.leadId);
+  await lockLeadAgendaTx(tx, input.leadId);
   if (input.floor !== false) {
     // clock_timestamp(), not now() (tx-start time, possibly outlived by the lock wait)
     const [row] = await tx<{ soon: boolean }[]>`
@@ -175,8 +175,9 @@ export async function scheduleTimerTx(
     keepParked: true,
   });
   await syncNextActionTx(tx, input.leadId);
+  if (!out.mailboxId) return { error: out.parked ?? 'não foi possível agendar o retorno' };
   return {
-    wakeup: { id: out.mailboxId ?? '', at: input.at.toISOString() },
+    wakeup: { id: out.mailboxId, at: input.at.toISOString() },
     replaced: dropped[0] ?? null,
   };
 }
@@ -196,7 +197,7 @@ export async function setNextActionTx(
   who: 'staff' | 'agent' | 'requested',
 ): Promise<void> {
   if (at === null) {
-    await lockLead(tx, leadId);
+    await lockLeadAgendaTx(tx, leadId);
     await dropTimersTx(tx, leadId, (p) =>
       // staff clearing the date clears its own and the agent's plans; a promise to the lead stays
       who === 'staff' ? p.by === 'staff' || !p.requested : p.by !== 'staff' && !p.requested,
@@ -216,7 +217,7 @@ export async function setNextActionTx(
 
 /** The agent's own pending dates and the callbacks it booked for the lead go — staff's stay. */
 export async function cancelAgentWakeupsTx(tx: Sql, leadId: string): Promise<number> {
-  await lockLead(tx, leadId);
+  await lockLeadAgendaTx(tx, leadId);
   const ids = await dropTimersTx(tx, leadId, (p) => p.by !== 'staff');
   if (ids.length) await syncNextActionTx(tx, leadId);
   return ids.length;
@@ -226,7 +227,7 @@ export async function cancelAgentWakeupsTx(tx: Sql, leadId: string): Promise<num
  *  agenda (the agent's own date or a promise wins). */
 export async function scheduleCadenceTx(tx: Sql, leadId: string, days: number): Promise<boolean> {
   if (days <= 0) return false;
-  await lockLead(tx, leadId);
+  await lockLeadAgendaTx(tx, leadId);
   if ((await pendingWakeupsTx(tx, leadId)).length) return false;
   const out = await requestLeadTx(tx, {
     leadId,
@@ -287,7 +288,7 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
     const [row] = await tx<TimerRow[]>`${TIMER_SELECT(tx)} and m.id = ${id}::uuid`;
     if (!row) throw new HttpError(404, 'WAKEUP_NOT_FOUND', 'wakeup not found');
     if (row.consumed_by_turn) return { status: 200, body: { wakeup: toWakeup(row) } };
-    await lockLead(tx, row.lead_id);
+    await lockLeadAgendaTx(tx, row.lead_id);
     await tx`delete from agent_mailbox where id = ${id}::uuid and consumed_by_turn is null`;
     await syncNextActionTx(tx, row.lead_id);
     return { status: 200, body: { wakeup: { ...toWakeup(row), status: 'canceled' as const } } };
@@ -297,7 +298,7 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
 
 /** Opt-out never lifts: everything still waiting for the lead's agent goes. */
 export async function dropLeadMailTx(tx: Sql, leadId: string): Promise<number> {
-  await lockLead(tx, leadId);
+  await lockLeadAgendaTx(tx, leadId);
   const rows = await tx<{ id: string }[]>`
     delete from agent_mailbox m using agent_actors a
     where a.id = m.actor_id and a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID} and a.subject_kind = ${LEAD_SUBJECT}
