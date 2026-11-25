@@ -263,10 +263,12 @@ func fromCaptchaStep(s *bridgev2.LoginStep) (*Step, error) {
 		frameURL.User != nil || frameURL.EscapedPath() != "/captcha/recaptcha/iframe/" || frameURL.Fragment != "" {
 		return nil, errCheckpointUnsupported
 	}
-	return &Step{
-		Type: "captcha", StepID: s.StepID, Captcha: &captcha,
-		Instructions: "Resolva a verificação do Instagram para continuar o login.",
-	}, nil
+	instructions := "O Instagram pediu um captcha para continuar o login."
+	// instameow's retry notices (token rejected, expired or reused); its default text means a first try
+	if strings.HasPrefix(s.Instructions, "Instagram rejected") || strings.HasPrefix(s.Instructions, "Complete a fresh") {
+		instructions = "O Instagram recusou esse código ou ele expirou (vale 2 minutos). Resolva um captcha novo."
+	}
+	return &Step{Type: "captcha", StepID: s.StepID, Captcha: &captcha, Instructions: instructions}, nil
 }
 
 func sanitizeCAAStep(step *bridgev2.LoginStep) error {
