@@ -2802,8 +2802,14 @@ export function createApp({
 
   app.post('/control/v1/ig/login/start', async (c) => {
     controlGate(c);
+    // an empty body is the default (Android app) login; older CRMs send none
+    const raw = (await boundedText(c, 1024)).trim();
+    const mode = raw ? parseJsonObject(raw).mode : undefined;
+    if (mode !== undefined && mode !== 'app' && mode !== 'web') {
+      throw new HttpError(422, 'BAD_REQUEST', 'mode must be app or web', { field: 'mode' });
+    }
     const { igLoginStart } = await import('./crm/channels/instagram.ts');
-    return igClaim(c, async () => ({ step: await igLoginStart(sql) }));
+    return igClaim(c, async () => ({ step: await igLoginStart(sql, mode) }));
   });
 
   app.post('/control/v1/ig/login/submit', async (c) => {

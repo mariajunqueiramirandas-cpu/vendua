@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +14,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-meta/pkg/instameow"
 	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
@@ -31,6 +35,8 @@ type Step struct {
 	Instructions string   `json:"instructions"`
 	Fields       []Field  `json:"fields,omitempty"`
 	Captcha      *Captcha `json:"captcha,omitempty"`
+	// Image is the Android login's letters captcha, a data: URL shown above its field.
+	Image string `json:"image,omitempty"`
 	// Code is the number to tap on the other device; Back offers "use another method" on a wait step.
 	Code    string   `json:"code,omitempty"`
 	Back    bool     `json:"back,omitempty"`
@@ -74,6 +80,8 @@ const (
 	declineOptionalCookies = "Continuar só com os cookies obrigatórios"
 	cancelCookieConsent    = "Cancelar login"
 
+	caaPrefix = "fi.mau.meta.instagram.caa."
+
 	loginTTL = 15 * time.Minute
 	// instameow polls an approval until its context ends; one "já aprovei" stays under Core's 30s
 	// call timeout, and running out hands the same step back (the approval state survives)
@@ -81,6 +89,11 @@ const (
 )
 
 var approvalCodeRe = regexp.MustCompile(`^[0-9A-Za-z]{1,12}$`)
+
+// letters-captcha images Instagram serves are a few KB; raster types only, never SVG
+const maxCaptchaImage = 128 << 10
+
+var captchaImageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
 var (
 	errUnsupportedStep = &LoginError{http.StatusBadRequest, "unsupported_step",
@@ -100,16 +113,32 @@ var (
 	errLoginCancelled  = &LoginError{http.StatusConflict, "cancelled", "Login cancelado."}
 	errApprovalExpired = &LoginError{http.StatusBadRequest, "approval_expired",
 		"A aprovação no outro aparelho expirou ou foi recusada. Comece o login de novo."}
+	errRecaptcha = &LoginError{http.StatusBadRequest, "recaptcha",
+		"O Instagram pediu o captcha do Google (“não sou um robô”), que não dá para resolver pelo app. Num computador, tente “entrar pelo site”."}
 )
 
-// CAA (mobile fallback) steps we can render safely: one field, known id/type.
-var caaSafeSteps = map[string][3]string{
-	"fi.mau.meta.instagram.caa.password":    {"password", "Senha", "Digite a senha do Instagram de novo."},
-	"fi.mau.meta.instagram.caa.otp_code":    {"otp_code", "Código", "Digite o código de verificação do Instagram."},
-	"fi.mau.meta.instagram.caa.backup_code": {"backup_code", "Código de backup", "Digite um dos códigos de backup do Instagram."},
-	"fi.mau.meta.instagram.caa.totp":        {"totp_code", "Código de 6 dígitos", "Digite o código do app autenticador."},
-	"fi.mau.meta.instagram.caa.sms":         {"sms_code", "Código de 6 dígitos", "Digite o código que o Instagram mandou por SMS."},
-	"fi.mau.meta.instagram.caa.whatsapp":    {"whatsapp_code", "Código de 6 dígitos", "Digite o código que o Instagram mandou no WhatsApp."},
+type caaStep struct {
+	field     string
+	fieldType bridgev2.LoginInputFieldType
+	name      string
+	// instructions replace Instagram's; empty keeps its own (dialogs carry their message)
+	instructions string
+}
+
+// Android-app (CAA) steps we can render safely: one field, known id/type. The app login and the
+// web login's CAA fallback share them.
+var caaSafeSteps = map[string]caaStep{
+	caaPrefix + "password":    {"password", bridgev2.LoginInputFieldTypePassword, "Senha", "Digite a senha do Instagram de novo."},
+	caaPrefix + "otp_code":    {"otp_code", bridgev2.LoginInputFieldType2FACode, "Código", "Digite o código de verificação do Instagram."},
+	caaPrefix + "backup_code": {"backup_code", bridgev2.LoginInputFieldType2FACode, "Código de backup", "Digite um dos códigos de backup do Instagram."},
+	caaPrefix + "totp":        {"totp_code", bridgev2.LoginInputFieldType2FACode, "Código de 6 dígitos", "Digite o código do app autenticador."},
+	caaPrefix + "sms":         {"sms_code", bridgev2.LoginInputFieldType2FACode, "Código de 6 dígitos", "Digite o código que o Instagram mandou por SMS."},
+	caaPrefix + "whatsapp":    {"whatsapp_code", bridgev2.LoginInputFieldType2FACode, "Código de 6 dígitos", "Digite o código que o Instagram mandou no WhatsApp."},
+	caaPrefix + "captcha": {"captcha_code", bridgev2.LoginInputFieldTypeCaptchaCode, "Letras da imagem",
+		"O Instagram pediu um captcha: digite as letras e números da imagem."},
+	caaPrefix + "mfa_type":             {"mfatype", bridgev2.LoginInputFieldTypeSelect, "Como confirmar", "Escolha como confirmar este login."},
+	caaPrefix + "choose_contact_point": {"contact_point", bridgev2.LoginInputFieldTypeSelect, "Para onde", "Escolha para onde o Instagram manda o código."},
+	caaPrefix + "dialog":               {"dialog_action", bridgev2.LoginInputFieldTypeSelect, "Continuar", ""},
 }
 
 type pendingConsent struct {
@@ -122,6 +151,9 @@ type loginProc struct {
 	client  *instameow.Client
 	device  *types.InstagramLoginDevice
 	started time.Time
+
+	// native logs in as the Android app (the default); false is the website login
+	native bool
 
 	caaIdentifier, caaPassword, caaUserID string
 	webTwoFactor                          *instameow.InstagramWebTwoFactorChallenge
@@ -174,7 +206,8 @@ func fromBridgeStep(s *bridgev2.LoginStep) (*Step, error) {
 		if s.UserInputParams == nil {
 			return nil, errUnsupportedStep
 		}
-		out := &Step{Type: "input", StepID: s.StepID, Instructions: s.Instructions}
+		out := &Step{Type: "input", StepID: s.StepID, Instructions: s.Instructions,
+			Image: captchaImage(s.UserInputParams.Attachments)}
 		for _, f := range s.UserInputParams.Fields {
 			out.Fields = append(out.Fields, Field{ID: f.ID, Name: f.Name, Type: string(f.Type), Options: f.Options})
 		}
@@ -275,11 +308,14 @@ func sanitizeCAAStep(step *bridgev2.LoginStep) error {
 	if step == nil {
 		return nil
 	}
+	if step.StepID == caaPrefix+"recaptcha" {
+		return errRecaptcha
+	}
 	if step.CookiesParams != nil || step.ClientHTTPParams != nil || step.WebAuthnParams != nil || step.CompleteParams != nil {
 		return errUnsupportedStep
 	}
 	if step.Type == bridgev2.LoginStepTypeDisplayAndWait {
-		if step.StepID != "fi.mau.meta.instagram.caa.afad_wait" || step.UserInputParams != nil ||
+		if step.StepID != caaPrefix+"afad_wait" || step.UserInputParams != nil ||
 			step.DisplayAndWaitParams == nil || step.DisplayAndWaitParams.Type != bridgev2.LoginDisplayTypeNothing ||
 			step.DisplayAndWaitParams.Data != "" || step.DisplayAndWaitParams.ImageURL != "" {
 			return errUnsupportedStep
@@ -289,19 +325,68 @@ func sanitizeCAAStep(step *bridgev2.LoginStep) error {
 	}
 	spec, ok := caaSafeSteps[step.StepID]
 	if !ok || step.Type != bridgev2.LoginStepTypeUserInput || step.DisplayAndWaitParams != nil ||
-		step.UserInputParams == nil || len(step.UserInputParams.Attachments) != 0 || len(step.UserInputParams.Fields) != 1 {
+		step.UserInputParams == nil || len(step.UserInputParams.Fields) != 1 {
 		return errUnsupportedStep
 	}
-	field := &step.UserInputParams.Fields[0]
-	expected := bridgev2.LoginInputFieldType2FACode
-	if spec[0] == "password" {
-		expected = bridgev2.LoginInputFieldTypePassword
-	}
-	if field.ID != spec[0] || field.Type != expected || field.DefaultValue != "" || len(field.Options) != 0 {
+	params := step.UserInputParams
+	if spec.fieldType == bridgev2.LoginInputFieldTypeCaptchaCode {
+		if captchaImage(params.Attachments) == "" {
+			return errUnsupportedStep
+		}
+	} else if len(params.Attachments) != 0 {
 		return errUnsupportedStep
 	}
-	field.Name, step.Instructions, field.Description, field.Pattern = spec[1], spec[2], "", ""
+	field := &params.Fields[0]
+	if field.ID != spec.field || field.Type != spec.fieldType {
+		return errUnsupportedStep
+	}
+	if spec.fieldType == bridgev2.LoginInputFieldTypeSelect {
+		if !boundedOptions(field.Options) {
+			return errUnsupportedStep
+		}
+	} else if field.DefaultValue != "" || len(field.Options) != 0 {
+		return errUnsupportedStep
+	}
+	field.Name, field.Description, field.Pattern, field.DefaultValue = spec.name, "", "", ""
+	switch {
+	case spec.instructions != "":
+		// a retry carries Instagram's own error instead of the default prompt
+		if spec.fieldType == bridgev2.LoginInputFieldTypeCaptchaCode && step.Instructions != "Instagram requires solving a captcha" {
+			step.Instructions = "Não foi dessa vez — digite as letras e números da imagem nova."
+		} else {
+			step.Instructions = spec.instructions
+		}
+	case step.Instructions == "" || utf8.RuneCountInString(step.Instructions) > 500:
+		step.Instructions = "O Instagram mostrou um aviso. Escolha como continuar."
+	}
 	return nil
+}
+
+// boundedOptions accepts a short list of short, printable choices.
+func boundedOptions(options []string) bool {
+	if len(options) == 0 || len(options) > 10 {
+		return false
+	}
+	for _, o := range options {
+		if o == "" || utf8.RuneCountInString(o) > 120 || strings.ContainsFunc(o, unicode.IsControl) {
+			return false
+		}
+	}
+	return true
+}
+
+// captchaImage is the first raster image attachment as a data: URL, or "" when there's none fit to show.
+func captchaImage(attachments []*bridgev2.LoginUserInputAttachment) string {
+	for _, a := range attachments {
+		if a == nil || a.Type != event.MsgImage {
+			continue
+		}
+		if !captchaImageTypes[a.Info.MimeType] || len(a.Content) == 0 || len(a.Content) > maxCaptchaImage {
+			return ""
+		}
+		return "data:" + a.Info.MimeType + ";base64," + base64.StdEncoding.EncodeToString(a.Content)
+	}
+	return ""
 }
 
 func (m *Manager) pendingLoginStep() *Step {
@@ -324,14 +409,16 @@ func (m *Manager) setLogin(p *loginProc) {
 	m.mu.Unlock()
 }
 
-// LoginStart begins a password login; device is the stored Android identity, if any.
-func (m *Manager) LoginStart(device *types.InstagramLoginDevice) (*Step, error) {
+// LoginStart begins a password login; device is the stored Android identity, if any. It logs in as
+// the Android app unless web: the app's checks (codes, approvals, a letters captcha) can be answered
+// from the CRM on a phone, where the website's reCAPTCHA can't.
+func (m *Manager) LoginStart(device *types.InstagramLoginDevice, web bool) (*Step, error) {
 	m.loginMu.Lock()
 	defer m.loginMu.Unlock()
-	p := &loginProc{m: m, device: device, started: time.Now()}
+	p := &loginProc{m: m, device: device, started: time.Now(), native: !web}
 	c := &cookies.Cookies{Platform: types.Instagram}
 	c.UpdateValues(nil)
-	cli, err := m.newClient(c, device, func(d types.InstagramLoginDevice) { p.device = &d })
+	cli, err := m.newClient(c, device, nil, func(d types.InstagramLoginDevice) { p.device = &d })
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +474,7 @@ func (p *loginProc) restart(instructions string) (*Step, error) {
 	p.webTwoFactor, p.webSessionReady, p.webCookieConsent = nil, false, nil
 	c := &cookies.Cookies{Platform: types.Instagram}
 	c.UpdateValues(nil)
-	cli, err := p.m.newClient(c, p.device, func(d types.InstagramLoginDevice) { p.device = &d })
+	cli, err := p.m.newClient(c, p.device, nil, func(d types.InstagramLoginDevice) { p.device = &d })
 	if err != nil {
 		return nil, err
 	}
@@ -471,6 +558,10 @@ func (p *loginProc) submit(ctx context.Context, input map[string]string) (*Step,
 	password := input[fieldPassword]
 	if identifier == "" || password == "" {
 		return p.remember(credentialsStep("Preencha o e-mail ou usuário e a senha."), nil)
+	}
+	if p.native {
+		p.caaIdentifier = identifier
+		return p.continueCAA(ctx, map[string]string{fieldIdentifier: identifier, fieldPassword: password})
 	}
 	return p.submitCredentials(ctx, identifier, password, true)
 }
@@ -558,7 +649,13 @@ func (p *loginProc) continueCAA(ctx context.Context, input map[string]string) (*
 	if pw := input[fieldPassword]; pw != "" {
 		p.caaPassword = pw
 	}
-	step, err := p.client.DoInstagramCAALoginStepsExactAccount(ctx, input, p.caaIdentifier, p.caaUserID)
+	var step *bridgev2.LoginStep
+	var err error
+	if p.native {
+		step, err = p.client.DoInstagramCAALoginSteps(ctx, input)
+	} else {
+		step, err = p.client.DoInstagramCAALoginStepsExactAccount(ctx, input, p.caaIdentifier, p.caaUserID)
+	}
 	if err != nil {
 		p.clearCAA()
 		var re bridgev2.RespError
@@ -582,9 +679,24 @@ func (p *loginProc) continueCAA(ctx context.Context, input map[string]string) (*
 		s, err := fromBridgeStep(step)
 		return p.remember(s, err)
 	}
+	if p.native {
+		return p.completeNative(ctx)
+	}
 	identifier, password := p.caaIdentifier, p.caaPassword
 	p.clearCAA()
 	return p.submitCredentials(ctx, identifier, password, false)
+}
+
+// completeNative finishes an app login: the token goes along with the cookies the app login set.
+func (p *loginProc) completeNative(ctx context.Context) (*Step, error) {
+	// read both before clearCAA, which drops the token from the client
+	jar := cookiesFrom(cookieValues(p.client.GetCookies()))
+	native := nativeFor(p.client.GetInstagramNativeSession(), jar)
+	p.clearCAA()
+	if native == nil {
+		return nil, errCAAFailed
+	}
+	return p.m.completeLogin(ctx, jar, p.device, native)
 }
 
 func (p *loginProc) continueAccountManager(ctx context.Context, input map[string]string) (*Step, error) {
@@ -602,7 +714,7 @@ func (p *loginProc) continueAccountManager(ctx context.Context, input map[string
 		s, err := fromBridgeStep(step)
 		return p.remember(s, err)
 	}
-	return p.m.completeLogin(ctx, p.client.GetCookies(), p.device)
+	return p.m.completeLogin(ctx, p.client.GetCookies(), p.device, nil)
 }
 
 func fromRespError(re bridgev2.RespError) *LoginError {
@@ -613,17 +725,16 @@ func fromRespError(re bridgev2.RespError) *LoginError {
 	return &LoginError{Status: status, Code: strings.ToLower(strings.TrimPrefix(re.ErrCode, "FI.MAU.META_")), Message: re.Err}
 }
 
-// completeLogin validates fresh cookies with a real index load, then hands that client to the manager.
-func (m *Manager) completeLogin(ctx context.Context, c *cookies.Cookies, device *types.InstagramLoginDevice) (*Step, error) {
+// completeLogin validates fresh cookies (and an app login's token) with a real index load, then hands
+// that client to the manager.
+func (m *Manager) completeLogin(ctx context.Context, c *cookies.Cookies, device *types.InstagramLoginDevice,
+	native *types.InstagramNativeSession) (*Step, error) {
 	if missing := c.GetMissingCookieNames(); len(missing) > 0 {
 		return nil, &LoginError{http.StatusBadRequest, "missing_cookies",
 			fmt.Sprintf("Faltam cookies obrigatórios: %v", missing)}
 	}
-	values := map[string]string{}
-	for k, v := range c.GetAll() {
-		values[string(k)] = v
-	}
-	cli, err := m.newClient(cookiesFrom(values), device, nil)
+	values := cookieValues(c)
+	cli, err := m.newClient(cookiesFrom(values), device, native, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -649,6 +760,9 @@ func (m *Manager) completeLogin(ctx context.Context, c *cookies.Cookies, device 
 	if cli.GetOwnFBID() == 0 {
 		return nil, errors.New("o Instagram não devolveu o id da conta")
 	}
+	if native != nil && native.UserID != viewer.ID {
+		return nil, errCAAFailed
+	}
 	// the first connect has no catch-up floor: an existing inbox isn't imported as leads
 	m.launch(cli, viewer, mailbox, device, 0)
 	return &Step{
@@ -656,7 +770,7 @@ func (m *Manager) completeLogin(ctx context.Context, c *cookies.Cookies, device 
 		StepID:       "instagram.complete",
 		Instructions: fmt.Sprintf("Conectado como @%s.", viewer.GetUsername()),
 		Account:      &Account{Username: viewer.GetUsername(), Name: viewer.GetName(), IGID: viewer.ID},
-		Session:      &Session{Cookies: values, Device: device},
+		Session:      &Session{Cookies: values, Device: device, Native: native},
 	}, nil
 }
 
@@ -669,5 +783,5 @@ func (m *Manager) LoginCookies(ctx context.Context, raw string, device *types.In
 	m.loginMu.Lock()
 	defer m.loginMu.Unlock()
 	m.setLogin(nil)
-	return m.completeLogin(ctx, cookiesFrom(values), device)
+	return m.completeLogin(ctx, cookiesFrom(values), device, nil)
 }

@@ -40,6 +40,8 @@ type Session struct {
 	// Android installation identity from the mobile (CAA) login fallback — reusing
 	// it keeps later logins looking like the same device
 	Device *types.InstagramLoginDevice `json:"device,omitempty"`
+	// Native is the Android app's token from an app login; it rides with the cookies it set
+	Native *types.InstagramNativeSession `json:"native,omitempty"`
 }
 
 type Account struct {
@@ -99,11 +101,13 @@ func newManager(cfg config, log zerolog.Logger, sink *eventSink) *Manager {
 	}
 }
 
-func (m *Manager) newClient(c *cookies.Cookies, device *types.InstagramLoginDevice, onDevice func(types.InstagramLoginDevice)) (*instameow.Client, error) {
+func (m *Manager) newClient(c *cookies.Cookies, device *types.InstagramLoginDevice, native *types.InstagramNativeSession,
+	onDevice func(types.InstagramLoginDevice)) (*instameow.Client, error) {
 	cli := instameow.NewClient(instameow.ClientParams{
-		Cookies:  c,
-		Log:      m.log.With().Str("mod", "instameow").Logger(),
-		Settings: exhttp.SensibleClientSettings,
+		Cookies:       c,
+		NativeSession: native,
+		Log:           m.log.With().Str("mod", "instameow").Logger(),
+		Settings:      exhttp.SensibleClientSettings,
 		// no typing indicators — skips the extra stream-controller socket
 		DisableTyping:     true,
 		MobileLoginDevice: device,
@@ -122,6 +126,22 @@ func (m *Manager) newClient(c *cookies.Cookies, device *types.InstagramLoginDevi
 		}
 	}
 	return cli, nil
+}
+
+func cookieValues(jar *cookies.Cookies) map[string]string {
+	values := map[string]string{}
+	for k, v := range jar.GetAll() {
+		values[string(k)] = v
+	}
+	return values
+}
+
+// nativeFor keeps an app token only while it belongs to the account the cookies are for.
+func nativeFor(n *types.InstagramNativeSession, jar *cookies.Cookies) *types.InstagramNativeSession {
+	if n == nil || n.Authorization == "" || n.UserID == "" || n.UserID != jar.Get(cookies.IGCookieDSUserID) {
+		return nil
+	}
+	return n
 }
 
 func cookiesFrom(values map[string]string) *cookies.Cookies {
@@ -143,7 +163,7 @@ func (m *Manager) Start(s Session, sinceMS int64) error {
 	if missing := c.GetMissingCookieNames(); len(missing) > 0 {
 		return fmt.Errorf("sessão incompleta — faltam cookies %v", missing)
 	}
-	cli, err := m.newClient(c, s.Device, nil)
+	cli, err := m.newClient(c, s.Device, nativeFor(s.Native, c), nil)
 	if err != nil {
 		return err
 	}
@@ -163,7 +183,7 @@ func (m *Manager) launch(cli *instameow.Client, viewer *types.PolarisViewer, mai
 	m.device = device
 	m.account = nil
 	m.ownFBID = 0
-	m.lastCookies = marshalCookies(cli)
+	m.lastCookies = marshalSession(cli)
 	m.lastInboundMS = max(sinceMS, 0)
 	m.groups = map[string]bool{}
 	m.setStateLocked(stateConnecting, nil)
@@ -343,26 +363,26 @@ func (m *Manager) onIndexLoaded(ctx context.Context, gen uint64, cli *instameow.
 	m.mu.Unlock()
 }
 
-func marshalCookies(cli *instameow.Client) string {
-	b, _ := json.Marshal(cli.GetCookies().GetAll())
+// marshalSession fingerprints what a restart needs: the cookies and any app token.
+func marshalSession(cli *instameow.Client) string {
+	b, _ := json.Marshal([]any{cli.GetCookies().GetAll(), cli.GetInstagramNativeSession()})
 	return string(b)
 }
 
-// persistCookies pushes rotated cookies to Core so a restart resumes the fresh session.
+// persistCookies pushes rotated cookies (and app token) to Core so a restart resumes the fresh session.
 func (m *Manager) persistCookies(gen uint64) {
 	m.mu.Lock()
 	if gen != m.gen || m.client == nil {
 		m.mu.Unlock()
 		return
 	}
-	cur := marshalCookies(m.client)
+	cur := marshalSession(m.client)
 	if cur == m.lastCookies {
 		m.mu.Unlock()
 		return
 	}
 	m.lastCookies = cur
-	s := &Session{Device: m.device}
-	_ = json.Unmarshal([]byte(cur), &s.Cookies)
+	s := &Session{Cookies: cookieValues(m.client.GetCookies()), Device: m.device, Native: m.client.GetInstagramNativeSession()}
 	m.mu.Unlock()
 	m.sink.emit(Event{Type: "session", Session: s})
 }

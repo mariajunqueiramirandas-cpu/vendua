@@ -49,6 +49,8 @@ export interface IgStep {
   instructions: string;
   fields?: IgField[];
   captcha?: { iframeURL: string; instance: string };
+  /** the Android login's letters captcha, a data: URL */
+  image?: string;
   code?: string;
   back?: boolean;
   account?: IgAccount;
@@ -62,6 +64,8 @@ export interface IgStatus {
 interface IgSession {
   cookies: Record<string, string>;
   device?: Record<string, unknown> | null;
+  /** an Android-app login's token; the sidecar needs it alongside the cookies after a restart */
+  native?: Record<string, unknown>;
 }
 
 // last state the sidecar reported (events or reconcile polls)
@@ -200,7 +204,7 @@ async function requireSidecar(sql: Sql): Promise<IntegrationRow> {
 
 function validSession(v: unknown): IgSession | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const s = v as { cookies?: unknown; device?: unknown };
+  const s = v as { cookies?: unknown; device?: unknown; native?: unknown };
   if (!s.cookies || typeof s.cookies !== 'object' || Array.isArray(s.cookies)) return null;
   const cookies: Record<string, string> = {};
   for (const [k, val] of Object.entries(s.cookies as Record<string, unknown>)) {
@@ -212,7 +216,19 @@ function validSession(v: unknown): IgSession | null {
     s.device && typeof s.device === 'object' && !Array.isArray(s.device)
       ? (s.device as Record<string, unknown>)
       : null;
-  const out = { cookies, device };
+  const out: IgSession = { cookies, device };
+  // a token for another account than the cookies' is dropped, not trusted
+  const n = s.native;
+  if (
+    n &&
+    typeof n === 'object' &&
+    !Array.isArray(n) &&
+    typeof (n as { authorization?: unknown }).authorization === 'string' &&
+    (n as { authorization: string }).authorization.length > 0 &&
+    (n as { user_id?: unknown }).user_id === cookies.ds_user_id
+  ) {
+    out.native = n as Record<string, unknown>;
+  }
   return JSON.stringify(out).length <= MAX_SESSION_BYTES ? out : null;
 }
 
@@ -436,11 +452,15 @@ async function afterLoginStep(
   return stripSession(step);
 }
 
-export async function igLoginStart(sql: Sql): Promise<IgStep> {
+/** `web` asks for the website login; the default logs in as the Android app. */
+export async function igLoginStart(sql: Sql, mode: 'app' | 'web' = 'app'): Promise<IgStep> {
   const i = await requireSidecar(sql);
   const { device } = await loadAuth(sql, requireSecret(i));
   try {
-    const step = await call<IgStep>(i, 'POST', '/v1/login/start', { device });
+    const step = await call<IgStep>(i, 'POST', '/v1/login/start', {
+      device,
+      ...(mode === 'web' ? { mode } : {}),
+    });
     return await afterLoginStep(sql, i, step);
   } catch (e) {
     throw sidecarHttpError(e);
