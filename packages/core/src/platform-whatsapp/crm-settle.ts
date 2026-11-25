@@ -1,4 +1,5 @@
 import { salesDeliveryFailedTx } from '../crm/delivery-policy.ts';
+import { CRM_SEEN_SUFFIX } from '../crm/message-seen.ts';
 import { finalizeSentTx } from '../crm/send.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -157,6 +158,10 @@ export function startCrmSettle(sql: Sql, opts: { sweepMs?: number } = {}): () =>
       'vendua_platform_wa_out',
       (payload) => {
         if (payload.endsWith('|crm')) void drain();
+        if (payload.endsWith(CRM_SEEN_SUFFIX)) {
+          const threadId = payload.slice(0, -CRM_SEEN_SUFFIX.length);
+          if (UUID_RE.test(threadId)) emitControlEvent('thread.message', threadId);
+        }
       },
       () => void drain(),
     )

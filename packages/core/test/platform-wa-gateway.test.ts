@@ -627,6 +627,37 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('platform whatsapp: gateway (db)
     });
   });
 
+  test('only recipient read receipts mark outgoing CRM messages seen', async () => {
+    const [lead] = await sql<
+      { id: string }[]
+    >`insert into leads (name) values ('Read receipt test') returning id`;
+    try {
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${lead!.id}, 'whatsapp') returning id`;
+      const seenId = `wa-seen-${nonce}`;
+      const deliveredId = `wa-delivered-${nonce}`;
+      await sql`
+        insert into lead_messages (thread_id, direction, author, status, body, provider_message_id)
+        values (${thread!.id}, 'out', 'agent', 'sent', 'seen', ${`whatsapp:${seenId}`}),
+               (${thread!.id}, 'out', 'agent', 'sent', 'delivered', ${`whatsapp:${deliveredId}`})`;
+      world.last.emit('messages.update', [
+        { key: { id: deliveredId, fromMe: true }, update: { status: 3 } },
+        { key: { id: deliveredId, fromMe: false }, update: { status: 4 } },
+        { key: { id: seenId, fromMe: true }, update: { status: 4 } },
+      ]);
+      const read = () => sql<{ body: string; seen: boolean }[]>`
+        select body, seen_at is not null as seen from lead_messages
+        where thread_id = ${thread!.id} order by body`;
+      await until(async () => (await read()).some((m) => m.seen));
+      expect(Array.from(await read())).toEqual([
+        { body: 'delivered', seen: false },
+        { body: 'seen', seen: true },
+      ]);
+    } finally {
+      await sql`delete from leads where id = ${lead!.id}`;
+    }
+  });
+
   test('outbox: a failed send retries with the same wa_id; not on WhatsApp fails at once; expired never goes', async () => {
     world.last.failNext = new Error('timed out');
     const id = await enqueue('5511987654321', 'notice', 'de novo');

@@ -2,6 +2,7 @@ import type { PageTab } from '@/components/Page.tsx';
 
 export const PIPELINE_TABS: PageTab[] = [
   { to: '/pipeline', label: 'Leads', end: true },
+  { to: '/pipeline/limpeza', label: 'Limpeza' },
   { to: '/pipeline/relatorios', label: 'Relatórios' },
   { to: '/pipeline/analytics', label: 'Analytics' },
 ];

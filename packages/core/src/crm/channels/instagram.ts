@@ -14,6 +14,7 @@ import { emitControlEvent } from '../../modules/control-events.ts';
 import { DEFAULT_SECRET, getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 import { recordChannelState } from '../../modules/system-events.ts';
 import { instagramHandle } from '../../modules/threads.ts';
+import { recordMessageSeen } from '../message-seen.ts';
 import { log } from '../../platform/log.ts';
 
 // Instagram DMs ride the ig-sidecar (services/ig-sidecar, Go + mautrix-meta):
@@ -687,6 +688,7 @@ export interface IgInbound {
 type IgEvent =
   | { type: 'state'; status: IgStatus }
   | { type: 'session'; session: IgSession }
+  | { type: 'seen'; messageIds: string[] }
   | { type: 'message'; message: IgInbound };
 
 function asObject(v: unknown): Record<string, unknown> | null {
@@ -731,6 +733,17 @@ export function parseIgEvent(raw: unknown): IgEvent {
     const session = validSession(e.session);
     if (!session) throw bad('session');
     return { type: 'session', session };
+  }
+  if (e.type === 'seen') {
+    const ids = e.messageIds;
+    if (
+      !Array.isArray(ids) ||
+      ids.length < 1 ||
+      ids.length > 50 ||
+      !ids.every((id): id is string => typeof id === 'string' && !!id.trim() && id.length <= 200)
+    )
+      throw bad('seen');
+    return { type: 'seen', messageIds: [...new Set(ids)] };
   }
   if (e.type === 'message') {
     const m = asObject(e.message);
@@ -781,6 +794,10 @@ export async function applyIgEvent(
         update ig_auth_state set session = ${tx.json(seal(secret, evt.session) as never)}, updated_at = now()
         where account_id = ${ACCOUNT} and session is not null`,
     );
+    return null;
+  }
+  if (evt.type === 'seen') {
+    await recordMessageSeen(sql, 'instagram', evt.messageIds);
     return null;
   }
   return evt.message;

@@ -256,6 +256,16 @@ export async function dispatchMessage(
       }
     }
 
+    // Serialize the final claim with cleanup. Policy refusals above can take the
+    // agenda lock, so take this lead lock only once those paths have returned.
+    const [active] =
+      await tx`select id from leads where id = ${lead.id} and archived_at is null for share`;
+    if (!active) {
+      await markMessageFailed(tx, messageId, 'lead archived');
+      wroteTid = msg.thread_id;
+      return { fail: 'lead archived' };
+    }
+
     // 'sending' is the point of no return — stamp the attempt so dedupe
     // can tell it from a pre-wire refusal
     const upd = await tx<{ sending_at: string }[]>`
@@ -451,7 +461,11 @@ export async function finalizeSentTx(
       order by id
     `;
     for (const ev of pending) {
-      if (ev.event === 'email.delivered') {
+      if (ev.event === `${f.channel}.seen`) {
+        await tx`
+          update lead_messages set seen_at = coalesce(seen_at, now())
+          where id = ${f.messageId}`;
+      } else if (ev.event === 'email.delivered') {
         await tx`
           update lead_messages set status = 'delivered', updated_at = now()
           where id = ${f.messageId} and status = 'sent'`;

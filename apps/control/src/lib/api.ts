@@ -182,7 +182,36 @@ export interface Message {
   audio?: boolean;
   /** the lead's machine answering our send (a WhatsApp greeting or away message), not a person */
   autoReply?: boolean;
+  /** The channel confirmed that the recipient read this message. */
+  seen?: boolean;
   createdAt: string;
+}
+
+export type LeadCleanupChannel = Exclude<ThreadItem['channel'], 'manual'>;
+
+export interface LeadCleanupFilter {
+  channel: LeadCleanupChannel | 'all';
+  minDays: number;
+  scheduledOnly: boolean;
+}
+
+export interface LeadCleanupRef {
+  leadId: string;
+  lastMessageId: string;
+  version: string;
+}
+
+export interface LeadCleanupItem extends LeadCleanupRef {
+  name: string;
+  channel: LeadCleanupChannel;
+  threadId: string;
+  lastOutboundAt: string;
+  lastOutboundBody: string;
+  lastOutboundStatus: 'sent' | 'delivered';
+  seen: boolean;
+  nextActionAt: string | null;
+  hadHumanReply: boolean;
+  recommendation: { decision: 'archive' | 'keep'; reason: string } | null;
 }
 export interface ThreadView {
   thread: {
@@ -679,6 +708,18 @@ const apiBase = {
   stats: () => req<Stats>('/stats'),
   snapshotNow: () => req<{ snapshot: Snapshot }>('/stats/snapshot', { method: 'POST' }),
   duplicates: () => req<{ groups: DupeGroup[] }>('/leads/duplicates'),
+  reviewLeadsForCleanup: (
+    filter: LeadCleanupFilter & { cursor: string | null; criteria: string },
+  ) =>
+    req<{ leads: LeadCleanupItem[]; nextCursor: string | null }>('/leads/cleanup/review', {
+      method: 'POST',
+      body: JSON.stringify(filter),
+    }),
+  archiveReviewedLeads: (input: LeadCleanupFilter & { leads: LeadCleanupRef[] }) =>
+    req<{ archived: string[]; skipped: string[] }>('/leads/cleanup/archive', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   importCsv: (csv: string) =>
     req<{ created: number; skipped: { reason: string; name?: string }[] }>('/leads/import', {
       method: 'POST',

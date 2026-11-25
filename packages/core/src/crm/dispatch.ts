@@ -142,7 +142,9 @@ export async function requestLeadTx(tx: Sql, req: LeadRequest): Promise<Requeste
     from leads l where l.id = ${req.leadId}`;
   if (!lead) return { mailboxId: null, deliverAt: null, parked: 'lead não encontrado' };
   const parked = await parkedReasonTx(tx, req.kind, req.source, lead, payload);
-  if (parked && !req.keepParked) return { mailboxId: null, deliverAt: null, parked };
+  if (parked && (!req.keepParked || (lead.archived_at && !req.source.startsWith('staff')))) {
+    return { mailboxId: null, deliverAt: null, parked };
+  }
   const deliverAt = await smartStartTx(tx, req.leadId, req.kind, payload, req.at ?? null, lead);
   const out = await dispatchTx(tx, {
     actor: {

@@ -17,10 +17,13 @@ import (
 
 // Event is what Core receives on CORE_EVENTS_URL.
 type Event struct {
-	Type string `json:"type"` // message | state | session
+	Type string `json:"type"` // message | seen | state | session
 
 	// message
 	Message *InboundMessage `json:"message,omitempty"`
+
+	// seen: provider ids of our messages covered by the other participant's read watermark.
+	MessageIDs []string `json:"messageIds,omitempty"`
 
 	// state
 	State   string   `json:"state,omitempty"`
