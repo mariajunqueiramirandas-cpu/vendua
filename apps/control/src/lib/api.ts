@@ -1805,6 +1805,16 @@ export interface AiVoiceView {
   /** false = no row yet: the sidecar is used when it's configured */
   saved: boolean;
   sidecar: { configured: boolean; reachable: boolean; model: string | null };
+  /** fSpeech, the self-hosted TTS sidecar that speaks Duá's audio replies (ADR 0048) */
+  tts: {
+    configured: boolean;
+    reachable: boolean;
+    model: string | null;
+    /** its default voice id */
+    voice: string | null;
+    /** how many voices the stores can pick from */
+    voices: number;
+  };
   providers: { id: Exclude<MediaProviderId, 'sidecar'>; configured: boolean; secretName: string }[];
 }
 export interface AiPricing {

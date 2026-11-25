@@ -119,9 +119,10 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0041](adr/0041-zero-downtime-deploys.md)              | Deploys without downtime: storefronts from CI, the platform as a start-first stack        |
 | [0042](adr/0042-signup-coupons.md)                     | Signup coupons: free days and/or a discount on the first paid months                      |
 | [0044](adr/0044-admin-native-app.md)                   | The merchant admin as an iOS and Android app, from the same code                          |
-| [0045](adr/0045-self-hosted-tts.md)                    | Replies can be spoken: Pocket TTS on our own C++ engine (built, not yet called)           |
+| [0045](adr/0045-self-hosted-tts.md)                    | Replies can be spoken: Pocket TTS on our own C++ engine (superseded by 0048)              |
 | [0046](adr/0046-insumos.md)                            | Insumos: fichas técnicas, stock drawn by each sale (never refused), the CMV               |
 | [0047](adr/0047-staff-events-on-telegram.md)           | Staff events delivered to per-member Telegram DMs (supersedes Discord from ADR 0023)      |
+| [0048](adr/0048-fspeech.md)                            | fSpeech speaks for the stores: audio replies, voice samples, kitchen announcements        |
 
 ## Conventions
 

@@ -74,6 +74,7 @@ import { mountHome } from './routes-home.ts';
 import { mountKitchen } from './routes-kitchen.ts';
 import { mountPdv } from './routes-pdv.ts';
 import { mountVendedor } from './routes-vendedor.ts';
+import { mountSpeech } from './routes-speech.ts';
 import { AGENT_NAME } from '../vendedor/settings.ts';
 import { mountMarketing } from './routes-marketing.ts';
 import { mountOnboarding } from './routes-onboarding.ts';
@@ -1040,6 +1041,7 @@ export function mountAdmin(o: MountAdminOpts) {
   mountKitchen(deps);
   mountPdv(deps);
   mountVendedor(deps);
+  mountSpeech(deps);
   mountAccount(deps);
   mountDomains(deps);
   mountAppearance(deps);

@@ -29,6 +29,7 @@ import {
   ToneField,
   useSettingsPatch,
 } from './Settings.parts.tsx';
+import { VoiceReplies } from './Settings.voice.tsx';
 
 export default function VendedorSettings() {
   const session = useSession();
@@ -60,6 +61,7 @@ function Editor({ v, owner }: { v: VendedorSettings; owner: boolean }) {
     <div className="space-y-5">
       <Power v={v} owner={owner} />
       <Persona s={s} intro={v.intro} owner={owner} />
+      <VoiceReplies s={s} />
       <When s={s} />
       <Who s={s} />
       <Can v={v} owner={owner} />

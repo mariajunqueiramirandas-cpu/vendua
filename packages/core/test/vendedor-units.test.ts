@@ -227,6 +227,22 @@ describe('settings', () => {
     expect(parseSettingsPatch({ enabled: true }, DEFAULT_SETTINGS, 'owner').enabled).toBe(true);
     expect(() => parseSettingsPatch({ name: 'Bia' }, DEFAULT_SETTINGS, 'owner')).toThrow();
   });
+  test('the spoken voice: a voice id or empty, and a store from before it reads empty', () => {
+    expect(DEFAULT_SETTINGS.speechVoice).toBe('');
+    expect(withDefaults({ voiceReplies: true }).speechVoice).toBe('');
+    const p = parseSettingsPatch(
+      { speechVoice: 'manuela-lu', voiceReplies: true },
+      DEFAULT_SETTINGS,
+      'manager',
+    );
+    expect(p.settings).toMatchObject({ speechVoice: 'manuela-lu', voiceReplies: true });
+    expect(p.changed).toEqual(['speechVoice', 'voiceReplies']);
+    expect(
+      parseSettingsPatch({ speechVoice: '' }, p.settings, 'attendant').settings.speechVoice,
+    ).toBe('');
+    for (const bad of ['Kauã', 'kaua kaua', 'x'.repeat(41), 7, null])
+      expect(() => parseSettingsPatch({ speechVoice: bad }, DEFAULT_SETTINGS, 'manager')).toThrow();
+  });
   test('phones are masked', () => {
     expect(maskPhone('11987654821')).toBe('(11) 9••••-4821');
     expect(maskPhone('+351912345678')).toBe('+351••••5678');

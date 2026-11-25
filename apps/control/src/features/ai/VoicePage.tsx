@@ -94,6 +94,63 @@ function sidecarState(s: AiVoiceView['sidecar']) {
   return { tone: 'ok' as const, label: 'no ar', hint: s.model ?? '' };
 }
 
+function ttsState(s: AiVoiceView['tts']) {
+  if (!s.configured)
+    return { tone: 'off' as const, label: 'desligado', hint: 'defina TTS_SECRET no servidor' };
+  if (!s.reachable)
+    return {
+      tone: 'warn' as const,
+      label: 'configurado, sem resposta',
+      hint: 'o serviço tts não respondeu agora',
+    };
+  return { tone: 'ok' as const, label: 'no ar', hint: s.model ?? '' };
+}
+
+/** The other direction: Duá's audio replies, spoken by fSpeech unless staff set speak routes. */
+function SpeechPanel({ view }: { view: AiVoiceView }) {
+  const st = ttsState(view.tts);
+  const routes = view.routes.speak ?? [];
+  return (
+    <Panel title="respostas em áudio">
+      <div className="flex flex-col gap-3">
+        <p className="max-w-prose text-[13px] leading-relaxed">
+          Quando a loja liga “responder áudio com áudio”, o Duá responde com um áudio a quem mandou
+          áudio no WhatsApp, na voz que a loja escolheu. As telas da cozinha e da retirada também
+          falam com essa voz. Valores, Pix e links continuam por escrito.
+        </p>
+        <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+          O servidor de fala da Venduá (fSpeech) gera a voz na nossa própria máquina: o texto não
+          vai para nenhuma outra empresa, e não há custo por caractere. Se ele não responder, a
+          resposta vai por escrito.
+        </p>
+        {routes.length > 0 && (
+          <Notice>
+            {routes.length === 1
+              ? 'Há uma rota de fala salva: ela vale'
+              : `Há ${routes.length} rotas de fala salvas: elas valem`}{' '}
+            no lugar do servidor de fala.
+          </Notice>
+        )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t pt-3 text-[13px]">
+          <span className="flex min-w-0 items-center gap-1.5" title={st.hint}>
+            <span className="text-xs text-muted-foreground">servidor de fala</span>
+            <Dot tone={st.tone} />
+            <span className={cn(st.tone === 'off' && 'text-muted-foreground')}>{st.label}</span>
+            {st.tone === 'ok' && view.tts.model && (
+              <span className="truncate text-xs text-muted-foreground">{view.tts.model}</span>
+            )}
+          </span>
+          {st.tone === 'ok' && (
+            <span className="text-xs text-muted-foreground">
+              {view.tts.voices} vozes{view.tts.voice ? ` · padrão: ${view.tts.voice}` : ''}
+            </span>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 function IntroPanel({ view, draft }: { view: AiVoiceView; draft: Draft }) {
   const sc = sidecarState(view.sidecar);
   const first = draft.rows[0];
@@ -361,7 +418,6 @@ export default function VoicePage() {
   }
 
   const general = server && server.row === undefined ? server.msg : null;
-  const speak = d?.rest.speak?.length ?? 0;
 
   return (
     <Page title="IA" tabs={AI_TABS}>
@@ -413,13 +469,8 @@ export default function VoicePage() {
                   ))}
                 </ol>
               )}
-              {speak > 0 && (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  As respostas em áudio do Duá têm {speak === 1 ? '1 rota' : `${speak} rotas`} de
-                  fala, que ficam como estão.
-                </p>
-              )}
             </HintPanel>
+            <SpeechPanel view={view} />
             <div className="h-14" aria-hidden />
           </div>
           {(routes.dirty || general) && (

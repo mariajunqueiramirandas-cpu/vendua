@@ -171,6 +171,9 @@ services:
       # Voice-note transcription via the stt service below (ADR 0037); unset secret = off.
       STT_URL: http://stt:8792
       STT_SECRET: ${STT_SECRET:-}
+      # Spoken replies and announcements via the tts service below (fSpeech, ADR 0048); unset secret = off.
+      TTS_URL: http://tts:8793
+      TTS_SECRET: ${TTS_SECRET:-}
       # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
       IG_SIDECAR_URL: http://ig-sidecar:8790
       IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
@@ -417,6 +420,47 @@ services:
       restart_policy: { condition: any, delay: 5s }
       resources:
         limits: { cpus: '${STT_CPUS:-2}', memory: '${STT_MEM_LIMIT:-3g}' }
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Self-hosted text-to-speech in pt-BR (fSpeech, ADR 0048): the Vendedor's audio replies, voice
+  # samples and the kitchen's announcements. The image is built and published by the private
+  # fSpeech repo's CI (ghcr.io/<owner>/fspeech:<sha> and :main), so this host's registry login must
+  # be able to read that package (docs/deploy/dokploy.md, "Private images"). Internal only;
+  # without TTS_SECRET it idles and refuses every call. At start it times its kernel sets on this
+  # host's CPU and keeps the fastest (a few seconds, inside start_period).
+  tts:
+    image: ${FSPEECH_IMAGE:-ghcr.io/mariajunqueiramirandas-cpu/fspeech:main}
+    environment:
+      TTS_SECRET: ${TTS_SECRET:-}
+      # defaults spelled out: the service parses these with int()/float(), so empty would crash it.
+      # Threads follow `cpus` (TTS_CPUS); TTS_THREADS has no safe empty value, so it isn't passed.
+      TTS_MAX_ACTIVE: ${TTS_MAX_ACTIVE:-16}
+      TTS_MAX_CHARS: ${TTS_MAX_CHARS:-2000}
+      TTS_REQUEST_TIMEOUT_S: ${TTS_REQUEST_TIMEOUT_S:-120}
+      TTS_VOICE: ${TTS_VOICE:-manuela-lu}
+      TTS_OPUS_BITRATE: ${TTS_OPUS_BITRATE:-32000}
+      TTS_TEMPERATURE: ${TTS_TEMPERATURE:--1}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8793/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+    # start-first: the model is 70 MB, memory-mapped; Core's replies go as text while neither answers
+    deploy:
+      update_config: { order: start-first, failure_action: rollback, monitor: 30s }
+      rollback_config: { order: stop-first }
+      restart_policy: { condition: any, delay: 5s }
+      resources:
+        limits: { cpus: '${TTS_CPUS:-2}', memory: '${TTS_MEM_LIMIT:-1g}' }
     logging:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }

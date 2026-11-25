@@ -292,6 +292,31 @@ on spontaneous speech, worse on read speech (ADR 0037). If the image is built on
 AVX-512/AVX-VNNI, build with `--build-arg STT_REDUCE_RANGE=1`. If the release is missing a file,
 the build downloads the 2.5 GB fp32 export and compiles it instead, which needs about 6 GB of RAM.
 
+## Spoken replies (tts)
+
+The `tts` service ([ADR 0048](../adr/0048-fspeech.md)) is fSpeech: pt-BR text-to-speech on this
+host's CPU, with gradium's phonon-40m-pt and twelve Brazilian voices. It speaks the Vendedor's
+audio replies (a shopper who sends a voice note hears one back, when the store turns that on),
+the voice samples in the admin, and the kitchen and pickup screens' announcements. No text goes
+to a third party and there is no per-character charge.
+
+1. Set `TTS_SECRET`. It is one value, and the stack hands it to both `core` and `tts`. Without it
+   the service idles: the Vendedor answers in text and the kitchen uses the device's voice.
+2. Let this host pull the image. fSpeech is a private repo, so its CI publishes a private
+   package, `ghcr.io/<owner>/fspeech` (`:main` and `:<sha>`). In Dokploy, under Registry, add
+   `ghcr.io` with a GitHub user and a classic token with `read:packages` that can read that
+   package, and pick it for this compose. `FSPEECH_IMAGE` pins another tag (an fSpeech commit,
+   say). A deploy pulls `:main` again, so a new fSpeech goes out with the next Venduá deploy.
+3. Deploy. The image carries its 70 MB model. At start the engine times each kernel set the CPU
+   has (AVX2, AVX-512, AMX) on a short reply and keeps the fastest, a few seconds inside the
+   healthcheck's `start_period`.
+4. Check the CRM, under IA → Voz, "respostas em áudio": it shows whether the speech server is up,
+   its model and how many voices the stores can pick. A store turns the replies on, and picks its
+   voice, in the admin under Duá → Configurar → Respostas em áudio.
+
+`TTS_CPUS` (default 2) caps its cores, and `TTS_VOICE` (default `manuela-lu`) is the voice of
+stores that picked none. It needs little RAM: about 60 MB idle, plus a few MB per reply in flight.
+
 ## Stores' own WhatsApp (order updates to shoppers)
 
 The `wa-gateway` service ([ADR 0026](../adr/0026-store-whatsapp-gateway.md)) runs from Core's
@@ -352,18 +377,19 @@ through the edge with the store's Host header (DNS and TLS unchecked).
 
 ## Services
 
-| Service      | Image                                                      | Exposed port   |
-| ------------ | ---------------------------------------------------------- | -------------- |
-| `db`         | postgres:16-alpine                                         | internal only  |
-| `core`       | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
-| `edge`       | `packages/edge/Dockerfile` (Bun) — every store             | 8080           |
-| `publish`    | `storefronts/Dockerfile` `target: publish` — one-shot      | none           |
-| `crm`        | `apps/control/Dockerfile` (nginx + conf baked in)          | 80             |
-| `admin`      | `apps/admin/Dockerfile` (nginx + conf baked in)            | 80             |
-| `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
-| `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
-| `wa-gateway` | `packages/core/Dockerfile`, entrypoint `src/wa-gateway.ts` | 8791, internal |
-| `stt`        | `services/stt/Dockerfile` (Python, ONNX Runtime)           | 8792, internal |
+| Service      | Image                                                          | Exposed port   |
+| ------------ | -------------------------------------------------------------- | -------------- |
+| `db`         | postgres:16-alpine                                             | internal only  |
+| `core`       | `packages/core/Dockerfile` (Bun)                               | 8787, internal |
+| `edge`       | `packages/edge/Dockerfile` (Bun) — every store                 | 8080           |
+| `publish`    | `storefronts/Dockerfile` `target: publish` — one-shot          | none           |
+| `crm`        | `apps/control/Dockerfile` (nginx + conf baked in)              | 80             |
+| `admin`      | `apps/admin/Dockerfile` (nginx + conf baked in)                | 80             |
+| `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)      | 80             |
+| `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                          | 8790, internal |
+| `wa-gateway` | `packages/core/Dockerfile`, entrypoint `src/wa-gateway.ts`     | 8791, internal |
+| `stt`        | `services/stt/Dockerfile` (Python, ONNX Runtime)               | 8792, internal |
+| `tts`        | `ghcr.io/<owner>/fspeech` (private fSpeech repo; C++ + Python) | 8793, internal |
 
 `site` and `publish` share the storefronts Dockerfile's install stage, so a deploy runs one
 `bun install` for both (compose/bake dedupe the shared stage). The Dockerfiles collect every

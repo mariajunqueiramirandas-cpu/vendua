@@ -8,8 +8,9 @@ import { log } from '../platform/log.ts';
 //   { "transcribe": [route…], "speak": [route…] }   route = { provider, model, zdr, voice? }
 // `zdr` is staff's record of the provider account's retention terms (a per-route choice since
 // 2026-10-05); every route is used either way. Photos go through the model gateway's routes.
-// Provider `sidecar` is the self-hosted STT service (services/stt, ADR 0037) at STT_URL: when
-// staff named no transcribe route and it is configured, voice notes go there by default.
+// Provider `sidecar` is a self-hosted service: for transcribe, the STT service (services/stt, ADR
+// 0037) at STT_URL; for speak, fSpeech (ADR 0048) at TTS_URL. When staff named no route of a kind
+// and its sidecar is configured, that kind goes to the sidecar by default.
 
 const mediaLog = log.child({ mod: 'vendedor-media' });
 
@@ -27,6 +28,19 @@ export interface Transcript {
   language: string | null;
 }
 
+export interface SpeakOptions {
+  /** a voice of the TTS sidecar (fSpeech ids, e.g. "rafaela"); cloud routes keep their own */
+  voice?: string | undefined;
+  /** ogg: Ogg/Opus, a WhatsApp voice note (default); mp3: what every browser's <audio> plays */
+  format?: 'ogg' | 'mp3' | undefined;
+}
+
+export interface Speech {
+  bytes: Uint8Array;
+  mime: string;
+  seconds: number;
+}
+
 export interface TranscribeHints {
   /** words the audio likely contains (the store's product names); the sidecar boosts them */
   phrases?: readonly string[];
@@ -36,8 +50,10 @@ export interface MediaProviders {
   transcribe(audio: Uint8Array, mime: string, hints?: TranscribeHints): Promise<Transcript | null>;
   /** Whether any transcription route could answer now (a sidecar or a keyed cloud route). */
   canTranscribe?(): Promise<boolean>;
-  /** Ogg/Opus bytes for a WhatsApp voice note, or null. */
-  speak(text: string): Promise<{ bytes: Uint8Array; mime: string; seconds: number } | null>;
+  /** The text spoken (Ogg/Opus for a WhatsApp voice note unless opts.format says), or null. */
+  speak(text: string, opts?: SpeakOptions): Promise<Speech | null>;
+  /** Whether any speech route could answer now (the TTS sidecar or a keyed cloud route). */
+  canSpeak?(): Promise<boolean>;
 }
 
 export interface PhotoReading {
@@ -54,8 +70,15 @@ export interface StaffPhotoReading {
 }
 
 const TIMEOUT_MS = 20_000;
+// a 2,000-character reply is about 2.5 minutes of speech: under 30 s on the sidecar's 2 cores
+const SPEAK_TIMEOUT_MS = 45_000;
+/** the TTS sidecar's own cap (fSpeech TTS_MAX_CHARS); longer texts go as text */
+export const MAX_SPEAK_CHARS = 2000;
 const CACHE_MS = 30_000;
 const SIDECAR_ROUTE: MediaRoute = { provider: 'sidecar', model: 'parakeet-tdt-0.6b-v3', zdr: true };
+const TTS_ROUTE: MediaRoute = { provider: 'sidecar', model: 'phonon-40m-pt', zdr: true };
+/** fSpeech voice ids ("rafaela", "manuela-lu") */
+export const SPEECH_VOICE = /^[a-z0-9-]{1,40}$/;
 // services/stt caps: 300 phrases of up to 80 characters; the header itself stays well under the
 // sidecar's 64 KB header-line limit
 const MAX_PHRASES = 300;
@@ -66,7 +89,7 @@ const MAX_ROUTES = 5;
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,80}$/;
 const PROVIDERS_FOR = {
   transcribe: ['sidecar', 'openai'],
-  speak: ['openai'],
+  speak: ['sidecar', 'openai'],
 } as const;
 
 /** write-time check for `agent_runtime.media_routes` (validateSetting); paths are `transcribe.0.model` */
@@ -115,6 +138,69 @@ export async function sidecarStatus(
     };
   } catch {
     return { configured: true, reachable: false, model: null };
+  }
+}
+
+export interface SpeechVoice {
+  id: string;
+  name: string;
+  gender: 'female' | 'male' | null;
+  age: string | null;
+  description: string | null;
+}
+
+export interface TtsStatus {
+  configured: boolean;
+  reachable: boolean;
+  model: string | null;
+  /** the sidecar's default voice */
+  voice: string | null;
+  voices: SpeechVoice[];
+}
+
+const str = (v: unknown, max: number): string | null =>
+  typeof v === 'string' && v ? v.slice(0, max) : null;
+
+let ttsCache: { url: string; at: number; value: TtsStatus } | null = null;
+
+/** The TTS sidecar as the CRM and the admin show it: configured by env, answering /healthz, its
+ *  voices. A reachable answer is kept a minute. */
+export async function ttsStatus(
+  env: Record<string, string | undefined> = process.env,
+): Promise<TtsStatus> {
+  const off = { reachable: false, model: null, voice: null, voices: [] };
+  if (!env.TTS_URL || !env.TTS_SECRET) return { configured: false, ...off };
+  const url = env.TTS_URL.replace(/\/+$/, '');
+  if (ttsCache && ttsCache.url === url && Date.now() - ttsCache.at < 60_000) return ttsCache.value;
+  try {
+    const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(2_000) });
+    const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const voices = (Array.isArray(j.voices) ? j.voices : [])
+      .slice(0, 64)
+      .flatMap((v: Record<string, unknown>): SpeechVoice[] => {
+        const id = typeof v?.id === 'string' && SPEECH_VOICE.test(v.id) ? v.id : null;
+        if (!id) return [];
+        return [
+          {
+            id,
+            name: str(v.name, 40) ?? id,
+            gender: v.gender === 'female' || v.gender === 'male' ? v.gender : null,
+            age: str(v.age, 20),
+            description: str(v.description, 300),
+          },
+        ];
+      });
+    const value: TtsStatus = {
+      configured: true,
+      reachable: res.ok,
+      model: str(j.model, 80),
+      voice: typeof j.voice === 'string' && SPEECH_VOICE.test(j.voice) ? j.voice : null,
+      voices,
+    };
+    if (res.ok) ttsCache = { url, at: Date.now(), value };
+    return value;
+  } catch {
+    return { configured: true, ...off };
   }
 }
 
@@ -246,9 +332,51 @@ export function mediaProviders(
       }
       return null;
     },
-    async speak(text) {
-      for (const r of await routes('speak')) {
+    async canSpeak() {
+      const configured = await routes('speak');
+      const tts = !!(env.TTS_URL && env.TTS_SECRET);
+      if (!configured.length) return tts;
+      return configured.some(
+        (r) =>
+          (r.provider === 'sidecar' && tts) || (r.provider === 'openai' && !!env.OPENAI_API_KEY),
+      );
+    },
+    async speak(text, opts = {}) {
+      if (!text.trim() || text.length > MAX_SPEAK_CHARS) return null;
+      const format = opts.format ?? 'ogg';
+      const voice = opts.voice && SPEECH_VOICE.test(opts.voice) ? opts.voice : undefined;
+      const tts = env.TTS_URL && env.TTS_SECRET ? env.TTS_URL.replace(/\/+$/, '') : null;
+      const configured = await routes('speak');
+      for (const r of configured.length || !tts ? configured : [TTS_ROUTE]) {
         try {
+          if (r.provider === 'sidecar' && tts) {
+            const call = (v: string | undefined) =>
+              fetch(`${tts}/v1/speak`, {
+                method: 'POST',
+                headers: {
+                  authorization: `Bearer ${env.TTS_SECRET}`,
+                  'content-type': 'application/json',
+                },
+                body: JSON.stringify({ text, format, ...(v ? { voice: v } : {}) }),
+                signal: AbortSignal.timeout(SPEAK_TIMEOUT_MS),
+              });
+            // the store's voice first, then the route's; one the model no longer has falls back
+            // to the sidecar's default rather than to text
+            let res = await call(voice ?? r.voice);
+            if (res.status === 400 && (voice ?? r.voice)) {
+              const err = (await res.json().catch(() => ({}))) as { error?: string };
+              if (err.error === 'unknown_voice') res = await call(undefined);
+            }
+            if (!res.ok) throw new Error(`tts ${res.status}`);
+            const bytes = new Uint8Array(await res.arrayBuffer());
+            const secs = Number(res.headers.get('x-tts-seconds'));
+            return {
+              bytes,
+              mime: format === 'mp3' ? 'audio/mpeg' : 'audio/ogg; codecs=opus',
+              seconds:
+                Number.isFinite(secs) && secs > 0 ? Math.max(1, Math.round(secs)) : estimate(text),
+            };
+          }
           if (r.provider === 'openai' && env.OPENAI_API_KEY) {
             const res = await fetch('https://api.openai.com/v1/audio/speech', {
               method: 'POST',
@@ -260,7 +388,7 @@ export function mediaProviders(
                 model: r.model,
                 voice: r.voice ?? 'alloy',
                 input: text,
-                response_format: 'opus',
+                response_format: format === 'mp3' ? 'mp3' : 'opus',
               }),
               signal: AbortSignal.timeout(TIMEOUT_MS),
             });
@@ -268,8 +396,8 @@ export function mediaProviders(
             const bytes = new Uint8Array(await res.arrayBuffer());
             return {
               bytes,
-              mime: 'audio/ogg; codecs=opus',
-              seconds: Math.max(1, Math.round(text.length / 15)),
+              mime: format === 'mp3' ? 'audio/mpeg' : 'audio/ogg; codecs=opus',
+              seconds: estimate(text),
             };
           }
         } catch (err) {
@@ -280,6 +408,9 @@ export function mediaProviders(
     },
   };
 }
+
+/** Seconds of speech in a text, when the provider doesn't say: ~15 characters a second. */
+const estimate = (text: string) => Math.max(1, Math.round(text.length / 15));
 
 /** What a photo shows, through the model gateway (its routes are ZDR-only too). */
 export async function readPhoto(
