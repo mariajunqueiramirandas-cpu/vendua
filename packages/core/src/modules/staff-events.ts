@@ -185,6 +185,8 @@ export interface StaffEventMap {
     by: 'agent' | 'staff' | 'complaint';
     reason: Opt<string>;
   };
+  /** staff zeroed the CRM (crm/reset.ts): the leads that became stores stay */
+  'crm.reset': { leads: number; keptLeads: number };
   'meeting.booked': {
     meetingId: Id;
     leadId: Id;
@@ -618,6 +620,13 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'silent',
     severity: 'info',
     label: 'lead pediu para sair',
+  },
+  'crm.reset': {
+    category: 'crm',
+    level: 'normal',
+    severity: 'warning',
+    label: 'CRM zerado',
+    hint: 'a equipe zerou o CRM — leads, memória e trabalho dos agentes começam do zero',
   },
   'meeting.booked': {
     category: 'crm',

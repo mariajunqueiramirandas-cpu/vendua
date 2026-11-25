@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { DataList, type Column } from '@/components/DataList.tsx';
 import { EmptyState, ErrorState, LoadingRows } from '@/components/common.tsx';
+import { CrmResetPanel } from './CrmResetPanel.tsx';
 import { RoutinesPanel } from './RoutinesPanel.tsx';
 import { SectionHead } from './bits.tsx';
 import type { ProvTone } from './providers.ts';
@@ -81,6 +82,7 @@ export function OverviewArea({
           <ChannelHealthPanel />
         </section>
         <RoutinesPanel active={active} />
+        <CrmResetPanel />
         {instance.data?.resetEnabled && <ResetPanel />}
       </div>
     </div>

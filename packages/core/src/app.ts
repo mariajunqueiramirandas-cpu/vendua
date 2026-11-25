@@ -286,6 +286,7 @@ import {
 import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountInstanceReset } from './modules/instance-reset.ts';
 import { mountStoreReset } from './modules/store-reset.ts';
+import { mountCrmReset } from './crm/reset.ts';
 import { mountIncidentsControl } from './modules/incidents.ts';
 import { mountWebAnalytics } from './modules/web-analytics.ts';
 import { mountControlPartners } from './modules/control-partners.ts';
@@ -3157,6 +3158,7 @@ export function createApp({
     onRequested: onResetRequested,
   });
   mountStoreReset({ app, sql, controlGate, requireIdemKey, provider, domains: domainProviders });
+  mountCrmReset({ app, sql, controlGate, requireIdemKey });
   mountSavedViews({ app, sql, controlGate, requireIdemKey });
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });

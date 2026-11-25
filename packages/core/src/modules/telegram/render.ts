@@ -392,6 +392,26 @@ function leadUnsubscribed(ev: Ev<'lead.unsubscribed'>, ctx: RenderCtx): Rendered
   };
 }
 
+function crmReset(ev: Ev<'crm.reset'>, ctx: RenderCtx): Rendered {
+  const { leads, keptLeads } = ev.data;
+  const title = '🧹 CRM zerado';
+  return {
+    card: card(ev, {
+      title,
+      body: [
+        `a equipe zerou o CRM: ${leads === 1 ? '1 lead apagado' : `${leads} leads apagados`}, memória, fila e instruções dos agentes de volta ao começo`,
+        keptLeads === 1
+          ? '1 lead que virou loja ficou'
+          : keptLeads
+            ? `${keptLeads} leads que viraram loja ficaram`
+            : null,
+      ],
+      buttons: row(linkButton('abrir CRM', ctx.crm('/pipeline'))),
+    }),
+    summary: title,
+  };
+}
+
 function meeting(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
   const booked = first(h, 'meeting.booked');
   const change = lastOf(h, 'meeting.changed');
@@ -1183,6 +1203,7 @@ const STANDALONE: Standalone = {
   'lead.replied': leadReplied,
   'lead.milestone': leadMilestone,
   'lead.unsubscribed': leadUnsubscribed,
+  'crm.reset': crmReset,
   'store.first_order': firstOrder,
   'payment.problem': paymentProblem,
   'payments.connection': paymentsConnection,

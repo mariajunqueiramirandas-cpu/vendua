@@ -35,6 +35,7 @@ export const qk = {
   igStatus: () => ['integrations', 'ig'] as const,
   settings: () => ['settings'] as const,
   instance: () => ['instance'] as const,
+  crmReset: () => ['crm-reset'] as const,
   telegram: () => ['telegram'] as const,
   wakeups: (params?: Record<string, string>) => ['wakeups', params ?? {}] as const,
   agentConfig: () => ['agent-config'] as const,

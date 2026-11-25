@@ -127,6 +127,19 @@ export async function agentSettingTx(tx: Sql): Promise<AgentSetting> {
 export const RESET_INSTRUCTION_SCOPES = ['all', 'instructions', 'pitch'] as const;
 export type ResetInstructionsScope = (typeof RESET_INSTRUCTION_SCOPES)[number];
 
+export async function resetInstructionsTx(tx: Sql, scope: ResetInstructionsScope): Promise<void> {
+  if (scope === 'all' || scope === 'instructions') {
+    await tx`
+      update control_settings
+      set value = value - 'instructions'
+      where key = 'agent' and value ? 'instructions'
+    `;
+  }
+  if (scope === 'all' || scope === 'pitch') {
+    await tx`delete from control_settings where key = 'pitch'`;
+  }
+}
+
 /**
  * Drops custom `agent.instructions` and/or `pitch` overrides so the sales agent falls back to the
  * built-in defaults (`DEFAULT_INSTRUCTIONS` / `DEFAULT_PITCH`). Leaves autonomy, jobs, schedule,
@@ -138,16 +151,7 @@ export async function resetAgentInstructions(
   idemKey: string,
 ): Promise<ClaimResult<{ scope: ResetInstructionsScope; config: AgentSetting; pitch: Pitch }>> {
   return claimControl(sql, idemKey, async (tx) => {
-    if (scope === 'all' || scope === 'instructions') {
-      await tx`
-        update control_settings
-        set value = value - 'instructions'
-        where key = 'agent' and value ? 'instructions'
-      `;
-    }
-    if (scope === 'all' || scope === 'pitch') {
-      await tx`delete from control_settings where key = 'pitch'`;
-    }
+    await resetInstructionsTx(tx, scope);
     return {
       status: 200,
       body: {
