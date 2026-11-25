@@ -3,6 +3,21 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.31.0
+
+The store chat's replies to a voice message are said out loud (ADR 0048) — additive, no storefront
+edit, no new runtime export.
+
+- `StoreChatMessage.audio` (optional): the reply answers a voice message and has a sound; the text
+  stays the message. `api.chatAudio(id)` (`GET /checkout/v1/chat/messages/:id/audio`, the cart
+  session's Bearer) fetches it as an MP3 blob, made by Core on the first ask. 404 for another
+  session's, 503 `SPEECH_UNAVAILABLE` (new in `ERROR_CODES`, with `ERROR_COPY`), 429.
+- `useStoreChat()` gains `loadAudio(id)` (a blob, or null when there's none right now; never
+  throws), and slot `system.Chat` an optional `onLoadAudio`. The default shows "Ouvir" on such a
+  reply (part `listen`, `data-state` idle | loading | playing | failed), one plays at a time,
+  closing the chat stops it, and the answer to a voice message sent from this chat plays by itself
+  once. A browser that only plays from a tap keeps the sound for the next tap.
+
 ## 1.30.0
 
 Two more Core error codes in `ERROR_CODES` — additive, no storefront edit, no new export.

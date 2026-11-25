@@ -59,9 +59,11 @@ export const vendedorTransport: Transport<Sql> = {
       select kind from shopper_messages
       where tenant_id = ${tenantId} and thread_id = ${thread.id} and author = 'shopper'
       order by created_at desc limit 1`;
-    // a voice reply speaks the words; amounts and the Pix code stay as text cards
-    const voice =
-      agent.settings.voiceReplies && lastIn?.kind === 'audio' && thread.channel === 'whatsapp';
+    // a voice reply speaks the words; amounts and the Pix code stay as text cards. On the site the
+    // reply is text with a "ouvir" (web-chat.ts makes its sound when first played)
+    const answersVoice = agent.settings.voiceReplies && lastIn?.kind === 'audio';
+    const voice = answersVoice && thread.channel === 'whatsapp';
+    const speak = answersVoice && thread.channel === 'web' && status === 'sent';
 
     const ids: string[] = [];
     for (const [i, p] of parts.entries()) {
@@ -70,6 +72,7 @@ export const vendedorTransport: Transport<Sql> = {
         ...p.meta,
         turnId: msg.turnId,
         ...(voice && p.author === 'agent' && status === 'queued' ? { voice: 'pending' } : {}),
+        ...(speak && p.author === 'agent' ? { speak: true } : {}),
       };
       const inserted = await sql<{ id: string }[]>`
         insert into shopper_messages (tenant_id, thread_id, author, kind, body, meta, status, agent_step)

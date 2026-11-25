@@ -69,13 +69,27 @@ failure still sends the reply as text (`voicePass`, unchanged).
   that can't be made sends the same words as text. The agent never claims to be a person in
   audio either: the prompt keeps its transparency rule, and invents no attendant's name.
 
+- **Duá answers a merchant's voice message with one** (0151), wherever they talk to it:
+  - On Venduá's WhatsApp the reply's outbox row waits for its voice note (`voice = 'pending'`,
+    `enqueue_dua_whatsapp`'s third argument). Core's voice pass (`platform-whatsapp/voice.ts`)
+    makes it and sets `media_id`; the gateway and the socket pump hold such a row a minute at
+    most, then send its text. A reply with a card stays text, so a SIM answers something read.
+  - In the admin's Copilot the reply gets "ouvir". Its sound is made on the first listen
+    (`GET /admin/v1/copilot/messages/:id/audio`, the person's own, rate-limited) and kept in
+    `copilot_audio`. It plays by itself when it answers a voice message just sent from that
+    screen. With no voice the control isn't offered.
+- **The storefront chat speaks too** (Kernel 1.31). A reply to a shopper's voice message, when the
+  store has voice replies on, is marked `speak` and shows "Ouvir". Its sound is made on the first
+  play (`GET /checkout/v1/chat/messages/:id/audio`, the cart session's own, capped per session and
+  per store) and kept in `shopper_media`. It plays by itself once when it answers a voice message
+  just sent from that chat. Cards, Pix and links stay text, as on WhatsApp.
+
+Everything spoken drops the marks that only mean something written first (`speakable`: bold,
+links, bullets), so the voice never reads them out.
+
 **The normalizer is fSpeech's own** (`engine/src/normalize_pt.cpp`). Numbers agree with the noun
 they count ("duas pizzas", "uma coca", "às duas"), "1/2 kg" is "meio quilo", and chat shorthand is
 spelled out.
-
-Not yet: Duá's replies to merchants on Venduá's WhatsApp, and the storefront chat, which needs a
-Kernel audio part. Both have the outbound path now (the platform outbox carries voice notes); what
-remains is the product call on when each should speak.
 
 ## Measurements
 

@@ -585,6 +585,25 @@ caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot th
   with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
   in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
 
+### Replies said out loud in the store chat (Kernel 1.31)
+
+Additive — no storefront edit, no new runtime export. When the shopper sends a voice message and
+the merchant has voice replies on, the Vendedor's answer (its text, never a card) also has a sound,
+made by Core's voice (ADR 0048) the first time it's played and kept with the message.
+
+- `StoreChatMessage.audio?: boolean` — the reply has a sound; `body` is still its text. Absent =
+  text only (an older Core, a typed message, voice replies off, or no voice on this Core).
+- Client: `api.chatAudio(messageId)` → `GET /checkout/v1/chat/messages/:id/audio` with the cart
+  session's Bearer, an MP3 `Blob`. 404 `NOT_FOUND` (not one said out loud, or another session's),
+  503 `SPEECH_UNAVAILABLE` (in `ERROR_CODES`, with `ERROR_COPY`), 429 `RATE_LIMITED`.
+- `useStoreChat()` gains `loadAudio(messageId)`: the blob, or null when there's none right now;
+  never throws.
+- Slot `system.Chat` gains optional `onLoadAudio(messageId)`; a custom slot that ignores it stays
+  text. The default: "Ouvir" under such a reply, fetched on the first tap ("Carregando…"),
+  "Pausar" while playing, "Áudio indisponível" when there's none (a tap tries again); one plays at
+  a time, closing the chat stops it, and the answer to a voice message just sent from this chat
+  plays by itself once. A browser that only plays from a tap keeps the sound: the next tap plays it.
+
 ### Street suggestions while the address is typed (Kernel 1.28)
 
 Additive — no storefront edit, no new runtime export. As the shopper types in "Rua", the checkout
@@ -1065,6 +1084,9 @@ Parts added in Kernel 1.24, inside `[data-vendua="chat"]`: `media` (the "Mensage
 `recording` (`data-state` recording | held — a take whose send failed), `recording-dot`,
 `recording-time`, `recording-cancel` and `recording-send`; the `composer` has `data-state`
 voice | photo while one is in it.
+
+Parts added in Kernel 1.31, inside `[data-vendua="chat"]`: `listen` (the "Ouvir" button in a
+reply's body, `data-state` idle | loading | playing | failed, `aria-pressed` while playing).
 
 Parts added in Kernel 1.21: `dietary` (the tag list in `catalog.ProductCard` and
 `sdk:purchase-panel`; each `li` has `data-kind` diet | spicy | allergen and `data-tag`), `share`

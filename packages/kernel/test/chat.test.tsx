@@ -31,6 +31,7 @@ type Msg = {
   at: string;
   card: string | null;
   kind?: string;
+  audio?: boolean;
 };
 interface Fake {
   calls: { method: string; path: string; headers: Record<string, string>; body?: unknown }[];
@@ -45,6 +46,8 @@ interface Fake {
   media?: { voice: boolean; image: boolean };
   /** …and what the store profile says, before any read */
   profileMedia?: { voice: boolean; image: boolean };
+  /** Kernel 1.31 — GET /checkout/v1/chat/messages/:id/audio (absent: 404) */
+  audio?: (id: string) => Response;
 }
 
 function cart(items: number) {
@@ -138,6 +141,12 @@ function fakeCore(over: Partial<Fake> = {}): Fake {
       ];
       f.pending = true;
       return json(201, view());
+    }
+    const said = /^\/checkout\/v1\/chat\/messages\/([^/]+)\/audio$/.exec(p);
+    if (said && method === 'GET') {
+      if (!headers.authorization)
+        return json(401, { error: { code: 'SESSION_REQUIRED', message: 'x' } });
+      return f.audio?.(decodeURIComponent(said[1]!)) ?? json(404, { error: { code: 'NOT_FOUND' } });
     }
     return base(input, init);
   }) as typeof fetch;
@@ -665,5 +674,210 @@ describe('store chat media (Kernel 1.24)', () => {
         value: had.mediaDevices,
       });
     }
+  });
+});
+
+// Kernel 1.31 — a reply to a voice message, said out loud: fetched on the first play (Core makes
+// the sound then), and played by itself when it answers a voice message sent from this chat.
+const MP3 = () =>
+  new Response(new Blob([bytes(73, 68, 51)], { type: 'audio/mpeg' }), {
+    status: 200,
+    headers: { 'content-type': 'audio/mpeg' },
+  });
+const audioCalls = (f: Fake) => f.calls.filter((c) => c.path.endsWith('/audio')).map((c) => c.path);
+
+describe('replies said out loud (Kernel 1.31)', () => {
+  const G = globalThis as Record<string, unknown>;
+  const had = {
+    Audio: G.Audio,
+    create: URL.createObjectURL,
+    revoke: URL.revokeObjectURL,
+    MediaRecorder: G.MediaRecorder,
+    mediaDevices: navigator.mediaDevices,
+  };
+  let played: string[] = [];
+  let revoked: string[] = [];
+  let blocked = false;
+  let urls = 0;
+  class FakeAudio {
+    paused = true;
+    onended: (() => void) | null = null;
+    onpause: (() => void) | null = null;
+    constructor(public src: string) {}
+    async play() {
+      if (blocked) throw Object.assign(new Error('needs a tap'), { name: 'NotAllowedError' });
+      this.paused = false;
+      played.push(this.src);
+    }
+    pause() {
+      if (this.paused) return;
+      this.paused = true;
+      this.onpause?.();
+    }
+  }
+  beforeEach(() => {
+    played = [];
+    revoked = [];
+    blocked = false;
+    urls = 0;
+    G.Audio = FakeAudio;
+    URL.createObjectURL = () => `blob:sound-${++urls}`;
+    URL.revokeObjectURL = (u: string) => void revoked.push(u);
+  });
+  afterEach(() => {
+    probe = null;
+    G.Audio = had.Audio;
+    URL.createObjectURL = had.create;
+    URL.revokeObjectURL = had.revoke;
+    G.MediaRecorder = had.MediaRecorder;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: had.mediaDevices,
+    });
+  });
+  const said = (id: string, at = '2026-10-03T12:00:05Z'): Msg => ({
+    id,
+    author: 'agent',
+    body: 'Temos sim! Quer que eu coloque na sacola?',
+    at,
+    card: null,
+    audio: true,
+  });
+
+  test('loadAudio fetches the sound with the cart session; none right now is null, never a throw', async () => {
+    let up = true;
+    const f = fakeCore({
+      reply: null,
+      messages: [said('a1')],
+      audio: () => (up ? MP3() : json(503, { error: { code: 'SPEECH_UNAVAILABLE' } })),
+    });
+    m = await mount({ path: '/', session: 'tok', children: <Probe /> });
+    await until(() => probe!.messages.length === 1);
+    expect(probe!.messages[0]!.audio).toBe(true);
+    let got: Blob | null = null;
+    await act(async () => {
+      got = await probe!.loadAudio('a1');
+    });
+    expect(got).not.toBeNull();
+    expect(got!.type).toBe('audio/mpeg');
+    const call = f.calls.find((c) => c.path === '/checkout/v1/chat/messages/a1/audio')!;
+    expect(call.headers.authorization).toBe('Bearer tok');
+    up = false;
+    await act(async () => {
+      got = await probe!.loadAudio('a1');
+    });
+    expect(got).toBeNull();
+    await act(async () => {
+      got = await probe!.loadAudio('missing');
+    });
+    expect(got).toBeNull();
+  });
+
+  test('the default chat offers "Ouvir" on a reply said out loud, plays it on a tap, and pauses', async () => {
+    let up = false;
+    const f = fakeCore({
+      reply: null,
+      messages: [
+        { id: 't1', author: 'agent', body: 'Oi!', at: '2026-10-03T12:00:01Z', card: null },
+        said('a1'),
+      ],
+      audio: () => (up ? MP3() : json(503, { error: { code: 'SPEECH_UNAVAILABLE' } })),
+    });
+    m = await mount({ path: '/', session: 'tok' });
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
+    await until(() => !!$('[data-vendua="chat"] [data-part="listen"]'));
+    expect(document.querySelectorAll('[data-vendua="chat"] [data-part="listen"]')).toHaveLength(1);
+    const listen = () => $('[data-vendua="chat"] [data-part="listen"]')!;
+    expect(listen().textContent).toBe('Ouvir');
+    expect(listen().getAttribute('aria-label')).toBe('Ouvir a resposta em áudio');
+    // nothing is fetched until it's played
+    expect(audioCalls(f)).toEqual([]);
+
+    // no voice right now: said so, and a tap tries again
+    await click(listen());
+    await until(() => listen().getAttribute('data-state') === 'failed');
+    expect(listen().textContent).toBe('Áudio indisponível');
+    up = true;
+    await click(listen());
+    await until(() => listen().getAttribute('data-state') === 'playing');
+    expect(played).toEqual(['blob:sound-1']);
+    expect(listen().textContent).toBe('Pausar');
+    expect(listen().getAttribute('aria-pressed')).toBe('true');
+    expect(audioCalls(f)).toHaveLength(2);
+    await click(listen());
+    expect(listen().getAttribute('data-state')).toBe('idle');
+    // the second play is the sound already here
+    await click(listen());
+    expect(played).toHaveLength(2);
+    expect(audioCalls(f)).toHaveLength(2);
+    // closing the chat stops it
+    await click($('[data-vendua="chat"] [data-part="close"]'));
+    await flush();
+    expect(listen().getAttribute('data-state')).toBe('idle');
+  });
+
+  test('the answer to a voice message sent here plays by itself, once; older ones wait for a tap', async () => {
+    class FakeRecorder {
+      static isTypeSupported = () => true;
+      state = 'inactive';
+      mimeType = 'audio/ogg;codecs=opus';
+      ondataavailable: ((e: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([bytes(7, 7)], { type: this.mimeType }) });
+        queueMicrotask(() => this.onstop?.());
+      }
+    }
+    G.MediaRecorder = FakeRecorder;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => {} }] }) },
+    });
+    const f = fakeCore({
+      media: { voice: true, image: true },
+      messages: [said('old', '2026-10-03T11:00:00Z')],
+      reply: [said('a1')],
+      audio: () => MP3(),
+    });
+    m = await mount({ path: '/', session: 'tok' });
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
+    await until(() => !!$('[data-vendua="chat"] [data-part="mic"]'));
+    await click($('[data-vendua="chat"] [data-part="mic"]')!);
+    await flush();
+    setSystemTime(new Date(Date.now() + 2500));
+    await click($('[data-vendua="chat"] [data-part="recording-send"]'));
+    await until(() => played.length === 1);
+    expect(audioCalls(f)).toEqual(['/checkout/v1/chat/messages/a1/audio']);
+    const states = [...document.querySelectorAll('[data-vendua="chat"] [data-part="listen"]')].map(
+      (b) => b.getAttribute('data-state'),
+    );
+    expect(states).toEqual(['idle', 'playing']);
+    // the next reads don't play it again
+    await wait(60);
+    expect(played).toHaveLength(1);
+    setSystemTime();
+  });
+
+  test('a browser that waits for a tap keeps the sound: the next tap plays it at once', async () => {
+    blocked = true;
+    const f = fakeCore({ reply: null, messages: [said('a1')], audio: () => MP3() });
+    m = await mount({ path: '/', session: 'tok' });
+    await click($('[data-vendua="chat"] [data-part="launcher"]'));
+    await until(() => !!$('[data-vendua="chat"] [data-part="listen"]'));
+    const listen = () => $('[data-vendua="chat"] [data-part="listen"]')!;
+    await click(listen());
+    await until(() => audioCalls(f).length === 1);
+    await flush();
+    // not a broken voice: "Ouvir" again, the sound kept
+    expect(listen().getAttribute('data-state')).toBe('idle');
+    expect(listen().textContent).toBe('Ouvir');
+    blocked = false;
+    await click(listen());
+    await until(() => played.length === 1);
+    expect(audioCalls(f)).toHaveLength(1);
   });
 });

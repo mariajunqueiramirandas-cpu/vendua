@@ -2,9 +2,10 @@ import type { Context } from 'hono';
 import { mediaUpload } from '../modules/media-upload.ts';
 import type { Sql } from '../platform/db.ts';
 import { withTenant } from '../platform/db.ts';
-import { HttpError, bodyJson, sessionCartId } from '../platform/http.ts';
+import { HttpError, bodyJson, sessionCartId, uuidParam, windowCounter } from '../platform/http.ts';
+import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
-import type { MediaProviders } from './media.ts';
+import { MAX_SPEAK_CHARS, type MediaProviders } from './media.ts';
 import { introduction, loadAgent } from './settings.ts';
 
 // The storefront chat (sales-agent.md §8 V4, I3): the Vendedor on the store's own site,
@@ -17,6 +18,10 @@ const MAX_PER_10_MIN = 30;
 const MEDIA_PER_10_MIN = 6;
 const MEDIA_MAX = 2 * 1024 * 1024;
 const MEDIA_JSON_MAX = 3 * 1024 * 1024;
+/** replies made into sound, per cart session and per store: each is a call to the voice */
+const allowSoundPerCart = windowCounter({ windowMs: 60_000, max: 12 });
+const allowSoundPerStore = windowCounter({ windowMs: 60_000, max: 120 });
+const chatLog = log.child({ mod: 'web-chat' });
 
 export interface WebChatView {
   available: boolean;
@@ -30,6 +35,8 @@ export interface WebChatView {
     card: string | null;
     /** a voice message's body is its transcript ('' until heard); a photo's, its caption */
     kind: 'text' | 'voice' | 'image';
+    /** the reply to a voice message, said out loud: GET /chat/messages/:id/audio (ADR 0048) */
+    audio?: true;
   }[];
   /** a reply is on its way */
   pending: boolean;
@@ -74,6 +81,7 @@ async function view(
   tenantId: string,
   cartId: string,
   canHear: boolean,
+  canSpeak: boolean,
 ): Promise<WebChatView> {
   const a = await chatAvailable(tx, tenantId);
   const [t] = await tx<{ id: string; pending_since: Date | null }[]>`
@@ -87,7 +95,7 @@ async function view(
           body: string | null;
           transcript: string | null;
           created_at: Date;
-          meta: { card?: string };
+          meta: { card?: string; speak?: boolean };
         }[]
       >`
         select id, author, kind, body, transcript, created_at, meta from shopper_messages
@@ -105,6 +113,9 @@ async function view(
       at: m.created_at.toISOString(),
       card: m.meta?.card ?? null,
       kind: m.kind === 'audio' ? 'voice' : m.kind === 'image' ? 'image' : 'text',
+      ...(canSpeak && m.author === 'agent' && m.meta?.speak === true && m.body
+        ? { audio: true as const }
+        : {}),
     })),
     // a reply that hasn't come in two minutes isn't coming soon: the store took over, or muted
     pending: !!t?.pending_since && Date.now() - t.pending_since.getTime() < 120_000,
@@ -120,22 +131,89 @@ export function mountWebChat(d: {
   };
   sql: Sql;
   sessionSecret: string;
-  /** null: voice messages are off (no transcription route) */
-  media: Pick<MediaProviders, 'canTranscribe'> | null;
+  /** null: voice messages are off (no transcription route), and replies are never said */
+  media: Pick<MediaProviders, 'canTranscribe' | 'canSpeak' | 'speak'> | null;
   idempotency: (
     sql: Sql,
     run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown }>,
   ) => (c: Context) => Promise<Response>;
 }) {
   const canHear = async () => !!d.media && ((await d.media.canTranscribe?.()) ?? true);
+  const canSpeak = async () => !!d.media && ((await d.media.canSpeak?.()) ?? true);
 
   d.checkout.get('/chat', async (c) => {
     const tenant = c.get('tenant') as Tenant;
     const cartId = await sessionCartId(c, d.sessionSecret);
-    const hear = await canHear();
-    const out = await withTenant(d.sql, tenant.id, (tx) => view(tx, tenant.id, cartId, hear));
+    const [hear, say] = await Promise.all([canHear(), canSpeak()]);
+    const out = await withTenant(d.sql, tenant.id, (tx) => view(tx, tenant.id, cartId, hear, say));
     c.header('cache-control', 'no-store');
     return c.json(out);
+  });
+
+  // a reply to the shopper's voice message, said out loud: made the first time it's played and
+  // kept with the message (the shopper's own cart session only)
+  d.checkout.get('/chat/messages/:id/audio', async (c) => {
+    const tenant = c.get('tenant') as Tenant;
+    const cartId = await sessionCartId(c, d.sessionSecret);
+    const id = uuidParam(c, 'id');
+    const found = await withTenant(d.sql, tenant.id, async (tx) => {
+      const [r] = await tx<
+        {
+          body: string;
+          voice: string | null;
+          bytes: Uint8Array | null;
+          mime: string | null;
+          seconds: number | null;
+        }[]
+      >`
+        select m.body, a.settings ->> 'speechVoice' as voice, s.bytes, s.mime, s.seconds
+        from shopper_messages m
+        join shopper_threads t on t.id = m.thread_id
+        left join store_agent a on a.tenant_id = m.tenant_id
+        left join lateral (
+          select bytes, mime, seconds from shopper_media
+          where message_id = m.id and mime = 'audio/mpeg'
+          order by created_at limit 1
+        ) s on true
+        where m.tenant_id = ${tenant.id} and m.id = ${id} and m.author = 'agent'
+          and (m.meta ->> 'speak')::boolean is true
+          and m.status not in ('draft', 'skipped', 'blocked')
+          and t.channel = 'web' and t.address = ${`web:${cartId}`}`;
+      return r;
+    });
+    if (!found) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    let sound = found.bytes
+      ? { bytes: found.bytes, mime: found.mime!, seconds: found.seconds ?? 0 }
+      : null;
+    if (!sound) {
+      if (!allowSoundPerCart(`${tenant.id}|${cartId}`) || !allowSoundPerStore(tenant.id))
+        throw new HttpError(429, 'RATE_LIMITED', 'too many replies to hear; wait a little');
+      const s =
+        d.media && found.body.length <= MAX_SPEAK_CHARS
+          ? await d.media
+              .speak(found.body, { format: 'mp3', voice: found.voice || undefined })
+              .catch(() => null)
+          : null;
+      if (!s) {
+        chatLog.warn({ tenantId: tenant.id }, 'no voice for a chat reply');
+        throw new HttpError(503, 'SPEECH_UNAVAILABLE', 'a voz da loja não está disponível agora');
+      }
+      sound = s;
+      await withTenant(
+        d.sql,
+        tenant.id,
+        (tx) => tx`
+          insert into shopper_media (tenant_id, message_id, mime, bytes, seconds)
+          select ${tenant.id}, ${id}, ${s.mime}, ${Buffer.from(s.bytes)}, ${Math.min(600, s.seconds)}
+          where not exists (
+            select 1 from shopper_media where message_id = ${id} and mime = ${s.mime})`,
+      );
+    }
+    c.header('content-type', sound.mime);
+    c.header('cache-control', 'private, max-age=86400');
+    c.header('x-content-type-options', 'nosniff');
+    c.header('x-speech-seconds', String(sound.seconds));
+    return c.body(sound.bytes as unknown as ArrayBuffer);
   });
 
   d.checkout.post(
@@ -154,7 +232,7 @@ export function mountWebChat(d: {
         throw new HttpError(422, 'BAD_REQUEST', 'text must have 1–1000 characters', {
           field: 'text',
         });
-      const hear = await canHear();
+      const [hear, say] = await Promise.all([canHear(), canSpeak()]);
       const a = await chatAvailable(tx, tenant.id);
       if (!a.on) throw new HttpError(404, 'CHAT_UNAVAILABLE', 'this store has no chat');
       if (up?.kind === 'voice' && !hear)
@@ -190,7 +268,7 @@ export function mountWebChat(d: {
           values (${tenant.id}, ${threadId}, 'shopper', 'text', ${text}, 'received', 'pending')`;
       await tx`update shopper_threads set last_in_at = now(), pending_since = coalesce(pending_since, now()),
         updated_at = now() where id = ${threadId}`;
-      return { status: 201, body: await view(tx, tenant.id, cartId, hear) };
+      return { status: 201, body: await view(tx, tenant.id, cartId, hear, say) };
     }),
   );
 }

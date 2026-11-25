@@ -264,4 +264,126 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('the storefront chat (db)', () =
       where t.tenant_id = ${tenantId} and t.channel = 'web' and m.kind = 'image'`;
     expect(photo!.meta.description).toBe('Uma garrafa de refrigerante');
   });
+
+  test('a reply to a voice message is said out loud: made on the first play, kept, the cart’s own', async () => {
+    // the cap test above used up this hour's new site conversations
+    await sql`update ai_conversations set started_at = started_at - interval '2 hours' where tenant_id = ${tenantId}`;
+    await sql`update store_agent set settings = settings || ${sql.json({ webChat: true, voiceReplies: true, speechVoice: 'kaua' })}
+      where tenant_id = ${tenantId}`;
+    const session = (await call('POST', '/checkout/v1/session', {})).body.sessionToken as string;
+    const other = (await call('POST', '/checkout/v1/session', {})).body.sessionToken as string;
+    const spoken: { text: string; voice: string | undefined; format: string | undefined }[] = [];
+    let speaking = true;
+    let voiceOn = true;
+    const media = {
+      transcribe: async () => ({ text: 'tem coca de 2 litros?', confidence: 0.9, language: 'pt' }),
+      speak: async (text: string, o?: { voice?: string; format?: 'ogg' | 'mp3' }) => {
+        spoken.push({ text, voice: o?.voice, format: o?.format });
+        return speaking
+          ? { bytes: new Uint8Array([73, 68, 51, 4]), mime: 'audio/mpeg', seconds: 2 }
+          : null;
+      },
+      canTranscribe: async () => true,
+      canSpeak: async () => voiceOn,
+    };
+    const voicing = createApp({
+      sql: appSql,
+      sessionSecret: 's',
+      controlSecret: 'ctl',
+      cepLookup: async () => null,
+      storeDomain: 'vendua.test',
+      duaMedia: { media, gateway: null },
+    });
+    const req = async (method: string, path: string, body?: unknown, token = session) => {
+      const res = await voicing.request(`http://${host}${path}`, {
+        method,
+        headers: {
+          host,
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+          ...(method === 'GET' ? {} : { 'idempotency-key': `${nonce}-${++idem}` }),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      const type = res.headers.get('content-type') ?? '';
+      return {
+        status: res.status,
+        type,
+        body: (type.includes('json')
+          ? await res.json()
+          : new Uint8Array(await res.arrayBuffer())) as any,
+      };
+    };
+    const turn = async (text: string) => {
+      const rt = new Runtime<Sql>({
+        agents: [vendedor],
+        store: new PgActorStore(appSql),
+        gateway: createGateway({
+          adapters: [scriptedAdapter([{ toolCalls: [{ name: 'reply', args: { text } }] }])],
+          routes: { routes: async () => [{ provider: 'scripted', model: 't', zdr: true }] },
+        }),
+        transports: [vendedorTransport],
+        owner: 'web-voice-test',
+        hooks: hostHooks(),
+        clock: { now: () => new Date(Date.now() + 60_000), sleep: async () => {} },
+      });
+      for (let i = 0; i < 5; i++)
+        if (!(await ingestPass({ sql: appSql, media, gateway: null }))) break;
+      for (let i = 0; i < 10; i++) {
+        await sql`update agent_actors set next_wake_at = null where tenant_id <> ${tenantId} and agent_id = 'vendedor'`;
+        if ((await rt.pump('interactive', { limit: 5, perTenantCap: 5 })) === 0) break;
+      }
+      const chat = await req('GET', '/checkout/v1/chat');
+      return chat.body.messages.filter((m: { author: string }) => m.author === 'agent').at(-1);
+    };
+    const voice = { kind: 'voice', mime: 'audio/ogg', data: btoa('OggS fake'), seconds: 2 };
+
+    expect((await req('POST', '/checkout/v1/chat', voice)).status).toBe(201);
+    const said = await turn('Temos sim! Quer que eu coloque na sacola?');
+    expect(said).toMatchObject({ body: 'Temos sim! Quer que eu coloque na sacola?', audio: true });
+    const path = `/checkout/v1/chat/messages/${said.id}/audio`;
+    expect(spoken).toHaveLength(0); // nothing is made until it's played
+    const a = await req('GET', path);
+    expect(a.status).toBe(200);
+    expect(a.type).toBe('audio/mpeg');
+    expect([...a.body]).toEqual([73, 68, 51, 4]);
+    expect(spoken).toEqual([
+      { text: 'Temos sim! Quer que eu coloque na sacola?', voice: 'kaua', format: 'mp3' },
+    ]);
+    expect([...(await req('GET', path)).body]).toEqual([73, 68, 51, 4]);
+    expect(spoken).toHaveLength(1);
+    // another cart session, no session, a bad id: nothing
+    expect((await req('GET', path, undefined, other)).status).toBe(404);
+    expect((await call('GET', path)).status).toBe(401);
+    expect((await req('GET', '/checkout/v1/chat/messages/nope/audio')).status).toBe(400);
+    // nothing for WhatsApp to send
+    expect(await sql`select 1 from store_wa_messages where tenant_id = ${tenantId}`).toHaveLength(
+      0,
+    );
+
+    // typed: text alone
+    expect((await req('POST', '/checkout/v1/chat', { text: 'e de lata?' })).status).toBe(201);
+    const typed = await turn('Tem de lata também.');
+    expect(typed.audio).toBeUndefined();
+    expect((await req('GET', `/checkout/v1/chat/messages/${typed.id}/audio`)).status).toBe(404);
+
+    // no voice right now: a 503 Core words, and the reply stays readable
+    expect((await req('POST', '/checkout/v1/chat', voice)).status).toBe(201);
+    const later = await turn('Posso ajudar com mais alguma coisa?');
+    speaking = false;
+    const off = await req('GET', `/checkout/v1/chat/messages/${later.id}/audio`);
+    expect(off.status).toBe(503);
+    expect(off.body.error.code).toBe('SPEECH_UNAVAILABLE');
+    // a Core without a voice doesn't offer one
+    voiceOn = false;
+    const quiet = await req('GET', '/checkout/v1/chat');
+    expect(quiet.body.messages.some((m: { audio?: boolean }) => m.audio)).toBe(false);
+
+    // the merchant turned voice replies off: the next answer is text
+    voiceOn = true;
+    speaking = true;
+    await sql`update store_agent set settings = settings || '{"voiceReplies": false}'::jsonb where tenant_id = ${tenantId}`;
+    expect((await req('POST', '/checkout/v1/chat', voice)).status).toBe(201);
+    expect((await turn('Certo!')).audio).toBeUndefined();
+  });
 });

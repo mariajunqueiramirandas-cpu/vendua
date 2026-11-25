@@ -56,7 +56,7 @@ export function VoiceReplies({ s }: { s: StoreAgentSettings }) {
           !available
             ? 'A voz está indisponível agora: até ela voltar, ele responde por escrito.'
             : s.voiceReplies
-              ? 'Quem manda áudio no WhatsApp ouve a resposta. Valores, Pix e links continuam por escrito.'
+              ? 'Quem manda áudio no WhatsApp ou no chat do site ouve a resposta. Valores, Pix e links continuam por escrito.'
               : 'Ele responde sempre por escrito, mesmo a quem manda áudio.'
         }
       />

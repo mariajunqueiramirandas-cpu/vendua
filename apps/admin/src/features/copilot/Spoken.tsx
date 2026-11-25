@@ -43,32 +43,41 @@ export function SpokenReply({
     [],
   );
 
-  const play = async (auto: boolean) => {
+  const play = async () => {
+    if (state === 'loading') return;
     if (state === 'playing') {
       audio.current?.pause();
       setState('idle');
       return;
     }
+    // the element is made in the tap: a browser that plays only from one keeps it playable
+    if (!audio.current) {
+      const a = new Audio();
+      a.onended = () => setState('idle');
+      a.onpause = () => setState((s) => (s === 'playing' ? 'idle' : s));
+      audio.current = a;
+    }
+    const a = audio.current;
     try {
-      if (!audio.current) {
+      if (!a.src) {
         setState('loading');
         const url = await platform.http.privateMedia(src);
         if (url.startsWith('blob:')) made.current = url;
-        const a = new Audio(url);
-        a.onended = () => setState('idle');
-        a.onpause = () => setState((s) => (s === 'playing' ? 'idle' : s));
-        audio.current = a;
+        a.src = url;
       }
-      await audio.current.play();
+      await a.play();
       setState('playing');
     } catch (err) {
-      // a browser that won't play without a tap: the button is there for it. Anything else is
-      // Core without a voice right now: say so, and a tap tries again
-      if ((err as { name?: string })?.name === 'NotAllowedError' && auto) {
+      // the sound is there but the browser waits for a tap (it played by itself, or took long):
+      // the next tap plays it at once. Anything else is Core without a voice right now: say so,
+      // and a tap tries again
+      if ((err as { name?: string })?.name === 'NotAllowedError') {
         setState('idle');
         return;
       }
-      audio.current = null;
+      a.removeAttribute('src');
+      if (made.current) URL.revokeObjectURL(made.current);
+      made.current = null;
       setState('failed');
     }
   };
@@ -78,7 +87,7 @@ export function SpokenReply({
     // the server's clock and this one may disagree by a little
     if (Date.parse(at) < voiceSentAt - 5_000) return;
     autoPlayed.add(id);
-    void play(true);
+    void play();
   }, [id, latest, at]);
 
   const label =
@@ -90,7 +99,7 @@ export function SpokenReply({
   return (
     <button
       type="button"
-      onClick={() => void play(false)}
+      onClick={() => void play()}
       aria-label={label}
       aria-pressed={state === 'playing'}
       className={cn(
