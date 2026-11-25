@@ -394,6 +394,20 @@ export async function handleUpdate(
           });
           return;
         }
+        if (prompt.kind === 'campaign_guide' && prompt.targetId) {
+          const { guideCampaign } = await import('../../crm/campaigns.ts');
+          const r = await guideCampaign(sql, {
+            campaignId: prompt.targetId,
+            guidance: text,
+            by: staffName,
+            idemKey,
+          });
+          await syncAnchorCards(sql, ctx, client, `campaign:${prompt.targetId}`);
+          await sendCard(client, chatId, {
+            text: `${voiceHeader}🚀 orientação aplicada na campanha ${b(esc(r.campaign.title))} — diretor acordado para ajustar o rumo agora.`,
+          });
+          return;
+        }
       }
 
       const cardTarget = await lookupRepliedCard(sql, chatId, replyToId);
@@ -421,6 +435,20 @@ export async function handleUpdate(
           await syncAnchorCards(sql, ctx, client, `handoff:${cardTarget.taskId}`);
           await sendCard(client, chatId, {
             text: `${voiceHeader}🤖 orientação enviada para o agente em ${b(esc(r.leadName))} — handoff resolvido e agente retomado.`,
+          });
+          return;
+        }
+        if (cardTarget.kind === 'campaign') {
+          const { guideCampaign } = await import('../../crm/campaigns.ts');
+          const r = await guideCampaign(sql, {
+            campaignId: cardTarget.campaignId,
+            guidance: text,
+            by: staffName,
+            idemKey,
+          });
+          await syncAnchorCards(sql, ctx, client, `campaign:${cardTarget.campaignId}`);
+          await sendCard(client, chatId, {
+            text: `${voiceHeader}🚀 orientação aplicada na campanha ${b(esc(r.campaign.title))} — diretor acordado para ajustar o rumo agora.`,
           });
           return;
         }

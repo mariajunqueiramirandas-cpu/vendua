@@ -624,7 +624,7 @@ export interface AutonomyExplanation {
   /** ordered — the first reason is the decisive one */
   reasons: AutonomyReason[];
 }
-export type RunKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
+export type RunKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist' | 'campaign';
 export interface Wakeup {
   id: string;
   leadId: string | null;
@@ -1021,6 +1021,160 @@ export interface MemoryItem {
   updatedAt: string;
 }
 
+export type CampaignGoalKind = 'signup' | 'meeting' | 'reply';
+export type CampaignScope = 'any' | 'campaign_only';
+export type CampaignStatus = 'active' | 'paused' | 'won' | 'stopped' | 'exhausted';
+
+export interface CampaignWip {
+  enrolledTotal: number;
+  uncontacted: number;
+  awaitingReply: number;
+  activeConversations: number;
+  coldOrExhausted: number;
+  pendingDrafts: number;
+  openHandoffs: number;
+  activeWip: number;
+  conversions: number;
+}
+
+export interface CampaignSummary {
+  id: string;
+  title: string;
+  objective: string;
+  goalKind: CampaignGoalKind;
+  goalTarget: number;
+  goalProgress: number;
+  goalScope: CampaignScope;
+  status: CampaignStatus;
+  stopReason: string | null;
+  focusSegment: string | null;
+  focusCity: string | null;
+  playbook: string;
+  budgetCents: number;
+  spentCents: number;
+  maxDays: number;
+  expiresAt: string;
+  maxHuntsPerDay: number;
+  targetWip: number;
+  checkIntervalMin: number;
+  allowExistingLeads: boolean;
+  createdBy: string;
+  huntsLaunched: number;
+  leadsEnrolled: number;
+  lastTickAt: string | null;
+  nextTickAt: string | null;
+  wonAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
+  wip?: CampaignWip;
+}
+
+export interface CampaignPreflight {
+  autonomyLevel: AutonomyLevel;
+  signupOpen: boolean;
+  channels: { whatsapp: boolean; instagram: boolean; email: boolean; any: boolean };
+  researchReady: boolean;
+  whatsappColdRemaining: number | null;
+  whatsappColdCap: number;
+  instagramColdRemaining: number;
+  instagramColdCap: number;
+  activeCampaigns: number;
+  warnings: string[];
+}
+
+export interface CampaignListResponse {
+  campaigns: CampaignSummary[];
+  preflight: CampaignPreflight;
+}
+
+export interface CampaignHuntItem {
+  id: string;
+  query: string;
+  segment: string | null;
+  city: string | null;
+  target: number | null;
+  status: 'queued' | 'done' | 'failed';
+  leadsCreated: number;
+  costCents: number;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface CampaignLeadItem {
+  id: string;
+  name: string;
+  businessName: string | null;
+  city: string | null;
+  segment: string | null;
+  state: string;
+  origin: 'discovered' | 'revived' | 'matched';
+  enrolledAt: string;
+  convertedAt: string | null;
+}
+
+export interface CampaignTurnItem {
+  id: string;
+  kind: string;
+  status: string;
+  source: string;
+  leadId: string | null;
+  leadName: string | null;
+  steps: number;
+  leadsCreated: number;
+  costCents: number;
+  outcome: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface CampaignDetailResponse {
+  campaign: CampaignSummary;
+  scoreboard: {
+    spentCents: number;
+    remainingBudgetCents: number;
+    hoursRemaining: number;
+    huntsTotal: number;
+    huntsLast24h: number;
+    huntsQueued: number;
+    wip: CampaignWip;
+    untouchedCrmPool: number;
+    health: {
+      autonomyLevel: AutonomyLevel;
+      signupOpen: boolean;
+      whatsappReady: boolean;
+      instagramReady: boolean;
+      emailReady: boolean;
+      researchReady: boolean;
+      whatsappColdRemaining: number | null;
+      whatsappColdNextSlotAt: string | null;
+      instagramColdRemaining: number;
+      instagramColdNextSlotAt: string | null;
+      inQuietHours: boolean;
+      nextSendWindowAt: string;
+    };
+  };
+  hunts: CampaignHuntItem[];
+  leads: CampaignLeadItem[];
+  turns: CampaignTurnItem[];
+}
+
+export interface StartCampaignPayload {
+  title: string;
+  objective: string;
+  goalKind?: CampaignGoalKind | undefined;
+  goalTarget?: number | undefined;
+  goalScope?: CampaignScope | undefined;
+  budgetUsd?: number | undefined;
+  maxDays?: number | undefined;
+  maxHuntsPerDay?: number | undefined;
+  targetWip?: number | undefined;
+  focusSegment?: string | undefined;
+  focusCity?: string | undefined;
+  allowExistingLeads?: boolean | undefined;
+  enableAutopilot?: boolean | undefined;
+}
+
 const agentV2 = {
   /** the `agent` setting with defaults applied; the Studio writes via putSetting. */
   agentConfig: () => req<AgentConfig>('/agent/config'),
@@ -1030,6 +1184,47 @@ const agentV2 = {
       { method: 'POST', body: JSON.stringify({ scope }) },
     ),
   routines: () => req<{ routines: Routine[] }>('/agent/routines'),
+
+  campaigns: (q: { status?: CampaignStatus | 'open'; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (q.status) params.set('status', q.status);
+    if (q.limit) params.set('limit', String(q.limit));
+    return req<CampaignListResponse>(`/agent/campaigns${params.size ? `?${params}` : ''}`);
+  },
+  campaign: (id: string) => req<CampaignDetailResponse>(`/agent/campaigns/${id}`),
+  startCampaign: (b: StartCampaignPayload) =>
+    req<{ campaign: CampaignSummary; mailboxId: string | null }>('/agent/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(b),
+    }),
+  pauseCampaign: (id: string, reason?: string) =>
+    req<{ campaign: CampaignSummary }>(`/agent/campaigns/${id}/pause`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
+    }),
+  resumeCampaign: (
+    id: string,
+    b: { extraBudgetUsd?: number | undefined; extendDays?: number | undefined } = {},
+  ) =>
+    req<{ campaign: CampaignSummary; mailboxId: string | null }>(`/agent/campaigns/${id}/resume`, {
+      method: 'POST',
+      body: JSON.stringify(b),
+    }),
+  stopCampaign: (id: string, reason?: string) =>
+    req<{ campaign: CampaignSummary }>(`/agent/campaigns/${id}/stop`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
+    }),
+  guideCampaign: (id: string, guidance: string) =>
+    req<{ campaign: CampaignSummary; mailboxId: string | null }>(`/agent/campaigns/${id}/guide`, {
+      method: 'POST',
+      body: JSON.stringify({ guidance }),
+    }),
+  bumpCampaignBudget: (id: string, addUsd: number) =>
+    req<{ campaign: CampaignSummary; resumed: boolean }>(`/agent/campaigns/${id}/budget`, {
+      method: 'POST',
+      body: JSON.stringify({ addUsd }),
+    }),
 
   memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
     const params = new URLSearchParams(

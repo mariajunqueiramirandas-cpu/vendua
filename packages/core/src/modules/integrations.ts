@@ -244,6 +244,9 @@ export const DEFAULT_GUARDRAILS = {
   staleDraftDays: 3,
   /** a brief whose last N runs produced zero leads auto-pauses; 0 = never */
   briefAutoPauseRuns: 5,
+  /** account-wide cap on agent cold WhatsApp opens (threads the lead never wrote in)
+   *  per rolling 24h — protects the WhatsApp number during campaigns; 0 = uncapped */
+  whatsappColdPerDay: 25,
   /** account-wide cap on agent cold DMs (instagram threads the lead never wrote
    *  in) per rolling 24h — new accounts get restricted above a few dozen */
   instagramColdDmsPerDay: 15,
@@ -280,6 +283,7 @@ export type Guardrails = {
   followupCadenceDays: number;
   staleDraftDays: number;
   briefAutoPauseRuns: number;
+  whatsappColdPerDay: number;
   instagramColdDmsPerDay: number;
   instagramFollowsPerDay: number;
   ignoredPhones: string[];
@@ -631,6 +635,7 @@ export function validateSetting(key: string, value: unknown): void {
     intField('followupCadenceDays', 0, 90);
     intField('staleDraftDays', 0, 90);
     intField('briefAutoPauseRuns', 0, 100);
+    intField('whatsappColdPerDay', 0, 200);
     intField('instagramColdDmsPerDay', 0, 200);
     intField('instagramFollowsPerDay', 0, 200);
     const numField = (k: keyof Guardrails, min: number, max: number) => {
@@ -932,6 +937,22 @@ export function validateSetting(key: string, value: unknown): void {
   }
 }
 
+export async function putSettingTx(tx: Sql, key: string, value: unknown): Promise<void> {
+  str(key, 'key', 80);
+  if (typeof value !== 'object' || value === null) {
+    throw new HttpError(422, 'BAD_REQUEST', 'value must be an object');
+  }
+  await tx`
+    insert into control_settings (key, value) values (${key}, ${tx.json(value as never)})
+    on conflict (key) do update set value = excluded.value
+  `;
+  // replies back on (or a raised cost cap): what leads wrote meanwhile gets its answer
+  if (key === 'agent' || key === 'guardrails') {
+    const { reserveParkedTx } = await import('../crm/inbound.ts');
+    await reserveParkedTx(tx, null);
+  }
+}
+
 export async function putSetting(
   sql: Sql,
   key: string,
@@ -943,15 +964,7 @@ export async function putSetting(
     throw new HttpError(422, 'BAD_REQUEST', 'value must be an object');
   }
   const res = await claimControl(sql, idemKey, async (tx) => {
-    await tx`
-      insert into control_settings (key, value) values (${key}, ${tx.json(value as never)})
-      on conflict (key) do update set value = excluded.value
-    `;
-    // replies back on (or a raised cost cap): what leads wrote meanwhile gets its answer
-    if (key === 'agent' || key === 'guardrails') {
-      const { reserveParkedTx } = await import('../crm/inbound.ts');
-      await reserveParkedTx(tx, null);
-    }
+    await putSettingTx(tx, key, value);
     return { status: 200, body: { key, value } };
   });
   // meeting window changes alter the availability grid

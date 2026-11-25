@@ -21,6 +21,7 @@ import {
   instagramColdBudgetTx,
   instagramReadyTx,
   passesAutoContactScore,
+  whatsappColdBudgetTx,
   whatsappReadyTx,
 } from './guardrails.ts';
 import { agentSettingTx, automationAllowedTx, discoveryBudgetTx } from './policy.ts';
@@ -212,6 +213,10 @@ export async function sweepOutreachBacklog(
   const touched: string[] = [];
   const queued = await controlTx(sql, async (tx) => {
     if (!(await automationAllowedTx(tx, 'outreach')).ok) return 0;
+    const waBudget = waReady
+      ? await whatsappColdBudgetTx(tx, g)
+      : { cap: 0, used: 0, remaining: 0 as number | null, nextSlotAt: null };
+    let waSlots = waBudget.remaining === null ? Infinity : waBudget.remaining;
     const igBudget = igReady
       ? await instagramColdBudgetTx(tx, g)
       : { remaining: 0, nextSlotAt: null };
@@ -262,7 +267,7 @@ export async function sweepOutreachBacklog(
       if (!passesAutoContactScore(c.fit_score, c.intent_score, g.discoveryContactMinScore))
         continue;
       let chan: 'whatsapp' | 'instagram' | 'email' | null = null;
-      if (waReady && c.whatsapp && c.whatsapp_verified) chan = 'whatsapp';
+      if (waReady && waSlots > 0 && c.whatsapp && c.whatsapp_verified) chan = 'whatsapp';
       else if (igReady && igSlots > 0 && instagramHandle(c.instagram)) chan = 'instagram';
       else if (emailReady && c.email && !c.email_bounced_at) chan = 'email';
       if (!chan) continue;
@@ -281,6 +286,7 @@ export async function sweepOutreachBacklog(
         },
       });
       if (r.mailboxId) {
+        if (chan === 'whatsapp' && Number.isFinite(waSlots)) waSlots--;
         if (chan === 'instagram') igSlots--;
         touched.push(r.mailboxId);
         n++;

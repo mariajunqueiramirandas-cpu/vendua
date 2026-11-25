@@ -49,6 +49,7 @@ const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage.tsx'
 const InboxPage = lazy(() => import('@/features/inbox/InboxPage.tsx'));
 const AgendaPage = lazy(() => import('@/features/agenda/AgendaPage.tsx'));
 const OperationsPage = lazy(() => import('@/features/agent/operations/OperationsPage.tsx'));
+const CampaignsPage = lazy(() => import('@/features/agent/campaigns/CampaignsPage.tsx'));
 const DiscoveryPage = lazy(() => import('@/features/agent/discovery/DiscoveryPage.tsx'));
 const ConfigPage = lazy(() => import('@/features/agent/config/ConfigPage.tsx'));
 const StoresPage = lazy(() => import('@/features/stores/StoresPage.tsx'));
@@ -156,6 +157,8 @@ export function AppRoutes() {
         <Route path="/agente" element={<Navigate to="/agente/operacao" replace />} />
         <Route path="/agente/operacao" element={<OperationsPage />} />
         <Route path="/agente/operacao/:id" element={<OperationsPage />} />
+        <Route path="/agente/campanhas" element={<CampaignsPage />} />
+        <Route path="/agente/campanhas/:id" element={<CampaignsPage />} />
         <Route path="/agente/descoberta" element={<DiscoveryPage />} />
         <Route path="/agente/configurar" element={<ConfigPage />} />
         <Route path="/lojas" element={<StoresPage />} />

@@ -20,7 +20,21 @@ import {
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import { afterCommit, type Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
-import { CRM_AGENT_ID, CRM_DISCOVERY_ID, CRM_STRATEGIST_ID, LEAD_SUBJECT } from './dispatch.ts';
+import {
+  CAMPAIGN_SUBJECT,
+  CRM_AGENT_ID,
+  CRM_CAMPAIGN_ID,
+  CRM_DISCOVERY_ID,
+  CRM_STRATEGIST_ID,
+  LEAD_SUBJECT,
+} from './dispatch.ts';
+import {
+  activeCampaignForLeadTx,
+  ensureActiveCampaignHeartbeatTx,
+  onCampaignConversionTx,
+  onCampaignHuntFinishedTx,
+  syncCampaignSpendTx,
+} from './campaigns.ts';
 import { syncNextActionTx } from './agenda.ts';
 import { TRIGGER_OF } from './jobs.ts';
 import { salesAttentionTx } from './delivery-policy.ts';
@@ -29,7 +43,12 @@ import { salesAttentionTx } from './delivery-policy.ts';
 // host's turn hooks in the transaction that ends the turn. It is what the activity list, the cost
 // caps, metrics and reports read; the turn's whole story stays in agent_events.
 
-export const CRM_AGENTS: readonly string[] = [CRM_AGENT_ID, CRM_DISCOVERY_ID, CRM_STRATEGIST_ID];
+export const CRM_AGENTS: readonly string[] = [
+  CRM_AGENT_ID,
+  CRM_DISCOVERY_ID,
+  CRM_STRATEGIST_ID,
+  CRM_CAMPAIGN_ID,
+];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -70,7 +89,7 @@ async function projectTx(
   status: 'done' | 'failed',
   error: string | null,
   outcome: string | null = null,
-): Promise<{ leadId: string | null; costCents: number }> {
+): Promise<{ leadId: string | null; campaignId: string | null; costCents: number }> {
   const totals = await totalsTx(tx, t.actorId, t.turnId);
   const costCents = Math.round((totals.cost_usd + info.monidUsd) * 100);
   const leadId = t.subject.kind === LEAD_SUBJECT && UUID.test(t.subject.id) ? t.subject.id : null;
@@ -78,25 +97,35 @@ async function projectTx(
     typeof info.params.briefId === 'string' && UUID.test(info.params.briefId)
       ? info.params.briefId
       : null;
+  const directCampaignId =
+    t.subject.kind === CAMPAIGN_SUBJECT && UUID.test(t.subject.id)
+      ? t.subject.id
+      : typeof info.params.campaignId === 'string' && UUID.test(info.params.campaignId)
+        ? info.params.campaignId
+        : null;
+  const turnKind = t.agentId === CRM_CAMPAIGN_ID ? 'campaign' : info.kind;
   // staff text rides in params: bounded so the row stays under its 8 KB check
   let params: Record<string, Json> = Object.fromEntries(
     Object.entries(info.params).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 1500) : v]),
   );
-  if (Buffer.byteLength(JSON.stringify(params)) > 8000) params = { kind: info.kind };
-  await controlTx(
-    tx,
-    (c) => c`
-    insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, brief_id, status,
-      started_at, steps, acted, leads_created, tokens_in, tokens_out, cost_cents, error, params, outcome)
-    values (${t.turnId}, ${t.actorId}, ${t.agentId}, ${info.kind}, ${TRIGGER_OF[info.trigger] ?? (info.source.slice(0, 120) || 'agent')},
-      (select id from leads where id = ${leadId}),
-      (select id from discovery_briefs where id = ${briefId}),
-      ${status}, ${totals.started_at ?? new Date()}, ${totals.steps}, ${info.acted},
-      ${info.leadsCreated}, ${totals.tokens_in}, ${totals.tokens_out}, ${costCents},
-      ${error ? error.slice(0, 1000) : null}, ${c.json(params as never)}, ${outcome})
-    on conflict (turn_id) do nothing`,
-  );
-  return { leadId, costCents };
+  if (Buffer.byteLength(JSON.stringify(params)) > 8000) params = { kind: turnKind };
+  const campaignId = await controlTx(tx, async (c) => {
+    const resolvedCampaignId =
+      directCampaignId ?? (leadId ? await activeCampaignForLeadTx(c, leadId) : null);
+    await c`
+      insert into crm_turns (turn_id, actor_id, agent_id, kind, source, lead_id, brief_id, campaign_id,
+        status, started_at, steps, acted, leads_created, tokens_in, tokens_out, cost_cents, error, params, outcome)
+      values (${t.turnId}, ${t.actorId}, ${t.agentId}, ${turnKind}, ${TRIGGER_OF[info.trigger] ?? (info.source.slice(0, 120) || 'agent')},
+        (select id from leads where id = ${leadId}),
+        (select id from discovery_briefs where id = ${briefId}),
+        (select id from crm_campaigns where id = ${resolvedCampaignId}),
+        ${status}, ${totals.started_at ?? new Date()}, ${totals.steps}, ${info.acted},
+        ${info.leadsCreated}, ${totals.tokens_in}, ${totals.tokens_out}, ${costCents},
+        ${error ? error.slice(0, 1000) : null}, ${c.json(params as never)}, ${outcome})
+      on conflict (turn_id) do nothing`;
+    return resolvedCampaignId;
+  });
+  return { leadId, campaignId, costCents };
 }
 
 /** Whether the lead's agent spend reached its lifetime cap. Crossing it is flagged once per cap
@@ -253,14 +282,54 @@ export async function crmTurnEnded(tx: FencedTx<Sql>, end: TurnEnd): Promise<voi
       : parked
         ? 'parked'
         : null;
-  const { leadId } = await projectTx(sql, end, info, 'done', parked, outcome);
+  const { leadId, campaignId, costCents } = await projectTx(
+    sql,
+    end,
+    info,
+    'done',
+    parked,
+    outcome,
+  );
   // a lowered cap parks the lead without spending: the flag still goes up
   if (leadId) {
     await leadOverCostCapTx(sql, leadId);
     // the timer this turn consumed no longer is the lead's next action
     await controlTx(sql, (c) => syncNextActionTx(c, leadId));
   }
-  if (end.agentId === CRM_DISCOVERY_ID) await debriefTx(sql, end.turnId, end.actorId, info);
+  if (end.agentId === CRM_DISCOVERY_ID) {
+    await debriefTx(sql, end.turnId, end.actorId, info);
+    await controlTx(sql, (c) =>
+      onCampaignHuntFinishedTx(c, {
+        huntSubjectId: end.subject.id,
+        turnId: end.turnId,
+        status: 'done',
+        leadsCreated: info.leadsCreated,
+        costCents,
+      }),
+    );
+  } else if (campaignId) {
+    await controlTx(sql, (c) => syncCampaignSpendTx(c, campaignId));
+  }
+  if (end.agentId === CRM_CAMPAIGN_ID && UUID.test(end.subject.id)) {
+    await controlTx(sql, (c) => ensureActiveCampaignHeartbeatTx(c, end.subject.id, end.turnId));
+  }
+  // Verified human reply (not a store auto-reply robot, not an opt-out) counts toward `reply` campaigns.
+  if (
+    end.agentId === CRM_AGENT_ID &&
+    leadId &&
+    info.trigger === 'message.inbound' &&
+    !parked &&
+    !info.actions.includes('mark_auto_reply') &&
+    !info.actions.includes('unsubscribe')
+  ) {
+    await controlTx(sql, (c) =>
+      onCampaignConversionTx(c, {
+        kind: 'reply',
+        leadId,
+        detail: 'resposta humana confirmada',
+      }),
+    );
+  }
   afterCommit(sql, () => {
     emitControlEvent('run.update', end.turnId);
     if (leadId) emitControlEvent('lead.change', leadId);
@@ -275,7 +344,14 @@ export async function crmTurnFailed(tx: FencedTx<Sql>, f: TurnFailure): Promise<
     ? (totals.batch as unknown as { kind: string; source: string; payload: Json }[])
     : [];
   const info = turnOf(batch, f.turnId);
-  const { leadId } = await projectTx(sql, f, info, 'failed', f.error, 'failed');
+  const { leadId, campaignId, costCents } = await projectTx(
+    sql,
+    f,
+    info,
+    'failed',
+    f.error,
+    'failed',
+  );
   await controlTx(sql, async (c) => {
     const [lead] = leadId
       ? await c<{ name: string }[]>`select name from leads where id = ${leadId}`
@@ -285,7 +361,7 @@ export async function crmTurnFailed(tx: FencedTx<Sql>, f: TurnFailure): Promise<
       'agent.run_failed',
       {
         runId: f.turnId,
-        job: info.kind,
+        job: f.agentId === CRM_CAMPAIGN_ID ? 'campaign' : info.kind,
         leadId,
         leadName: lead?.name ?? null,
         error: f.error.slice(0, 500),
@@ -308,6 +384,20 @@ export async function crmTurnFailed(tx: FencedTx<Sql>, f: TurnFailure): Promise<
           info.params.threadId ?? null,
           info.kind !== 'triage',
         );
+    }
+    if (f.agentId === CRM_DISCOVERY_ID) {
+      await onCampaignHuntFinishedTx(c, {
+        huntSubjectId: f.subject.id,
+        turnId: f.turnId,
+        status: 'failed',
+        leadsCreated: info.leadsCreated,
+        costCents,
+      });
+    } else if (campaignId) {
+      await syncCampaignSpendTx(c, campaignId);
+    }
+    if (f.agentId === CRM_CAMPAIGN_ID && UUID.test(f.subject.id)) {
+      await ensureActiveCampaignHeartbeatTx(c, f.subject.id, f.turnId);
     }
   });
   afterCommit(sql, () => {

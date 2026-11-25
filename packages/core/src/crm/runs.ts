@@ -10,11 +10,12 @@ import { CRM_AGENTS } from './turns.ts';
 // waiting (queued, or scheduled for later). A finished run's trajectory is its turn's events.
 
 /** A mailbox kind as the job the screens speak (crm/dispatch.ts `jobOf`, in SQL). */
-const KIND_OF = `case m.kind
-    when 'message.inbound' then 'reply'
-    when 'timer.daily' then 'discovery'
-    when 'timer.weekly' then 'strategist'
-    when 'staff.request' then coalesce(nullif(m.payload->>'kind', ''), 'outreach')
+const KIND_OF = `case
+    when a.agent_id = 'crm-campaign' then 'campaign'
+    when m.kind = 'message.inbound' then 'reply'
+    when m.kind = 'timer.daily' then 'discovery'
+    when m.kind = 'timer.weekly' then 'strategist'
+    when m.kind = 'staff.request' then coalesce(nullif(m.payload->>'kind', ''), 'outreach')
     else 'outreach' end`;
 const TRIGGER = `case m.kind ${Object.entries(TRIGGER_OF)
   .map(([k, v]) => `when '${k}' then '${v}'`)

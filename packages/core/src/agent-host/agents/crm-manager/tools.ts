@@ -850,6 +850,255 @@ export const proposeBoardRunTool = defineTool<
     }),
 });
 
+export const listCampaignsTool = defineTool<
+  { status?: 'open' | 'active' | 'paused' | 'won' | 'stopped' | 'exhausted' | undefined },
+  Sql
+>({
+  name: 'list_campaigns',
+  description:
+    'List autonomous sales campaigns (active, paused, won, stopped, or exhausted) with goal progress, USD spent/budget, hunts launched, enrolled leads, active WIP, replies, and playbook summary.',
+  effect: 'read',
+  input: s.object({
+    status: s.enum(['open', 'active', 'paused', 'won', 'stopped', 'exhausted']).optional(),
+  }),
+  run: (ctx, input) =>
+    safe(async () => {
+      const { listCampaigns } = await import('../../../crm/campaigns.ts');
+      const campaigns = await listCampaigns(ctx.tx, {
+        ...(input.status ? { status: input.status } : {}),
+        limit: 10,
+      });
+      return {
+        campaigns: campaigns.map((c) => ({
+          id: c.id,
+          title: c.title,
+          status: c.status,
+          goal: `${c.goalProgress}/${c.goalTarget} ${label('campaignGoal', c.goalKind)}`,
+          spentUsd: usd(c.spentCents),
+          budgetUsd: usd(c.budgetCents),
+          hunts: c.huntsLaunched,
+          leads: c.leadsEnrolled,
+          wip: c.wip ?? null,
+          focusSegment: c.focusSegment,
+          focusCity: c.focusCity,
+          stopReason: c.stopReason,
+          playbook: c.playbook.slice(0, 400),
+          nextTickAt: c.nextTickAt,
+          expiresAt: c.expiresAt,
+        })),
+      } as unknown as Json;
+    }),
+});
+
+export const manageCampaignTool = defineTool<
+  {
+    campaignId: string;
+    action: 'pause' | 'resume' | 'stop' | 'guide' | 'bump_budget';
+    guidance?: string | undefined;
+    addBudgetUsd?: number | undefined;
+    reason?: string | undefined;
+  },
+  Sql
+>({
+  name: 'manage_campaign',
+  description:
+    'Control an existing autonomous campaign right away: pause, resume, stop, send tactical steering guidance (`guide`), or add USD budget (`bump_budget`). Pass the exact campaignId UUID from HOJE AGORA or `list_campaigns`.',
+  effect: 'write',
+  input: s.object({
+    campaignId: s.string({ min: 1, max: 64 }),
+    action: s.enum(['pause', 'resume', 'stop', 'guide', 'bump_budget']),
+    guidance: s.string({ min: 2, max: 1500 }).optional(),
+    addBudgetUsd: s.number({ min: 1, max: 200 }).optional(),
+    reason: s.string({ max: 300 }).optional(),
+  }),
+  run: (ctx, input) =>
+    safe(async () => {
+      const campaignId = assertUuid(input.campaignId, 'campaignId');
+      const { staffName } = who(ctx);
+      const idemKey = `tg-mgr:camp:${input.action}:${ctx.turnId}:${randomUUID().slice(0, 12)}`;
+      const { bumpCampaignBudget, guideCampaign, pauseCampaign, resumeCampaign, stopCampaign } =
+        await import('../../../crm/campaigns.ts');
+
+      if (input.action === 'pause') {
+        const r = await pauseCampaign(ctx.tx, {
+          campaignId,
+          reason: input.reason ?? null,
+          by: staffName,
+          idemKey,
+        });
+        return { ok: true, status: r.campaign.status, title: r.campaign.title } as unknown as Json;
+      }
+      if (input.action === 'resume') {
+        const r = await resumeCampaign(ctx.tx, {
+          campaignId,
+          by: staffName,
+          ...(input.addBudgetUsd ? { extraBudgetUsd: input.addBudgetUsd } : {}),
+          idemKey,
+        });
+        return {
+          ok: true,
+          status: r.campaign.status,
+          title: r.campaign.title,
+          budgetUsd: usd(r.campaign.budget_cents),
+        } as unknown as Json;
+      }
+      if (input.action === 'stop') {
+        const r = await stopCampaign(ctx.tx, {
+          campaignId,
+          reason: input.reason ?? null,
+          by: staffName,
+          idemKey,
+        });
+        return { ok: true, status: r.campaign.status, title: r.campaign.title } as unknown as Json;
+      }
+      if (input.action === 'bump_budget') {
+        const addUsd = input.addBudgetUsd ?? 10;
+        const r = await bumpCampaignBudget(ctx.tx, {
+          campaignId,
+          addUsd,
+          by: staffName,
+          idemKey,
+        });
+        return {
+          ok: true,
+          status: r.campaign.status,
+          resumed: r.resumed,
+          title: r.campaign.title,
+          budgetUsd: usd(r.campaign.budget_cents),
+        } as unknown as Json;
+      }
+      if (!input.guidance?.trim()) {
+        throw new ToolError('informe guidance para orientar a campanha');
+      }
+      const r = await guideCampaign(ctx.tx, {
+        campaignId,
+        guidance: input.guidance,
+        by: staffName,
+        idemKey,
+      });
+      return {
+        ok: true,
+        guided: true,
+        status: r.campaign.status,
+        title: r.campaign.title,
+      } as unknown as Json;
+    }),
+});
+
+export const proposeStartCampaignTool = defineTool<
+  {
+    title: string;
+    objective: string;
+    goalKind?: 'signup' | 'meeting' | 'reply' | undefined;
+    goalTarget?: number | undefined;
+    goalScope?: 'any' | 'campaign_only' | undefined;
+    budgetUsd?: number | undefined;
+    maxDays?: number | undefined;
+    maxHuntsPerDay?: number | undefined;
+    targetWip?: number | undefined;
+    focusSegment?: string | undefined;
+    focusCity?: string | undefined;
+    allowExistingLeads?: boolean | undefined;
+    enableAutopilot?: boolean | undefined;
+  },
+  Sql
+>({
+  name: 'propose_start_campaign',
+  description:
+    'Prepare a 1-tap confirmation card to launch Autonomous Campaign Mode (`crm-campaign`): keeps discovering leads, messaging, following up, and pivoting niches/angles within hard budget/time/channel guardrails until the goal (default: 1 verified signup) is reached. Does NOT start until staff taps Confirm.',
+  effect: 'write',
+  input: s.object({
+    title: s.string({ min: 3, max: 160 }).describe('short title, e.g. "Conseguir 1 cadastro"'),
+    objective: s
+      .string({ min: 5, max: 2000 })
+      .describe('full mission brief capturing everything staff asked for'),
+    goalKind: s.enum(['signup', 'meeting', 'reply']).optional(),
+    goalTarget: s.int({ min: 1, max: 100 }).optional(),
+    goalScope: s.enum(['any', 'campaign_only']).optional(),
+    budgetUsd: s.number({ min: 1, max: 1000 }).optional(),
+    maxDays: s.int({ min: 1, max: 60 }).optional(),
+    maxHuntsPerDay: s.int({ min: 1, max: 12 }).optional(),
+    targetWip: s.int({ min: 3, max: 80 }).optional(),
+    focusSegment: s.string({ max: 120 }).optional(),
+    focusCity: s.string({ max: 120 }).optional(),
+    allowExistingLeads: s.boolean().optional(),
+    enableAutopilot: s
+      .boolean()
+      .describe('set true to also switch global workspace autonomy to autopilot on confirm')
+      .optional(),
+  }),
+  run: (ctx, input) =>
+    safe(async () => {
+      const {
+        DEFAULT_CAMPAIGN_BUDGET_USD,
+        DEFAULT_CAMPAIGN_MAX_DAYS,
+        DEFAULT_CAMPAIGN_MAX_HUNTS_PER_DAY,
+        DEFAULT_CAMPAIGN_TARGET_WIP,
+        goalKindLabel,
+        preflightCampaignTx,
+      } = await import('../../../crm/campaigns.ts');
+      const goalKind = input.goalKind ?? 'signup';
+      const goalTarget = input.goalTarget ?? 1;
+      const budgetUsd = input.budgetUsd ?? DEFAULT_CAMPAIGN_BUDGET_USD;
+      const maxDays = input.maxDays ?? DEFAULT_CAMPAIGN_MAX_DAYS;
+      const maxHuntsPerDay = input.maxHuntsPerDay ?? DEFAULT_CAMPAIGN_MAX_HUNTS_PER_DAY;
+      const targetWip = input.targetWip ?? DEFAULT_CAMPAIGN_TARGET_WIP;
+      const allowExistingLeads = input.allowExistingLeads !== false;
+
+      const { staffName, chatId } = who(ctx);
+      const out = await mgr(ctx, async (tx) => {
+        const preflight = await preflightCampaignTx(tx, goalKind);
+        const lines: string[] = [
+          `meta: ${goalTarget} ${goalKindLabel(goalKind, goalTarget)} (para automaticamente ao bater)`,
+          `teto: US$ ${budgetUsd.toFixed(2)} · prazo: ${maxDays} dias · até ${maxHuntsPerDay} buscas/dia (WIP alvo ${targetWip})`,
+        ];
+        if (input.focusSegment || input.focusCity) {
+          lines.push(`foco: ${[input.focusSegment, input.focusCity].filter(Boolean).join(' · ')}`);
+        }
+        lines.push(
+          allowExistingLeads
+            ? 'escopo: busca novos leads + ativa leads intocados do CRM'
+            : 'escopo: somente novos leads descobertos',
+        );
+        if (input.enableAutopilot && preflight.autonomyLevel !== 'autopilot') {
+          lines.push('também liga piloto automático (envia sem precisar aprovar rascunho)');
+        }
+        const relevantWarnings = preflight.warnings.filter(
+          (w) => !(input.enableAutopilot && w.startsWith('autonomia')),
+        );
+        for (const w of relevantWarnings.slice(0, 2)) {
+          lines.push(`⚠️ ${w}`);
+        }
+
+        const p = await createProposalTx(tx, {
+          chatId,
+          turnId: ctx.turnId,
+          staffName,
+          kind: 'start_campaign',
+          title: `iniciar modo campanha: ${input.title.trim()}`,
+          lines,
+          payload: {
+            title: input.title.trim(),
+            objective: input.objective.trim(),
+            goalKind,
+            goalTarget,
+            ...(input.goalScope ? { goalScope: input.goalScope } : {}),
+            budgetUsd,
+            maxDays,
+            maxHuntsPerDay,
+            targetWip,
+            ...(input.focusSegment ? { focusSegment: input.focusSegment.trim() } : {}),
+            ...(input.focusCity ? { focusCity: input.focusCity.trim() } : {}),
+            allowExistingLeads,
+            ...(input.enableAutopilot ? { enableAutopilot: true } : {}),
+          },
+        });
+        return { proposed: true, proposalId: p.id, lines, preflight };
+      });
+      return out as unknown as Json;
+    }),
+});
+
 export const MANAGER_TOOLS = [
   pipelineOverviewTool,
   searchLeadsTool,
@@ -857,15 +1106,18 @@ export const MANAGER_TOOLS = [
   listPendingTool,
   listRulesTool,
   listRunsTool,
+  listCampaignsTool,
   teachRuleTool,
   guideLeadTool,
   rewriteDraftTool,
   answerHandoffTool,
   setLeadAgentTool,
+  manageCampaignTool,
   proposeAutonomyTool,
   proposeInstructionsTool,
   proposeDeleteRuleTool,
   proposeApproveDraftTool,
   proposeDirectMessageTool,
   proposeBoardRunTool,
+  proposeStartCampaignTool,
 ];

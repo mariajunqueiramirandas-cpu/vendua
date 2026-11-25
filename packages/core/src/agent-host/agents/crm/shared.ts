@@ -78,6 +78,10 @@ export interface Params {
   briefId?: string;
   briefName?: string;
   monidCapUsd?: number;
+  /** campaign mode */
+  campaignId?: string;
+  campaignAngle?: string;
+  guidance?: string;
   /** the inbound message this turn answers */
   messageId?: string;
   callbackActivityId?: string;
@@ -118,9 +122,14 @@ const RANK: Record<string, number> = {
   'message.inbound': 0,
   'staff.request': 1,
   'staff.regenerate': 2,
+  'campaign.progress': 2,
+  'campaign.started': 3,
+  'campaign.resumed': 3,
+  'campaign.hunt_done': 4,
   'timer.callback': 3,
   'lead.first_contact': 4,
   'timer.followup': 5,
+  'timer.campaign_tick': 5,
   'timer.daily': 6,
   'timer.weekly': 6,
 };
@@ -138,6 +147,9 @@ const PARAM_KEYS = [
   'briefId',
   'briefName',
   'monidCapUsd',
+  'campaignId',
+  'campaignAngle',
+  'guidance',
   'messageId',
   'callbackActivityId',
   'threadId',
@@ -184,6 +196,12 @@ export const ACTION_TOOLS = new Set([
   'request_human',
   'unsubscribe',
   'mark_auto_reply',
+  'launch_hunt',
+  'activate_existing_leads',
+  'coach_lead',
+  'update_playbook',
+  'schedule_next_check',
+  'pause_campaign',
 ]);
 
 /** A tool result the model may count as done: ok, no error, not blocked. */
@@ -194,7 +212,7 @@ export function landed(p: JsonObject): boolean {
 }
 
 /** Output guards that push back once per turn before the model may stop. */
-export const NUDGES = ['must_act', 'book_settled'];
+export const NUDGES = ['must_act', 'book_settled', 'campaign_settled'];
 
 export function triageMissing(t: TurnInfo): string[] {
   const missing = ['add_note', 'create_task'].filter((action) => !t.actions.includes(action));

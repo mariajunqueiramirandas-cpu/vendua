@@ -376,6 +376,76 @@ export interface StaffEventMap {
     channel: 'whatsapp' | 'instagram' | 'email' | 'whatsapp_lojas';
     detail: Opt<string>;
   };
+  'campaign.started': {
+    campaignId: Id;
+    title: string;
+    objective: string;
+    goalKind: 'signup' | 'meeting' | 'reply';
+    goalTarget: number;
+    budgetCents: number;
+    maxDays: number;
+    by: Name;
+    focusSegment: Opt<string>;
+    focusCity: Opt<string>;
+  };
+  'campaign.progress': {
+    campaignId: Id;
+    title: string;
+    goalKind: 'signup' | 'meeting' | 'reply';
+    goalTarget: number;
+    goalProgress: number;
+    spentCents: number;
+    budgetCents: number;
+    hunts: number;
+    leads: number;
+    activeWip: number;
+    replies: number;
+    summary: string;
+    urgent: boolean;
+  };
+  'campaign.updated': {
+    campaignId: Id;
+    title: string;
+    status: 'active' | 'paused';
+    goalKind: 'signup' | 'meeting' | 'reply';
+    goalTarget: number;
+    goalProgress: number;
+    spentCents: number;
+    budgetCents: number;
+    hunts: number;
+    leads: number;
+    reason: Opt<string>;
+    by: Opt<Name>;
+  };
+  'campaign.won': {
+    campaignId: Id;
+    title: string;
+    goalKind: 'signup' | 'meeting' | 'reply';
+    goalTarget: number;
+    goalProgress: number;
+    spentCents: number;
+    budgetCents: number;
+    hunts: number;
+    leads: number;
+    winnerLeadId: Id;
+    winnerName: Name;
+    winnerBusiness: Opt<string>;
+    detail: Opt<string>;
+  };
+  'campaign.ended': {
+    campaignId: Id;
+    title: string;
+    status: 'stopped' | 'exhausted';
+    goalKind: 'signup' | 'meeting' | 'reply';
+    goalTarget: number;
+    goalProgress: number;
+    spentCents: number;
+    budgetCents: number;
+    hunts: number;
+    leads: number;
+    reason: Opt<string>;
+    by: Opt<Name>;
+  };
   // sistema
   'system.boot': { bootsLastHour: number; version: Opt<string> };
   'system.error': { method: string; path: string; message: string; count: number };
@@ -821,6 +891,43 @@ export const STAFF_EVENT_KINDS: Catalog = {
     severity: 'success',
     label: 'canal voltou',
     anchor: { role: 'follows', key: (d) => `channel:${d.channel}` },
+  },
+  'campaign.started': {
+    category: 'agente',
+    level: 'normal',
+    severity: 'info',
+    label: 'campanha autônoma iniciada',
+    hint: 'modo campanha com meta, orçamento e direção contínua no agente de vendas',
+    anchor: { role: 'opens', key: (d) => `campaign:${d.campaignId}` },
+  },
+  'campaign.progress': {
+    category: 'agente',
+    level: 'silent',
+    severity: (d) => (d.urgent ? 'warning' : 'info'),
+    label: 'atualização de campanha',
+    anchor: { role: 'follows', key: (d) => `campaign:${d.campaignId}` },
+  },
+  'campaign.updated': {
+    category: 'agente',
+    level: 'normal',
+    severity: (d) => (d.status === 'paused' ? 'warning' : 'info'),
+    label: 'campanha pausada ou retomada',
+    anchor: { role: 'follows', key: (d) => `campaign:${d.campaignId}` },
+  },
+  'campaign.won': {
+    category: 'agente',
+    level: 'ping',
+    severity: 'success',
+    label: 'campanha bateu a meta',
+    hint: 'um lead atingiu a meta da campanha (cadastro, reunião ou resposta) e a campanha encerrou',
+    anchor: { role: 'follows', key: (d) => `campaign:${d.campaignId}` },
+  },
+  'campaign.ended': {
+    category: 'agente',
+    level: 'normal',
+    severity: (d) => (d.status === 'exhausted' ? 'warning' : 'info'),
+    label: 'campanha encerrada',
+    anchor: { role: 'follows', key: (d) => `campaign:${d.campaignId}` },
   },
   'system.boot': {
     category: 'sistema',

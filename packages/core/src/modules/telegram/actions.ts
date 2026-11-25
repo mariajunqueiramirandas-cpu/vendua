@@ -18,6 +18,7 @@ import { approveMessage, rejectMessage } from '../threads.ts';
 import {
   agenteView,
   applyMute,
+  campanhaView,
   frotaView,
   memoriaView,
   muteDurationPicker,
@@ -53,7 +54,8 @@ const LEAD_PAUSE_RE = new RegExp(`^lp:([pr]):(${UUID})$`);
 const LEAD_MODE_RE = new RegExp(`^lm:([da]):(${UUID})$`);
 const AGENT_LEVEL_RE = /^al:(off|copilot|supervised|autopilot)$/;
 const AGENT_JOB_RE = /^aj:(reply|outreach|discovery|strategist)$/;
-const AGENT_BTN_RE = /^ag:([tmbs])$/;
+const AGENT_BTN_RE = /^ag:([tmbsc])$/;
+const CAMPAIGN_BTN_RE = new RegExp(`^cp(v?):([prsbg]):(${UUID})$`);
 const MEM_DEL_RE = new RegExp(`^md:(${UUID})$`);
 const PROPOSAL_RE = new RegExp(`^p:([yn]):(${UUID})$`);
 const MUTE_CAT_RE = /^mc:([a-z]+)$/;
@@ -68,6 +70,10 @@ const REASONS: Record<string, string> = {
   INCIDENT_NOT_FOUND: 'esse incidente não existe mais',
   PROPOSAL_NOT_FOUND: 'essa proposta não existe mais',
   MEMORY_NOT_FOUND: 'essa regra já foi removida',
+  CAMPAIGN_NOT_FOUND: 'essa campanha não existe mais',
+  CAMPAIGN_ENDED: 'essa campanha já foi encerrada',
+  CAMPAIGN_LIMIT: 'já existem muitas campanhas ativas — pause ou encerre uma antes',
+  CAMPAIGN_BUDGET_EXHAUSTED: 'orçamento esgotado — toque em ➕ +US$10 para retomar',
 };
 
 export function refusal(e: unknown): string {
@@ -226,11 +232,56 @@ export async function runCallback(
         await editThis(client, click, await agenteView(c));
         return;
       }
+      if (op === 'c') {
+        await answerToast(client, click.callbackId);
+        await editThis(client, click, await campanhaView(c));
+        return;
+      }
       if (op === 's') {
         await triggerBoardRun(c.sql, { kind: 'strategist', by, idemKey: key });
         await answerToast(client, click.callbackId, '🔎 revisão do estrategista iniciada');
         return;
       }
+    }
+
+    const cp = CAMPAIGN_BTN_RE.exec(click.data);
+    if (cp) {
+      const [, fromView, op, campaignId] = cp as unknown as [string, string, string, string];
+      if (op === 'g') {
+        await openPrompt(c, click, client, {
+          kind: 'campaign_guide',
+          targetId: campaignId,
+          promptText: `🚀 ${b('como você quer direcionar esta campanha?')}\nresponda em texto ou áudio — o diretor ajusta o playbook e age agora.`,
+          placeholder: 'ex.: foca em hamburguerias de BH e testa outro ângulo…',
+        });
+        return;
+      }
+      const { bumpCampaignBudget, pauseCampaign, resumeCampaign, stopCampaign } =
+        await import('../../crm/campaigns.ts');
+      let toast = 'feito';
+      if (op === 'p') {
+        await pauseCampaign(c.sql, { campaignId, by, idemKey: key });
+        toast = '⏸ campanha pausada';
+      } else if (op === 'r') {
+        await resumeCampaign(c.sql, { campaignId, by, idemKey: key });
+        toast = '▶️ campanha retomada';
+      } else if (op === 'b') {
+        await bumpCampaignBudget(c.sql, { campaignId, addUsd: 10, by, idemKey: key });
+        toast = '➕ +US$10 adicionados';
+      } else if (op === 's') {
+        await stopCampaign(c.sql, { campaignId, by, idemKey: key });
+        toast = '🛑 campanha encerrada';
+      }
+      await answerToast(client, click.callbackId, toast);
+      if (fromView) await editThis(client, click, await campanhaView(c));
+      await syncAnchorCards(
+        c.sql,
+        c.ctx,
+        client,
+        `campaign:${campaignId}`,
+        fromView ? undefined : clicked,
+      );
+      return;
     }
 
     const md = MEM_DEL_RE.exec(click.data);

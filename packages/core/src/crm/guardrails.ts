@@ -383,12 +383,108 @@ export async function checkSendAllowedTx(
         return { ok: false, forceDraft: false, reason: 'unanswered sequence ended' };
     }
 
+    if (channel === 'whatsapp') {
+      const cold = await whatsappColdCapTx(tx, g, leadId, opts.messageId);
+      if (cold) return { ok: false, forceDraft: false, reason: cold };
+    }
     if (channel === 'instagram') {
       const cold = await instagramColdCapTx(tx, g, leadId, opts.messageId);
       if (cold) return { ok: false, forceDraft: false, reason: cold };
     }
     return { ok: true, forceDraft: false };
   }
+}
+
+/** Account-wide WhatsApp cold-open budget: opening a conversation with a lead who never
+ *  wrote on WhatsApp (and didn't request a site callback) counts against whatsappColdPerDay
+ *  (rolling 24h, agent sends only). 0 = uncapped. Replies and follow-ups on already-opened
+ *  threads are free. Returns the refusal reason, or null. */
+export async function whatsappColdCapTx(
+  tx: Sql,
+  g: Guardrails,
+  leadId: string,
+  excludeMessageId: string | null = null,
+): Promise<string | null> {
+  const cap = g.whatsappColdPerDay ?? DEFAULT_GUARDRAILS.whatsappColdPerDay;
+  if (cap <= 0) return null;
+  const lead = (
+    await tx<{ wrote: number; opened: number; callback: number }[]>`
+      select
+        count(*) filter (where m.direction = 'in' and not m.historical)::int as wrote,
+        count(*) filter (where m.direction = 'out'
+          and m.status in ('queued', 'sending', 'sent', 'delivered'))::int as opened,
+        (select count(*)::int from lead_activities a
+          where a.lead_id = ${leadId} and a.meta->>'type' = 'site_callback') as callback
+      from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and t.channel = 'whatsapp'
+        and m.id is distinct from ${excludeMessageId}::uuid
+    `
+  )[0]!;
+  if (lead.wrote > 0 || lead.opened > 0 || lead.callback > 0) return null;
+  await tx`select pg_advisory_xact_lock(hashtext('wa-cold-cap'))`;
+  const used = (
+    await tx<{ n: number }[]>`
+      select count(distinct o.id)::int as n from (
+        select t.id, t.lead_id, min(m.created_at) as opened_at
+        from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.channel = 'whatsapp' and m.direction = 'out'
+          and m.id is distinct from ${excludeMessageId}::uuid
+          and m.status in ('queued', 'sending', 'sent', 'delivered')
+        group by t.id, t.lead_id
+      ) o
+      join lead_messages first on first.thread_id = o.id and first.created_at = o.opened_at
+      where o.opened_at > now() - interval '1 day'
+        and first.author = 'agent'
+        and not exists (
+          select 1 from lead_messages i
+          where i.thread_id = o.id and i.direction = 'in' and not i.historical and i.created_at < o.opened_at
+        )
+        and not exists (
+          select 1 from lead_activities a
+          where a.lead_id = o.lead_id and a.meta->>'type' = 'site_callback' and a.at < o.opened_at
+        )
+    `
+  )[0]!.n;
+  return used >= cap ? 'whatsapp cold-outreach daily cap reached' : null;
+}
+
+/** Remaining rolling-24h WhatsApp cold-open slots (null remaining = uncapped) and next free slot. */
+export async function whatsappColdBudgetTx(
+  tx: Sql,
+  g: Guardrails,
+): Promise<{ cap: number; used: number; remaining: number | null; nextSlotAt: Date | null }> {
+  const cap = g.whatsappColdPerDay ?? DEFAULT_GUARDRAILS.whatsappColdPerDay;
+  if (cap <= 0) return { cap: 0, used: 0, remaining: null, nextSlotAt: null };
+  const [row] = await tx<{ used: number; oldest: Date | null }[]>`
+    select count(distinct o.id)::int as used, min(o.opened_at) as oldest from (
+      select t.id, t.lead_id, min(m.created_at) as opened_at
+      from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.channel = 'whatsapp' and m.direction = 'out'
+        and m.status in ('queued', 'sending', 'sent', 'delivered')
+      group by t.id, t.lead_id
+    ) o
+    join lead_messages first on first.thread_id = o.id and first.created_at = o.opened_at
+    where o.opened_at > now() - interval '1 day'
+      and first.author = 'agent'
+      and not exists (
+        select 1 from lead_messages i
+        where i.thread_id = o.id and i.direction = 'in' and not i.historical and i.created_at < o.opened_at
+      )
+      and not exists (
+        select 1 from lead_activities a
+        where a.lead_id = o.lead_id and a.meta->>'type' = 'site_callback' and a.at < o.opened_at
+      )
+  `;
+  const used = row?.used ?? 0;
+  const remaining = Math.max(0, cap - used);
+  if (remaining > 0) return { cap, used, remaining, nextSlotAt: null };
+  const next = row?.oldest
+    ? new Date(new Date(row.oldest).getTime() + 86_400_000 + 120_000)
+    : new Date(Date.now() + 3_600_000);
+  return { cap, used, remaining: 0, nextSlotAt: next };
 }
 
 /** Account-wide cold-DM budget: opening a conversation with a lead who never

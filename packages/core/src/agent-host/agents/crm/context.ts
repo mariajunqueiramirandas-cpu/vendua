@@ -387,9 +387,16 @@ export async function huntSubjectTx(
     if (typeof p.target === 'number' && p.target > 0)
       parts.push(`META: criar até ${Math.floor(p.target)} leads`);
     if (p.briefName) parts.push(`BRIEF: ${p.briefName}`);
+    if (p.campaignAngle) parts.push(`ÂNGULO DA CAMPANHA: ${p.campaignAngle}`);
     const seg = segmentLines(await segmentStats(c));
     if (seg) parts.push(seg);
-    let parked = t.source.startsWith('staff') ? null : await automationParked(c, 'discovery');
+    let parked: string | null = null;
+    if (t.source.startsWith('campaign:')) {
+      const a = await agentSettingTx(c);
+      if (a.level === 'off') parked = 'autonomia do agente desligada';
+    } else if (!t.source.startsWith('staff')) {
+      parked = await automationParked(c, 'discovery');
+    }
     // a hunt with nothing to research with would only invent prospects: it costs no model call
     if (!parked) {
       const { disabled } = await workspaceTx(c);
