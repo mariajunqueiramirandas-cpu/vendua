@@ -340,7 +340,7 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
     ).length;
     if (!isInboundOrigin && liveIn === 1 && liveOut >= 1) {
       parts.push(
-        'MOMENTO: primeira resposta do lead à nossa abordagem fria. Se ela fez uma pergunta direta (ex.: preço ou link), responda direto; se apenas sinalizou abertura ("sim", "faz", "como funciona?", "no WhatsApp mesmo"), acolha com leveza, explique rapidinho como entraria no dia a dia dela e faça 1 pergunta genuína — sem empurrar preço nem link de cadastro.',
+        'MOMENTO: primeira resposta do lead à nossa abordagem fria. Antes, veja se foi a pessoa ou o robô da loja (saudação, ausência, menu ou catálogo que não responde nada do que dissemos): robô não se responde. Se foi a pessoa e ela ainda não sabe o que a Venduá faz, diga em meia frase. Pergunta direta (ex.: preço ou link) → responda direto; abertura curta ("sim", "faz", "como funciona?", "no WhatsApp mesmo") → acolha com leveza e explique rapidinho como entraria no dia a dia dela, com no máximo 1 pergunta e sem empurrar preço nem link de cadastro. Se ela te tratou como cliente (mandou preços, perguntou sabor ou data), desfaça a confusão primeiro.',
       );
     }
     if (rows.length)

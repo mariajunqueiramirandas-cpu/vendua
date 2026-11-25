@@ -74,7 +74,7 @@ export interface TranscriptMessage {
   channel?: string;
   /** a voice note (an inbound one's body already starts with "[áudio]") */
   audio?: boolean;
-  /** the lead's machine answering our send, not a person (crm/auto-reply.ts) */
+  /** the lead's machine answering our send, not a person (the agent's mark_auto_reply) */
   auto_reply?: boolean;
 }
 
@@ -85,6 +85,18 @@ const STATUS_NOTE: Record<string, string> = {
   queued: 'na fila de envio',
   sending: 'na fila de envio',
 };
+
+// the minute stamp hides it: a store's WhatsApp greets in seconds, a person takes longer. A
+// fact for the model to weigh, never a verdict on its own.
+function quickAfterOurs(prev: TranscriptMessage | undefined, m: TranscriptMessage): string | null {
+  if (!prev || prev.direction !== 'out' || prev.status === 'draft' || prev.status === 'rejected')
+    return null;
+  const s = Math.round(
+    (new Date(m.created_at).getTime() - new Date(prev.created_at).getTime()) / 1000,
+  );
+  if (s < 0 || s >= 180) return null;
+  return `chegou ${s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`} depois da nossa mensagem`;
+}
 
 /** One line per message, oldest first: `[sex 26/09 19:07] LEAD: Ola`. */
 export function renderTranscript(
@@ -101,7 +113,7 @@ function transcriptEntries(
   tz: string,
   opts: { tagChannel?: boolean },
 ): string[] {
-  return msgs.map((m) => {
+  return msgs.map((m, i) => {
     const who =
       m.direction === 'in'
         ? m.auto_reply
@@ -116,6 +128,7 @@ function transcriptEntries(
       opts.tagChannel && m.channel,
       m.direction === 'out' && m.audio && 'em áudio',
       STATUS_NOTE[m.status],
+      m.direction === 'in' && quickAfterOurs(msgs[i - 1], m),
     ].filter(Boolean);
     const body = (m.body ?? '').trim() || '(vazio)';
     return `[${stamp(m.created_at, tz)}] ${who}${notes.length ? ` (${notes.join(', ')})` : ''}: ${body}`;

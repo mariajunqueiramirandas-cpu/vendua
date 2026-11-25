@@ -602,7 +602,7 @@ export const unsubscribeTool = defineTool<
 export const markAutoReplyTool = defineTool<{ reason?: string | undefined }, Sql>({
   name: 'mark_auto_reply',
   description:
-    "The lead's messages since our last send came from their business's machine, not a person: a WhatsApp Business greeting or away message, an Instagram instant reply, a chatbot menu, an autoresponder ('Olá, seja bem-vindo à X! Como podemos ajudar?', 'Nosso horário de atendimento é...', 'Retornaremos em breve', a catalog link), arriving right after our send and answering nothing we said. Marks them as automatic, puts the follow-up back on the agenda and ends this turn WITHOUT a reply: a person who gets a robot's greeting waits for the human. Never for a short human answer, and never when a person wrote after the robot.",
+    "The lead's messages since our last send came from their business's machine, not a person: a WhatsApp Business greeting or away message, an Instagram instant reply, a chatbot menu, an autoresponder ('Olá, seja bem-vindo à X! Como podemos ajudar?', 'Nosso horário de atendimento é...', 'Retornaremos em breve', a catalog link), often arriving right after our send (sometimes minutes later, when their phone comes online) and answering nothing we said. Marks them as automatic, puts the follow-up back on the agenda and ends this turn WITHOUT a reply: a person who gets a robot's greeting waits for the human. Never for a short human answer, and never when a person wrote after the robot.",
   effect: 'write',
   input: s.object({
     reason: s.string({ max: 200 }).describe('what gave the machine away').optional(),

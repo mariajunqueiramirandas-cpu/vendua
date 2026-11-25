@@ -56,8 +56,6 @@ export async function ingestInbound(
     unverifiedSender?: boolean;
     /** a WhatsApp voice note: the body is its transcript (crm/voice.ts hearLeadVoiceNote) */
     audio?: boolean;
-    /** the provider's timestamp of a live message: times an auto reply against our send */
-    providerAt?: Date;
   },
 ): Promise<IngestResult> {
   if (input.channel === 'whatsapp' && containsMerchantOtp(input.body)) {
@@ -114,7 +112,6 @@ export async function ingestInbound(
         ...(input.historical ? { historical: input.historical } : {}),
         ...(input.unverifiedSender ? { unverifiedSender: true } : {}),
         ...(input.audio ? { audio: true } : {}),
-        ...(input.providerAt && !input.historical ? { providerAt: input.providerAt } : {}),
         ...(history
           ? {
               createLead: history.mode === 'leads',
@@ -122,10 +119,7 @@ export async function ingestInbound(
             }
           : {}),
       });
-      // a lead's machine greeting our send (crm/auto-reply.ts) is context: no turn, and the
-      // drafts, first contact and follow-ups it would otherwise retire stay
-      if (!result || input.historical || input.direction === 'out' || result.autoReply)
-        return result;
+      if (!result || input.historical || input.direction === 'out') return result;
       const res = result;
       const dedupeKey = `crm:inbound:${res.messageId}`;
       // Record the message and its reply request in the same transaction.
@@ -225,10 +219,6 @@ export async function ingestInbound(
   }
   if (!res) return { ignored: 'histórico de contato sem lead' };
   if (input.historical || input.direction === 'out') return res;
-  if (res.autoReply) {
-    if (!res.alreadySeen) emitControlEvent('thread.message', res.threadId);
-    return res;
-  }
   if (!res.alreadySeen) {
     emitControlEvent('thread.message', res.threadId);
     if (res.leadCreated) emitControlEvent('lead.change', res.leadId);

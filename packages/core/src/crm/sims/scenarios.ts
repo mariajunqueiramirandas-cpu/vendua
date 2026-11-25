@@ -238,6 +238,31 @@ export const SIM_SCENARIOS: SimScenario[] = [
     maxTurns: 8,
   },
   {
+    name: 'confeitaria-acha-que-e-cliente',
+    description:
+      'quem atende a loja trata todo número novo como cliente — testa se o agente diz o que a Venduá faz e não vira interrogatório',
+    lead: {
+      name: 'Choco-Rá',
+      businessName: 'Choco-Rá',
+      whatsapp: `${SP}0010019`,
+      city: 'Cabo Frio',
+      segment: 'confeitaria',
+      fitScore: 8,
+      fitReason: 'confeitaria com Kit Festa em destaque e encomendas pelo WhatsApp',
+      agentGoal: 'negotiation',
+    },
+    dossier: [
+      'Choco-Rá (Cabo Frio). Instagram com destaque "Kit Festa" (doces e bolo para festa sob encomenda) e pedidos pelo WhatsApp.',
+    ],
+    persona:
+      'Você atende o WhatsApp da Choco-Rá entre uma encomenda e outra. Número desconhecido é cliente até que te digam o contrário. Se a primeira mensagem não deixar claro que a pessoa oferece um serviço pra sua loja, você acha que é cliente: responde simpática, conta que tira encomenda pelo WhatsApp com sinal e, se falarem de kit ou de preço, manda "[documento: Kit Festas - Valores.pdf]". Se ela te fizer pergunta atrás de pergunta sobre sua rotina sem dizer o que vende, você estranha e pergunta "mas você quer encomendar pra quando?"; na quarta pergunta sem explicação, some (FIM). Se ela disser claramente que é uma ferramenta pra sua loja e explicar em poucas palavras, você se interessa: conta que o Pix do sinal cai na hora pra você, que perde tempo montando orçamento de kit pra cada cliente e pergunta quanto custa.',
+    hidden:
+      'Você monta uns 30 orçamentos de Kit Festa por semana à mão, calculando sabor e quantidade pra cada cliente. Um link onde o cliente monta o kit com o valor já calculado e escolhe a data te pouparia horas.',
+    success:
+      'A primeira mensagem já diz em meia frase o que a Venduá faz (loja online/link de pedidos pro negócio dela), sem pergunta que soe como cliente querendo comprar. Se for tratado como cliente (tabela, PDF, "pra quando?"), desfaz a confusão na hora, sem fingir que vai comprar. Depois que ela conta como trabalha, liga isso a um recurso real da Venduá em vez de emendar outra pergunta; nunca repete pergunta nem faz mais de duas perguntas seguidas sobre a rotina sem mostrar nada. Falha: não explicar o que a Venduá é, agradecer o PDF como quem vai comprar, interrogatório.',
+    maxTurns: 8,
+  },
+  {
     name: 'marmitaria-frio-preco',
     description:
       'marmitaria abordada a frio que pergunta "como funciona?" e "quanto custa?" antes de decidir começar',
