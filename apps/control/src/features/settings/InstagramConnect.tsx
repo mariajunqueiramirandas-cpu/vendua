@@ -199,7 +199,7 @@ export function InstagramConnect({
           captcha={captcha}
           instructions={shown.instructions}
           busy={busy}
-          onSolved={(token) =>
+          onSubmit={(token) =>
             mutate({
               type: 'submit',
               input: { captcha_token: token, captcha_instance: captcha.instance },

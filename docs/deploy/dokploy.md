@@ -261,6 +261,9 @@ people who never wrote first, and Instagram can challenge or restrict the accoun
    ideally, `IG_PROXY` pointing at a static residential proxy in Brazil.
 2. CRM → config → conexões → instagram → **usar sidecar**, then **entrar com
    usuário e senha**. The same card handles 2FA, approvals, and supported CAPTCHA challenges.
+   Meta's CAPTCHA widget only reports a solve to a page on a Meta domain, so the card can't
+   embed it: it hands staff a script to paste in an instagram.com tab's console (on a computer)
+   that shows the CAPTCHA there, and the solved code is pasted back into the card.
    When Instagram requires verification in its app, open Instagram from the card and start
    a fresh login after verifying the account.
 3. Estúdio → limites → **DMs frias no instagram / dia** caps agent first
