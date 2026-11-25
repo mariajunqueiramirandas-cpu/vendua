@@ -117,6 +117,7 @@ export const outHint = (s: Step): string => {
     return `${base}${o.contactRun ? ' · contato auto' : ''}`;
   }
   if (s.name === 'create_lead' && createdLeadId(o)) {
+    if (o.lowFit === true) return '+ registro (fit baixo)';
     return `+ lead${o.contactRun || o.firstContactQueued ? ' · contato auto' : ''}`;
   }
   if (s.name === 'web_search' || s.name === 'serp') {

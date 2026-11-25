@@ -15,7 +15,9 @@ import {
   type PlatformSessionRow,
 } from '../src/platform-whatsapp/session.ts';
 import { whatsappRegistered } from '../src/crm/channels/whatsapp.ts';
+import { applyIgEvent } from '../src/crm/channels/instagram.ts';
 import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
+import { applyCrm, EMPTY_TURN, type CrmCustom } from '../src/agent-host/agents/crm/shared.ts';
 import { DISCOVERY_TOOLS } from '../src/agent-host/agents/crm/discovery.ts';
 import { CRM_STATES } from '../src/agent-host/agents/crm/index.ts';
 import {
@@ -213,7 +215,7 @@ describe('probeWhatsApp transaction safety', () => {
 });
 
 describe('scoring & liveness prompts', () => {
-  test('discovery prompt documents liveness checks and aligned fit/intent guides with default 7', () => {
+  test('discovery prompt documents bio/link following, liveness checks, and aligned fit/intent guides with default 7', () => {
     const p = buildSystemPrompt(
       'discovery',
       DEFAULT_PITCH,
@@ -224,11 +226,31 @@ describe('scoring & liveness prompts', () => {
         autoContact: { enabled: true, minScore: 7 },
       },
     );
+    expect(p).toContain('## Como o negócio recebe pedidos hoje (siga a bio e os links)');
+    expect(p).toContain('outboundLinks');
+    expect(p).toContain('bioPages');
+    expect(p).toContain('Brendi');
+    expect(p).toContain('concorrente');
+    expect(p).toContain('não contam pra META');
+    expect(p).toContain('iFood');
     expect(p).toContain('## Verificação de negócio ativo');
     expect(p).toContain('180 dias');
     expect(p).toContain('fitScore ≥ 7 (ou fitScore ≥ 6 com intentScore ≥ 6)');
     expect(p).toContain('WhatsApp, Instagram ou e-mail');
     expect(p).toContain('atrito observável');
+  });
+
+  test('outreach prompt instructs checking bio/site links when dossier lacks ordering flow', () => {
+    const p = buildSystemPrompt(
+      'outreach',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        tools: new Set(CRM_STATES.outreach),
+      },
+    );
+    expect(p).toContain('seguindo bio e links do site');
   });
 
   test('reply prompt instructs updating fitScore/intentScore during live conversations', () => {
@@ -243,58 +265,149 @@ describe('scoring & liveness prompts', () => {
     );
     expect(p).toContain('Atualize fitScore/intentScore');
   });
+
+  test('applyCrm fold keeps lowFit tracked-only leads out of leadsCreated while tracking leadId', () => {
+    const init = { turn: { ...EMPTY_TURN, kind: 'discovery' as const } } as unknown as Parameters<
+      typeof applyCrm
+    >[0];
+    const afterLow = applyCrm(init, {
+      type: 'tool.returned',
+      payload: {
+        name: 'create_lead',
+        ok: true,
+        data: { leadId: 'lead-brendi', created: true, lowFit: true },
+      },
+    } as unknown as Parameters<typeof applyCrm>[1]) as unknown as CrmCustom;
+    expect(afterLow.turn.leads).toEqual(['lead-brendi']);
+    expect(afterLow.turn.leadsCreated).toBe(0);
+
+    const afterQualified = applyCrm(
+      afterLow as unknown as Parameters<typeof applyCrm>[0],
+      {
+        type: 'tool.returned',
+        payload: {
+          name: 'create_lead',
+          ok: true,
+          data: { leadId: 'lead-real', created: true },
+        },
+      } as unknown as Parameters<typeof applyCrm>[1],
+    ) as unknown as CrmCustom;
+    expect(afterQualified.turn.leads).toEqual(['lead-brendi', 'lead-real']);
+    expect(afterQualified.turn.leadsCreated).toBe(1);
+  });
 });
 
 describe.skipIf(!OWNER_URL)('discovery liveness gate + backlog sweep (db)', () => {
   const b = crmBench('score-liveness');
   const origFetch = globalThis.fetch;
   const origMonid = process.env.MONID_API_KEY;
-  beforeAll(b.setup);
+  const origIgSecret = process.env.IG_SIDECAR_SECRET;
+  const origIgUrl = process.env.IG_SIDECAR_URL;
+  const IG_SECRET = 'test-ig-liveness-secret';
+  let priorIg: { driver: string; enabled: boolean }[] = [];
+
+  beforeAll(async () => {
+    await b.setup();
+    priorIg = await b.sql<{ driver: string; enabled: boolean }[]>`
+      select driver, enabled from control_integrations where kind = 'instagram'`;
+  });
   beforeEach(() => b.mine.clear());
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = origFetch;
+    await applyIgEvent(
+      b.sql as unknown as Sql,
+      { type: 'state', status: { state: 'off' } },
+      IG_SECRET,
+    );
+    if (!priorIg.some((p) => p.driver === 'sidecar'))
+      await b.sql`delete from control_integrations where kind = 'instagram' and driver = 'sidecar'`;
+    for (const p of priorIg)
+      await b.sql`update control_integrations set enabled = ${p.enabled}
+        where kind = 'instagram' and driver = ${p.driver}`;
     if (origMonid === undefined) delete process.env.MONID_API_KEY;
     else process.env.MONID_API_KEY = origMonid;
+    if (origIgSecret === undefined) delete process.env.IG_SIDECAR_SECRET;
+    else process.env.IG_SIDECAR_SECRET = origIgSecret;
+    if (origIgUrl === undefined) delete process.env.IG_SIDECAR_URL;
+    else process.env.IG_SIDECAR_URL = origIgUrl;
   });
   afterAll(b.teardown);
 
-  const stubMonid = (outputs: Record<string, unknown>[][]) => {
-    process.env.MONID_API_KEY = 'test-key';
-    let idx = 0;
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ output: outputs[idx++] ?? [], cost: 0.003 }), {
+  const stubResearch = async (opts: {
+    monid?: Record<string, unknown>[][];
+    igProfiles?: Record<string, Record<string, unknown>>;
+  }) => {
+    if (opts.monid) process.env.MONID_API_KEY = 'test-key';
+    if (opts.igProfiles) {
+      process.env.IG_SIDECAR_SECRET = IG_SECRET;
+      process.env.IG_SIDECAR_URL = 'http://ig-sidecar.test:8790';
+      await upsertIntegration(
+        b.sql as unknown as Sql,
+        { kind: 'instagram', driver: 'sidecar', enabled: true },
+        b.key(),
+      );
+      await applyIgEvent(
+        b.sql as unknown as Sql,
+        { type: 'state', status: { state: 'open' } },
+        IG_SECRET,
+      );
+    }
+    let monidIdx = 0;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const target = String(url);
+      if (target.includes('/v1/profile')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { username?: string };
+        const key = (body.username ?? '').toLowerCase();
+        const prof = opts.igProfiles?.[key];
+        if (!prof) {
+          return new Response(
+            JSON.stringify({ error: { code: 'user_not_found', message: 'not found' } }),
+            { status: 404, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(JSON.stringify(prof), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ output: opts.monid?.[monidIdx++] ?? [], cost: 0.003 }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      })) as unknown as typeof fetch;
+      });
+    }) as unknown as typeof fetch;
   };
 
   test('create_lead rejects permanently closed or IG-only stale shops, and accepts active ones', async () => {
     await b.settings('autopilot', { discoveryContactMinScore: 7 });
-    stubMonid([
-      [
-        {
-          name: `Doceria Fechada ${b.nonce}`,
-          phone: '+55 11 99111-2222',
-          permanentlyClosed: true,
-        },
-        {
-          name: `Padaria Ativa ${b.nonce}`,
-          phone: '+55 11 99222-3333',
-          businessStatus: 'OPERATIONAL',
-          reviewsCount: 55,
-          openingHours: ['Seg-Dom 07:00-20:00'],
-        },
+    await stubResearch({
+      monid: [
+        [
+          {
+            name: `Doceria Fechada ${b.nonce}`,
+            phone: '+55 11 99111-2222',
+            permanentlyClosed: true,
+          },
+          {
+            name: `Padaria Ativa ${b.nonce}`,
+            phone: '+55 11 99222-3333',
+            businessStatus: 'OPERATIONAL',
+            reviewsCount: 55,
+            openingHours: ['Seg-Dom 07:00-20:00'],
+          },
+        ],
       ],
-      [
-        {
+      igProfiles: {
+        [`stale_${b.nonce}`]: {
           username: `stale_${b.nonce}`,
           fullName: `Doces Parados ${b.nonce}`,
           biography: 'Doces artesanais',
           postsCount: 5,
-          latestPosts: [{ timestamp: daysAgoIso(250), caption: 'Feliz 2025' }],
+          isPrivate: false,
+          isBusinessAccount: true,
+          latestPosts: [{ timestamp: daysAgoUnixSec(250), caption: 'Feliz 2025' }],
         },
-      ],
-    ]);
+      },
+    });
 
     const { outcomes } = await b.runTools(
       [
@@ -348,21 +461,28 @@ describe.skipIf(!OWNER_URL)('discovery liveness gate + backlog sweep (db)', () =
     if (activeRes.leadId) b.mine.add(activeRes.leadId);
   });
 
-  test('instagram whatsappNumber verifies WhatsApp and dual-score fit=6 + intent=6 queues first contact', async () => {
+  test('instagram whatsappNumber & multi-link externalUrls verify WhatsApp and dual-score fit=6 + intent=6 queues first contact', async () => {
     await b.settings('autopilot', { discoveryContactMinScore: 7 });
     const waNum = b.phone();
-    stubMonid([
-      [
-        {
+    await stubResearch({
+      igProfiles: {
+        [`doces_${b.nonce}`]: {
           username: `doces_${b.nonce}`,
           fullName: `Doces Vivos ${b.nonce}`,
           biography: 'Encomendas pelo WhatsApp!',
+          externalUrl: 'https://docesvivos.pages.dev',
+          externalUrls: [
+            { url: 'https://docesvivos.pages.dev', title: 'Cardápio e WhatsApp' },
+            { url: `https://wa.me/${waNum.replace(/\D/g, '')}`, title: 'Encomendas' },
+          ],
           whatsappNumber: waNum,
           postsCount: 25,
-          latestPosts: [{ timestamp: daysAgoIso(4), caption: 'Bolo de cenoura saindo agora!' }],
+          isPrivate: false,
+          isBusinessAccount: true,
+          latestPosts: [{ timestamp: daysAgoUnixSec(4), caption: 'Bolo de cenoura saindo agora!' }],
         },
-      ],
-    ]);
+      },
+    });
 
     const { outcomes } = await b.runTools(
       [
@@ -373,6 +493,7 @@ describe.skipIf(!OWNER_URL)('discovery liveness gate + backlog sweep (db)', () =
             name: `Doces Vivos ${b.nonce}`,
             instagram: `@doces_${b.nonce}`,
             whatsapp: waNum,
+            website: 'https://docesvivos.pages.dev',
             fitScore: 6,
             intentScore: 6,
             findings:
@@ -382,6 +503,13 @@ describe.skipIf(!OWNER_URL)('discovery liveness gate + backlog sweep (db)', () =
       ],
       { kind: 'discovery', payload: { query: 'docerias' } },
     );
+    const out0 = outcomes[0];
+    if (!out0 || 'blocked' in out0) throw new Error('expected unblocked instagram_profile');
+    const igData = out0.data as {
+      profile: { externalUrls?: { url: string; title?: string }[] };
+    };
+    expect(igData.profile.externalUrls).toHaveLength(2);
+
     const out1 = outcomes[1];
     if (!out1 || 'blocked' in out1) throw new Error('expected unblocked create_lead');
     const created = out1.data as {
@@ -395,6 +523,75 @@ describe.skipIf(!OWNER_URL)('discovery liveness gate + backlog sweep (db)', () =
     const [row] = await b.sql<{ whatsapp_verified: boolean }[]>`
       select whatsapp_verified from leads where id = ${created.leadId}`;
     expect(row!.whatsapp_verified).toBe(true);
+  });
+
+  test('low-fit competitor lead is saved with tags for cross-run dedupe without autocontact, IG follow, or burning META', async () => {
+    await b.settings('autopilot', { discoveryContactMinScore: 7 });
+    const handle = `brendi_${b.nonce}`;
+    const { outcomes } = await b.runTools(
+      [
+        [
+          'create_lead',
+          {
+            name: `Confeitaria Brendi ${b.nonce}`,
+            instagram: `@${handle}`,
+            website: 'https://menu.brendi.com.br/confeitaria-brendi',
+            tags: ['concorrente', 'brendi'],
+            fitScore: 2,
+            fitReason: 'já opera delivery e cardápio ativo na Brendi',
+            intentScore: 0,
+            intentReason: 'sem lacuna observada',
+            findings:
+              'Confeitaria ativa em Cabo Frio; link da bio leva ao cardápio digital ativo na Brendi.',
+          },
+        ],
+        ['search_leads', { q: `Confeitaria Brendi ${b.nonce}` }],
+        [
+          'create_lead',
+          {
+            name: `Doceria Sem Link ${b.nonce}`,
+            email: `semlink-${b.nonce}@example.com`,
+            fitScore: 8,
+            intentScore: 5,
+            findings:
+              'Doceria ativa em Cabo Frio recebendo encomendas manualmente pelo WhatsApp sem link próprio.',
+          },
+        ],
+      ],
+      { kind: 'discovery', payload: { query: 'confeitarias', target: 1 } },
+    );
+    const out0 = outcomes[0];
+    if (!out0 || 'blocked' in out0) throw new Error('expected unblocked low-fit create_lead');
+    const low = out0.data as {
+      leadId: string;
+      lowFit?: boolean;
+      firstContactQueued?: boolean;
+      leadsCreated: number;
+    };
+    b.mine.add(low.leadId);
+    expect(low.lowFit).toBe(true);
+    expect(low.firstContactQueued).toBeUndefined();
+    expect(low.leadsCreated).toBe(0);
+
+    // Low-fit tracked leads never spend Instagram follow budget.
+    const [follow] = await b.sql<{ handle: string }[]>`
+      select handle from ig_follows where handle = ${handle}`;
+    expect(follow).toBeUndefined();
+
+    // Future runs immediately see fitScore + tags in search_leads.
+    const out1 = outcomes[1];
+    if (!out1 || 'blocked' in out1) throw new Error('expected unblocked search_leads');
+    const hits = (out1.data as { matches: { fitScore: number | null; tags: string[] }[] }).matches;
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.fitScore).toBe(2);
+    expect(hits[0]!.tags).toEqual(expect.arrayContaining(['descoberto', 'concorrente', 'brendi']));
+
+    // Because the low-fit lead did not consume target=1, the qualified lead still fits in META.
+    const out2 = outcomes[2];
+    if (!out2 || 'blocked' in out2) throw new Error('expected unblocked qualified create_lead');
+    const qual = out2.data as { leadId: string; leadsCreated: number };
+    b.mine.add(qual.leadId);
+    expect(qual.leadsCreated).toBe(1);
   });
 
   test('sweepOutreachBacklog queues first contact for eligible untouched leads once (idempotent)', async () => {

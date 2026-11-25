@@ -35,6 +35,9 @@ export interface ReadPage {
   text: string;
   /** internal links worth a follow-up read (contato, sobre, cardápio…) */
   nav: string[];
+  /** meaningful outbound links on the page (digital menus, ordering platforms,
+   *  marketplaces, PDFs, forms, shorteners, external sites) — never dropped */
+  outboundLinks?: string[];
   /** provider cut the render short (instagram's '…mais' tail etc.) — the
    *  contact line can sit past the fold; resolve via search/directories. */
   truncated?: boolean;
@@ -49,6 +52,7 @@ export interface ReadPagesResult {
 }
 
 export interface DiscoveryProvider {
+  readonly isMock?: boolean;
   search(query: string, purpose: string): Promise<DiscoveryResult>;
   readPages(urls: string[], purpose: string): Promise<ReadPagesResult>;
 }
@@ -83,6 +87,11 @@ export interface AnnotatedResult {
 
 const LISTING_HOSTS = new Set([
   'ifood.com.br',
+  'rappi.com.br',
+  'rappi.com',
+  'aiqfome.com',
+  'deliverymuch.com.br',
+  'querodelivery.com',
   'tripadvisor.com.br',
   'tripadvisor.com',
   'guiamais.com.br',
@@ -94,16 +103,39 @@ const LISTING_HOSTS = new Set([
   'tiktok.com',
   'kwai.com',
   'linkedin.com',
-  // hosted ordering platforms — JS-shell pages that fetch renders empty; the
-  // store URL is still lead evidence, just a weak contact source
+  // hosted ordering platforms — JS-shell pages that fetch often renders thin;
+  // still crucial evidence of how the shop currently takes orders
+  'brendi.com.br',
+  'brendi.app',
   'anota.ai',
   'instadelivery.com.br',
   'cardapioweb.com',
+  'cardapioweb.com.br',
   'ola.click',
+  'olaclick.app',
   'deliverydireto.com.br',
   'saipos.com',
   'goomer.app',
   'takeat.app',
+  'menudino.com',
+  'menudino.com.br',
+  'yooga.app',
+  'neemo.com.br',
+  'jotaja.com',
+  'jotaja.com.br',
+  'diggy.menu',
+  'pedir.site',
+  'accon.app',
+  'multipedidos.com.br',
+  'grandchef.com.br',
+  'wabiz.com.br',
+  'expressodelivery.com.br',
+  'pedzap.com.br',
+  'vucadelivery.com.br',
+  'delivoro.com.br',
+  'menuintegrado.com',
+  'sischef.com',
+  'kyte.site',
   'ueniweb.com',
   '99app.com',
   // company registries — bot-blocked on fetch, so a read never pays off
@@ -111,13 +143,29 @@ const LISTING_HOSTS = new Set([
   'cnpj.info',
   'casadosdados.com',
 ]);
-/** link-in-bio hubs — where an ig-first business parks its real channels;
- *  the cheapest fetch to a wa.me link */
+/** free static-site / bio-page hosts where each business owns a subdomain
+ *  (e.g. torbolariadapreta.pages.dev, doceria.my.canva.site). Treated as
+ *  link-in-bio hubs for chasing, while still allowing same-host subpages. */
+const STATIC_SITE_HUB_HOSTS = new Set([
+  'pages.dev',
+  'vercel.app',
+  'netlify.app',
+  'canva.site',
+  'web.app',
+  'firebaseapp.com',
+  'github.io',
+  'framer.website',
+  'notion.site',
+  'wixsite.com',
+]);
+/** link-in-bio hubs — where an ig-first business parks its real channels
+ *  and menu/ordering links; the cheapest fetch to both wa.me and ordering URLs */
 const LINK_HUB_HOSTS = new Set([
   'linktr.ee',
   'lnk.bio',
   'bio.link',
   'beacons.ai',
+  'beacons.page',
   'linklist.bio',
   'allmylinks.com',
   'msha.ke',
@@ -128,16 +176,45 @@ const LINK_HUB_HOSTS = new Set([
   'linkbio.co',
   'camps.bio',
   'flow.page',
+  'taplink.cc',
+  'bio.site',
+  'bento.me',
+  'heylink.me',
+  'linkin.bio',
+  'insta.bio',
+  'instabio.cc',
+  'milkshake.app',
+  'liinks.co',
+  'direct.me',
+  'shor.by',
+  'snipfeed.co',
+  'linkr.bio',
+  'biolink.com.br',
+  'linkme.bio',
+  'sites.google.com',
+  ...STATIC_SITE_HUB_HOSTS,
 ]);
 /** URL shorteners — opaque tail, destination resolves on read. Kept out of
- *  LINK_HUB_HOSTS: on a hub page a shortener link is the OUTBOUND contact. */
+ *  LINK_HUB_HOSTS: on a hub page a shortener link is the OUTBOUND contact/menu. */
 const SHORTENER_HOSTS = new Set([
   'bit.ly',
+  'bitly.com',
   'w.app',
   'cutt.ly',
   'tinyurl.com',
   'rebrand.ly',
   'short.io',
+  'encurtador.com.br',
+  'contate.me',
+  't.ly',
+  'rb.gy',
+  'is.gd',
+  'shre.ink',
+  'abre.ai',
+  'l1nk.dev',
+  'goo.gl',
+  'me-qr.com',
+  'qrco.de',
 ]);
 /** social redirect wrappers — real destination sits in the `u` param;
  *  unwrap before parsing or a linktr.ee reads as an instagram link */
@@ -457,12 +534,60 @@ export function contactsFromLinks(links: string[]): FoundContacts {
   return out;
 }
 
-/** a url written out in prose — scheme optional for contact domains */
+/** a url written out in prose — scheme optional for contact/hub/shortener domains */
 const TEXT_URL_RE = /https?:\/\/[^\s"'<>()[\]]+/gi;
 const BARE_CONTACT_RE =
-  /\b(?:[\w-]+\.)?(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page|bit\.ly|w\.app|cutt\.ly|tinyurl\.com|rebrand\.ly|short\.io)\/[^\s"'<>()[\]]*/gi;
+  /\b(?:[\w-]+\.)?(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|beacons\.page|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page|taplink\.cc|bio\.site|bento\.me|heylink\.me|linkin\.bio|insta\.bio|instabio\.cc|milkshake\.app|liinks\.co|direct\.me|shor\.by|snipfeed\.co|linkr\.bio|biolink\.com\.br|linkme\.bio|sites\.google\.com|bit\.ly|bitly\.com|w\.app|cutt\.ly|tinyurl\.com|rebrand\.ly|short\.io|encurtador\.com\.br|contate\.me|t\.ly|rb\.gy|is\.gd|shre\.ink|abre\.ai|l1nk\.dev|goo\.gl|me-qr\.com|qrco\.de)\/[^\s"'<>()[\]]*/gi;
+/** bare subdomain bio-pages without a trailing path (e.g. "torbolariadapreta.pages.dev",
+ *  "doceria.carrd.co", "doceria.my.canva.site") — how Instagram renders bio links as text */
+const BARE_SUBDOMAIN_HUB_RE =
+  /(?<![\w@/.-])[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:my\.)?(?:carrd\.co|pages\.dev|canva\.site|vercel\.app|netlify\.app|bio\.site|bento\.me|wixsite\.com|web\.app|firebaseapp\.com|github\.io|framer\.website|notion\.site)(?:\/[^\s"'<>()[\]]*)?/gi;
 const EMAIL_TEXT_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const ASSET_TAIL_RE = /\.(?:png|jpe?g|gif|webp|svg|css|js|mjs|ico|woff2?|ttf|otf)$/i;
+const OUTBOUND_ASSET_RE =
+  /\.(?:png|jpe?g|gif|webp|avif|svg|ico|css|js|mjs|cjs|map|woff2?|ttf|otf|eot|mp4|webm|mp3|wav|ogg|xml|json)$/i;
+/** Pure infrastructure, analytics, and social-chrome hosts that add noise to outboundLinks. */
+const OUTBOUND_NOISE_HOSTS = new Set([
+  'fonts.googleapis.com',
+  'fonts.gstatic.com',
+  'googletagmanager.com',
+  'google-analytics.com',
+  'doubleclick.net',
+  'googlesyndication.com',
+  'gstatic.com',
+  'connect.facebook.net',
+  'static.cdninstagram.com',
+  'cloudflare.com',
+  'cloudflareinsights.com',
+  'sentry.io',
+  'w3.org',
+  'schema.org',
+  'gravatar.com',
+  'wordpress.org',
+  'cookiebot.com',
+  'onetrust.com',
+  'recaptcha.net',
+  'hcaptcha.com',
+  'meta.com',
+  'about.meta.com',
+  'transparency.meta.com',
+  'about.instagram.com',
+  'help.instagram.com',
+  'privacycenter.instagram.com',
+  'developers.facebook.com',
+  'policies.google.com',
+  'support.google.com',
+  'accounts.google.com',
+  'threads.net',
+  'threads.com',
+  'canva.com',
+  'wix.com',
+  'squarespace.com',
+  'vercel.com',
+  'netlify.com',
+  'pages.cloudflare.com',
+  'github.com',
+]);
 /** formatted BR phones — the required separator and \w-ish boundaries keep
  *  CNPJs/dates/prices out; bare contiguous digits only count in the 11-13
  *  mobile shape (a bare landline is indistinguishable from a 10-digit code) */
@@ -494,18 +619,42 @@ export function isBrMobilePhone(phone: string): boolean {
 }
 
 function isHubHost(host: string): boolean {
-  // subdomain-aware: carrd.co sites are <name>.carrd.co — an exact-match set
-  // would drop every one of them out of the hub path.
+  // subdomain-aware: carrd.co / pages.dev / canva.site sites are <name>.<host>
   return hostMatches(host, LINK_HUB_HOSTS);
 }
 
+function isStaticSiteHubSubdomain(host: string): boolean {
+  return !STATIC_SITE_HUB_HOSTS.has(host) && hostMatches(host, STATIC_SITE_HUB_HOSTS);
+}
+
+export function isShortenerUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    const h = u.hostname.toLowerCase().replace(/^www\./, '');
+    return SHORTENER_HOSTS.has(h) && u.pathname.split('/').filter(Boolean).length >= 1;
+  } catch {
+    return false;
+  }
+}
+
 /** profile-shaped url on a link-in-bio host — apex hubs carry the handle in
- *  the path (linktr.ee/x), subdomain hubs in the host (x.carrd.co) */
+ *  the path (linktr.ee/x), subdomain hubs in the host (x.carrd.co, x.pages.dev) */
 export function isProfileHubUrl(u: URL): boolean {
   const h = u.hostname.toLowerCase().replace(/^www\./, '');
   const segs = u.pathname.split('/').filter(Boolean).length;
+  if (h === 'sites.google.com') return segs >= 2 && /^\/view\//i.test(u.pathname);
   if (LINK_HUB_HOSTS.has(h) || SHORTENER_HOSTS.has(h)) return segs === 1;
   return hostMatches(h, LINK_HUB_HOSTS) && segs <= 1;
+}
+
+/** Strips tracking params (utm_*, fbclid, gclid, igsh…) and trailing slash while keeping meaningful params. */
+function cleanOutboundUrl(u: URL): string {
+  const kept = [...u.searchParams.entries()].filter(([k]) => !TRACKING_PARAMS.test(k));
+  const query = kept.length
+    ? `?${kept.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')}`
+    : '';
+  const path = u.pathname.replace(/\/+$/, '');
+  return `${u.protocol}//${u.host}${path}${query}`;
 }
 
 /** contacts printed in body text — same fields as contactsFromLinks, plus
@@ -522,7 +671,11 @@ export function contactsFromText(text: string): FoundContacts & { hubs: string[]
     hubs: [],
   };
   const seen = new Set<string>();
-  const urlish = [...text.matchAll(TEXT_URL_RE), ...text.matchAll(BARE_CONTACT_RE)];
+  const urlish = [
+    ...text.matchAll(TEXT_URL_RE),
+    ...text.matchAll(BARE_CONTACT_RE),
+    ...text.matchAll(BARE_SUBDOMAIN_HUB_RE),
+  ];
   for (const m of urlish) {
     let raw = m[0].replace(/[.,;!?]+$/, '');
     if (!/^https?:\/\//.test(raw)) raw = `https://${raw}`;
@@ -580,10 +733,15 @@ export function navLinks(links: string[], pageUrl: string): string[] {
       out.push(v);
     }
   };
+  const isRedirectWrapped = (raw: string): boolean => {
+    const h = hostOf(raw);
+    return h !== null && REDIRECT_HOSTS.has(h);
+  };
   // hubs first — for ig-first businesses the link-in-bio IS the contact page;
   // a hub's own pages are footer noise, so hub surfacing is profile-shaped only
   if (!host || !isHubHost(host)) {
     for (const link of links) {
+      const wrapped = isRedirectWrapped(link);
       const raw = unwrapLink(link);
       let u: URL;
       try {
@@ -597,30 +755,64 @@ export function navLinks(links: string[], pageUrl: string): string[] {
         // keep the query — /maps/search?q=<name> encodes the business in the
         // params; strip it and the pointer loses the entity
         push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}${u.search}`);
+      } else if (wrapped && host && PROFILE_HOSTS.has(host)) {
+        // explicit bio link wrapped by l.instagram.com/?u=... pointing to a custom domain
+        const h = hostOf(raw);
+        if (h && h !== host && !PROFILE_HOSTS.has(h) && !hostMatches(h, OUTBOUND_NOISE_HOSTS)) {
+          const c = contactFromUrl(u);
+          if (!c.phone && !c.whatsappLink) push(cleanOutboundUrl(u));
+        }
       }
     }
   }
   if (!host) return out.slice(0, 8);
   if (isHubHost(host)) {
     // on a hub page same-host links are platform chrome — the worthwhile
-    // follow-ups point OUT to the business's own domain
+    // follow-ups point OUT to the business's own domain, shorteners, or Google Maps
     for (const link of links) {
       const raw = unwrapLink(link);
       const h = hostOf(raw);
       if (!h || h === host) continue;
-      if (isHubHost(h) || PROFILE_HOSTS.has(h) || hostMatches(h, LISTING_HOSTS)) continue;
       let u: URL;
       try {
         u = new URL(raw);
       } catch {
         continue;
       }
+      if (isBizMapUrl(u)) {
+        push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}${u.search}`);
+        if (out.length >= 8) break;
+        continue;
+      }
+      if (PROFILE_HOSTS.has(h) || hostMatches(h, LISTING_HOSTS)) continue;
+      if (isHubHost(h) && !isProfileHubUrl(u)) continue;
       const c = contactFromUrl(u);
       // wa.me destinations are already in foundContacts — nav points at
       // pages worth another fetch
       if (c.phone || c.whatsappLink) continue;
       push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '') || '/'}`);
       if (out.length >= 8) break;
+    }
+    // subdomain-hosted static sites (x.pages.dev, x.vercel.app, x.canva.site…) can also
+    // have their own same-host /contato or /cardapio pages
+    if (out.length < 8 && isStaticSiteHubSubdomain(host)) {
+      for (const hint of [NAV_CONTACT, NAV_CATALOG]) {
+        for (const link of links) {
+          const raw = unwrapLink(link);
+          if (hostOf(raw) !== host) continue;
+          let u: URL;
+          try {
+            u = new URL(raw);
+          } catch {
+            continue;
+          }
+          const path = u.pathname.replace(/\/+$/, '') || '/';
+          if (!hint.test(path)) continue;
+          push(`${u.protocol}//${u.host}${path}`);
+          if (out.length >= 8) break;
+        }
+        if (out.length >= 8) break;
+      }
     }
     return out.slice(0, 8);
   }
@@ -644,6 +836,56 @@ export function navLinks(links: string[], pageUrl: string): string[] {
     if (out.length >= 8) break;
   }
   return out.slice(0, 8);
+}
+
+/** Meaningful external URLs on a page (digital menus, ordering platforms, marketplaces,
+ *  PDFs, Google Forms, shorteners, external sites) — never drops LISTING_HOSTS so the agent
+ *  can see every platform and link behind a bio page or website. */
+export function outboundLinks(links: string[], pageUrl: string, text = ''): string[] {
+  const pageHost = hostOf(pageUrl);
+  const out: string[] = [];
+  const seenKeys = new Set<string>();
+
+  const candidates: string[] = [...links];
+  if (text) {
+    for (const m of [
+      ...text.matchAll(TEXT_URL_RE),
+      ...text.matchAll(BARE_CONTACT_RE),
+      ...text.matchAll(BARE_SUBDOMAIN_HUB_RE),
+    ]) {
+      let raw = m[0].replace(/[.,;!?]+$/, '');
+      if (!/^https?:\/\//.test(raw)) raw = `https://${raw}`;
+      candidates.push(raw);
+    }
+  }
+
+  for (const candidate of candidates) {
+    const raw = unwrapLink(candidate);
+    let u: URL;
+    try {
+      u = new URL(raw, pageUrl);
+    } catch {
+      continue;
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+    const h = u.hostname.toLowerCase().replace(/^www\./, '');
+    if (!h || h === pageHost) continue;
+    if (PROFILE_HOSTS.has(h) || h === 'm.instagram.com' || h === 'tiktok.com') continue;
+    if (hostMatches(h, OUTBOUND_NOISE_HOSTS)) continue;
+    if (OUTBOUND_ASSET_RE.test(u.pathname)) continue;
+    if (isBizMapUrl(u)) continue;
+    const contact = contactFromUrl(u);
+    if (contact.phone || contact.whatsappLink || contact.instagram) continue;
+    // Skip marketing/footer chrome on link-hub platforms (e.g. linktr.ee/s/about)
+    if (isHubHost(h) && !isProfileHubUrl(u)) continue;
+    const cleaned = cleanOutboundUrl(u);
+    const key = pageKey(cleaned) ?? cleaned;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    out.push(cleaned);
+    if (out.length >= 12) break;
+  }
+  return out;
 }
 
 /** pinned to TinyFish hosts over https — otherwise the config row is an SSRF
@@ -825,6 +1067,8 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           tiktok: [...new Set([...fromLinks.tiktok, ...fromText.tiktok])],
           phoneHints: [...new Set([...fromLinks.phoneHints, ...fromText.phoneHints])],
         };
+        const pageBase = r.final_url ?? url;
+        const ext = outboundLinks(links, pageBase, text);
         pages.push({
           url,
           ...(r.final_url && r.final_url !== url ? { finalUrl: r.final_url } : {}),
@@ -833,7 +1077,8 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           text,
           // nav links belong to the rendered destination — compare same-host
           // against final_url, not the requested url
-          nav: [...new Set([...navLinks(links, r.final_url ?? url), ...fromText.hubs])].slice(0, 8),
+          nav: [...new Set([...navLinks(links, pageBase), ...fromText.hubs])].slice(0, 8),
+          ...(ext.length ? { outboundLinks: ext } : {}),
           ...(isTruncatedText(text) ? { truncated: true } : {}),
           foundContacts,
         });
@@ -848,6 +1093,7 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
 
 function mock(): DiscoveryProvider {
   return {
+    isMock: true,
     async search() {
       return {
         results: [
@@ -902,18 +1148,26 @@ export function isMapPointer(url: string): boolean {
   }
 }
 
-/** pointer-only surfaces that exist solely to hold the real contact —
- *  auto-chased so profile → hub → wa.me never costs a second model step */
+/** pointer-only surfaces that exist solely to hold the real contact or ordering link —
+ *  auto-chased so profile → hub/shortener → destination never costs a second model step */
 export function chaseLinks(page: ReadPage): string[] {
   const out: string[] = [];
-  for (const link of page.nav) {
+  const seen = new Set<string>();
+  const pool = [...page.nav, ...(page.outboundLinks ?? [])];
+  for (const link of pool) {
     let u: URL;
     try {
       u = new URL(link);
     } catch {
       continue;
     }
-    if (isHubHost(u.hostname.toLowerCase().replace(/^www\./, '')) || isBizMapUrl(u)) {
+    const h = u.hostname.toLowerCase().replace(/^www\./, '');
+    if (isProfileHubUrl(u) || isShortenerUrl(link) || isBizMapUrl(u)) {
+      const key = pageKey(link) ?? link;
+      if (seen.has(key)) continue;
+      // Don't re-chase a hub's own host or an apex hub marketing page
+      if (h === hostOf(page.finalUrl ?? page.url) && isHubHost(h)) continue;
+      seen.add(key);
       out.push(link);
     }
   }

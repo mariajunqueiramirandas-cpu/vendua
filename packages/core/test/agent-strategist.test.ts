@@ -5,6 +5,7 @@ import { crmDiscovery, DISCOVERY_TOOLS } from '../src/agent-host/agents/crm/disc
 import { CRM_STATES, crmAgent, offered } from '../src/agent-host/agents/crm/index.ts';
 import { buildSystemPrompt } from '../src/agent-host/agents/crm/prompts.ts';
 import { crmStrategist } from '../src/agent-host/agents/crm/strategist.ts';
+import { applyIgEvent } from '../src/crm/channels/instagram.ts';
 import { MonidBudget } from '../src/crm/channels/monid.ts';
 import type { JobKind } from '../src/crm/policy.ts';
 import { DEFAULT_PITCH, type Pitch, upsertIntegration } from '../src/modules/integrations.ts';
@@ -46,7 +47,7 @@ describe('MonidBudget', () => {
 type Gate = { disabled: Record<string, string>; channels: string[] };
 const asWorkspace = (g: Gate) => g as unknown as Workspace;
 
-const MONID = ['maps_lookup', 'instagram_profile', 'serp'];
+const MONID = ['maps_lookup', 'serp'];
 const DISC = ['web_search', 'read_pages'];
 const disabled = (...names: string[]) => Object.fromEntries(names.map((n) => [n, 'x']));
 const KINDS: JobKind[] = ['triage', 'reply', 'outreach', 'discovery', 'strategist'];
@@ -54,8 +55,12 @@ const KINDS: JobKind[] = ['triage', 'reply', 'outreach', 'discovery', 'strategis
 const GATES: Record<string, Gate> = {
   full: { disabled: {}, channels: ['whatsapp', 'instagram', 'email'] },
   noMonid: { disabled: disabled(...MONID), channels: ['whatsapp'] },
+  noIgSidecar: { disabled: disabled('instagram_profile'), channels: ['whatsapp'] },
   noDiscovery: { disabled: disabled(...DISC), channels: ['email'] },
-  noResearch: { disabled: disabled(...MONID, ...DISC), channels: ['instagram'] },
+  noResearch: {
+    disabled: disabled(...MONID, 'instagram_profile', ...DISC),
+    channels: ['instagram'],
+  },
   noChannels: { disabled: disabled('send_message'), channels: [] },
   noMemory: { disabled: disabled('remember', 'set_fact'), channels: ['whatsapp'] },
 };
@@ -65,7 +70,15 @@ const GATES: Record<string, Gate> = {
 const TURN_GATES: Record<string, Gate> = {
   leadBlocked: { disabled: disabled('send_message'), channels: [] },
   nothing: {
-    disabled: disabled(...MONID, ...DISC, 'send_message', 'draft_message', 'remember', 'set_fact'),
+    disabled: disabled(
+      ...MONID,
+      'instagram_profile',
+      ...DISC,
+      'send_message',
+      'draft_message',
+      'remember',
+      'set_fact',
+    ),
     channels: [],
   },
 };
@@ -323,33 +336,81 @@ describe.skipIf(!OWNER_URL)('discovery and strategist tools on Runtime v3 (db)',
     });
   });
 
-  test('instagram_profile normalizes bio + externalUrl, and hints the hub', async () => {
-    stubMonid([
-      {
-        username: 'apadariadaponte',
-        fullName: 'Padaria Da Ponte',
-        biography: 'artesanal 📞 (22) 99968-8525',
-        externalUrl: 'https://linktr.ee/padariadaponte',
-        followersCount: 1249,
-        businessCategoryName: 'Bakery',
-      },
-    ]);
-    const { outcomes } = await b.runTools([['instagram_profile', { handle: '@apadariadaponte' }]], {
-      kind: 'discovery',
-    });
-    const out = dataOf<{
-      profile: { biography: string; externalUrl: string };
-      foundContacts: { phones: string[] };
-      next?: string[];
-      spentUsd: number;
-      monidUsd: number;
-    }>(outcomes[0]);
-    expect(out.profile.biography).toContain('99968-8525');
-    expect(out.foundContacts.phones).toContain('+5522999688525');
-    expect(out.next?.[0]).toContain('linktr.ee');
-    expect(out.spentUsd).toBe(0.003);
-    // the turn's monid balance, carried in the result for the fold
-    expect(out.monidUsd).toBe(0.003);
+  test('instagram_profile uses ig-sidecar (no monid spend), normalizes bio + externalUrls, and hints the hub', async () => {
+    const savedSecret = process.env.IG_SIDECAR_SECRET;
+    const savedUrl = process.env.IG_SIDECAR_URL;
+    const priorIg = await sql<{ driver: string; enabled: boolean }[]>`
+      select driver, enabled from control_integrations where kind = 'instagram'`;
+    const secret = 'test-ig-sidecar-secret';
+    process.env.IG_SIDECAR_SECRET = secret;
+    process.env.IG_SIDECAR_URL = 'http://ig-sidecar.test:8790';
+    await upsertIntegration(
+      sql as unknown as Sql,
+      { kind: 'instagram', driver: 'sidecar', enabled: true },
+      b.key(),
+    );
+    await applyIgEvent(sql as unknown as Sql, { type: 'state', status: { state: 'open' } }, secret);
+    let sidecarCalls = 0;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/v1/profile')) {
+        sidecarCalls++;
+        return new Response(
+          JSON.stringify({
+            username: 'apadariadaponte',
+            fullName: 'Padaria Da Ponte',
+            biography: 'artesanal 📞 (22) 99968-8525',
+            externalUrl: 'https://linktr.ee/padariadaponte',
+            externalUrls: [{ url: 'https://linktr.ee/padariadaponte', title: 'Cardápio' }],
+            followersCount: 1249,
+            businessCategoryName: 'Bakery',
+            isPrivate: false,
+            isBusinessAccount: true,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected fetch to ${String(url)}`);
+    }) as typeof fetch;
+    try {
+      const { outcomes } = await b.runTools(
+        [['instagram_profile', { handle: '@apadariadaponte' }]],
+        { kind: 'discovery' },
+      );
+      const out = dataOf<{
+        profile: {
+          biography: string;
+          externalUrl: string;
+          externalUrls?: { url: string; title?: string }[];
+        };
+        foundContacts: { phones: string[] };
+        next?: string[];
+        monidUsd?: number;
+      }>(outcomes[0]);
+      expect(sidecarCalls).toBe(1);
+      expect(out.profile.biography).toContain('99968-8525');
+      expect(out.profile.externalUrl).toBe('https://linktr.ee/padariadaponte');
+      expect(out.profile.externalUrls).toEqual([
+        { url: 'https://linktr.ee/padariadaponte', title: 'Cardápio' },
+      ]);
+      expect(out.foundContacts.phones).toContain('+5522999688525');
+      expect(out.next?.[0]).toContain('linktr.ee');
+      expect(out.monidUsd).toBeUndefined();
+    } finally {
+      await applyIgEvent(
+        sql as unknown as Sql,
+        { type: 'state', status: { state: 'off' } },
+        secret,
+      );
+      if (!priorIg.some((p) => p.driver === 'sidecar'))
+        await sql`delete from control_integrations where kind = 'instagram' and driver = 'sidecar'`;
+      for (const p of priorIg)
+        await sql`update control_integrations set enabled = ${p.enabled}
+          where kind = 'instagram' and driver = ${p.driver}`;
+      if (savedSecret === undefined) delete process.env.IG_SIDECAR_SECRET;
+      else process.env.IG_SIDECAR_SECRET = savedSecret;
+      if (savedUrl === undefined) delete process.env.IG_SIDECAR_URL;
+      else process.env.IG_SIDECAR_URL = savedUrl;
+    }
   });
 
   test('maps_lookup anchors bare city on Brasil and hints phone-less candidates', async () => {
@@ -379,15 +440,18 @@ describe.skipIf(!OWNER_URL)('discovery and strategist tools on Runtime v3 (db)',
     expect(out.next[0]).toContain('serp');
   });
 
-  test('toolsFor drops disabled tools', async () => {
+  test('toolsFor drops disabled tools (monid vs ig-sidecar)', async () => {
     delete process.env.MONID_API_KEY;
     const ws = await workspaceTx(sql);
-    expect(ws.disabled).toMatchObject({ serp: 'MONID_API_KEY não configurada' });
+    expect(ws.disabled).toMatchObject({
+      serp: 'MONID_API_KEY não configurada',
+      instagram_profile: 'Instagram (ig-sidecar) não conectado',
+    });
     const lead = offered('outreach', ws);
-    for (const n of MONID) expect(lead.has(n)).toBe(false);
+    for (const n of [...MONID, 'instagram_profile']) expect(lead.has(n)).toBe(false);
     expect(lead.has('draft_message')).toBe(true);
     const discovery = DISCOVERY_TOOLS.filter((n) => !ws.disabled[n]);
-    for (const n of MONID) expect(discovery).not.toContain(n);
+    for (const n of [...MONID, 'instagram_profile']) expect(discovery).not.toContain(n);
     expect(discovery).toContain('web_search');
   });
 

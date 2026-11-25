@@ -5,9 +5,12 @@ import {
   chaseLinks,
   contactFromUrl,
   isBrMobilePhone,
+  isProfileHubUrl,
+  isShortenerUrl,
   contactsFromLinks,
   contactsFromText,
   navLinks,
+  outboundLinks,
   pageKey,
   phoneFromText,
 } from '../src/crm/channels/discovery.ts';
@@ -427,5 +430,149 @@ describe('isBrMobilePhone', () => {
   test('short/international non-BR not whatsapp', () => {
     expect(isBrMobilePhone('+1 415 555 0132')).toBe(false);
     expect(isBrMobilePhone('99999')).toBe(false);
+  });
+});
+
+describe('outboundLinks & bio-hub link following', () => {
+  test('torbolariadapreta.pages.dev surfaces Brendi menus in outboundLinks, WhatsApp in contacts, and Maps in nav', () => {
+    const pageUrl = 'https://torbolariadapreta.pages.dev/';
+    const links = [
+      'https://chat.whatsapp.com/FcdgrprZwnVKKa7nPrKhKh',
+      'https://menu.brendi.com.br/torbolaria-da-preta/?utm_source=Instagram',
+      'https://menu.brendi.com.br/torbolaria-da-preta-sao-pedro-da-aldeia/?utm_source=Instagram',
+      'https://wa.me/5522988459183?text=Gostaria%20do%20card%C3%A1pio%20de%20Natal',
+      'https://www.google.com/maps/place/data=!3m1!4b1!4m2!3m1!1s0x976971a000000001:0x1',
+      'https://instagram.com/torbolariadapreta',
+    ];
+    const out = outboundLinks(links, pageUrl);
+    expect(out).toEqual([
+      'https://menu.brendi.com.br/torbolaria-da-preta',
+      'https://menu.brendi.com.br/torbolaria-da-preta-sao-pedro-da-aldeia',
+    ]);
+    const contacts = contactsFromLinks(links);
+    expect(contacts.phones).toEqual(['+5522988459183']);
+    expect(contacts.instagram).toEqual(['@torbolariadapreta']);
+    expect(contacts.whatsappLinks).toContain('https://chat.whatsapp.com/FcdgrprZwnVKKa7nPrKhKh');
+    expect(contacts.whatsappLinks.some((u) => u.startsWith('https://wa.me/5522988459183'))).toBe(
+      true,
+    );
+    const nav = navLinks(links, pageUrl);
+    expect(nav.some((u) => u.startsWith('https://www.google.com/maps/place/'))).toBe(true);
+  });
+
+  test('outboundLinks keeps ordering platforms, marketplaces, PDFs, Forms, and unwraps l.instagram.com while dropping noise', () => {
+    const out = outboundLinks(
+      [
+        'https://linktr.ee/s/about',
+        'https://linktr.ee/features/pricing',
+        'https://pedido.anota.ai/loja/doce?utm_medium=bio',
+        'https://www.ifood.com.br/delivery/cabo-frio/doceria',
+        'https://drive.google.com/file/d/123/view',
+        'https://forms.gle/abc123',
+        'https://cdn.example.com/cardapio-natal.pdf',
+        'https://cdn.example.com/logo.png',
+        'https://fonts.googleapis.com/css2?family=Inter',
+        'https://www.googletagmanager.com/gtag/js?id=G-123',
+        'https://wa.me/5522999990000',
+        'mailto:oi@doceria.com.br',
+        'tel:+5522999990000',
+        'https://l.instagram.com/?u=' +
+          encodeURIComponent('https://menu.brendi.com.br/doce/?fbclid=xyz'),
+      ],
+      'https://linktr.ee/doceria85',
+      'Veja também https://doceria85.goomer.app/menu',
+    );
+    expect(out).toEqual([
+      'https://pedido.anota.ai/loja/doce',
+      'https://www.ifood.com.br/delivery/cabo-frio/doceria',
+      'https://drive.google.com/file/d/123/view',
+      'https://forms.gle/abc123',
+      'https://cdn.example.com/cardapio-natal.pdf',
+      'https://menu.brendi.com.br/doce',
+      'https://doceria85.goomer.app/menu',
+    ]);
+  });
+
+  test('modern bio-hub hosts and bare subdomain hubs are recognized', () => {
+    for (const u of [
+      'https://torbolariadapreta.pages.dev',
+      'https://torbolariadapreta.pages.dev/',
+      'https://doceria.my.canva.site/',
+      'https://doceria.vercel.app',
+      'https://doceria.netlify.app',
+      'https://taplink.cc/doceria',
+      'https://bio.site/doceria',
+      'https://bento.me/doceria',
+      'https://heylink.me/doceria',
+      'https://sites.google.com/view/doceria-artesanal',
+    ]) {
+      expect(isProfileHubUrl(new URL(u))).toBe(true);
+    }
+    expect(isProfileHubUrl(new URL('https://sites.google.com/'))).toBe(false);
+    expect(isProfileHubUrl(new URL('https://doceria85.com.br/contato'))).toBe(false);
+    expect(isProfileHubUrl(new URL('https://menu.brendi.com.br/torbolaria-da-preta'))).toBe(false);
+
+    const fromBio = contactsFromText(
+      'Cardápio e encomendas em torbolariadapreta.pages.dev ou doceria.my.canva.site e taplink.cc/doce',
+    );
+    expect(fromBio.hubs).toContain('https://torbolariadapreta.pages.dev');
+    expect(fromBio.hubs).toContain('https://doceria.my.canva.site');
+    expect(fromBio.hubs).toContain('https://taplink.cc/doce');
+  });
+
+  test('isShortenerUrl and chaseLinks follow hubs, shorteners, and maps pointers from nav and outboundLinks', () => {
+    expect(isShortenerUrl('https://bit.ly/cardapio-doce')).toBe(true);
+    expect(isShortenerUrl('https://w.app/doce')).toBe(true);
+    expect(isShortenerUrl('https://contate.me/doce')).toBe(true);
+    expect(isShortenerUrl('https://encurtador.com.br/abc')).toBe(true);
+    expect(isShortenerUrl('https://bit.ly/')).toBe(false);
+    expect(isShortenerUrl('https://menu.brendi.com.br/doce')).toBe(false);
+
+    const chased = chaseLinks({
+      url: 'https://instagram.com/torbolariadapreta',
+      title: null,
+      description: null,
+      text: '',
+      nav: [
+        'https://torbolariadapreta.pages.dev',
+        'https://g.co/kgs/xm7tgsx',
+        'https://doceria85.com.br/contato',
+      ],
+      outboundLinks: [
+        'https://bit.ly/cardapio-doce',
+        'https://contate.me/torbolaria',
+        'https://menu.brendi.com.br/torbolaria-da-preta',
+      ],
+      foundContacts: {
+        phones: [],
+        whatsappLinks: [],
+        emails: [],
+        instagram: [],
+        facebook: [],
+        tiktok: [],
+        phoneHints: [],
+      },
+    });
+    expect(chased).toEqual([
+      'https://torbolariadapreta.pages.dev',
+      'https://g.co/kgs/xm7tgsx',
+      'https://bit.ly/cardapio-doce',
+      'https://contate.me/torbolaria',
+    ]);
+  });
+
+  test('annotateResult classifies Brendi and BR ordering platforms as listing', () => {
+    for (const u of [
+      'https://menu.brendi.com.br/torbolaria-da-preta',
+      'https://brendi.app/loja',
+      'https://app.cardapioweb.com.br/doce',
+      'https://doceria.olaclick.app/',
+      'https://menudino.com.br/doceria',
+      'https://delivery.yooga.app/doceria',
+      'https://www.rappi.com.br/restaurantes/123',
+      'https://aiqfome.com/SP/cidade/doceria',
+    ]) {
+      expect(annotateResult(r(u)).kind).toBe('listing');
+    }
   });
 });

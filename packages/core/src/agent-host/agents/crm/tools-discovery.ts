@@ -33,6 +33,8 @@ import { crm, emitAfter, refusals, turn, type BookEntry, type Ctx } from './shar
 
 /** created leads per turn when the request names no target */
 export const DISCOVERY_LEAD_CAP = 20;
+/** max low-fit (<= 3) tracked-only leads (e.g. competitor intel/dedupe) per turn */
+const LOW_FIT_TRACKED_CAP = 30;
 const LEAD = 'lead';
 
 const leadCap = (ctx: Ctx): number => {
@@ -53,7 +55,7 @@ function ownLead(ctx: Ctx, ref: string): string {
 export const searchLeadsTool = defineTool<{ q: string; state?: string | undefined }, Sql>({
   name: 'search_leads',
   description:
-    'Check names against the leads already registered: free + instant. A maps/web sweep surfaces CANDIDATE names → search_leads filters them → only the misses are worth paid investigation. A hit is a POSSIBLE duplicate (broad substring match): compare name/business/city before discarding. q matches name/business/instagram/email/phone/whatsapp (phone digits match normalized numbers). Returns channel flags + whatsappVerified.',
+    'Check names against the leads already registered: free + instant. A maps/web sweep surfaces CANDIDATE names → search_leads filters them → only the misses are worth paid investigation. A hit is a POSSIBLE duplicate (broad substring match): compare name/business/city before discarding. q matches name/business/instagram/email/phone/whatsapp (phone digits match normalized numbers). Returns fitScore, tags (e.g. concorrente/brendi), channel flags + whatsappVerified.',
   effect: 'read',
   input: s.object({
     q: s.string({ min: 1, max: 200 }),
@@ -72,6 +74,8 @@ export const searchLeadsTool = defineTool<{ q: string; state?: string | undefine
         business: l.businessName,
         state: l.state,
         score: l.score,
+        fitScore: l.fitScore,
+        tags: l.tags,
         city: l.city,
         segment: l.segment,
         hasWhatsapp: Boolean(l.whatsapp),
@@ -83,7 +87,7 @@ export const searchLeadsTool = defineTool<{ q: string; state?: string | undefine
         matches,
         count: matches.length,
         next: matches.length
-          ? 'possível registro existente — compare nome/negócio/cidade; correspondência parcial em outro campo não prova duplicata'
+          ? 'possível registro existente — compare nome/negócio/cidade (e tags/fitScore, ex.: concorrente já mapeado); correspondência parcial em outro campo não prova duplicata'
           : 'nenhuma correspondência — prospect provavelmente novo, vale a investigação paga',
       } as unknown as Json;
     }),
@@ -195,7 +199,7 @@ function normalizeContacts(payload: Record<string, unknown>): boolean {
 export const createLeadTool = defineTool<CreateInput, Sql>({
   name: 'create_lead',
   description:
-    'Create a new lead (state=lead), only AFTER researching it. Requires findings (the 2-4 line dossier: what the business sells, size/channel signals, where each contact came from) and at least one contact channel. Pass fitScore/fitReason (ICP match) and intentScore/intentReason (buying intent). Self-dedupes on name+city/phone/instagram: a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
+    'Create a new lead (state=lead), only AFTER researching it (including following its bio/site links). Requires findings (the 2-4 line dossier: what the business sells, how it currently takes orders, size/channel signals, where each contact came from) and at least one contact channel. Fill website when known, and pass fitScore/fitReason (ICP match) and intentScore/intentReason (buying intent). Self-dedupes on name+city/phone/instagram: a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
   effect: 'write',
   input: s.object({
     name: s.string({ min: 1, max: 200 }),
@@ -203,7 +207,7 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
     findings: s
       .string({ max: 4000 })
       .describe(
-        'concise research dossier: what the business sells, owner first name if public, best single natural hook for a human opener, fit signals, and where each contact came from',
+        'concise research dossier: what the business sells, how it currently takes orders (verified from bio/links/site), owner first name if public, best single natural hook for a human opener, fit signals, and where each contact came from',
       ),
     sources: s
       .array(s.string({ max: 2000 }), { max: 20 })
@@ -530,8 +534,15 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           };
         }
         const cap = leadCap(ctx);
-        if (t.leadsCreated >= cap)
+        const lowFit = score !== null && score <= 3;
+        if (lowFit) {
+          if (t.leads.length - t.leadsCreated >= LOW_FIT_TRACKED_CAP)
+            throw new ToolError(
+              `DISCOVERY_CAP: low-fit tracking cap reached — max ${LOW_FIT_TRACKED_CAP} low-fit leads per run`,
+            );
+        } else if (t.leadsCreated >= cap) {
           throw new ToolError(`DISCOVERY_CAP: discovery cap reached — max ${cap} leads per run`);
+        }
         const autoContact = gateFires(
           score,
           intent,
@@ -566,18 +577,23 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           shown: {
             lead: { ref: ctx.alias(LEAD, lead.id), ...visible },
             ...(contacted ? { firstContactQueued: true, contactChannel: autoContact } : {}),
-            ...(whatsappDerived
+            ...(lowFit
               ? {
-                  whatsappUnverified: true,
-                  next: 'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)',
+                  lowFit: true,
+                  next: 'registrado pra histórico/dedupe (fitScore baixo — sem autocontato e NÃO conta pra META; continue buscando prospects com fit alto)',
                 }
-              : score === null
+              : whatsappDerived
                 ? {
-                    fitScoreMissing: true,
-                    next: 'fitScore ausente — sem nota de aderência o autocontato não dispara; preencha com update_lead',
+                    whatsappUnverified: true,
+                    next: 'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)',
                   }
-                : {}),
-            leadsCreated: t.leadsCreated + 1,
+                : score === null
+                  ? {
+                      fitScoreMissing: true,
+                      next: 'fitScore ausente — sem nota de aderência o autocontato não dispara; preencha com update_lead',
+                    }
+                  : {}),
+            leadsCreated: lowFit ? t.leadsCreated : t.leadsCreated + 1,
             cap,
           },
         };

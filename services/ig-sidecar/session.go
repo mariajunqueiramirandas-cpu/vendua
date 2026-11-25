@@ -82,8 +82,11 @@ type Manager struct {
 	lastInboundMS int64
 	groups        map[string]bool
 
-	sendPace   pacer
-	followPace pacer
+	sendPace     pacer
+	followPace   pacer
+	profilePace  pacer
+	profileCache *profileCache
+	profileQuota *hourlyLimiter
 
 	// loginMu serializes wizard calls (held across Instagram round trips);
 	// loginView/loginAt sit under mu so /v1/status never waits on one
@@ -96,8 +99,11 @@ type Manager struct {
 func newManager(cfg config, log zerolog.Logger, sink *eventSink) *Manager {
 	return &Manager{
 		cfg: cfg, log: log, sink: sink, state: stateOff, groups: map[string]bool{},
-		sendPace:   pacer{gap: cfg.MinSendGap},
-		followPace: pacer{gap: cfg.MinFollowGap},
+		sendPace:     pacer{gap: cfg.MinSendGap},
+		followPace:   pacer{gap: cfg.MinFollowGap},
+		profilePace:  pacer{gap: cfg.MinProfileGap},
+		profileCache: newProfileCache(profileCacheTTL, profileCacheMax),
+		profileQuota: newHourlyLimiter(cfg.MaxProfilesPerHour),
 	}
 }
 

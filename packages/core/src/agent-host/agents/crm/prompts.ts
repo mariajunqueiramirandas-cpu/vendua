@@ -414,7 +414,7 @@ Conclua a resposta com ${join(
 
 function coldResearch(env: LeadEnv, stop: string): string {
   return env.research
-    ? `Antes da abordagem, confirme de qual negócio se trata, o que vende, o primeiro nome de quem toca (se for público), um sinal público real e de onde veio o contato. Use o DOSSIÊ quando estiver atualizado; complete só as lacunas com ${env.research}. Registre em add_note o fato, a fonte, o canal e por que vale conversar. Sem base suficiente, ${stop}`
+    ? `Antes da abordagem, confirme de qual negócio se trata, o que vende, como recebe pedidos hoje (seguindo bio e links do site se o dossiê ainda não confirmar), o primeiro nome de quem toca (se for público), um sinal público real e de onde veio o contato. Use o DOSSIÊ quando estiver atualizado; complete só as lacunas com ${env.research}. Registre em add_note o fato, a fonte, o canal e por que vale conversar. Sem base suficiente, ${stop}`
     : `Com dossiê fraco e sem pesquisa externa nesta instalação, registre o que está confirmado em add_note. Sem base suficiente, ${stop}`;
 }
 
@@ -530,15 +530,21 @@ function discoveryPrompt(
   env: { has: (t: string) => boolean; research: string },
 ): string[] {
   const { has, research } = env;
+  const searchNames = join([has('serp') && 'serp', has('web_search') && 'web_search'], ' ou ');
   const ladder = join([
     has('serp')
       ? 'Só tem o nome → serp com negócio, cidade e o dado a confirmar.'
       : has('web_search') && 'Só tem o nome → web_search com negócio, cidade e o dado a confirmar.',
     has('instagram_profile')
-      ? `Tem o perfil do negócio → instagram_profile${has('read_pages') ? ' e read_pages no link da bio' : ''}.`
-      : has('read_pages') && 'Tem um perfil público → read_pages no perfil e no link da bio.',
+      ? `Tem o perfil do negócio → instagram_profile (lê bio completa, todos os links da bio e bioPages)${has('read_pages') ? '; se sobrarem links ou outboundLinks relevantes, abra com read_pages' : ''}.`
+      : has('read_pages') &&
+        'Tem um perfil público → read_pages no perfil, nos links da bio e nos outboundLinks.',
     has('read_pages') && 'Diretório ou site → confira que a página pertence ao mesmo negócio.',
   ]);
+  const followVia = join(
+    [has('instagram_profile') && 'bioPages', has('read_pages') && 'read_pages'],
+    ' / ',
+  );
   return [
     `# Pesquisa de prospects da Venduá
 Encontre negócios novos de comida do segmento e da cidade onde exista um motivo real e natural para puxar conversa (como encomendas pelo WhatsApp, cardápio em imagem/PDF, delivery próprio sem link ou dependência de marketplace). A meta é qualidade: oportunidade verificável, canal comercial público e um gancho genuíno que permita uma abertura humana.`,
@@ -548,14 +554,26 @@ Encontre negócios novos de comida do segmento e da cidade onde exista um motivo
 Use plan para registrar o público, a hipótese de utilidade, as fontes e o critério para parar. Varie a situação dentro do segmento se a busca inicial não render.
 Use book quando o negócio entrar no radar. Registre name, channels, tried (${ladderTags(has).join(', ') || 'sem busca disponível'}), status e uma nota com fonte e resultado. Marque resolved quando o contato e a decisão de registrar estiverem resolvidos. Marque dead com a razão se não houver encaixe ou fonte suficiente. Confira o LIVRO e a META antes de repetir uma busca.`,
     `## Pesquisa
-- search_leads(q) — antes de pagar por pesquisa de um candidato, filtre a base local. Compare nome, cidade e negócio porque o resultado pode ser só um nome parecido.
-- maps_lookup(query, city) — comece aqui para negócios físicos. Confira activityStatus, permanentlyClosed, temporarilyClosed, reviewsCount e hasOpeningHours. whatsappLikely indica celular provável: guarde-o como telefone até confirmar WhatsApp.
-- instagram_profile(handle) — leia bio, link público E o bloco activity (lastPostAt, daysSinceLastPost, postsLast30d/90d, recentPosts e avisos de encerramento). Use seguidores apenas como contexto; use recentPosts pra confirmar operação viva e puxar 1 gancho atual.
-- serp(query) — pesquise nome e cidade com a informação comercial que falta (ou pra confirmar se um negócio ainda está aberto).
+- search_leads(q) — antes de pagar por pesquisa de um candidato, filtre a base local. Compare nome, cidade, negócio, fitScore e tags (ex.: concorrente já mapeado em rodadas anteriores) porque o resultado pode ser só um nome parecido.
+- maps_lookup(query, city) — comece aqui para negócios físicos. Confira website, menuUrl, orderLinks, activityStatus, permanentlyClosed, temporarilyClosed, reviewsCount e hasOpeningHours. whatsappLikely indica celular provável: guarde-o como telefone até confirmar WhatsApp.
+- instagram_profile(handle) — lê bio completa, TODOS os links da bio (externalUrl e externalUrls), bioPages (leitura automática de links da bio com seus outboundLinks e contatos) E o bloco activity (lastPostAt, daysSinceLastPost, postsLast30d/90d, recentPosts e avisos de encerramento). Use seguidores apenas como contexto; use recentPosts pra confirmar operação viva e puxar 1 gancho atual.
+- serp(query) — pesquise nome e cidade com a informação comercial que falta (telefone/WhatsApp, se ainda está aberto, ou se já tem cardápio digital/loja online própria fora da bio).
 - web_search(query, purpose) — combine cidade, segmento e um sinal público concreto, como encomendas por WhatsApp ou cardápio próprio.
-- read_pages(urls, goal) — confira fonte, identidade, contatos, link da bio e eventual closedSignal. Número parcial é só pista. Link de grupo ou código sem dígitos fica como referência.
+- read_pages(urls, goal) — leia texto, foundContacts, nav, outboundLinks (links externos de cardápio, plataformas de pedidos, marketplaces, PDFs, formulários) e eventual closedSignal. Hubs de bio (linktr.ee, *.pages.dev, *.canva.site, *.carrd.co…), encurtadores (bit.ly, w.app, contate.me…) e links do Maps são seguidos automaticamente. Número parcial é só pista; link de grupo fica como referência.
 ${ladder}
 Use as sugestões do resultado quando resolverem uma lacuna. Reutilize o que já encontrou antes de consumir mais pesquisa.`,
+    `## Como o negócio recebe pedidos hoje (siga a bio e os links)
+Nunca julgue ou pontue um prospect olhando só a bio ou o nome no Maps — siga a bio e os links pra entender de verdade como ele vende hoje:
+- Leia a bio do Instagram, todos os links da bio (externalUrl e externalUrls), páginas intermediárias de link-in-bio (*.pages.dev, Linktree, Canva, Carrd, Bento, Taplink, sites.google.com…), encurtadores (bit.ly, w.app, contate.me…), site próprio e menuUrl/orderLinks do Maps. Observe os outboundLinks, nav e o texto${followVia ? ` em ${followVia}` : ''}; quando o link da bio levar a outra página de cardápio ou pedidos ainda não aberta${has('read_pages') ? ', siga com read_pages se precisar confirmar' : ', confira antes de concluir'}.${
+      searchNames
+        ? `\n- Se o negócio tem presença ativa mas a bio/Maps não deixa claro como recebe pedidos, faça uma busca rápida (${searchNames} com nome + cidade + "cardápio" ou "pedidos") pra não deixar passar um cardápio digital já em uso.`
+        : ''
+    }
+- Avalie pelo seu julgamento real o que você encontrou:
+  • Já usa plataforma própria de cardápio/pedidos diretos ativa (ex.: Brendi / menu.brendi.com.br / brendi.app, Anota AI, Cardápio Web, Goomer, Saipos, Instadelivery, Delivery Direto, Takeat, OlaClick, MenuDino, Yooga, Neemo, Accon, ou loja/e-commerce próprio completo com checkout) sem sinal de dor ou lacuna clara → registre silenciosamente no CRM com create_lead usando fitScore 2–3, intentScore 0–1, website preenchido, tags: ["concorrente", "<plataforma>"] (ex.: ["concorrente", "brendi"], ["concorrente", "anota-ai"], ["concorrente", "cardapio-web"], ["concorrente", "goomer"], ["concorrente", "loja-propria"]) e findings explicando qual plataforma usa; marque resolved no book. Registros com fitScore ≤ 3 não disparam autocontato, não gastam follow no Instagram, não contam pra META e evitam retrabalho em buscas futuras via search_leads. Se houver lacuna real ou sinal de troca (ex.: só cobre delivery enquanto encomendas com data continuam manuais no WhatsApp, ou o link está quebrado/fora do ar), avalie normalmente pela oportunidade e documente a lacuna no findings.
+  • Está em marketplace (iFood, Rappi, aiqfome, Delivery Much, 99Food) sem canal próprio de pedidos → ótima oportunidade (canal próprio sem comissão pros clientes recorrentes).
+  • Recebe pedidos na mão pelo WhatsApp/DM, cardápio em foto/destaque/PDF/Google Drive ou Google Forms → encaixe ideal pra Venduá.
+- Sempre preencha website quando o negócio tiver site ou página de link-in-bio/cardápio, e registre no findings como ele recebe pedidos hoje (com base nos links verificados).`,
     `## Verificação de negócio ativo (evite negócios parados ou fechados)
 Antes de chamar create_lead, confirme que o negócio ainda opera de verdade:
 - Fechado permanentemente no Google Maps, ou bio/post/site indicando encerramento ("encerramos atividades", "fechamos as portas", "perfil desativado") → NUNCA cadastre; marque dead no book.
@@ -564,20 +582,20 @@ Antes de chamar create_lead, confirme que o negócio ainda opera de verdade:
 - Instagram quiet (60–180 dias sem post) ou negócio só de Maps sem Instagram → válido quando houver operação confirmada (horários ativos, avaliações ou WhatsApp/cardápio funcionando); muitos negócios locais vendem bem no WhatsApp sem postar sempre.
 - Sempre cite no findings a evidência de que está ativo (ex.: "último post há 6 dias", "Maps operacional com 120 avaliações e horário ativo").`,
     `## Decisão de registrar e notas
-Use create_lead com o que vende, primeiro nome de quem toca o negócio (se for público, nunca inventado), evidência de atividade recente, origem de cada canal, fitScore, fitReason, intentScore, intentReason e URLs em sources. No findings, seja conciso e útil pro vendedor: separe (1) o fato verificável + evidência de negócio ativo e fonte, (2) a hipótese de onde a Venduá ajuda e (3) O MELHOR gancho natural único pra abrir a conversa (evite listas longas de produtos que incentivem mensagens com cara de robô). Priorize contato comercial publicado pelo próprio negócio. Guarde números como publicados e cadastre WhatsApp quando a fonte o identificar como tal.
+Use create_lead com o que vende, como recebe pedidos hoje (verificado na bio/links/site), website (quando existir), primeiro nome de quem toca o negócio (se for público, nunca inventado), evidência de atividade recente, origem de cada canal, fitScore, fitReason, intentScore, intentReason e URLs em sources. No findings, seja conciso e útil pro vendedor: separe (1) o fato verificável + como recebe pedidos hoje + evidência de negócio ativo e fonte, (2) a hipótese de onde a Venduá ajuda e (3) O MELHOR gancho natural único pra abrir a conversa (evite listas longas de produtos que incentivem mensagens com cara de robô). Priorize contato comercial publicado pelo próprio negócio. Guarde números como publicados e cadastre WhatsApp quando a fonte o identificar como tal.
 - fitScore (0 a 10 — aderência ao público + operação ativa):
-  • 0–3: fora do público, rede grande fora do perfil, fechado ou parado sem prova de operação.
+  • 0–3: fora do público, rede grande fora do perfil, fechado/parado sem prova de operação, ou já opera bem com plataforma própria de cardápio digital/loja online (ex.: Brendi, Anota AI, Cardápio Web, Goomer, e-commerce próprio) sem lacuna evidente.
   • 4–5: negócio de comida plausível, mas com lacunas relevantes ou atividade não confirmada.
   • 6: negócio de comida ativo confirmado, perfil compatível, mas sem fluxo/atrito digital específico ainda confirmado.
-  • 7–8: negócio de comida ativo confirmado (post recente, Maps operacional ou cardápio ativo) + fluxo concreto em que a Venduá ajuda (pedidos/encomendas no WhatsApp/DM, cardápio em imagem/PDF, dependência de iFood, sem link próprio).
+  • 7–8: negócio de comida ativo confirmado (post recente, Maps operacional ou cardápio ativo) + fluxo concreto em que a Venduá ajuda (pedidos/encomendas no WhatsApp/DM, cardápio em imagem/PDF, dependência de iFood) verificado após checar bio e links (sem plataforma de cardápio digital já cobrindo esse fluxo).
   • 9–10: operação ativa forte + dor/utilidade evidente + canal comercial direto confirmado + ótimo gancho natural.
 - intentScore (0 a 10 — atrito observável / prontidão pra adotar):
-  • 0–2: sem sinal observável de dor ou mudança (ex.: já usa loja própria completa ou só sabemos que existe).
+  • 0–2: sem sinal observável de dor ou mudança (ex.: já usa plataforma própria de cardápio digital/loja online cobrindo os pedidos ou só sabemos que existe).
   • 3–5: atrito operacional moderado (vende no WhatsApp/DM sem link próprio, cardápio em foto/PDF/destaques, ou só no iFood sem canal direto).
   • 6–7: sinal forte de atrito ou crescimento (alto giro de encomendas/pedidos manuais no WhatsApp, comentários/avaliações pedindo cardápio/preço, expandindo delivery).
   • 8–10: intenção explícita do comprador (pediu preço, disse querer sair do WhatsApp manual ou trocar de plataforma).
 - Sempre preencha fitScore, fitReason, intentScore e intentReason pela evidência (nunca infle nem deixe em branco).
-- Conte na META apenas novos registros. Anote duplicatas resolvidas sem aumentar a entrega. Deixe os casos fracos ou parados fora quando a pesquisa acabar. A quantidade pedida é teto.
+- Conte na META apenas novos leads qualificados (fitScore ≥ 4). Duplicatas e registros silenciosos de fit baixo (fitScore ≤ 3, como concorrentes mapeados pra dedupe) NÃO aumentam a entrega nem disparam autocontato — continue buscando prospects qualificados. Deixe negócios fechados, parados ou fora do público só como dead no book (sem cadastrar). A quantidade pedida é teto.
 ${
   opts.autoContact?.enabled !== false
     ? `Autocontato: dispara quando fitScore ≥ ${opts.autoContact?.minScore ?? 7} (ou fitScore ≥ ${Math.max(1, (opts.autoContact?.minScore ?? 7) - 1)} com intentScore ≥ 6) e houver canal apto (WhatsApp, Instagram ou e-mail). Evidência do contato e autonomia decidem se sai direto ou vira rascunho. Dê as notas pela evidência real.`
