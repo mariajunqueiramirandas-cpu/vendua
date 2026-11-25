@@ -321,7 +321,7 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
     const rows = await c<(TranscriptMessage & { subject: string | null; thread_id: string })[]>`
       select * from (
         select m.direction, m.body, m.status, m.author, m.created_at, t.channel, t.subject,
-               t.id::text as thread_id, m.audio
+               t.id::text as thread_id, m.audio, m.auto_reply
         from lead_messages m join lead_threads t on t.id = m.thread_id
         where t.lead_id = ${leadId}
         order by m.created_at desc, m.id desc limit ${CTX.messages}
@@ -334,13 +334,13 @@ export async function leadSubjectTx(tx: Sql, leadId: string, t: TurnInfo): Promi
         ? channels[0]!
         : null;
     const isInboundOrigin = Boolean(callback || first?.direction === 'in');
-    const liveIn = rows.filter((r) => r.direction === 'in').length;
+    const liveIn = rows.filter((r) => r.direction === 'in' && !r.auto_reply).length;
     const liveOut = rows.filter(
       (r) => r.direction === 'out' && ['sending', 'sent', 'delivered'].includes(r.status),
     ).length;
     if (!isInboundOrigin && liveIn === 1 && liveOut >= 1) {
       parts.push(
-        'MOMENTO: primeira resposta do lead à nossa abordagem fria. Se ela fez uma pergunta direta (ex.: preço ou link), responda direto; se apenas sinalizou abertura ("sim", "faz", "como funciona?", "no WhatsApp mesmo"), acolha com leveza, explique rapidinho como entraria no dia a dia dela e faça 1 pergunta genuína — sem empurrar preço nem link de cadastro.',
+        'MOMENTO: primeira resposta do lead à nossa abordagem fria. Antes, veja se foi a pessoa ou o robô da loja (saudação, ausência, menu ou catálogo que não responde nada do que dissemos): robô não se responde. Se foi a pessoa e ela ainda não sabe o que a Venduá faz, diga em meia frase. Pergunta direta (ex.: preço ou link) → responda direto; abertura curta ("sim", "faz", "como funciona?", "no WhatsApp mesmo") → acolha com leveza e explique rapidinho como entraria no dia a dia dela, com no máximo 1 pergunta e sem empurrar preço nem link de cadastro. Se ela te tratou como cliente (mandou preços, perguntou sabor ou data), desfaça a confusão primeiro.',
       );
     }
     if (rows.length)

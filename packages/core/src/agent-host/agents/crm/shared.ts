@@ -183,6 +183,7 @@ export const ACTION_TOOLS = new Set([
   'send_signup_link',
   'request_human',
   'unsubscribe',
+  'mark_auto_reply',
 ]);
 
 /** A tool result the model may count as done: ok, no error, not blocked. */
@@ -207,6 +208,7 @@ export const RESPONSE_ACTIONS = [
   'create_task',
   'request_human',
   'unsubscribe',
+  'mark_auto_reply',
 ];
 export const waitsForResponse = (t: TurnInfo) =>
   t.trigger === 'message.inbound' || t.source === 'site';
@@ -241,7 +243,12 @@ export function applyCrm(prev: Json, e: AgentEvent): Json {
             : name;
         if (!c.turn.actions.includes(action)) c.turn.actions = [...c.turn.actions, action];
       }
-      if ((name === 'unsubscribe' || name === 'request_human') && landed(p)) c.turn.closed = true;
+      // a robot's greeting gets no answer: the turn ends where the marking lands
+      if (
+        (name === 'unsubscribe' || name === 'request_human' || name === 'mark_auto_reply') &&
+        landed(p)
+      )
+        c.turn.closed = true;
       if (p.ok !== true) break;
       const d = obj(p.data);
       if (typeof d.pageReads === 'number') c.turn.pageReads += d.pageReads;

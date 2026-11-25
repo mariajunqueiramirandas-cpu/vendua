@@ -304,7 +304,8 @@ export async function unansweredTouchesTx(
     with boundary as (
       select greatest(
         (select max(i.created_at) from lead_messages i join lead_threads t on t.id = i.thread_id
-          where t.lead_id = ${leadId} and i.direction = 'in' and not i.historical),
+          where t.lead_id = ${leadId} and i.direction = 'in' and not i.historical
+            and not i.auto_reply),
         (select max(at) from lead_activities where lead_id = ${leadId} and meta->>'type' = 'site_callback'),
         '-infinity') as at
     )

@@ -67,6 +67,8 @@ export interface MessageRow {
   is_farewell: boolean;
   /** a voice note: in, the lead's (body = its transcript); out, the agent's (crm/voice.ts, 0150) */
   audio?: boolean;
+  /** the lead's machine answering our send, not a person: the agent's mark_auto_reply (0152) */
+  auto_reply?: boolean;
   created_at: string;
 }
 
@@ -98,6 +100,7 @@ export function messageJson(row: MessageRow) {
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     audio: row.audio === true,
+    autoReply: row.auto_reply === true,
     createdAt: row.created_at,
   };
 }
@@ -143,11 +146,11 @@ export async function listThreads(
               l.name as lead_name, l.business_name, l.state as lead_state,
               lm.n as message_count, lm.last_body, lm.last_direction,
               dr.n as pending_drafts,
-              (lm.last_direction = 'in'
+              (lm.last_live_direction = 'in'
                  and not exists (
                    select 1 from lead_messages m2
                    where m2.thread_id = t.id and m2.direction = 'out'
-                     and m2.created_at > lm.last_at
+                     and m2.created_at > lm.last_live_at
                  )) as needs_reply
        from lead_threads t
        join leads l on l.id = t.lead_id
@@ -155,7 +158,11 @@ export async function listThreads(
          select count(*)::int n,
                 (array_agg(m.body order by m.created_at desc))[1] as last_body,
                 (array_agg(m.direction order by m.created_at desc))[1] as last_direction,
-                max(m.created_at) as last_at
+                max(m.created_at) as last_at,
+                -- a machine's greeting needs no reply (mark_auto_reply)
+                (array_agg(m.direction order by m.created_at desc) filter (where not m.auto_reply))[1]
+                  as last_live_direction,
+                max(m.created_at) filter (where not m.auto_reply) as last_live_at
          from lead_messages m
          where m.thread_id = t.id and m.status <> 'rejected'
        ) lm on true

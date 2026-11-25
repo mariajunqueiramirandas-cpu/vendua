@@ -467,8 +467,8 @@ const LEAD_LIST_FROM = `
   left join lateral (
     select
       count(*) filter (where m.status = 'draft')::int n,
-      count(*) filter (where m.direction = 'in' and not m.historical)::int inbound_n,
-      max(m.created_at) filter (where m.direction = 'in' and not m.historical) last_in_at
+      count(*) filter (where m.direction = 'in' and not m.historical and not m.auto_reply)::int inbound_n,
+      max(m.created_at) filter (where m.direction = 'in' and not m.historical and not m.auto_reply) last_in_at
     from lead_messages m
     join lead_threads th on th.id = m.thread_id
     where th.lead_id = l.id
@@ -1236,7 +1236,7 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
              count(*) filter (where exists (
                select 1 from lead_threads t
                join lead_messages m on m.thread_id = t.id
-               where t.lead_id = l.id and m.direction = 'in'))::int as replied,
+               where t.lead_id = l.id and m.direction = 'in' and not m.auto_reply))::int as replied,
              count(*) filter (where l.state = 'live')::int as live
       from leads l
       where l.archived_at is null

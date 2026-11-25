@@ -50,6 +50,8 @@ async function seedSimEnv(sql: Sql) {
     timezone: 'America/Sao_Paulo',
     discoveryAutoContact: false,
     discoveryContactMinScore: 7,
+    // scenarios drive the lead's replies on a fast clock: the agent answers at once
+    humanReplyPacing: false,
     inboundReplyDelayMin: 0,
     firstContactDelayMin: 0,
   });

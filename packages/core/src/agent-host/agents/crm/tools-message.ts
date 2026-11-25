@@ -13,7 +13,7 @@ import {
   isSendChannel,
   type SendChannel,
 } from '../../../modules/threads.ts';
-import { dropLeadMailTx } from '../../../crm/agenda.ts';
+import { dropLeadMailTx, scheduleCadenceTx } from '../../../crm/agenda.ts';
 import { crmOfferTx, crmSignupLink } from '../../../crm/signup.ts';
 import { workspaceOf } from './availability.ts';
 import { CRM_OUTBOX_CHANNEL } from '../../../crm/outbox.ts';
@@ -596,5 +596,58 @@ export const unsubscribeTool = defineTool<
         ...(out.drafted ? { farewellDrafted: true } : {}),
         ...(out.sendBlocked ? { farewellBlocked: out.sendBlocked } : {}),
       };
+    }),
+});
+
+export const markAutoReplyTool = defineTool<{ reason?: string | undefined }, Sql>({
+  name: 'mark_auto_reply',
+  description:
+    "The lead's messages since our last send came from their business's machine, not a person: a WhatsApp Business greeting or away message, an Instagram instant reply, a chatbot menu, an autoresponder ('Olá, seja bem-vindo à X! Como podemos ajudar?', 'Nosso horário de atendimento é...', 'Retornaremos em breve', a catalog link), often arriving right after our send (sometimes minutes later, when their phone comes online) and answering nothing we said. Marks them as automatic, puts the follow-up back on the agenda and ends this turn WITHOUT a reply: a person who gets a robot's greeting waits for the human. Never for a short human answer, and never when a person wrote after the robot.",
+  effect: 'write',
+  input: s.object({
+    reason: s.string({ max: 200 }).describe('what gave the machine away').optional(),
+  }),
+  run: (ctx: Ctx, input) =>
+    refusals(async () => {
+      const leadId = leadOf(ctx);
+      const out = await crm(ctx, async (tx) => {
+        const [ours] = await tx<{ at: Date | null }[]>`
+          select max(coalesce(o.dispatch_attempted_at, o.created_at)) as at
+          from lead_messages o join lead_threads t on t.id = o.thread_id
+          where t.lead_id = ${leadId} and t.channel <> 'manual' and o.direction = 'out'
+            and not o.historical and o.status in ('sending', 'sent', 'delivered')`;
+        if (!ours?.at)
+          return { error: 'nada nosso foi enviado: quem escreveu primeiro foi uma pessoa' };
+        const marked = await tx<{ id: string; thread_id: string }[]>`
+          update lead_messages m set auto_reply = true, updated_at = now()
+          from lead_threads t
+          where t.id = m.thread_id and t.lead_id = ${leadId} and m.direction = 'in'
+            and not m.historical and not m.auto_reply and m.received_at > ${ours.at}
+          returning m.id, m.thread_id`;
+        if (!marked.length)
+          return { error: 'nenhuma mensagem do lead depois do nosso último envio' };
+        const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+        const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
+        const followup = await scheduleCadenceTx(tx, leadId, days);
+        const reason = input.reason?.slice(0, 200) ?? null;
+        await tx`
+          insert into lead_activities (lead_id, kind, body, meta, created_by)
+          values (${leadId}, 'system',
+            ${`Agente: ${marked.length === 1 ? 'a mensagem' : `${marked.length} mensagens`} do lead depois do nosso envio ${marked.length === 1 ? 'era resposta automática' : 'eram respostas automáticas'}, sem resposta${reason ? ` (${reason})` : ''}`},
+            ${tx.json({ autoReply: true, messageIds: marked.map((m) => m.id), by: 'agent' } as never)}, 'agent')`;
+        return {
+          marked: marked.length,
+          followupBooked: followup,
+          threads: [...new Set(marked.map((m) => m.thread_id))],
+        };
+      });
+      if ('error' in out) return out as unknown as Json;
+      for (const t of out.threads) emitAfter(ctx, 'thread.message', t);
+      emitAfter(ctx, 'lead.change', leadId);
+      return {
+        marked: out.marked,
+        followupBooked: out.followupBooked,
+        next: 'marcado como robô; a run termina aqui sem resposta',
+      } as unknown as Json;
     }),
 });

@@ -180,6 +180,8 @@ export interface Message {
   approvedAt: string | null;
   /** a WhatsApp voice note: in, the lead's (the body is its transcript); out, the agent's */
   audio?: boolean;
+  /** the lead's machine answering our send (a WhatsApp greeting or away message), not a person */
+  autoReply?: boolean;
   createdAt: string;
 }
 export interface ThreadView {

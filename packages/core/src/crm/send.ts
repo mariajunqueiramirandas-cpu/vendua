@@ -426,6 +426,7 @@ export async function finalizeSentTx(
             where it.lead_id = ${f.leadId}
               and im.direction = 'in'
               and not im.historical
+              and not im.auto_reply
               and im.received_at is not null
               and im.received_at > ${f.sendingAt}::timestamptz
           )

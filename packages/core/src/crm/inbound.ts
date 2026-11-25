@@ -16,6 +16,7 @@ import { containsMerchantOtp } from '../admin/otp-text.ts';
 import { inspectWhatsAppIntake } from '../platform-whatsapp/intake.ts';
 import { reserveParkedFollowupsTx, retireWakeupsOnInboundTx } from './agenda.ts';
 import { CRM_AGENT_ID, LEAD_SUBJECT, requestLeadTx } from './dispatch.ts';
+import { humanReplyAtTx } from './pacing.ts';
 
 type ReplyGate = {
   agent_enabled: boolean;
@@ -60,7 +61,7 @@ export async function ingestInbound(
   if (input.channel === 'whatsapp' && containsMerchantOtp(input.body)) {
     return { ignored: 'código de acesso do whatsapp' };
   }
-  const { inboundReplyDelayMin } = await getGuardrails(sql);
+  const { inboundReplyDelayMin, humanReplyPacing } = await getGuardrails(sql);
   // Team numbers drop before a lead is ever minted — the agent
   // must never see them as leads, in either direction.
   const blocked = await controlTx(sql, blockedPhonesTx);
@@ -187,6 +188,11 @@ export async function ingestInbound(
       // the agent is back (reserveUnansweredTx); quiet hours move the
       // answer to the window's end when it would go out live; a burst coalesces in the actor's
       // quiet window and a turn already running is preempted at its next step
+      const at = humanReplyPacing
+        ? await humanReplyAtTx(tx, res.leadId, input.body)
+        : inboundReplyDelayMin > 0
+          ? new Date(Date.now() + inboundReplyDelayMin * 60_000)
+          : null;
       await requestLeadTx(tx, {
         leadId: res.leadId,
         kind: 'message.inbound',
@@ -197,9 +203,7 @@ export async function ingestInbound(
           threadId: res.threadId,
           channel: input.channel,
         },
-        ...(inboundReplyDelayMin > 0
-          ? { at: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-          : {}),
+        ...(at ? { at } : {}),
       });
       return res;
     });
@@ -237,7 +241,8 @@ export async function reserveUnansweredTx(tx: Sql, leadId: string | null): Promi
     join lead_threads t on t.id = m.thread_id
     join leads l on l.id = t.lead_id
     where (${leadId}::uuid is null or t.lead_id = ${leadId}::uuid)
-      and m.direction = 'in' and not m.historical and m.created_at > now() - interval '3 days'
+      and m.direction = 'in' and not m.historical and not m.auto_reply
+      and m.created_at > now() - interval '3 days'
       and t.agent_enabled and l.agent_mode <> 'off' and l.agent_paused_at is null
       and l.unsubscribed_at is null and l.archived_at is null
       and not exists (
