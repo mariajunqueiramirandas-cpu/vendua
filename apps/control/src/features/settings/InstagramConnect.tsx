@@ -358,6 +358,14 @@ function StepForm({
         </div>
       ) : (
         <>
+          {step.code && (
+            <div className="flex items-baseline gap-2.5">
+              <span className={foot}>número</span>
+              <span className="font-mono text-3xl font-semibold tracking-[0.2em] tabular-nums">
+                {step.code}
+              </span>
+            </div>
+          )}
           {fields.map((f) => (
             <label key={f.id} className="flex flex-col gap-1">
               <span className="text-xs text-sidebar-muted">{f.name}</span>
@@ -375,8 +383,25 @@ function StepForm({
           <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="agent" disabled={busy}>
               {busy && <Loader2 className="animate-spin" />}
-              {step.type === 'wait' ? 'já aprovei' : busy ? 'enviando…' : 'continuar'}
+              {step.type === 'wait'
+                ? busy
+                  ? 'esperando a aprovação…'
+                  : 'já aprovei'
+                : busy
+                  ? 'enviando…'
+                  : 'continuar'}
             </Button>
+            {step.type === 'wait' && step.back && (
+              <Button
+                type="button"
+                variant="ghost"
+                className={quiet}
+                disabled={busy}
+                onClick={(e) => onSubmit(e, { back: 'true' })}
+              >
+                usar outro método
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"

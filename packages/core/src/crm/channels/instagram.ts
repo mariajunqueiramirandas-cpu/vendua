@@ -49,6 +49,8 @@ export interface IgStep {
   instructions: string;
   fields?: IgField[];
   captcha?: { iframeURL: string; instance: string };
+  code?: string;
+  back?: boolean;
   account?: IgAccount;
 }
 export interface IgStatus {
