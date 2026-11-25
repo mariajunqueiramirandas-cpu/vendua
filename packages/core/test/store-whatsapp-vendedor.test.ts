@@ -96,8 +96,14 @@ class FakeSocket implements WaSocket {
     this.probes.push(jids);
     return jids.map((jid) => ({ jid, exists: this.world.registered.has(jid) }));
   }
-  async sendMessage(jid: string, content: OutContent, opts?: { messageId?: string }) {
-    this.sent.push({ jid, content, id: opts?.messageId, at: Date.now() });
+  async sendMessage(
+    jid: string,
+    content: Parameters<WaSocket['sendMessage']>[1],
+    opts?: { messageId?: string },
+  ) {
+    if (!('delete' in content)) {
+      this.sent.push({ jid, content, id: opts?.messageId, at: Date.now() });
+    }
     return { key: { id: opts?.messageId ?? 'x' } };
   }
   async updateMediaMessage(m: WaMessage) {

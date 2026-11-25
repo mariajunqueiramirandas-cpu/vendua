@@ -59,8 +59,8 @@ export interface WaInbound {
   timestamp?: unknown;
 }
 
-export type OutContent =
-  { text: string } | { audio: Uint8Array; ptt: true; mimetype: string; seconds?: number };
+export type OutContent<AudioBytes extends Uint8Array = Uint8Array> =
+  { text: string } | { audio: AudioBytes; ptt: true; mimetype: string; seconds?: number };
 
 export interface Receipt {
   waId: string;
@@ -102,7 +102,7 @@ export interface WaSocket {
   onWhatsApp(...jids: string[]): Promise<{ jid: string; exists: boolean }[] | undefined>;
   sendMessage(
     jid: string,
-    content: OutContent | { delete: WaKey },
+    content: OutContent<Buffer> | { delete: WaKey },
     opts?: { messageId?: string },
   ): Promise<{ key?: { id?: string | null } } | undefined>;
   /** asks the phone for `count` messages of one chat older than `oldest`; the answer arrives as
@@ -676,8 +676,11 @@ export class StoreSession {
     if (!jid) throw new NotOnWhatsApp();
     const sock = this.sock;
     if (!sock || this.stateNow !== 'open') throw new SessionClosed(this.stateNow);
+    // Baileys requires a Buffer for in-memory media.
+    const payload =
+      'audio' in content ? { ...content, audio: Buffer.from(content.audio) } : content;
     const res = await bounded(
-      sock.sendMessage(jid, content, { messageId: waId }),
+      sock.sendMessage(jid, payload, { messageId: waId }),
       SEND_TIMEOUT_MS,
       'whatsapp send',
     );
