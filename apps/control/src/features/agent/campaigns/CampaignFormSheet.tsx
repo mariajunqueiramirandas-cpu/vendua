@@ -6,6 +6,7 @@ import type {
   CampaignScope,
   StartCampaignPayload,
 } from '@/lib/api.ts';
+import { AUTONOMY_LABEL } from '@/lib/labels.ts';
 import { Button } from '@/components/ui/button.tsx';
 import { Segmented, Switch } from '@/components/ui/controls.tsx';
 import { Field, Input, Textarea } from '@/components/ui/input.tsx';
@@ -91,15 +92,14 @@ export function CampaignFormSheet({
   const [maxHuntsPerDay, setMaxHuntsPerDay] = useState('3');
   const [targetWip, setTargetWip] = useState('15');
   const [allowExistingLeads, setAllowExistingLeads] = useState(true);
-  const [enableAutopilot, setEnableAutopilot] = useState(false);
+  const [autopilotChoice, setAutopilotChoice] = useState<boolean | null>(null);
 
   const needsAutopilot = Boolean(preflight && preflight.autonomyLevel !== 'autopilot');
+  const enableAutopilot = autopilotChoice ?? preflight?.autonomyLevel === 'off';
 
   useEffect(() => {
-    if (open) {
-      setEnableAutopilot(preflight?.autonomyLevel === 'off');
-    }
-  }, [open, preflight?.autonomyLevel]);
+    if (!open) setAutopilotChoice(null);
+  }, [open]);
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     setTitle(p.title);
@@ -349,11 +349,13 @@ export function CampaignFormSheet({
               <p className="text-[13px] font-medium">ligar piloto automático ao iniciar</p>
               <p className="text-xs text-muted-foreground">
                 autonomia atual:{' '}
-                <span className="font-medium text-foreground">{preflight.autonomyLevel}</span> — sem
-                piloto automático, mensagens viram rascunhos
+                <span className="font-medium text-foreground">
+                  {AUTONOMY_LABEL[preflight.autonomyLevel]}
+                </span>
+                . esta opção muda a autonomia de todo o CRM.
               </p>
             </div>
-            <Switch checked={enableAutopilot} onCheckedChange={setEnableAutopilot} />
+            <Switch checked={enableAutopilot} onCheckedChange={setAutopilotChoice} />
           </div>
         )}
       </form>

@@ -6,8 +6,10 @@ import {
   automationAllowedTx,
   explainAutonomyTx,
   JOB_KINDS,
+  patchAgentSetting,
   RESET_INSTRUCTION_SCOPES,
   resetAgentInstructions,
+  type AgentSettingPatch,
   type ResetInstructionsScope,
 } from './crm/policy.ts';
 import type { JsonObject } from '@vendua/agent-runtime';
@@ -2009,6 +2011,7 @@ export function createApp({
 
   app.get('/control/v1/settings', async (c) => {
     controlGate(c);
+    c.header('cache-control', 'no-store');
     const rows = await listSettings(sql);
     // guardrails/pitch return effective objects (defaults merged), not the sparse override.
     return c.json({
@@ -2493,7 +2496,16 @@ export function createApp({
   // the `agent` setting with defaults applied — what the runner actually reads
   app.get('/control/v1/agent/config', async (c) => {
     controlGate(c);
-    return c.json(await controlTx(sql, (tx) => agentSettingTx(tx)));
+    c.header('cache-control', 'no-store');
+    return c.json(await controlTx(sql, agentSettingTx));
+  });
+
+  app.patch('/control/v1/agent/config', async (c) => {
+    controlGate(c);
+    const patch = (await bodyJson(c)) as AgentSettingPatch;
+    const res = await patchAgentSetting(sql, patch, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
   });
 
   app.post('/control/v1/agent/reset-instructions', async (c) => {

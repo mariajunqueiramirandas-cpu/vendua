@@ -18,8 +18,9 @@ import { hostHooks } from '../src/agent-host/hooks.ts';
 import { pgMemory } from '../src/agent-host/store/memory.ts';
 import { PgActorStore } from '../src/agent-host/store/pg-store.ts';
 import { CRM_AGENT_ID, CRM_STRATEGIST_ID } from '../src/crm/jobs.ts';
-import { agentSettingTx } from '../src/crm/policy.ts';
+import { agentSettingTx, type AgentSetting } from '../src/crm/policy.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { subscribeControlEvents } from '../src/modules/control-events.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { recordStaffEventTx } from '../src/modules/staff-events.ts';
 import { deliverStaffEvents, resetDeliveryClock } from '../src/modules/telegram/deliver.ts';
@@ -591,6 +592,85 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('telegram sales-agent manager (d
     );
     expect(leadRow?.agent_paused_at).not.toBeNull();
     expect(leadRow?.agent_mode).toBe('draft');
+  });
+
+  test('website edits and a Telegram autonomy proposal share the live setting', async () => {
+    const configPath = '/control/v1/agent/config';
+    const headers = { 'x-vendua-control': 'ctl', 'content-type': 'application/json' };
+    const edit = (patch: Record<string, unknown>) =>
+      app.request(configPath, {
+        method: 'PATCH',
+        headers: { ...headers, 'idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify(patch),
+      });
+    const readConfig = async () =>
+      (await app.request(configPath, { headers })).json() as Promise<AgentSetting>;
+
+    expect((await edit({ level: 'autopilot' })).status).toBe(200);
+    const original = await readConfig();
+    expect(original).toMatchObject({ level: 'autopilot', jobs: { reply: true } });
+
+    const chat = { id: Number(ANA_ID), type: 'private' };
+    const from = { id: Number(ANA_ID), first_name: 'Ana' };
+    await webhook({
+      update_id: 1050,
+      message: { message_id: 850, from, chat, text: 'muda a autonomia pra supervisionado' },
+    });
+    await pumpManager(
+      managerRuntime([
+        tools(call('propose_autonomy', { level: 'supervised', reply: false })),
+        reply('Confirme no botão abaixo.'),
+      ]),
+    );
+    const [proposal] = await sql<{ id: string }[]>`select id from telegram_proposals`;
+    expect(proposal).toBeDefined();
+    const confirm = (updateId: number) =>
+      webhook({
+        update_id: updateId,
+        callback_query: {
+          id: `autonomy-${updateId}`,
+          from,
+          message: { message_id: 851, chat },
+          data: `p:y:${proposal!.id}`,
+        },
+      });
+
+    const published: Promise<AgentSetting>[] = [];
+    const unsubscribe = subscribeControlEvents((event) => {
+      if (event.type === 'settings.change' && event.ref === 'agent') published.push(readConfig());
+    });
+    try {
+      expect((await confirm(1051)).status).toBe(200);
+      expect(await published[0]).toMatchObject({ level: 'supervised', jobs: { reply: false } });
+
+      const responses = await Promise.all([
+        edit({ voice: { replies: !original.voice.replies } }),
+        edit({ voice: { proactive: !original.voice.proactive }, jobs: { discovery: false } }),
+      ]);
+      expect(responses.map((r) => r.status)).toEqual([200, 200]);
+      expect(await readConfig()).toMatchObject({
+        level: 'supervised',
+        jobs: { reply: false, discovery: false },
+        voice: { replies: false, proactive: false },
+      });
+
+      expect((await edit({ level: 'autopilot' })).status).toBe(200);
+      expect(await published[3]).toMatchObject({ level: 'autopilot' });
+
+      // The setting committed, but the confirmation status could still be pending after a crash.
+      await sql`update telegram_proposals set status = 'proposed' where id = ${proposal!.id}`;
+      expect((await confirm(1052)).status).toBe(200);
+      expect(await readConfig()).toMatchObject({ level: 'autopilot' });
+      expect(published).toHaveLength(4);
+
+      calls = [];
+      await webhook({ update_id: 1053, message: { message_id: 853, from, chat, text: '/agente' } });
+      expect(String(calls.find((c) => c.method === 'sendMessage')?.body.text)).toContain(
+        'autonomia: <b>piloto automático</b>',
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 
   test('free-text & voice DM runs real crm-manager Runtime v3 turn: reads, teaches rule, sends 1-tap Confirm card, applies on tap, and /nova resets history', async () => {

@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { AgentConfig } from '@/lib/api.ts';
+import type { AgentConfig, AgentConfigPatch, AutonomyLevel } from '@/lib/api.ts';
 import { useBottomBar } from '@/lib/bottomBar.ts';
 import { cn } from '@/lib/cn.ts';
 import { useAgentConfig } from '@/lib/queries.ts';
@@ -9,12 +9,15 @@ import { Button } from '@/components/ui/button.tsx';
 import { AgentStatusPill } from '../AgentStatusPill.tsx';
 import { EndpointState, TzList, useDraft } from './bits.tsx';
 import {
+  changedAgentFields,
   obj,
   str,
   tzValid,
   useResetAgentInstructions,
+  useSaveAgentConfig,
   useSaveSetting,
   useSettingsMap,
+  withAgentEdits,
   type SettingsMap,
   type SettingWrite,
 } from './settings.ts';
@@ -124,7 +127,13 @@ export default function ConfigPage() {
               onRetry={() => void agentQ.refetch()}
             />
           ) : (
-            <ConfigForm config={agentQ.data} map={settings.data} save={save} pending={pending} />
+            <ConfigForm
+              config={agentQ.data}
+              liveLevel={agentQ.isError ? null : agentQ.data.level}
+              map={settings.data}
+              save={save}
+              savingSettings={pending}
+            />
           )}
 
           <section id="sec-memoria" className="scroll-mt-4">
@@ -139,53 +148,65 @@ export default function ConfigPage() {
 
 function ConfigForm({
   config,
+  liveLevel,
   map,
   save,
-  pending,
+  savingSettings,
 }: {
   config: AgentConfig;
+  liveLevel: AutonomyLevel | null;
   map: SettingsMap;
   save: (key: string, v: SettingWrite) => Promise<boolean>;
-  pending: boolean;
+  savingSettings: boolean;
 }) {
   const { resetInstructions, resetting } = useResetAgentInstructions();
+  const { saveAgentConfig, savingAgentConfig } = useSaveAgentConfig();
   const rawPitch = obj(map.pitch);
   const rawGuardrails = obj(map.guardrails);
 
-  const agent = useDraft(config);
+  const [agentChanges, setAgentChanges] = useState<AgentConfigPatch>({});
+  const agent = withAgentEdits(config, agentChanges);
+  const agentDirty = Object.keys(agentChanges).length > 0;
   const voice = useDraft(voiceOf(rawPitch));
   const limits = useDraft(guardrailsOf(rawGuardrails));
 
-  const setAgent = (patch: Partial<AgentConfig>) => agent.setEdit({ ...agent.edit, ...patch });
+  const setAgent = (patch: Partial<AgentConfig>) =>
+    setAgentChanges((current) =>
+      changedAgentFields(config, { ...withAgentEdits(config, current), ...patch }),
+    );
 
   const tzOk = tzValid(limits.edit.timezone);
   const weeklyUsdBad =
-    !Number.isFinite(agent.edit.weeklyDiscoveryUsd) ||
-    agent.edit.weeklyDiscoveryUsd < 0 ||
-    agent.edit.weeklyDiscoveryUsd > 50;
+    !Number.isFinite(agent.weeklyDiscoveryUsd) ||
+    agent.weeklyDiscoveryUsd < 0 ||
+    agent.weeklyDiscoveryUsd > 50;
   const costCapBad =
     !Number.isFinite(limits.edit.leadLifetimeCostCapUsd) ||
     limits.edit.leadLifetimeCostCapUsd < 0 ||
     limits.edit.leadLifetimeCostCapUsd > 1000;
-  const tooLong = agent.edit.instructions.length > 8000;
+  const tooLong = agent.instructions.length > 8000;
   const invalid = !tzOk || weeklyUsdBad || costCapBad || tooLong;
 
-  const dirty = agent.dirty || voice.dirty || limits.dirty;
+  const pending = savingAgentConfig || savingSettings;
+  const dirty = agentDirty || voice.dirty || limits.dirty;
   const dirtyNames = [
-    agent.dirty && 'autonomia',
+    agentDirty && 'agente',
     voice.dirty && 'voz',
     limits.dirty && 'limites',
   ].filter(Boolean) as string[];
 
   const saveAll = async () => {
-    if (agent.dirty && !(await save('agent', { ...agent.edit }))) return;
+    if (agentDirty) {
+      if (!(await saveAgentConfig(agentChanges))) return;
+      setAgentChanges((current) => changedAgentFields(agentChanges, current));
+    }
     if (voice.dirty && !(await save('pitch', (c: unknown) => ({ ...obj(c), ...voice.edit }))))
       return;
     if (limits.dirty) await save('guardrails', (c: unknown) => ({ ...obj(c), ...limits.edit }));
   };
 
   const resetAll = () => {
-    agent.reset();
+    setAgentChanges({});
     voice.reset();
     limits.reset();
   };
@@ -195,20 +216,20 @@ function ConfigForm({
     if (!res) return;
     // Clear unsaved local edits to voice/instructions even when server values were already default.
     voice.setEdit({ ...res.pitch });
-    setAgent({ instructions: res.config.instructions });
+    setAgentChanges(({ instructions: _instructions, ...changes }) => changes);
   };
 
   return (
     <>
       <section id="sec-autonomia" className="scroll-mt-4">
-        <AutonomyPanel liveLevel={config.level} value={agent.edit} onChange={setAgent} />
+        <AutonomyPanel liveLevel={liveLevel} value={agent} onChange={setAgent} />
       </section>
 
       <section id="sec-voz" className="scroll-mt-4">
         <VoicePanel
           voice={voice.edit}
           onVoice={voice.setEdit}
-          instructions={agent.edit.instructions}
+          instructions={agent.instructions}
           onInstructions={(instructions) => setAgent({ instructions })}
           onReset={() => void resetCustomInstructions()}
           resetting={resetting}
@@ -217,10 +238,7 @@ function ConfigForm({
       </section>
 
       <section id="sec-audio" className="scroll-mt-4">
-        <AudioPanel
-          value={agent.edit.voice ?? { replies: true, proactive: true, speechVoice: '' }}
-          onChange={(voice) => setAgent({ voice })}
-        />
+        <AudioPanel value={agent.voice} onChange={(voice) => setAgent({ voice })} />
       </section>
 
       <section id="sec-limites" className="scroll-mt-4">
@@ -228,7 +246,7 @@ function ConfigForm({
           rawGuardrails={rawGuardrails}
           edit={limits.edit}
           onEdit={limits.setEdit}
-          agent={agent.edit}
+          agent={agent}
           onAgent={setAgent}
           onSaveRaw={(v) => void save('guardrails', v)}
         />

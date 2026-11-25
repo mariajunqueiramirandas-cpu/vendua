@@ -1,5 +1,5 @@
 import { ANTHROPIC_MODEL, EFFORTS, isEffort } from '../platform/anthropic.ts';
-import type { Sql } from '../platform/db.ts';
+import { afterCommit, type Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
@@ -588,7 +588,7 @@ function validateBudgets(value: unknown, bad: Bad) {
 
 // write-time validation for the settings the safety layer reads — a malformed
 // guardrails object must never silently disable the caps; unknown keys pass
-export function validateSetting(key: string, value: unknown): void {
+export function validateSetting(key: string, value: unknown, { partialAgent = false } = {}): void {
   const bad = (field: string, why: string) =>
     new HttpError(422, 'BAD_REQUEST', `settings.${key}.${field} ${why}`, { field });
 
@@ -845,6 +845,7 @@ export function validateSetting(key: string, value: unknown): void {
       throw bad('*', 'must be an object');
     }
     const v = value as Record<string, unknown>;
+    if (partialAgent && !Object.keys(v).length) throw bad('*', 'provide at least one field');
     for (const f of Object.keys(v)) {
       if (
         ![
@@ -859,7 +860,10 @@ export function validateSetting(key: string, value: unknown): void {
       )
         throw bad(f, 'is not an agent field');
     }
-    if (!['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)) {
+    if (
+      (!partialAgent || 'level' in v) &&
+      !['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)
+    ) {
       throw bad('level', 'must be off | copilot | supervised | autopilot');
     }
     if (v.jobs !== undefined) {
@@ -950,6 +954,9 @@ export async function putSettingTx(tx: Sql, key: string, value: unknown): Promis
   if (key === 'agent' || key === 'guardrails') {
     const { reserveParkedTx } = await import('../crm/inbound.ts');
     await reserveParkedTx(tx, null);
+  }
+  if (key === 'agent' || key === 'guardrails' || key === 'pitch') {
+    afterCommit(tx, () => emitControlEvent('settings.change', key));
   }
 }
 

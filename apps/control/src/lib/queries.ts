@@ -10,7 +10,11 @@ export const useIntegrations = () =>
   useQuery({ queryKey: qk.integrations(), queryFn: api.integrations });
 
 export const useAgentConfig = () =>
-  useQuery({ queryKey: qk.agentConfig(), queryFn: api.agentConfig });
+  useQuery({
+    queryKey: qk.agentConfig(),
+    queryFn: ({ signal }) => api.agentConfig(signal),
+    refetchOnWindowFocus: 'always',
+  });
 
 /** Site sob medida tasks a person has to act on: stuck ones, and green PRs awaiting approval. */
 export const needsHuman = (t: Pick<SiteTask, 'status' | 'ci'>) =>
@@ -50,7 +54,7 @@ export interface AgentStatus {
 export function useAgentStatus(): AgentStatus {
   const cfg = useAgentConfig();
   const models = useQuery({ queryKey: qk.aiModels(), queryFn: api.aiModels });
-  const level = cfg.data?.level ?? null;
+  const level = cfg.isError ? null : (cfg.data?.level ?? null);
   const modelsMissing =
     models.isSuccess && !models.data.primaryRoute && models.data.routesSource === 'none';
   if (modelsMissing) return { label: 'sem modelo', tone: 'bad', level, modelsMissing: true };
