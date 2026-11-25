@@ -18,6 +18,9 @@ export interface Enqueue {
   /** how long the message is still worth sending */
   ttlMs?: number;
   session?: string;
+  /** a voice note sent in place of the body (the body stays: what it says, and an older
+   *  sender's fallback) */
+  voice?: { bytes: Uint8Array; mime: string; seconds: number } | null;
 }
 
 const TTL_MS: Record<OutboxPurpose, number> = {
@@ -37,10 +40,23 @@ export async function enqueuePlatformWaTx(
   const body = m.body.trim();
   if (!body) throw new Error('empty whatsapp message');
   const ttl = m.ttlMs ?? TTL_MS[m.purpose];
+  const session = m.session ?? VENDUA_SESSION;
+  const [taken] = await tx<{ id: string }[]>`
+    select id from platform_wa_outbox where dedupe_key = ${m.dedupeKey.slice(0, 200)}`;
+  if (taken) return { id: taken.id, inserted: false };
+  const media = m.voice
+    ? (
+        await tx<{ id: string }[]>`
+          insert into platform_wa_media (session, mime, bytes, seconds)
+          values (${session}, ${m.voice.mime}, ${Buffer.from(m.voice.bytes)},
+                  ${Math.min(600, Math.max(0, Math.round(m.voice.seconds)))})
+          returning id`
+      )[0]!.id
+    : null;
   const inserted = await tx<{ id: string }[]>`
-    insert into platform_wa_outbox (session, to_jid, body, purpose, ref, dedupe_key, expires_at)
-    values (${m.session ?? VENDUA_SESSION}, ${to}, ${body}, ${m.purpose}, ${m.ref ?? null},
-            ${m.dedupeKey.slice(0, 200)}, now() + ${ttl} * interval '1 millisecond')
+    insert into platform_wa_outbox (session, to_jid, body, purpose, ref, dedupe_key, expires_at, media_id)
+    values (${session}, ${to}, ${body}, ${m.purpose}, ${m.ref ?? null},
+            ${m.dedupeKey.slice(0, 200)}, now() + ${ttl} * interval '1 millisecond', ${media})
     on conflict (dedupe_key) do nothing
     returning id`;
   if (inserted[0]) return { id: inserted[0].id, inserted: true };

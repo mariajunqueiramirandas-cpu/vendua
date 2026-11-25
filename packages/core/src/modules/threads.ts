@@ -65,6 +65,8 @@ export interface MessageRow {
   /** Opt-out goodbye — the one message allowed to dispatch after
    *  unsubscribed_at is set (0021). */
   is_farewell: boolean;
+  /** a voice note: in, the lead's (body = its transcript); out, the agent's (crm/voice.ts, 0150) */
+  audio?: boolean;
   created_at: string;
 }
 
@@ -95,6 +97,7 @@ export function messageJson(row: MessageRow) {
     error: row.error,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
+    audio: row.audio === true,
     createdAt: row.created_at,
   };
 }
@@ -304,6 +307,8 @@ export async function addInboundMessage(
     /** email From failed DKIM/DMARC: it may be forged, so it never joins an existing lead's
      *  history — it lands on a quarantine lead (agent off) for staff review */
     unverifiedSender?: boolean;
+    /** a voice note: the body is its transcript (crm/voice.ts) */
+    audio?: boolean;
   },
 ): Promise<InboundResult | null> {
   const body = str(input.body, 'body', 8000).trim();
@@ -498,8 +503,8 @@ export async function addInboundMessage(
     const status = direction === 'in' ? 'received' : 'sent';
     const message = (
       await tx<MessageRow[]>`
-        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at, historical)
-        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()}, ${input.historical === true})
+        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at, historical, audio)
+        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()}, ${input.historical === true}, ${input.audio === true})
         returning *
       `
     )[0]!;
@@ -581,6 +586,8 @@ export async function composeMessage(
     /** Opt-out goodbye — exempt from the unsubscribed suppression at
      *  dispatch. Only unsubscribe() sets this. */
     farewell?: boolean;
+    /** sent as a WhatsApp voice note (crm/voice.ts decides) */
+    audio?: boolean;
   },
   idemKey: string,
 ): Promise<
@@ -619,6 +626,8 @@ export async function composeMessageTx(
     /** Opt-out goodbye — exempt from the unsubscribed suppression at
      *  dispatch. Only unsubscribe() sets this. */
     farewell?: boolean;
+    /** sent as a WhatsApp voice note (crm/voice.ts decides) */
+    audio?: boolean;
   },
 ): Promise<{
   status: number;
@@ -651,8 +660,8 @@ export async function composeMessageTx(
   const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell, send_after)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false}, ${input.sendAfter ?? null})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell, send_after, audio)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false}, ${input.sendAfter ?? null}, ${input.audio === true && input.channel === 'whatsapp'})
       returning *
     `
   )[0]!;

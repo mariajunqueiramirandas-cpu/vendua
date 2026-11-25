@@ -133,7 +133,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('media transcribe via sidecar (d
       routes: { transcribe: [SIDECAR] },
       saved: true,
       sidecar: { configured: true, reachable: true, model: 'parakeet-tdt-0.6b-v3' },
-      tts: { configured: false, reachable: false, model: null, voice: null, voices: 0 },
+      tts: { configured: false, reachable: false, model: null, voice: null, voices: [] },
       providers: [{ id: 'openai', configured: true, secretName: 'OPENAI_API_KEY' }],
     });
     // configured but down: a closed port answers nothing

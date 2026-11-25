@@ -14,6 +14,7 @@ import {
 import { releaseJobs } from './platform/job-lease.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './crm/inbound.ts';
+import { leadMessageBody } from './crm/voice.ts';
 import { startScheduler, stopScheduler } from './crm/scheduler.ts';
 import { startCrmOutbox } from './crm/outbox.ts';
 import { startAgentRuntime } from './agent-host/scheduler.ts';
@@ -193,6 +194,8 @@ const stopVendedor = startVendedorWorker(jobsSql, {
   gateway: agentGateway,
   media: mediaProviders(jobsSql),
 });
+// voice in (STT) and out (TTS) for the CRM and Duá on Venduá's number
+const coreMedia = mediaProviders(jobsSql);
 // ingestInbound caps a body at 8000 chars: a longer WhatsApp message is cut, not dropped
 const waBody = (text: string) => (text.length > 8000 ? text.slice(0, 8000) : text);
 onInboundMessage(async (jid, text, providerId, pushName, altJid, media, sentAt) => {
@@ -206,13 +209,16 @@ onInboundMessage(async (jid, text, providerId, pushName, altJid, media, sentAt) 
     ...(sentAt ? { sentAt } : {}),
   };
   if (await socketMessageToInbox(jobsSql, m)) return;
+  // a lead's voice note reaches the sales agent as its transcript (crm/voice.ts)
+  const lead = await leadMessageBody(jobsSql, text, media, coreMedia);
   await ingestInbound(jobsSql, {
     channel: 'whatsapp',
     from: jid,
     ...(pushName ? { fromName: pushName } : {}),
     ...(altJid ? { fromAlias: altJid } : {}),
-    body: waBody(text),
+    body: waBody(lead.body),
     providerMessageId: providerId,
+    ...(lead.audio ? { audio: true } : {}),
   });
 });
 // Pairing-time history lands as context only (never queues a reply); fromMe echoes staff's phone replies.
@@ -246,7 +252,7 @@ if (waTransport === 'socket')
 const platformInbox = startPlatformInbox({
   sql: jobsSql,
   jobsSql,
-  media: mediaProviders(jobsSql),
+  media: coreMedia,
   gateway: agentGateway,
   origin: adminOrigin,
 });

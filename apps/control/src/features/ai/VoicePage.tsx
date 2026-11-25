@@ -142,7 +142,7 @@ function SpeechPanel({ view }: { view: AiVoiceView }) {
           </span>
           {st.tone === 'ok' && (
             <span className="text-xs text-muted-foreground">
-              {view.tts.voices} vozes{view.tts.voice ? ` · padrão: ${view.tts.voice}` : ''}
+              {view.tts.voices.length} vozes{view.tts.voice ? ` · padrão: ${view.tts.voice}` : ''}
             </span>
           )}
         </div>

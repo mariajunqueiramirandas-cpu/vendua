@@ -20,6 +20,7 @@ import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
 import { sendInstagram } from './channels/instagram.ts';
 import { followBeforeDm } from './ig-follows.ts';
+import { prepareVoiceNote, voiceNoteTx } from './voice.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 import { enqueuePlatformWaTx } from '../platform-whatsapp/outbox.ts';
 import { platformTransport } from '../platform-whatsapp/transport.ts';
@@ -53,6 +54,10 @@ export async function dispatchMessage(
   guard?: (tx: Sql) => Promise<string | null | void>,
 ): Promise<{ ok: boolean; reason?: string }> {
   let wroteTid: string | null = null;
+  // a voice note's sound is made before the claim: no HTTP inside its tx (crm/voice.ts)
+  await prepareVoiceNote(sql, messageId).catch((err) =>
+    sendLog.warn({ err: String(err), messageId }, 'voice note not prepared; text instead'),
+  );
   const job = await controlTx(sql, async (tx) => {
     const refused = (await guard?.(tx)) || null;
     const msg = (
@@ -68,8 +73,9 @@ export async function dispatchMessage(
           meeting_id: string | null;
           send_after: Date | null;
           approved_by: string | null;
+          audio: boolean;
         }[]
-      >`select id, thread_id, body, status, author, subject, is_farewell, meeting_id, send_after, approved_by from lead_messages where id = ${messageId} for update`
+      >`select id, thread_id, body, status, author, subject, is_farewell, meeting_id, send_after, approved_by, audio from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
     // terminal/in-flight states are honest outcomes — a replayed approve
@@ -258,6 +264,8 @@ export async function dispatchMessage(
       where id = ${messageId} returning updated_at as sending_at
     `;
     wroteTid = thread.id;
+    const voice =
+      thread.channel === 'whatsapp' && msg.audio ? await voiceNoteTx(tx, messageId) : null;
     if (viaGateway) {
       await enqueuePlatformWaTx(tx, {
         to: to!,
@@ -265,6 +273,7 @@ export async function dispatchMessage(
         purpose: 'crm',
         dedupeKey: `crm:${messageId}${msg.approved_by ? ':approved' : ''}`,
         ref: messageId,
+        voice,
       });
       return { fail: null, queued: true as const };
     }
@@ -279,6 +288,7 @@ export async function dispatchMessage(
         // compose-time subject wins; thread subject is the fallback
         subject: msg.subject ?? thread.subject ?? 'Venduá',
         body: msg.body,
+        voice,
         integration,
         igFbid: thread.channel === 'instagram' ? thread.external_id : null,
         leadId: thread.lead_id,
@@ -312,7 +322,13 @@ export async function dispatchMessage(
         body: send.body,
       });
     } else if (send.channel === 'whatsapp') {
-      providerMessageId = await sendWhatsApp(sql, send.integration!, send.to!, send.body);
+      providerMessageId = await sendWhatsApp(
+        sql,
+        send.integration!,
+        send.to!,
+        send.body,
+        send.voice,
+      );
     } else if (send.channel === 'instagram') {
       // follow first (best effort, bounded): a DM from an account that follows them reads less
       // like spam, and the follow notification gets it opened

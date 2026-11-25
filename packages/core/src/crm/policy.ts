@@ -57,6 +57,31 @@ export interface AgentSetting {
   schedule: AgentSchedule;
   /** the agent mode leads start in when no one on staff chose one */
   newLeadMode: NewLeadModes;
+  /** voice notes on WhatsApp (crm/voice.ts, ADR 0048) */
+  voice: AgentVoice;
+}
+
+export interface AgentVoice {
+  /** a lead's voice note is answered with one */
+  replies: boolean;
+  /** the agent may send one on its own, at most once a day per lead */
+  proactive: boolean;
+  /** the TTS sidecar's voice id; '' = its default */
+  speechVoice: string;
+}
+
+export const DEFAULT_AGENT_VOICE: AgentVoice = { replies: true, proactive: true, speechVoice: '' };
+
+function voiceOf(v: unknown): AgentVoice {
+  const o = (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  return {
+    replies: o.replies !== false,
+    proactive: o.proactive !== false,
+    speechVoice:
+      typeof o.speechVoice === 'string' && /^[a-z0-9-]{1,40}$/.test(o.speechVoice)
+        ? o.speechVoice
+        : '',
+  };
 }
 
 // Normalizes a stored row: bad/missing fields fall back to defaults so a hand-edited row can't poison policy.
@@ -86,6 +111,7 @@ export function normalizeAgent(v: unknown): AgentSetting {
         : DEFAULT_INSTRUCTIONS,
     weeklyDiscoveryUsd: Number.isFinite(usd) ? Math.min(50, Math.max(0, usd)) : 0,
     newLeadMode: newLeadModesOf(o),
+    voice: voiceOf(o.voice),
     schedule: {
       discoveryHour: int(sc.discoveryHour, 23, DEFAULT_SCHEDULE.discoveryHour),
       weeklyDay: int(sc.weeklyDay, 6, DEFAULT_SCHEDULE.weeklyDay),

@@ -32,6 +32,7 @@ import {
   NotOnWhatsApp,
   SessionClosed,
   StoreSession,
+  type OutContent,
   type WaInbound,
   type WaRuntime,
 } from './session.ts';
@@ -97,6 +98,8 @@ interface Claimed {
   attempts: number;
   wa_id: string;
   expired: boolean;
+  /** a voice note sent in place of the body (0150; the CRM agent's) */
+  media_id: string | null;
 }
 
 type HistoryContact = {
@@ -639,6 +642,23 @@ export class PlatformGateway {
     })();
   }
 
+  /** The row's voice note when it has one (the CRM agent's), else its text. */
+  private async outContent(row: Claimed): Promise<OutContent> {
+    if (!row.media_id) return { text: row.body };
+    const [m] = await controlTx(
+      this.o.sql,
+      (tx) => tx<{ mime: string; bytes: Buffer; seconds: number | null }[]>`
+        select mime, bytes, seconds from platform_wa_media where id = ${row.media_id}`,
+    );
+    if (!m) return { text: row.body };
+    return {
+      audio: new Uint8Array(m.bytes),
+      ptt: true,
+      mimetype: m.mime,
+      ...(m.seconds ? { seconds: m.seconds } : {}),
+    };
+  }
+
   private async sendOne(
     name: string,
     o: Owned,
@@ -671,7 +691,7 @@ export class PlatformGateway {
             lease_until = now() + ${SEND_LEASE}::interval,
             wa_id = ${next.wa_id ?? messageIdFor(next.id)}
           where id = ${next.id}
-          returning id, purpose, to_jid, body, attempts, wa_id, expires_at < now() as expired`
+          returning id, purpose, to_jid, body, attempts, wa_id, media_id, expires_at < now() as expired`
       )[0]!;
       if (r.expired)
         await tx`update platform_wa_outbox set status = 'expired', lease_until = null
@@ -700,7 +720,7 @@ export class PlatformGateway {
                    where id = ${row.id} and status = 'sending'`;
       });
     try {
-      await o.session.sendTo(platformAddress(row.to_jid), { text: row.body }, row.wa_id);
+      await o.session.sendTo(platformAddress(row.to_jid), await this.outContent(row), row.wa_id);
       const now = Date.now();
       const gap = this.o.minSendGapMs;
       o.nextSendAt =

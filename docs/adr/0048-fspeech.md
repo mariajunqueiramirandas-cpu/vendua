@@ -49,10 +49,33 @@ failure still sends the reply as text (`voicePass`, unchanged).
   because a pickup call can name the customer). Offline, or when Core can't speak, the device's
   voice says the line, as before.
 - The CRM's IA → Voz shows the speech server's state beside the STT one.
+- **The staff's manager on Telegram** answers a voice note with one: Telegram's `sendVoice` takes
+  Ogg/Opus as it comes. The voice note goes before the usual text and buttons, so cards, links and
+  numbers stay readable. `telegram_dm_outbox.speak` (0149) holds what it says until it's sent, so
+  a retried text never sends the voice twice. With no voice, the text goes alone.
+- **The CRM sales agent hears and speaks** on WhatsApp (`crm/voice.ts`, 0150). A lead's voice
+  note was the literal text "[áudio]"; now it is transcribed on either of Venduá's transports
+  (Core's socket, or the gateway's stored media) and reaches the agent as "[áudio] …", with
+  "[áudio; a transcrição pode ter erros]" when unsure. A voice note is answered with one. The
+  agent may also ask for one (`send_message`/`draft_message` `audio`). Code, not the model,
+  decides:
+  - never to a lead who hasn't written
+  - never with a link or past 600 characters
+  - a proactive one at most once a day per lead, and never right after another
+  - the staff's switches and voice in CRM → Agente → áudio (`agent.voice`)
 
-Not yet: Duá's replies to merchants on Venduá's WhatsApp, the CRM agent's to leads, and the
-storefront chat, which needs a Kernel audio part. Each needs its own outbound audio path (the
-platform outbox and the CRM channel only send text today) and a product call on when to speak.
+  The sound is made just before dispatch, outside the claim tx (`lead_audio`). It goes as a
+  WhatsApp PTT over the socket, or through `platform_wa_outbox.media_id` on the gateway. A voice
+  that can't be made sends the same words as text. The agent never claims to be a person in
+  audio either: the prompt keeps its transparency rule, and invents no attendant's name.
+
+**The normalizer is fSpeech's own** (`engine/src/normalize_pt.cpp`). Numbers agree with the noun
+they count ("duas pizzas", "uma coca", "às duas"), "1/2 kg" is "meio quilo", and chat shorthand is
+spelled out.
+
+Not yet: Duá's replies to merchants on Venduá's WhatsApp, and the storefront chat, which needs a
+Kernel audio part. Both have the outbound path now (the platform outbox carries voice notes); what
+remains is the product call on when each should speak.
 
 ## Measurements
 

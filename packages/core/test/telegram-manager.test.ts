@@ -721,6 +721,83 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('telegram sales-agent manager (d
     expect(String(calls[0]?.body.text)).toContain('nova conversa iniciada');
   });
 
+  test('a voice note is answered with a voice note, then the text; typed messages get text only', async () => {
+    const spoken: string[] = [];
+    let speaking = true;
+    const voiceMedia: MediaProviders = {
+      ...fakeMedia,
+      async speak(text, opts) {
+        spoken.push(`${opts?.format}:${text}`);
+        return speaking
+          ? {
+              bytes: new Uint8Array([79, 103, 103, 83]),
+              mime: 'audio/ogg; codecs=opus',
+              seconds: 2,
+            }
+          : null;
+      },
+    };
+    const outbox = async () =>
+      (
+        await controlTx(
+          sql,
+          (tx) => tx<{ speak: string | null; state: string }[]>`
+            select speak, state from telegram_dm_outbox where chat_id = ${ANA_ID} order by created_at`,
+        )
+      ).map((r) => ({ speak: r.speak, state: r.state }));
+    const voiceNote = (update: number, message: number) =>
+      webhook({
+        update_id: update,
+        message: {
+          message_id: message,
+          from: { id: Number(ANA_ID), first_name: 'Ana' },
+          chat: { id: Number(ANA_ID), type: 'private' },
+          voice: { file_id: `voice-${message}`, duration: 3, mime_type: 'audio/ogg', file_size: 4 },
+        },
+      });
+    const sentMethods = () =>
+      calls.map((c) => c.method).filter((m) => m === 'sendVoice' || m === 'sendMessage');
+
+    // a voice note: the reply is spoken, the voice goes first and the text still follows
+    nextTranscript = 'quantos leads entraram hoje?';
+    expect((await voiceNote(1101, 901)).status).toBe(200);
+    await pumpManager(managerRuntime([reply('Entraram **3 leads** hoje.')]));
+    expect(await outbox()).toEqual([{ speak: 'Entraram **3 leads** hoje.', state: 'pending' }]);
+    calls = [];
+    await deliverStaffEvents(appSql, { fetch: tgFetch, media: voiceMedia });
+    expect(sentMethods()).toEqual(['sendVoice', 'sendMessage']);
+    expect(spoken).toEqual(['ogg:Entraram **3 leads** hoje.']);
+    // sent once: a retried row can't say it again
+    expect(await outbox()).toEqual([{ speak: null, state: 'sent' }]);
+
+    // a typed message: text only
+    await controlTx(sql, (tx) => tx`delete from telegram_dm_outbox`);
+    await webhook({
+      update_id: 1102,
+      message: {
+        message_id: 902,
+        from: { id: Number(ANA_ID), first_name: 'Ana' },
+        chat: { id: Number(ANA_ID), type: 'private' },
+        text: 'e ontem?',
+      },
+    });
+    await pumpManager(managerRuntime([reply('Ontem foram 2.')]));
+    expect(await outbox()).toEqual([{ speak: null, state: 'pending' }]);
+    calls = [];
+    await deliverStaffEvents(appSql, { fetch: tgFetch, media: voiceMedia });
+    expect(sentMethods()).toEqual(['sendMessage']);
+
+    // no voice now (the TTS sidecar is down): the text goes, nothing is held back
+    await controlTx(sql, (tx) => tx`delete from telegram_dm_outbox`);
+    speaking = false;
+    await voiceNote(1103, 903);
+    await pumpManager(managerRuntime([reply('Tudo certo por aqui.')]));
+    calls = [];
+    await deliverStaffEvents(appSql, { fetch: tgFetch, media: voiceMedia });
+    expect(sentMethods()).toEqual(['sendMessage']);
+    expect(await outbox()).toEqual([{ speak: null, state: 'sent' }]);
+  });
+
   test('store tx cannot read telegram_dm_outbox, telegram_prompts, or telegram_proposals (RLS)', async () => {
     const [tenant] = await sql<{ id: string }[]>`
       insert into tenants (slug, name, status)

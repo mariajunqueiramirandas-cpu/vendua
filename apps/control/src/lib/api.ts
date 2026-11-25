@@ -178,6 +178,8 @@ export interface Message {
   error: string | null;
   approvedBy: string | null;
   approvedAt: string | null;
+  /** a WhatsApp voice note: in, the lead's (the body is its transcript); out, the agent's */
+  audio?: boolean;
   createdAt: string;
 }
 export interface ThreadView {
@@ -976,6 +978,8 @@ export interface AgentConfig {
   schedule: AgentSchedule;
   /** mode a lead starts in when staff didn't pick one: 'auto' follows the level, 'draft' holds every message */
   newLeadMode: { inbound: 'draft' | 'auto'; discovery: 'draft' | 'auto' };
+  /** WhatsApp voice notes: answer one with one, send one now and then, in which voice ('' = the default) */
+  voice: { replies: boolean; proactive: boolean; speechVoice: string };
 }
 
 export interface AgentPitch {
@@ -1799,6 +1803,13 @@ export interface MediaRoutesSetting {
   transcribe?: MediaRouteSetting[];
   speak?: MediaRouteSetting[];
 }
+/** A voice of the TTS sidecar (fSpeech); `age` is young | young_adult | adult | middle_age | older */
+export interface SpeechVoice {
+  id: string;
+  name: string;
+  gender: 'female' | 'male' | null;
+  age: string | null;
+}
 /** GET /ai/voice: the routes, the self-hosted STT sidecar's state and the cloud keys */
 export interface AiVoiceView {
   routes: MediaRoutesSetting;
@@ -1812,8 +1823,8 @@ export interface AiVoiceView {
     model: string | null;
     /** its default voice id */
     voice: string | null;
-    /** how many voices the stores can pick from */
-    voices: number;
+    /** the voices a store (or the sales agent) can pick */
+    voices: SpeechVoice[];
   };
   providers: { id: Exclude<MediaProviderId, 'sidecar'>; configured: boolean; secretName: string }[];
 }

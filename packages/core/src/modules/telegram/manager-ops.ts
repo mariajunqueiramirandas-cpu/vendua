@@ -3,6 +3,7 @@ import type { JsonObject } from '@vendua/agent-runtime';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
+import { mediaProviders, type MediaProviders } from '../../vendedor/media.ts';
 import {
   CRM_DISCOVERY_ID,
   CRM_STRATEGIST_ID,
@@ -850,11 +851,37 @@ interface OutboxRow {
   buttons: InlineButton[][];
   reply_to_message_id: string | null;
   attempts: number;
+  speak: string | null;
+}
+
+/** A voice note before the row's text, when it has one to say (ADR 0048). Best effort: no voice,
+ *  or a failed upload, leaves the text alone; only a rate limit retries the row. */
+async function sendVoiceFirst(
+  sql: Sql,
+  client: ReturnType<typeof telegramClient>,
+  r: OutboxRow,
+  media: MediaProviders | null,
+): Promise<void> {
+  if (!r.speak) return;
+  try {
+    const s = media ? await media.speak(r.speak, { format: 'ogg' }).catch(() => null) : null;
+    if (s) {
+      const form = new FormData();
+      form.append('chat_id', r.chat_id);
+      form.append('voice', new Blob([s.bytes], { type: 'audio/ogg' }), 'resposta.ogg');
+      form.append('duration', String(s.seconds));
+      await client.callForm('sendVoice', form);
+    }
+  } catch (e) {
+    if (e instanceof TelegramError && e.rateLimited) throw e;
+    mlog.warn({ err: e instanceof Error ? e.message : String(e) }, 'telegram voice reply failed');
+  }
+  await controlTx(sql, (tx) => tx`update telegram_dm_outbox set speak = null where id = ${r.id}`);
 }
 
 export async function deliverDmOutbox(
   sql: Sql,
-  opts: { fetch?: TelegramFetch; limit?: number } = {},
+  opts: { fetch?: TelegramFetch; limit?: number; media?: MediaProviders | null } = {},
 ): Promise<{ n: number; retryInMs?: number }> {
   const ctx = await telegramContext(sql);
   if (!ctx.app.ok) return { n: 0 };
@@ -872,9 +899,11 @@ export async function deliverDmOutbox(
         limit ${opts.limit ?? 15}
         for update skip locked
       )
-      returning id, chat_id, text, buttons, reply_to_message_id, attempts
+      returning id, chat_id, text, buttons, reply_to_message_id, attempts, speak
     `,
   );
+  const media =
+    opts.media !== undefined ? opts.media : rows.some((r) => r.speak) ? mediaProviders(sql) : null;
   let n = 0;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
@@ -883,6 +912,7 @@ export async function deliverDmOutbox(
       ...(Array.isArray(r.buttons) && r.buttons.length ? { buttons: r.buttons } : {}),
     });
     try {
+      await sendVoiceFirst(sql, client, r, media);
       await client.call<{ message_id: number }>('sendMessage', {
         chat_id: r.chat_id,
         text: msg.text,

@@ -53,6 +53,8 @@ export async function ingestInbound(
     historical?: boolean;
     /** email whose From failed DKIM/DMARC — never matched to an existing lead */
     unverifiedSender?: boolean;
+    /** a WhatsApp voice note: the body is its transcript (crm/voice.ts hearLeadVoiceNote) */
+    audio?: boolean;
   },
 ): Promise<IngestResult> {
   if (input.channel === 'whatsapp' && containsMerchantOtp(input.body)) {
@@ -108,6 +110,7 @@ export async function ingestInbound(
         ...(input.sentAt ? { sentAt: input.sentAt } : {}),
         ...(input.historical ? { historical: input.historical } : {}),
         ...(input.unverifiedSender ? { unverifiedSender: true } : {}),
+        ...(input.audio ? { audio: true } : {}),
         ...(history
           ? {
               createLead: history.mode === 'leads',

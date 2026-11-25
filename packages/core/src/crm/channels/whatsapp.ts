@@ -22,12 +22,25 @@ interface WaKey {
   fromMe: false;
 }
 
+/** a WhatsApp voice note (PTT): Ogg/Opus */
+export interface VoiceNote {
+  bytes: Uint8Array;
+  mime: string;
+  seconds: number;
+}
+
+type OutContent =
+  { text: string } | { audio: Buffer; ptt: true; mimetype: string; seconds?: number };
+
 interface BaileysSocket {
-  sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
+  sendMessage(jid: string, content: OutContent): Promise<{ key?: { id?: string } }>;
   /** blue ticks on the lead's phone for these inbound keys */
   readMessages?(keys: WaKey[]): Promise<unknown>;
   /** 'composing' shows "digitando…" in the lead's chat until the message lands */
-  sendPresenceUpdate?(type: 'composing' | 'paused' | 'available', jid?: string): Promise<unknown>;
+  sendPresenceUpdate?(
+    type: 'composing' | 'recording' | 'paused' | 'available',
+    jid?: string,
+  ): Promise<unknown>;
   /** free server-side existence probe — the autocontact gate verifies numbers through it */
   onWhatsApp(jid: string): Promise<{ jid: string; exists: boolean }[] | undefined>;
   end(err?: Error): void;
@@ -1092,10 +1105,12 @@ export async function sendWhatsApp(
   integration: IntegrationRow,
   to: string,
   text: string,
+  /** sent in place of the text when given (the text is what it says) */
+  voice?: VoiceNote | null,
 ): Promise<string | null> {
   const driver = integration.driver;
   if (driver === 'log') {
-    waLog.info({ to, text }, 'log-driver send');
+    waLog.info({ to, text, voice: voice ? voice.seconds : undefined }, 'log-driver send');
     return `log:${crypto.randomUUID()}`;
   }
   if (driver === 'baileys') {
@@ -1113,17 +1128,21 @@ export async function sendWhatsApp(
     }
     if (sock.sendPresenceUpdate) {
       await withTimeout(
-        sock.sendPresenceUpdate('composing', jid),
+        sock.sendPresenceUpdate(voice ? 'recording' : 'composing', jid),
         COSMETIC_TIMEOUT_MS,
         'whatsapp presence',
       ).catch(() => undefined);
       await new Promise((r) => setTimeout(r, typingMs(text)));
     }
-    const res = await withTimeout(
-      sock.sendMessage(jid, { text }),
-      SEND_TIMEOUT_MS,
-      'whatsapp send',
-    );
+    const content: OutContent = voice
+      ? {
+          audio: Buffer.from(voice.bytes),
+          ptt: true,
+          mimetype: voice.mime,
+          ...(voice.seconds ? { seconds: voice.seconds } : {}),
+        }
+      : { text };
+    const res = await withTimeout(sock.sendMessage(jid, content), SEND_TIMEOUT_MS, 'whatsapp send');
     if (sock.sendPresenceUpdate)
       await withTimeout(
         sock.sendPresenceUpdate('paused', jid),

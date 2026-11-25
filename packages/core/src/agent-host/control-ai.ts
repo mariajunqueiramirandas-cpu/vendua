@@ -120,7 +120,7 @@ export function mountAgentRuntimeAi(o: {
         reachable: tts.reachable,
         model: tts.model,
         voice: tts.voice,
-        voices: tts.voices.length,
+        voices: tts.voices.map((v) => ({ id: v.id, name: v.name, gender: v.gender, age: v.age })),
       },
       providers: [{ id: 'openai', configured: !!env.OPENAI_API_KEY, secretName: 'OPENAI_API_KEY' }],
     });
