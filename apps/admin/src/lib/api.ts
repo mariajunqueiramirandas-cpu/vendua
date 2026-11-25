@@ -2598,6 +2598,8 @@ export interface CopilotMessage {
   voice?: boolean;
   /** a photo the person sent: a same-origin URL (cookie auth); the text is its caption */
   image: string | null;
+  /** Duá's reply to a voice message, said out loud: an /admin/v1 path (session auth) */
+  audio?: string | null;
 }
 
 export type CopilotItem =

@@ -54,6 +54,7 @@ import {
   type Voice,
 } from './media.ts';
 import { useRecorder } from './useRecorder.ts';
+import { markVoiceSent, SpokenReply } from './Spoken.tsx';
 import { mediaUrl, usePrivateMedia } from '../../lib/media.ts';
 
 // Duá Copilot (ADR 0034): a manager or owner asks Duá about the store, or asks for a change, and
@@ -507,6 +508,10 @@ function Hello({
 /** The conversation: the person on the right, Duá on the left with his cards under his reply. */
 function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
   const items = c.view?.items ?? [];
+  // the newest spoken reply: the one that may play by itself after a voice message
+  let latestSpoken: string | undefined;
+  for (const it of items)
+    if (it.type === 'message' && it.author === 'dua' && it.audio) latestSpoken = it.id;
   let prevDay = '';
   let prevDua = false;
   const rows: ReactNode[] = items.map((it: CopilotItem) => {
@@ -536,6 +541,9 @@ function Thread({ c, dock }: { c: Chat; dock?: boolean }) {
           className={WIDTH}
         >
           <DuaText text={it.text} />
+          {it.audio ? (
+            <SpokenReply id={it.id} src={it.audio} at={it.at} latest={it.id === latestSpoken} />
+          ) : null}
         </Bubble>
       );
       prevDua = true;
@@ -729,7 +737,8 @@ function Composer({
       data,
       seconds: v.seconds,
     }));
-    if (!ok) setHeld(v);
+    if (ok) markVoiceSent();
+    else setHeld(v);
   };
 
   const rec = useRecorder({ max: VOICE_MAX_S, onDone: (v) => void sendVoice(v) });

@@ -28,6 +28,8 @@ describe.skipIf(!OWNER_URL)('Duá Copilot voice and photos (db)', () => {
   let seen: string | null = null;
   let hints: readonly string[] = [];
   let reads = 0;
+  const spoken: { text: string; format: string | undefined }[] = [];
+  let voiced: { bytes: Uint8Array; mime: string; seconds: number } | null = null;
   const gateway = {
     generate: async () => {
       reads++;
@@ -50,8 +52,12 @@ describe.skipIf(!OWNER_URL)('Duá Copilot voice and photos (db)', () => {
           hints = h?.phrases ?? [];
           return heard ? { ...heard, language: 'pt' } : null;
         },
-        speak: async () => null,
+        speak: async (text, o) => {
+          spoken.push({ text, format: o?.format });
+          return voiced;
+        },
         canTranscribe: async () => true,
+        canSpeak: async () => voiced !== null,
       },
       gateway,
     },
@@ -147,6 +153,52 @@ describe.skipIf(!OWNER_URL)('Duá Copilot voice and photos (db)', () => {
     const v = await as(owner)('GET', '/copilot');
     expect(v.status).toBe(200);
     expect(v.body.media).toEqual({ voice: true, image: true });
+  });
+
+  test('Duá’s answer to a voice message plays: made on the first listen, kept, its sender’s alone', async () => {
+    await as(owner)('DELETE', '/copilot');
+    const [said] = await sql<{ id: string }[]>`
+      insert into copilot_messages (tenant_id, user_id, author, body, speak)
+      values (${tenantId}, ${ownerId}, 'dua', 'Pausei o **Pudim de Leite**.', true) returning id`;
+    const [typed] = await sql<{ id: string }[]>`
+      insert into copilot_messages (tenant_id, user_id, author, body)
+      values (${tenantId}, ${ownerId}, 'dua', 'Feito.') returning id`;
+    const path = `/copilot/messages/${said!.id}/audio`;
+
+    // no voice here: the screen offers none, and asking anyway is a clear 503
+    voiced = null;
+    let v = await as(owner)('GET', '/copilot');
+    expect(v.body.items.map((i: { audio: string | null }) => i.audio)).toEqual([null, null]);
+    const off = await as(owner)('GET', path);
+    expect(off.status).toBe(503);
+    expect(off.body.error.code).toBe('SPEECH_UNAVAILABLE');
+
+    voiced = { bytes: new Uint8Array([73, 68, 51, 4]), mime: 'audio/mpeg', seconds: 2 };
+    v = await as(owner)('GET', '/copilot');
+    expect(v.body.items.map((i: { audio: string | null }) => i.audio)).toEqual([
+      `/admin/v1${path}`,
+      null,
+    ]);
+    spoken.length = 0;
+    const a = await as(owner)('GET', path);
+    expect(a.status).toBe(200);
+    expect(a.type).toBe('audio/mpeg');
+    expect([...a.body]).toEqual([73, 68, 51, 4]);
+    expect(spoken).toEqual([{ text: 'Pausei o **Pudim de Leite**.', format: 'mp3' }]);
+    // the second listen is the kept sound
+    const again = await as(owner)('GET', path);
+    expect([...again.body]).toEqual([73, 68, 51, 4]);
+    expect(spoken).toHaveLength(1);
+
+    // someone else's, a reply that wasn't spoken, a bad id: not found
+    expect((await as(manager)('GET', path)).status).toBe(404);
+    expect((await as(owner)('GET', `/copilot/messages/${typed!.id}/audio`)).status).toBe(404);
+    expect((await as(owner)('GET', '/copilot/messages/nope/audio')).status).toBe(400);
+
+    // "Nova conversa" takes the sound with the conversation
+    await as(owner)('DELETE', '/copilot');
+    expect(await sql`select 1 from copilot_audio where tenant_id = ${tenantId}`).toHaveLength(0);
+    voiced = null;
   });
 
   test('a voice message is its transcript, with the store’s names as hints', async () => {

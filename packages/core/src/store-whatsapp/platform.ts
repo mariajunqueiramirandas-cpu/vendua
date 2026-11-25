@@ -678,6 +678,8 @@ export class PlatformGateway {
           where session = ${name}
             and ((status = 'pending' and next_attempt_at <= now())
               or (status = 'sending' and lease_until < now()))
+            -- a voice note Core is making (platform-whatsapp/voice.ts): held a minute at most
+            and (voice is null or created_at < now() - interval '1 minute')
             and (${gapOpen}::boolean or purpose = 'otp')
           order by array_position(${PURPOSES}::text[], purpose), created_at
           limit 1

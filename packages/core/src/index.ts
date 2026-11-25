@@ -15,6 +15,7 @@ import { releaseJobs } from './platform/job-lease.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './crm/inbound.ts';
 import { leadMessageBody } from './crm/voice.ts';
+import { startDuaVoice } from './platform-whatsapp/voice.ts';
 import { startScheduler, stopScheduler } from './crm/scheduler.ts';
 import { startCrmOutbox } from './crm/outbox.ts';
 import { startAgentRuntime } from './agent-host/scheduler.ts';
@@ -257,6 +258,8 @@ const platformInbox = startPlatformInbox({
   origin: adminOrigin,
 });
 const socketPump = waTransport === 'socket' ? startSocketPump(jobsSql) : null;
+// Duá's answers to voice messages: their voice notes are made here, before either sender takes them
+const duaVoice = startDuaVoice(jobsSql, coreMedia);
 // CRM sends finish (lead state, cadence) when their outbox row settles; in socket mode too, for
 // rows queued before a rollback that the socket pump then sends
 const stopCrmSettle = startCrmSettle(jobsSql);
@@ -334,6 +337,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     void stopInstagramFollows();
     void platformInbox.stop();
     void socketPump?.stop();
+    void duaVoice.stop();
     void stopCrmSettle();
     void stopCrmOutbox();
     readCache.stop();

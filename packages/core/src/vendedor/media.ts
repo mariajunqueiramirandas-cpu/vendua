@@ -341,8 +341,9 @@ export function mediaProviders(
           (r.provider === 'sidecar' && tts) || (r.provider === 'openai' && !!env.OPENAI_API_KEY),
       );
     },
-    async speak(text, opts = {}) {
-      if (!text.trim() || text.length > MAX_SPEAK_CHARS) return null;
+    async speak(written, opts = {}) {
+      const text = speakable(written);
+      if (!text || text.length > MAX_SPEAK_CHARS) return null;
       const format = opts.format ?? 'ogg';
       const voice = opts.voice && SPEECH_VOICE.test(opts.voice) ? opts.voice : undefined;
       const tts = env.TTS_URL && env.TTS_SECRET ? env.TTS_URL.replace(/\/+$/, '') : null;
@@ -407,6 +408,20 @@ export function mediaProviders(
       return null;
     },
   };
+}
+
+/**
+ * The words of a reply, without the marks that only mean something written: the admin's links
+ * and bold, WhatsApp's *bold* _italic_ ~struck~ `code`, list bullets. The voice would say them.
+ */
+export function speakable(text: string): string {
+  return text
+    .replace(/\[([^\]\n]+)\]\([^)\s]*\)/g, '$1')
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/(^|[\s(])([*_~])([^*_~\n]+)\2(?=$|[\s.,!?;:)])/gm, '$1$3')
+    .replace(/`+/g, '')
+    .replace(/^[ \t]*(?:[-•*]|\d+[.)])[ \t]+/gm, '')
+    .trim();
 }
 
 /** Seconds of speech in a text, when the provider doesn't say: ~15 characters a second. */

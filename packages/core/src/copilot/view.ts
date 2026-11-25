@@ -4,6 +4,7 @@ import { emitAdminTx } from '../admin/live.ts';
 import { forgetSubjectTx } from '../agent-host/forget.ts';
 import { COPILOT_SUBJECT } from '../agent-host/agents/copilot/shared.ts';
 import type { Sql } from '../platform/db.ts';
+import { MAX_SPEAK_CHARS } from '../vendedor/media.ts';
 import { DUA, renderCards, toWhatsApp } from '../platform-whatsapp/dua-text.ts';
 import type { ActionKind, ActionStatus, ActionView, Line } from './actions.ts';
 
@@ -25,6 +26,8 @@ export interface MessageView {
   voice: boolean;
   /** a photo the person sent, served to them alone (GET /admin/v1/copilot/media/:id) */
   image: string | null;
+  /** Duá's reply to a voice message, said out loud (GET /admin/v1/copilot/messages/:id/audio) */
+  audio: string | null;
 }
 
 export type CopilotItem = ({ type: 'message' } & MessageView) | ({ type: 'action' } & ActionView);
@@ -44,6 +47,7 @@ interface MessageRow {
   channel: 'admin' | 'whatsapp';
   kind: 'text' | 'voice' | 'image';
   media_id: string | null;
+  speak: boolean;
   created_at: Date;
 }
 
@@ -79,7 +83,7 @@ export async function resetConversationTx(tx: Sql, tenantId: string, userId: str
 export async function copilotView(tx: Sql, tenantId: string, m: Merchant): Promise<CopilotView> {
   const messages = (
     await tx<MessageRow[]>`
-      select c.id, c.author, c.body, c.channel, c.kind, d.id as media_id, c.created_at
+      select c.id, c.author, c.body, c.channel, c.kind, d.id as media_id, c.speak, c.created_at
       from copilot_messages c left join copilot_media d on d.message_id = c.id
       where c.tenant_id = ${tenantId} and c.user_id = ${m.userId}
       order by c.created_at desc, c.id desc limit ${SHOWN}`
@@ -129,6 +133,8 @@ export async function copilotView(tx: Sql, tenantId: string, m: Merchant): Promi
       channel: msg.channel,
       voice: msg.kind === 'voice',
       image: msg.media_id ? `/admin/v1/copilot/media/${msg.media_id}` : null,
+      audio:
+        msg.author === 'dua' && msg.speak ? `/admin/v1/copilot/messages/${msg.id}/audio` : null,
     });
     for (const a of byMessage.get(msg.id) ?? []) items.push(card(a));
   }
@@ -154,7 +160,13 @@ interface CardRow {
  * cards as text ("Responda SIM"). The cards get their number here, once, so "SIM 2" always means
  * the card that was shown as 2. The recipient is decided by enqueue_dua_whatsapp, not by us.
  */
-async function forwardToWhatsApp(sql: Sql, tenantId: string, messageId: string, text: string) {
+async function forwardToWhatsApp(
+  sql: Sql,
+  tenantId: string,
+  messageId: string,
+  text: string,
+  speak: boolean,
+) {
   const cards = await sql<CardRow[]>`
     select id, wa_ref, title, lines, money, expires_at from copilot_actions
     where tenant_id = ${tenantId} and message_id = ${messageId} and status = 'proposed'
@@ -195,7 +207,11 @@ async function forwardToWhatsApp(sql: Sql, tenantId: string, messageId: string, 
   const body = [said.length > room ? `${said.slice(0, Math.max(0, room - 1))}…` : said, rendered]
     .filter(Boolean)
     .join('\n\n');
-  await sql`select enqueue_dua_whatsapp(${messageId}::uuid, ${body})`;
+  // an answer to a voice message goes as a voice note (platform-whatsapp/voice.ts makes it), unless
+  // it carries cards: those must be read to be answered with "SIM"
+  if (speak && !rendered && said.length <= MAX_SPEAK_CHARS)
+    await sql`select enqueue_dua_whatsapp(${messageId}::uuid, ${body}, true)`;
+  else await sql`select enqueue_dua_whatsapp(${messageId}::uuid, ${body})`;
 }
 
 /**
@@ -211,18 +227,25 @@ export const copilotTransport: Transport<Sql> = {
     const step = `${msg.actorId}:${msg.turnId}:${msg.step}`;
     const userId = msg.subject.id;
     const text = msg.text.trim().slice(0, 4000);
-    const [door] = await sql<{ whatsapp: boolean }[]>`
-      select exists (
-        select 1 from agent_mailbox
-        where tenant_id = ${msg.tenantId} and consumed_by_turn::text = ${msg.turnId}
-          and source like 'whatsapp:%') as whatsapp`;
+    const [door] = await sql<{ whatsapp: boolean; voice: boolean }[]>`
+      select
+        exists (
+          select 1 from agent_mailbox
+          where tenant_id = ${msg.tenantId} and consumed_by_turn::text = ${msg.turnId}
+            and source like 'whatsapp:%') as whatsapp,
+        exists (
+          select 1 from agent_mailbox
+          where tenant_id = ${msg.tenantId} and consumed_by_turn::text = ${msg.turnId}
+            and payload ->> 'kind' = 'voice') as voice`;
     const channel = door?.whatsapp ? 'whatsapp' : 'admin';
+    // a voice message is answered out loud (ADR 0048)
+    const speak = !!door?.voice && text.length <= MAX_SPEAK_CHARS;
     let id: string | null = null;
     if (text) {
       // someone removed from the team mid-turn has no conversation to write into
       const inserted = await sql<{ id: string }[]>`
-        insert into copilot_messages (tenant_id, user_id, author, body, turn_id, agent_step, channel)
-        select ${msg.tenantId}, u.id, 'dua', ${text}, ${msg.turnId}, ${step}, ${channel}
+        insert into copilot_messages (tenant_id, user_id, author, body, turn_id, agent_step, channel, speak)
+        select ${msg.tenantId}, u.id, 'dua', ${text}, ${msg.turnId}, ${step}, ${channel}, ${speak}
         from merchant_users u where u.tenant_id = ${msg.tenantId} and u.id = ${userId}
         on conflict (tenant_id, agent_step) where agent_step is not null do nothing
         returning id`;
@@ -238,7 +261,7 @@ export const copilotTransport: Transport<Sql> = {
       await sql`update copilot_actions set message_id = ${id}
         where tenant_id = ${msg.tenantId} and user_id = ${userId} and turn_id = ${msg.turnId}
           and message_id is null`;
-    if (id && channel === 'whatsapp') await forwardToWhatsApp(sql, msg.tenantId, id, text);
+    if (id && channel === 'whatsapp') await forwardToWhatsApp(sql, msg.tenantId, id, text, speak);
     await emitAdminTx(sql, msg.tenantId, 'copilot', userId);
     return { outboxId: id ?? step };
   },

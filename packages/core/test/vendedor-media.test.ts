@@ -7,6 +7,7 @@ import { validateSetting } from '../src/modules/integrations.ts';
 import {
   mediaProviders,
   phrasesHeader,
+  speakable,
   ttsStatus,
   type MediaRoute,
 } from '../src/vendedor/media.ts';
@@ -219,6 +220,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('media speak via the TTS sidecar
         body: { text: 'Seu pedido saiu para entrega.', format: 'ogg', voice: 'kaua' },
       },
     ]);
+    // what goes to the voice is the words, not the marks
+    await m.speak('Pronto, **pausei** o *pudim*.');
+    expect(seen.at(-1)!.body.text).toBe('Pronto, pausei o pudim.');
+    seen.length = 1;
     // the browser format, and no voice: the sidecar's default
     const mp3 = await m.speak('Pedido 42 pronto.', { format: 'mp3' });
     expect(mp3?.mime).toBe('audio/mpeg');
@@ -286,6 +291,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('media speak via the TTS sidecar
       configured: true,
       reachable: false,
     });
+  });
+});
+
+describe('what is said out loud', () => {
+  test('written-only marks go, the words stay', () => {
+    expect(speakable('Pausei o **Pudim de Leite**. Veja em [Cardápio](/cardapio).')).toBe(
+      'Pausei o Pudim de Leite. Veja em Cardápio.',
+    );
+    expect(speakable('Seu pedido *saiu* para _entrega_, ~ontem~ hoje. Código `A1`.')).toBe(
+      'Seu pedido saiu para entrega, ontem hoje. Código A1.',
+    );
+    expect(speakable('Ficou assim:\n- pudim, R$ 45\n• brigadeiro\n2) bolo')).toBe(
+      'Ficou assim:\npudim, R$ 45\nbrigadeiro\nbolo',
+    );
+    // a lone mark, a math star, a word with an underscore: left alone
+    expect(speakable('2 * 3 = 6, nome_do_produto, 5*')).toBe('2 * 3 = 6, nome_do_produto, 5*');
   });
 });
 

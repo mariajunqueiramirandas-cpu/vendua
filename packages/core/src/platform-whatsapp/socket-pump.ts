@@ -33,6 +33,8 @@ export async function pumpSocketOnce(sql: Sql, limit = 20): Promise<number> {
       const [next] = await tx<{ id: string; purpose: string; ref: string | null }[]>`
         select id, purpose, ref from platform_wa_outbox
         where status = 'pending' and next_attempt_at <= now()
+          -- a voice note being made (voice.ts): held a minute at most
+          and (voice is null or created_at < now() - interval '1 minute')
         order by array_position(array['otp', 'dua', 'notice', 'crm'], purpose), created_at
         limit 1 for update skip locked`;
       if (!next) return null;
