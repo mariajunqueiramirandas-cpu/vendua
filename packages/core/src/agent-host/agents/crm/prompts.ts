@@ -454,7 +454,7 @@ ${COLD_OPENER}
 A cadência padrão é automática depois do envio. ${has('schedule') ? 'Use schedule para um retorno específico combinado, com o foco real. ' : ''}Atualize o plano quando houver um compromisso.
 ${
   sender === 'send_message'
-    ? `Use send_message ou draft_message. Para o primeiro contato, omita channel se o canal preferido (${chans.join(' > ')}) corresponder à fonte do contato. Para uma retomada, fique no canal em que a conversa aconteceu.`
+    ? `Use send_message. O sistema decide se a mensagem sai ou aguarda aprovação conforme a autonomia vigente, o modo do lead e a orientação da equipe para esta rodada. Para o primeiro contato, omita channel se o canal preferido (${chans.join(' > ')}) corresponder à fonte do contato. Para uma retomada, fique no canal em que a conversa aconteceu. Se o lead não tiver canal alcançável, use draft_message com channel 'manual' para a equipe.`
     : `draft_message (${channelPick(chans)}).`
 } Para lead fora do público, use update_lead archived:true e registre o motivo em add_note.`;
 }

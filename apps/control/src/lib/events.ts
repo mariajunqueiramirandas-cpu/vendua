@@ -9,6 +9,7 @@ export type ControlEventType =
   | 'meeting.change'
   | 'draft.change'
   | 'channel.health'
+  | 'settings.change'
   | 'fleet.change'
   /** server-sent on every (re)connect — refetch whatever the view shows */
   | 'sync';
@@ -70,6 +71,7 @@ function open(): void {
     'meeting.change',
     'draft.change',
     'channel.health',
+    'settings.change',
     'fleet.change',
   ] as const) {
     es.addEventListener(type, (m) => {

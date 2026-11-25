@@ -1,4 +1,10 @@
-import type { IgStatus, Integration, MeetingStatus, TelegramOverview } from '@/lib/api.ts';
+import type {
+  AutonomyLevel,
+  IgStatus,
+  Integration,
+  MeetingStatus,
+  TelegramOverview,
+} from '@/lib/api.ts';
 import { KINDS, providerStatus, WA_IDLE, type ProvTone, type WaState } from './providers.ts';
 import { obj, str, type SettingsMap } from './queries.ts';
 
@@ -46,6 +52,7 @@ export function computeReadiness({
   integErr,
   settings,
   setErr,
+  autoLevel,
   wa,
   ig,
   mStatus,
@@ -55,6 +62,7 @@ export function computeReadiness({
   integErr: boolean;
   settings: SettingsMap;
   setErr: boolean;
+  autoLevel: AutonomyLevel | null;
   wa: WaState;
   ig: IgStatus | null;
   mStatus: MeetingStatus | 'err' | null;
@@ -136,34 +144,23 @@ export function computeReadiness({
 
   const g = obj(settings.guardrails);
   const pitch = obj(settings.pitch);
-  const autonomy = obj(settings.agent);
   const staff = obj(settings.staff);
   const staffCount = Array.isArray(staff.members) ? staff.members.length : 0;
-  const autoLevel = str(autonomy.level, 'autopilot');
+  const autonomyState: Record<AutonomyLevel, string> = {
+    off: 'desligado — nada roda sozinho',
+    copilot: 'copiloto — mensagens aguardam aprovação',
+    supervised: 'supervisionado — 1º contato frio espera aprovação',
+    autopilot: 'piloto automático — envios seguem o modo do lead e os limites',
+  };
   const routine: Check[] = setErr
     ? (
         [
-          { key: 'autonomia', label: 'autonomia', route: STUDIO },
           { key: 'voz', label: 'voz do agente', route: `${STUDIO}?s=voz` },
           { key: 'regras', label: 'limites', route: `${STUDIO}?s=limites` },
           { key: 'equipe', label: 'equipe', to: 'equipe' },
         ] as const
       ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
     : [
-        {
-          key: 'autonomia',
-          label: 'autonomia',
-          state:
-            autoLevel === 'off'
-              ? 'desligado — nada roda sozinho'
-              : autoLevel === 'copilot'
-                ? 'copiloto — tudo vira rascunho'
-                : autoLevel === 'autopilot'
-                  ? 'piloto automático — envia tudo direto sem aprovação'
-                  : 'supervisionado — respostas saem, 1º contato espera aprovação',
-          tone: autoLevel === 'off' ? 'off' : autoLevel === 'supervised' ? 'live' : 'warn',
-          route: STUDIO,
-        },
         {
           key: 'voz',
           label: 'voz do agente',
@@ -193,6 +190,13 @@ export function computeReadiness({
         },
       ];
 
+  routine.unshift({
+    key: 'autonomia',
+    label: 'autonomia',
+    state: autoLevel ? autonomyState[autoLevel] : 'falha ao ler',
+    tone: autoLevel === 'off' ? 'off' : autoLevel === 'supervised' ? 'live' : 'warn',
+    route: STUDIO,
+  });
   routine.push(telegramCheck(telegram));
 
   const ready = essential.filter((c) => c.tone === 'live').length;

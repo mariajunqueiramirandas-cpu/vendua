@@ -11,6 +11,7 @@ import {
 } from '../../../crm/policy.ts';
 import { label, usd } from '../../../modules/telegram/format.ts';
 import {
+  CAMPAIGN_AUTOPILOT_CONFIRMATION,
   createProposalTx,
   guideHandoff,
   guideLead,
@@ -1048,6 +1049,8 @@ export const proposeStartCampaignTool = defineTool<
       const { staffName, chatId } = who(ctx);
       const out = await mgr(ctx, async (tx) => {
         const preflight = await preflightCampaignTx(tx, goalKind);
+        const enableAutopilot =
+          input.enableAutopilot === true && preflight.autonomyLevel !== 'autopilot';
         const lines: string[] = [
           `meta: ${goalTarget} ${goalKindLabel(goalKind, goalTarget)} (para automaticamente ao bater)`,
           `teto: US$ ${budgetUsd.toFixed(2)} · prazo: ${maxDays} dias · até ${maxHuntsPerDay} buscas/dia (WIP alvo ${targetWip})`,
@@ -1060,11 +1063,11 @@ export const proposeStartCampaignTool = defineTool<
             ? 'escopo: busca novos leads + ativa leads intocados do CRM'
             : 'escopo: somente novos leads descobertos',
         );
-        if (input.enableAutopilot && preflight.autonomyLevel !== 'autopilot') {
-          lines.push('também liga piloto automático (envia sem precisar aprovar rascunho)');
+        if (enableAutopilot) {
+          lines.push(`${CAMPAIGN_AUTOPILOT_CONFIRMATION} em todo o CRM`);
         }
         const relevantWarnings = preflight.warnings.filter(
-          (w) => !(input.enableAutopilot && w.startsWith('autonomia')),
+          (w) => !(enableAutopilot && w.startsWith('autonomia')),
         );
         for (const w of relevantWarnings.slice(0, 2)) {
           lines.push(`⚠️ ${w}`);
@@ -1090,7 +1093,7 @@ export const proposeStartCampaignTool = defineTool<
             ...(input.focusSegment ? { focusSegment: input.focusSegment.trim() } : {}),
             ...(input.focusCity ? { focusCity: input.focusCity.trim() } : {}),
             allowExistingLeads,
-            ...(input.enableAutopilot ? { enableAutopilot: true } : {}),
+            ...(enableAutopilot ? { enableAutopilot: true } : {}),
           },
         });
         return { proposed: true, proposalId: p.id, lines, preflight };

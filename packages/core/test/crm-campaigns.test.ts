@@ -433,7 +433,61 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('crm autonomous campaign mode (d
     expect(uncapped).toBeNull();
   });
 
+  test('a campaign card without an autonomy change preserves later website changes', async () => {
+    const chat = { id: Number(FOUNDER_ID), type: 'private' };
+    const from = { id: Number(FOUNDER_ID), first_name: 'Maria' };
+    const messageId = ++updateSeq;
+    await postWebhook({
+      update_id: messageId,
+      message: { message_id: messageId, from, chat, text: 'inicia uma campanha de cadastros' },
+    });
+    const { rt } = makeRuntime([
+      tools(
+        call('propose_start_campaign', {
+          title: 'Campanha de cadastros',
+          objective: 'Chegar a um cadastro com leads novos.',
+          enableAutopilot: true,
+        }),
+      ),
+      reply('Confirme para iniciar a campanha.'),
+    ]);
+    await pumpOnly(rt, [FOUNDER_ID], ['interactive']);
+    const [proposal] = await sql<
+      { id: string; lines: string[]; payload: Record<string, unknown> }[]
+    >`
+      select id, lines, payload from telegram_proposals where chat_id = ${FOUNDER_ID} and kind = 'start_campaign'
+    `;
+    expect(proposal!.lines.join(' ')).not.toContain('liga piloto automático');
+    expect(proposal!.payload.enableAutopilot).toBeUndefined();
+    // Older Core could persist the flag without displaying it on the card.
+    await sql`
+      update telegram_proposals set payload = payload || '{"enableAutopilot":true}'
+      where id = ${proposal!.id}
+    `;
+
+    const path = '/control/v1/agent/config';
+    const edited = await ctlReq(path, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'idempotency-key': key() },
+      body: JSON.stringify({ level: 'supervised' }),
+    });
+    expect(edited.status).toBe(200);
+    await postWebhook({
+      update_id: ++updateSeq,
+      callback_query: {
+        id: `cb-${key()}`,
+        from,
+        message: { message_id: messageId + 1, chat },
+        data: `p:y:${proposal!.id}`,
+      },
+    });
+    expect(await (await ctlReq(path)).json()).toMatchObject({ level: 'supervised' });
+    const campaigns = await sql<{ status: string }[]>`select status from crm_campaigns`;
+    expect(campaigns.map((c) => c.status)).toEqual(['active']);
+  });
+
   test('full end-to-end: Telegram DM → 1-tap Confirm → Campaign Director → Hunt → Lead Enroll → Signup Win!', async () => {
+    await setWorkspace({ level: 'supervised' });
     // 1. Founder messages Telegram CRM agent
     const msgId = Math.floor(Date.now() / 1000) + ++updateSeq;
     const msgRes = await postWebhook({
@@ -460,6 +514,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('crm autonomous campaign mode (d
           maxDays: 7,
           focusSegment: 'docerias',
           focusCity: 'Campinas',
+          enableAutopilot: true,
         }),
       ),
       reply(
@@ -475,6 +530,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('crm autonomous campaign mode (d
         c.method === 'sendMessage' && String(c.body.text ?? '').includes('iniciar modo campanha'),
     );
     expect(proposalMsg).toBeDefined();
+    expect(String(proposalMsg!.body.text)).toContain('também liga piloto automático');
     const confirmBtn = (
       proposalMsg!.body.reply_markup as { inline_keyboard: { callback_data: string }[][] }
     ).inline_keyboard[0]![0]!;
@@ -495,6 +551,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('crm autonomous campaign mode (d
       },
     });
     expect(tapRes.status).toBe(200);
+    expect(await (await ctlReq('/control/v1/agent/config')).json()).toMatchObject({
+      level: 'autopilot',
+    });
 
     const [campaign] = await sql<
       { id: string; status: string; title: string; goal_kind: string }[]

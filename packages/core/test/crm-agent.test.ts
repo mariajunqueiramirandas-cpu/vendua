@@ -3,6 +3,7 @@ import { scheduleTimerTx } from '../src/crm/agenda.ts';
 import { requestBoardTx, requestLeadTx } from '../src/crm/dispatch.ts';
 import { adoptLegacy } from '../src/crm/legacy.ts';
 import { deliverQueued } from '../src/crm/outbox.ts';
+import { dispatchMessage } from '../src/crm/send.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { upsertIntegration } from '../src/modules/integrations.ts';
 import { approveMessage, composeMessageTx } from '../src/modules/threads.ts';
@@ -91,7 +92,7 @@ describe.skipIf(!OWNER_URL)('CRM agents on Runtime v3 (db)', () => {
     expect(agenda).toHaveLength(1);
   });
 
-  test('supervised: a first contact becomes a draft for staff', async () => {
+  test('first contacts follow the latest autonomy, while existing drafts still await approval', async () => {
     await settings('supervised');
     const l = await lead();
     const res = await control('POST', '/control/v1/agent/requests', {
@@ -110,6 +111,26 @@ describe.skipIf(!OWNER_URL)('CRM agents on Runtime v3 (db)', () => {
     const tools = adapter.requests[0]!.tools.map((t) => t.name);
     expect(tools).toContain('schedule');
     expect(tools).not.toContain('maps_lookup');
+
+    const nextLead = await lead();
+    await controlTx(appSql, (tx) =>
+      requestLeadTx(tx, {
+        leadId: nextLead.id,
+        kind: 'lead.first_contact',
+        source: 'first_contact',
+        dedupeKey: `crm:first_contact:${nextLead.id}`,
+      }),
+    );
+    const changed = await control('PATCH', '/control/v1/agent/config', { level: 'autopilot' });
+    expect(changed.status).toBe(200);
+    await settle(
+      runtime([call('send_message', { body: 'Oi, tudo bem? Sou da Venduá.' }), say('ok')]).rt,
+    );
+    const [queued] = await outbound(nextLead.id);
+    expect(queued?.status).toBe('queued');
+    expect((await dispatchMessage(appSql, queued!.id)).ok).toBe(true);
+    expect((await outbound(nextLead.id)).map((m) => m.status)).toEqual(['sent']);
+    expect((await outbound(l.id)).map((m) => m.status)).toEqual(['draft']);
   });
 
   test('a turn that would end without acting is nudged once, then acts', async () => {
