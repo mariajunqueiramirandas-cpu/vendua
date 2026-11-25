@@ -6,11 +6,14 @@ import type { Sql } from '../platform/db.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { channelAvailabilityTx, leadHasContactTx, sendWindowOpenAtTx } from './guardrails.ts';
 import {
+  CAMPAIGN_SUBJECT,
   CRM_AGENT_ID,
+  CRM_CAMPAIGN_ID,
   CRM_DISCOVERY_ID,
   CRM_STRATEGIST_ID,
   jobOf,
   LEAD_SUBJECT,
+  type CampaignMailKind,
   type LeadMailKind,
 } from './jobs.ts';
 import { agentSettingTx, automationAllowedTx } from './policy.ts';
@@ -21,7 +24,9 @@ import { agentSettingTx, automationAllowedTx } from './policy.ts';
 // else starts a CRM turn.
 
 export {
+  CAMPAIGN_SUBJECT,
   CRM_AGENT_ID,
+  CRM_CAMPAIGN_ID,
   CRM_DISCOVERY_ID,
   CRM_STRATEGIST_ID,
   HUNT_SUBJECT,
@@ -29,6 +34,7 @@ export {
   LEAD_SUBJECT,
   REVIEW_ID,
   REVIEW_SUBJECT,
+  type CampaignMailKind,
   type LeadMailKind,
 } from './jobs.ts';
 
@@ -70,6 +76,11 @@ export async function parkedReasonTx(
   if (lead) {
     if (lead.agent_mode === 'off') return 'agente desligado neste lead';
     if (lead.agent_paused_at) return 'agente pausado — aguardando um humano';
+  }
+  // An active staff-approved campaign overrides per-job cron toggles, never global `off` or lead gates.
+  if (source.startsWith('campaign:')) {
+    const { level } = await agentSettingTx(tx);
+    return level === 'off' ? 'autonomia do agente desligada' : null;
   }
   const v = await automationAllowedTx(tx, jobOf(kind, payload));
   return v.ok ? null : v.reason;
@@ -163,6 +174,33 @@ export async function requestBoardTx(
 ): Promise<{ mailboxId: string | null; actorId: string }> {
   const out = await dispatchTx(tx, {
     actor: { tenantId: PLATFORM_TENANT_ID, agentId: req.agent, subject: req.subject },
+    kind: req.kind,
+    source: req.source.slice(0, 120),
+    dedupeKey: req.dedupeKey.slice(0, 200),
+    ...(req.at ? { deliverAt: req.at } : {}),
+    payload: req.payload ?? {},
+  });
+  return { mailboxId: out.mailboxId, actorId: out.actorId };
+}
+
+/** Wakes a Campaign Director (`crm-campaign` actor) via the one mailbox producer. */
+export async function requestCampaignTx(
+  tx: Sql,
+  req: {
+    campaignId: string;
+    kind: CampaignMailKind;
+    source: string;
+    dedupeKey: string;
+    payload?: JsonObject;
+    at?: Date | null;
+  },
+): Promise<{ mailboxId: string | null; actorId: string }> {
+  const out = await dispatchTx(tx, {
+    actor: {
+      tenantId: PLATFORM_TENANT_ID,
+      agentId: CRM_CAMPAIGN_ID,
+      subject: { kind: CAMPAIGN_SUBJECT, id: req.campaignId },
+    },
     kind: req.kind,
     source: req.source.slice(0, 120),
     dedupeKey: req.dedupeKey.slice(0, 200),

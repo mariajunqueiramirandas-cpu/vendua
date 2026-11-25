@@ -79,6 +79,7 @@ export const DESTINATIONS: { to: string; label: string; group: string }[] = [
   { to: '/agente/operacao', label: 'Fila e próximos disparos do agente', group: 'Agente' },
   { to: '/agente/operacao?v=execucoes', label: 'Execuções do agente', group: 'Agente' },
   { to: '/agente/operacao?v=planos', label: 'Planos dos leads', group: 'Agente' },
+  { to: '/agente/campanhas', label: 'Campanhas autônomas', group: 'Agente' },
   { to: '/agente/descoberta', label: 'Descoberta de leads', group: 'Agente' },
   { to: '/agente/configurar', label: 'Configurar agente', group: 'Agente' },
   { to: '/agente/configurar?s=limites', label: 'Limites e ritmo do agente', group: 'Agente' },

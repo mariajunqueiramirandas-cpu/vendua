@@ -1209,6 +1209,187 @@ const STANDALONE: Standalone = {
   }),
 };
 
+function campaign(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
+  const started = first(h, 'campaign.started');
+  const won = lastOf(h, 'campaign.won');
+  const ended = lastOf(h, 'campaign.ended');
+  const latest = h.at(-1) ?? ev;
+  const lastProgress = lastOf(h, 'campaign.progress');
+  const lastUpdate = lastOf(h, 'campaign.updated');
+
+  const anyData = latest.data as {
+    campaignId: string;
+    title: string;
+    goalKind: 'signup' | 'meeting' | 'reply';
+    goalTarget: number;
+    goalProgress?: number;
+    spentCents?: number;
+    budgetCents: number;
+    hunts?: number;
+    leads?: number;
+  };
+  const campaignId = started?.data.campaignId ?? anyData.campaignId;
+  const title = started?.data.title ?? anyData.title ?? 'campanha autônoma';
+  const goalKind = started?.data.goalKind ?? anyData.goalKind ?? 'signup';
+  const goalTarget = started?.data.goalTarget ?? anyData.goalTarget ?? 1;
+
+  // Determine current status from the latest state-changing event in anchor history
+  let status: 'active' | 'paused' | 'won' | 'stopped' | 'exhausted' = 'active';
+  let statusReason: string | null = null;
+  let statusBy: string | null = null;
+  for (const rowEv of h) {
+    if (rowEv.kind === 'campaign.won') {
+      status = 'won';
+      statusReason = null;
+      statusBy = null;
+    } else if (rowEv.kind === 'campaign.ended') {
+      const d = (rowEv as Ev<'campaign.ended'>).data;
+      status = d.status;
+      statusReason = d.reason;
+      statusBy = d.by;
+    } else if (rowEv.kind === 'campaign.updated') {
+      const d = (rowEv as Ev<'campaign.updated'>).data;
+      status = d.status;
+      statusReason = d.reason;
+      statusBy = d.by;
+    }
+  }
+
+  const progress = anyData.goalProgress ?? 0;
+  const spentCents = anyData.spentCents ?? 0;
+  const budgetCents = anyData.budgetCents ?? started?.data.budgetCents ?? 0;
+  const hunts = anyData.hunts ?? 0;
+  const leads = anyData.leads ?? 0;
+  const goalWord = label('campaignGoal', goalKind);
+
+  const headEmoji =
+    status === 'won'
+      ? '🎉'
+      : status === 'paused'
+        ? '⏸'
+        : status === 'exhausted'
+          ? '⚠️'
+          : status === 'stopped'
+            ? '🛑'
+            : '🚀';
+  const headLabel =
+    status === 'won' ? `meta batida · ${esc(title)}` : `modo campanha · ${esc(title)}`;
+
+  const focusBits = [
+    started?.data.focusSegment ? esc(started.data.focusSegment) : null,
+    started?.data.focusCity ? esc(started.data.focusCity) : null,
+  ];
+  const progressLine =
+    `meta: ${b(`${int(progress)}/${int(goalTarget)}`)} ${goalWord} · ` +
+    `gasto ${b(usd(spentCents))} / ${usd(budgetCents)}`;
+  const funnelLine =
+    hunts > 0 || leads > 0 || lastProgress
+      ? metaLine([
+          `buscas: ${int(hunts)}`,
+          `leads: ${int(leads)}`,
+          lastProgress?.data.activeWip ? `em andamento: ${int(lastProgress.data.activeWip)}` : null,
+          lastProgress?.data.replies ? `respostas: ${int(lastProgress.data.replies)}` : null,
+        ])
+      : null;
+
+  const statusLine =
+    status === 'won' && won
+      ? `✅ ${b(who(won.data.winnerName, won.data.winnerBusiness))}${won.data.detail ? ` — ${esc(won.data.detail)}` : ''}`
+      : status === 'paused'
+        ? `⏸ pausada${byLine(statusBy, '')}${statusReason ? ` — ${esc(statusReason)}` : ''}`
+        : status === 'exhausted'
+          ? `⚠️ limite atingido${statusReason ? ` — ${esc(statusReason)}` : ''}`
+          : status === 'stopped'
+            ? `🛑 encerrada${byLine(statusBy, '')}${statusReason ? ` — ${esc(statusReason)}` : ''}`
+            : `🟢 rodando${started ? ` · iniciada por ${esc(started.data.by)} (${ts(started.created_at, 't')})` : ''}`;
+
+  const buttons: InlineButton[][] = [];
+  if (status === 'active') {
+    buttons.push(
+      ...row(
+        actionButton('💬 orientar', `cp:g:${campaignId}`, 'primary'),
+        actionButton('⏸ pausar', `cp:p:${campaignId}`),
+        actionButton('🛑 encerrar', `cp:s:${campaignId}`, 'danger'),
+      ),
+    );
+  } else if (status === 'paused' || status === 'exhausted') {
+    buttons.push(
+      ...row(
+        actionButton('▶️ retomar', `cp:r:${campaignId}`, 'success'),
+        actionButton('➕ +US$10', `cp:b:${campaignId}`, 'primary'),
+        actionButton('🛑 encerrar', `cp:s:${campaignId}`, 'danger'),
+      ),
+    );
+  } else if (status === 'won' && won) {
+    buttons.push(
+      ...row(
+        linkButton('abrir lead vencedor', ctx.crm(`/pipeline/${won.data.winnerLeadId}`)),
+        linkButton('abrir campanha', ctx.crm(`/agente/campanhas/${campaignId}`)),
+      ),
+    );
+  }
+  if (status !== 'won') {
+    buttons.push(...row(linkButton('abrir no CRM', ctx.crm(`/agente/campanhas/${campaignId}`))));
+  }
+
+  const msg = card(
+    {
+      ...ev,
+      severity:
+        status === 'won'
+          ? 'success'
+          : status === 'paused' || status === 'exhausted'
+            ? 'warning'
+            : 'info',
+    },
+    {
+      title: `${headEmoji} ${headLabel}`,
+      body: [
+        started?.data.objective && status === 'active' && !lastProgress
+          ? quote(started.data.objective, 360, 4)
+          : null,
+        focusBits.some(Boolean) ? `foco: ${metaLine(focusBits)}` : null,
+        progressLine,
+        funnelLine,
+        lastProgress?.data.summary && status !== 'won'
+          ? quote(lastProgress.data.summary, 420, 6)
+          : null,
+        statusLine,
+      ],
+      footer:
+        status === 'active'
+          ? 'responda esta mensagem (texto ou áudio) para ajustar o rumo da campanha'
+          : null,
+      buttons,
+    },
+  );
+
+  let reply: string | null = null;
+  if (ev.kind === 'campaign.won') {
+    const d = (ev as Ev<'campaign.won'>).data;
+    reply =
+      `🎉 ${b('Meta batida!')} ${who(d.winnerName, d.winnerBusiness)} fechou ` +
+      `(${int(d.goalProgress)}/${int(d.goalTarget)} ${goalWord} · gasto ${usd(d.spentCents)}). Campanha encerrada!`;
+  } else if (ev.kind === 'campaign.ended') {
+    const d = (ev as Ev<'campaign.ended'>).data;
+    reply =
+      d.status === 'exhausted'
+        ? `⚠️ Campanha ${b(esc(title))} parou: ${esc(d.reason ?? 'limite atingido')}. Toque em ➕ +US$10 para continuar.`
+        : `🛑 Campanha ${b(esc(title))} encerrada${byLine(d.by, '')}.`;
+  } else if (ev.kind === 'campaign.updated' && lastUpdate) {
+    const d = (ev as Ev<'campaign.updated'>).data;
+    reply =
+      d.status === 'paused'
+        ? `⏸ Campanha ${b(esc(title))} pausada${d.reason ? `: ${esc(d.reason)}` : ''}.`
+        : `▶️ Campanha ${b(esc(title))} retomada${d.reason ? ` (${esc(d.reason)})` : ''}.`;
+  } else if (ev.kind === 'campaign.progress') {
+    const d = (ev as Ev<'campaign.progress'>).data;
+    if (d.urgent) reply = `📣 ${esc(d.summary)}`;
+  }
+
+  return { card: msg, summary: `${headEmoji} ${headLabel}`, reply };
+}
+
 const FAMILIES: Record<string, Family> = {
   handoff,
   draft,
@@ -1219,6 +1400,7 @@ const FAMILIES: Record<string, Family> = {
   channel,
   job,
   status: statusPage,
+  campaign,
 };
 
 /** Which family renders an anchored kind: the anchor's prefix. */

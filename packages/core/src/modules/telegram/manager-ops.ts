@@ -528,7 +528,12 @@ export async function triggerBoardRun(
 // ── 2. ForceReply prompts & native swipe-reply lookup ────────────────────────
 
 export type PromptKind =
-  'draft_rewrite' | 'handoff_guide' | 'handoff_direct' | 'lead_guide' | 'teach_rule';
+  | 'draft_rewrite'
+  | 'handoff_guide'
+  | 'handoff_direct'
+  | 'lead_guide'
+  | 'teach_rule'
+  | 'campaign_guide';
 
 export interface SavedPrompt {
   chatId: string;
@@ -588,6 +593,7 @@ export async function consumePrompt(
 export type RepliedCardTarget =
   | { kind: 'draft'; messageId: string; leadId: string | null }
   | { kind: 'handoff'; taskId: string; leadId: string | null }
+  | { kind: 'campaign'; campaignId: string }
   | { kind: 'lead'; leadId: string };
 
 /** Resolves a native swipe-reply against any delivered event card in `staff_event_messages`. */
@@ -615,6 +621,9 @@ export async function lookupRepliedCard(
     if (hit.anchor?.startsWith('handoff:')) {
       return { kind: 'handoff', taskId: hit.anchor.slice('handoff:'.length), leadId };
     }
+    if (hit.anchor?.startsWith('campaign:')) {
+      return { kind: 'campaign', campaignId: hit.anchor.slice('campaign:'.length) };
+    }
     if (leadId) return { kind: 'lead', leadId };
     return null;
   });
@@ -628,7 +637,8 @@ export type ProposalKind =
   | 'delete_rule'
   | 'approve_draft'
   | 'direct_message'
-  | 'board_run';
+  | 'board_run'
+  | 'start_campaign';
 
 export interface ProposalRow {
   id: string;
@@ -813,6 +823,33 @@ export async function decideProposal(
       });
       resultText =
         kind === 'discovery' ? 'descoberta iniciada' : 'revisão do estrategista iniciada';
+    } else if (cur.kind === 'start_campaign') {
+      const { startCampaign } = await import('../../crm/campaigns.ts');
+      const created = await startCampaign(sql, {
+        title: String(p.title ?? 'Campanha autônoma'),
+        objective: String(p.objective ?? cur.title),
+        ...(p.goalKind === 'signup' || p.goalKind === 'meeting' || p.goalKind === 'reply'
+          ? { goalKind: p.goalKind }
+          : {}),
+        ...(typeof p.goalTarget === 'number' ? { goalTarget: p.goalTarget } : {}),
+        ...(p.goalScope === 'any' || p.goalScope === 'campaign_only'
+          ? { goalScope: p.goalScope }
+          : {}),
+        ...(typeof p.budgetUsd === 'number' ? { budgetUsd: p.budgetUsd } : {}),
+        ...(typeof p.maxDays === 'number' ? { maxDays: p.maxDays } : {}),
+        ...(typeof p.maxHuntsPerDay === 'number' ? { maxHuntsPerDay: p.maxHuntsPerDay } : {}),
+        ...(typeof p.targetWip === 'number' ? { targetWip: p.targetWip } : {}),
+        ...(typeof p.focusSegment === 'string' ? { focusSegment: p.focusSegment } : {}),
+        ...(typeof p.focusCity === 'string' ? { focusCity: p.focusCity } : {}),
+        ...(typeof p.allowExistingLeads === 'boolean'
+          ? { allowExistingLeads: p.allowExistingLeads }
+          : {}),
+        ...(p.enableAutopilot === true ? { enableAutopilot: true } : {}),
+        by: input.by,
+        chatId: cur.chat_id,
+        idemKey: `${input.idemKey}:campaign`,
+      });
+      resultText = `campanha "${created.campaign.title}" iniciada`;
     }
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);

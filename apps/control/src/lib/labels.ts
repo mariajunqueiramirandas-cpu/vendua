@@ -36,6 +36,7 @@ export const RUN_KIND_LABEL: Record<string, string> = {
   outreach: 'alcance',
   discovery: 'descoberta',
   strategist: 'estrategista',
+  campaign: 'campanha',
 };
 
 /** why a run exists (ADR 0016) — shown next to its kind */
@@ -48,6 +49,11 @@ export const TRIGGER_LABEL: Record<string, string> = {
   followup: 'follow-up do agente',
   brief: 'brief',
   weekly: 'revisão semanal',
+  campaign_started: 'campanha iniciada',
+  campaign_resumed: 'campanha retomada',
+  campaign_hunt_done: 'busca concluída',
+  campaign_progress: 'avanço na meta',
+  campaign_tick: 'checagem da campanha',
 };
 
 export const MEETING_STATUS_LABEL: Record<Meeting['status'], string> = {

@@ -276,6 +276,7 @@ import {
 import { mountControlBilling } from './modules/control-billing.ts';
 import { mountAgentRuntimeControl } from './agent-host/control-routes.ts';
 import { mountAgentRuntimeAi } from './agent-host/control-ai.ts';
+import { mountCampaignRoutes } from './crm/campaign-routes.ts';
 import { mountControlCustomers } from './modules/control-customers.ts';
 import { mountInstanceReset } from './modules/instance-reset.ts';
 import { mountStoreReset } from './modules/store-reset.ts';
@@ -3137,6 +3138,7 @@ export function createApp({
   mountIncidentsControl({ app, sql, controlGate });
   mountAgentRuntimeControl({ app, sql, controlGate });
   mountAgentRuntimeAi({ app, sql, controlGate, storeDomain: publicStoreDomain });
+  mountCampaignRoutes({ app, sql, controlGate });
   mountSiteCatalog(app, sql);
   mountWebAnalytics({
     app,

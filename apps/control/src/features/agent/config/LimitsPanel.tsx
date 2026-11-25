@@ -22,6 +22,7 @@ export interface GuardrailsDraft {
   followupCadenceDays: number;
   staleDraftDays: number;
   briefAutoPauseRuns: number;
+  whatsappColdPerDay: number;
   instagramColdDmsPerDay: number;
   instagramFollowsPerDay: number;
   leadLifetimeCostCapUsd: number;
@@ -43,6 +44,7 @@ export function guardrailsOf(value: Record<string, unknown>): GuardrailsDraft {
     followupCadenceDays: num(value.followupCadenceDays, 3),
     staleDraftDays: num(value.staleDraftDays, 3),
     briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
+    whatsappColdPerDay: num(value.whatsappColdPerDay, 25),
     instagramColdDmsPerDay: num(value.instagramColdDmsPerDay, 15),
     instagramFollowsPerDay: num(value.instagramFollowsPerDay, 30),
     leadLifetimeCostCapUsd: num(value.leadLifetimeCostCapUsd, 5),
@@ -105,6 +107,7 @@ type NumKey =
   | 'followupCadenceDays'
   | 'staleDraftDays'
   | 'briefAutoPauseRuns'
+  | 'whatsappColdPerDay'
   | 'instagramColdDmsPerDay'
   | 'instagramFollowsPerDay';
 
@@ -287,6 +290,13 @@ export function LimitsPanel({
               }}
             />
             {costCapBad && <FieldError>número entre 0 e 1000</FieldError>}
+          </Field>
+          <Field
+            label="abordagens frias no WhatsApp / dia"
+            htmlFor="gr-whatsappColdPerDay"
+            hint="teto da conta em 24h corridas para conversas abertas com quem nunca escreveu; 0 = sem teto"
+          >
+            {numIn('whatsappColdPerDay', 0, 200, 0)}
           </Field>
           <Field
             label="DMs frias no Instagram / dia"

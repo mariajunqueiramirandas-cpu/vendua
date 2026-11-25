@@ -613,6 +613,14 @@ export async function bookMeetingTx(
       source: input.source,
       roomUrl: row.room_url,
     });
+    const { onCampaignConversionTx } = await import('../crm/campaigns.ts');
+    await onCampaignConversionTx(tx, {
+      kind: 'meeting',
+      leadId,
+      leadName: lead.name,
+      businessName: lead.business_name,
+      detail: `call marcada para ${fmtWhen(row.starts_at, cfg.tz)}`,
+    });
     return { meeting: row, created: true as const, cfg, lead };
   }
 }

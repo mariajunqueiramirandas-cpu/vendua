@@ -17,8 +17,10 @@ import {
   instagramColdBudgetTx,
   instagramReadyTx,
   passesAutoContactScore,
+  whatsappColdBudgetTx,
   whatsappReadyTx,
 } from '../../../crm/guardrails.ts';
+import { enrollCampaignLeadTx } from '../../../crm/campaigns.ts';
 import { detectClosedPhrase, resolveLeadLiveness } from '../../../crm/liveness.ts';
 import { queueIgFollowTx } from '../../../crm/ig-follows.ts';
 import { parseWakeupAt } from '../../../crm/agenda.ts';
@@ -351,6 +353,9 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
             limit 1`;
           return Boolean(hit);
         };
+        const campaignId = typeof t.params.campaignId === 'string' ? t.params.campaignId : null;
+        const campaignAngle =
+          typeof t.params.campaignAngle === 'string' ? t.params.campaignAngle : null;
         const firstContact = async (
           leadId: string,
           sc: number | null,
@@ -359,10 +364,15 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
           evidence: boolean,
         ) => {
           if (await outreachActive(leadId)) return false;
-          // If Instagram's rolling 24h cold-DM cap is full, defer the mailbox item until the next
-          // slot opens instead of waking the agent just to get blocked and drop the lead.
+          // If rolling-24h cold-outreach cap is full, defer the mailbox item until the next slot
+          // opens instead of waking the agent just to get blocked and drop the lead.
           let deferAt: Date | null = null;
-          if (chan === 'instagram' && evidence) {
+          if (chan === 'whatsapp' && evidence) {
+            const budget = await whatsappColdBudgetTx(tx, g);
+            if (budget.remaining !== null && budget.remaining <= 0 && budget.nextSlotAt) {
+              deferAt = budget.nextSlotAt;
+            }
+          } else if (chan === 'instagram' && evidence) {
             const budget = await instagramColdBudgetTx(tx, g);
             if (budget.remaining <= 0 && budget.nextSlotAt) deferAt = budget.nextSlotAt;
           }
@@ -370,16 +380,18 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
             it !== null
               ? `fitScore ${String(sc)}, intentScore ${String(it)}`
               : `fitScore ${String(sc)}`;
+          const angleNote = campaignAngle ? ` Ângulo da campanha: ${campaignAngle}.` : '';
           const r = await requestLeadTx(tx, {
             leadId,
             kind: 'lead.first_contact',
-            source: 'first_contact',
+            source: campaignId ? `campaign:${campaignId}` : 'first_contact',
             dedupeKey: `crm:first_contact:${leadId}`,
             ...(deferAt ? { at: deferAt } : {}),
             payload: {
               channel: chan,
+              ...(campaignId ? { campaignId } : {}),
               ...(!evidence ? { draftOnly: true } : {}),
-              focus: `primeiro contato — lead descoberto (${scoreTag}). Use só 1 detalhe natural do dossiê na timeline pra abrir conversa leve, sem ficha corrida nem link.`,
+              focus: `primeiro contato — lead descoberto (${scoreTag}).${angleNote} Use só 1 detalhe natural do dossiê na timeline pra abrir conversa leve, sem ficha corrida nem link.`,
             },
           });
           return r.mailboxId !== null;
@@ -520,6 +532,14 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
                 )
               : false;
           await writeFindings(dupId, { merged });
+          if (campaignId && (contacted || merged.length)) {
+            await enrollCampaignLeadTx(tx, {
+              campaignId,
+              leadId: dupId,
+              origin: 'discovered',
+              huntTurnId: ctx.turnId,
+            });
+          }
           return {
             id: dupId,
             created: false,
@@ -557,6 +577,14 @@ export const createLeadTool = defineTool<CreateInput, Sql>({
         );
         const lead = created.body.lead;
         await writeFindings(lead.id);
+        if (campaignId) {
+          await enrollCampaignLeadTx(tx, {
+            campaignId,
+            leadId: lead.id,
+            origin: 'discovered',
+            huntTurnId: ctx.turnId,
+          });
+        }
         const contacted = autoContact
           ? await firstContact(
               lead.id,

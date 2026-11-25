@@ -190,6 +190,18 @@ const LABELS: Record<string, Record<string, string>> = {
     discovery: 'descoberta',
     strategist: 'estrategista',
   },
+  campaignGoal: {
+    signup: 'cadastro',
+    meeting: 'reunião',
+    reply: 'resposta',
+  },
+  campaignStatus: {
+    active: 'ativa',
+    paused: 'pausada',
+    won: 'meta batida',
+    stopped: 'encerrada',
+    exhausted: 'limite atingido',
+  },
 };
 
 export function label(group: keyof typeof LABELS | string, key: string | null | undefined): string {

@@ -135,6 +135,12 @@ export async function linkCrmSignupTx(
       values (${lead.id}, 'system', 'cadastro confirmado pelo WhatsApp',
         ${tx.json({ type: 'sales_signup', tenantId, fromLink: linkedId === lead.id })}, 'system')`;
     await syncLeadProfileTx(tx, tenantId, { verifiedPhone: phone, via: 'signup' });
+    const { onCampaignConversionTx } = await import('./campaigns.ts');
+    await onCampaignConversionTx(tx, {
+      kind: 'signup',
+      leadId: lead.id,
+      detail: 'cadastro confirmado pelo WhatsApp',
+    });
     afterCommit(tx, () => emitControlEvent('lead.change', lead.id));
     return lead.id;
   });

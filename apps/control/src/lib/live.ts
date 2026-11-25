@@ -16,8 +16,18 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
     'duplicates',
     // a next-action date is an agenda entry (ADR 0016)
     'wakeups',
+    'campaigns',
+    'campaign',
   ],
-  'thread.message': ['threads', 'thread', 'lead-threads', 'activities', 'approvals'],
+  'thread.message': [
+    'threads',
+    'thread',
+    'lead-threads',
+    'activities',
+    'approvals',
+    'campaigns',
+    'campaign',
+  ],
   'run.update': [
     'runs',
     'run',
@@ -28,10 +38,12 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
     'briefs',
     'memory',
     'routines',
+    'campaigns',
+    'campaign',
   ],
   'draft.change': ['approvals', 'threads', 'thread', 'stats', 'leads'],
-  'meeting.change': ['meetings', 'meetings-status'],
-  'channel.health': ['channel-health', 'integrations'],
+  'meeting.change': ['meetings', 'meetings-status', 'campaigns', 'campaign'],
+  'channel.health': ['channel-health', 'integrations', 'campaigns', 'campaign'],
   // 'lead' so a lead's loja card follows its provisioning
   'fleet.change': [
     'fleet-status',

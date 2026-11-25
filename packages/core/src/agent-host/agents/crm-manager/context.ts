@@ -45,6 +45,18 @@ export interface ManagerLive {
   cards: { at: string; title: string; state: string }[];
   /** discovery/strategist work queued, running, or just finished (crm_turns has finished only) */
   boardRuns: { kind: string; state: string; detail: string | null }[];
+  /** active or paused autonomous campaigns */
+  campaigns: {
+    id: string;
+    title: string;
+    status: string;
+    goal: string;
+    spentUsd: string;
+    budgetUsd: string;
+    hunts: number;
+    leads: number;
+    stopReason: string | null;
+  }[];
 }
 
 /** Static-ish workspace snapshot loaded once per turn. */
@@ -92,7 +104,7 @@ export async function managerLiveTx(tx: Sql, chatId: string): Promise<ManagerLiv
     const start = c`(date_trunc('day', now() at time zone ${tz}) at time zone ${tz})`;
 
     const hm = (d: Date) => ts(d, 't', tz);
-    const [drafts, handoffs, paused, runs, leads, replies, cards, pending, finished] =
+    const [drafts, handoffs, paused, runs, leads, replies, cards, pending, finished, campaigns] =
       await Promise.all([
         c<{ n: number }[]>`select count(*)::int as n from lead_messages where status = 'draft'`,
         c<
@@ -152,6 +164,28 @@ export async function managerLiveTx(tx: Sql, chatId: string): Promise<ManagerLiv
         where kind in ('discovery', 'strategist') and finished_at > now() - interval '12 hours'
         order by finished_at desc limit 3
       `,
+        c<
+          {
+            id: string;
+            title: string;
+            status: string;
+            goal_kind: string;
+            goal_progress: number;
+            goal_target: number;
+            spent_cents: number;
+            budget_cents: number;
+            hunts_launched: number;
+            leads_enrolled: number;
+            stop_reason: string | null;
+          }[]
+        >`
+        select id, title, status, goal_kind, goal_progress, goal_target, spent_cents,
+               budget_cents, hunts_launched, leads_enrolled, stop_reason
+        from crm_campaigns
+        where status in ('active', 'paused')
+        order by case status when 'active' then 0 else 1 end, created_at desc
+        limit 5
+      `.catch(() => []),
       ]);
 
     return {
@@ -192,6 +226,17 @@ export async function managerLiveTx(tx: Sql, chatId: string): Promise<ManagerLiv
           detail: r.query?.slice(0, 120) ?? null,
         })),
       ],
+      campaigns: campaigns.map((x) => ({
+        id: x.id,
+        title: x.title,
+        status: x.status,
+        goal: `${x.goal_progress}/${x.goal_target} ${label('campaignGoal', x.goal_kind)}`,
+        spentUsd: usd(x.spent_cents),
+        budgetUsd: usd(x.budget_cents),
+        hunts: x.hunts_launched,
+        leads: x.leads_enrolled,
+        stopReason: x.stop_reason,
+      })),
     };
   });
 }
@@ -247,6 +292,14 @@ export function livePrompt(l: ManagerLive): string {
     `rascunhos esperando=${l.openDrafts}, handoffs abertos=${l.openHandoffs}, leads pausados=${l.pausedLeads}, ` +
       `leads hoje=${l.leadsToday}, respostas hoje=${l.repliesToday}, ` +
       `runs hoje=${l.runsToday}${l.failedToday ? ` (${l.failedToday} falharam)` : ''}, gasto hoje=${usd(l.spendTodayCents)}.`,
+    l.campaigns.length
+      ? `\nMODO CAMPANHA (ativas/pausadas agora):\n${l.campaigns
+          .map(
+            (c) =>
+              `- [${c.status}] "${c.title}" (id=${c.id}): meta ${c.goal} · gasto ${c.spentUsd}/${c.budgetUsd} · buscas=${c.hunts} · leads=${c.leads}${c.stopReason ? ` · motivo: ${c.stopReason}` : ''}`,
+          )
+          .join('\n')}`
+      : '\nMODO CAMPANHA: nenhuma campanha ativa ou pausada agora.',
     l.cards.length
       ? `\nCARTÕES DE CONFIRMAÇÃO DESTA CONVERSA (estado real agora; vale mais que o que você disse antes):\n${l.cards
           .map((c) => `- ${c.at} ${c.title} → ${c.state}`)

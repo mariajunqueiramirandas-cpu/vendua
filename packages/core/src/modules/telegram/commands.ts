@@ -73,6 +73,7 @@ export const MUTE_CHOICES = [
 
 export const COMMANDS = [
   { command: 'agente', description: 'painel do agente de vendas: autonomia, rotinas e regras' },
+  { command: 'campanha', description: 'ver e controlar campanhas autônomas em andamento' },
   { command: 'pendencias', description: 'rascunhos e handoffs esperando você' },
   { command: 'hoje', description: 'o dia até agora: leads, pedidos, pendências e incidentes' },
   { command: 'ensinar', description: 'gravar uma regra permanente para o agente de vendas' },
@@ -975,11 +976,92 @@ export async function agenteView(c: CommandCtx): Promise<TelegramMessage> {
       ...row(
         actionButton('🧠 ensinar regra', 'ag:t', 'primary'),
         actionButton('📋 regras', 'ag:m'),
-        actionButton('🔎 revisar funil', 'ag:s'),
       ),
+      ...row(actionButton('🚀 campanhas', 'ag:c'), actionButton('🔎 revisar funil', 'ag:s')),
       ...row(linkButton('configurar agente no CRM', crm(c, '/agente/configurar'))),
     ],
   };
+}
+
+export async function campanhaView(c: CommandCtx): Promise<TelegramMessage> {
+  const { listCampaigns } = await import('../../crm/campaigns.ts');
+  const tz = await staffTz(c.sql);
+  const all = await listCampaigns(c.sql, { limit: 6 });
+  const open = all.filter((x) => x.status === 'active' || x.status === 'paused');
+
+  if (!all.length) {
+    return {
+      text: [
+        `🚀 ${b('modo campanha')}`,
+        '',
+        'nenhuma campanha rodada ainda.',
+        '',
+        i(
+          'para iniciar, mande em conversa livre aqui — ex.: "continua trabalhando até conseguir 1 cadastro" ou "roda campanha até marcar 2 reuniões com docerias, teto de 20 dólares".',
+        ),
+      ].join('\n'),
+      buttons: row(actionButton('⬅️ painel do agente', 'ag:b')),
+    };
+  }
+
+  const lines: string[] = [`🚀 ${b('campanhas autônomas')}`, ''];
+  const buttons: InlineButton[][] = [];
+
+  for (const camp of all) {
+    const icon =
+      camp.status === 'active'
+        ? '🟢'
+        : camp.status === 'paused'
+          ? '⏸'
+          : camp.status === 'won'
+            ? '🎉'
+            : camp.status === 'exhausted'
+              ? '⚠️'
+              : '🛑';
+    const goalWord = label('campaignGoal', camp.goalKind);
+    const wipLine = camp.wip
+      ? ` · ativos ${int(camp.wip.activeWip)} · resp ${int(camp.wip.activeConversations)}`
+      : '';
+    const nextLine =
+      camp.status === 'active' && camp.nextTickAt
+        ? ` · próx checagem ${ts(camp.nextTickAt, 'R', tz)}`
+        : '';
+    lines.push(
+      `${icon} ${b(esc(camp.title))} (${label('campaignStatus', camp.status)})`,
+      `meta ${b(`${int(camp.goalProgress)}/${int(camp.goalTarget)}`)} ${goalWord} · gasto ${usd(camp.spentCents)} / ${usd(camp.budgetCents)} · buscas ${int(camp.huntsLaunched)} · leads ${int(camp.leadsEnrolled)}${wipLine}${nextLine}`,
+    );
+    if (camp.stopReason) lines.push(i(esc(clip(camp.stopReason, 160))));
+    lines.push('');
+
+    if (camp.status === 'active' && buttons.length < 6) {
+      buttons.push(
+        ...row(
+          actionButton('💬 orientar', `cp:g:${camp.id}`, 'primary'),
+          actionButton('⏸ pausar', `cpv:p:${camp.id}`),
+          actionButton('🛑 encerrar', `cpv:s:${camp.id}`, 'danger'),
+        ),
+      );
+    } else if ((camp.status === 'paused' || camp.status === 'exhausted') && buttons.length < 6) {
+      buttons.push(
+        ...row(
+          actionButton('▶️ retomar', `cpv:r:${camp.id}`, 'success'),
+          actionButton('➕ +US$10', `cpv:b:${camp.id}`, 'primary'),
+          actionButton('🛑 encerrar', `cpv:s:${camp.id}`, 'danger'),
+        ),
+      );
+    }
+  }
+
+  if (!open.length) {
+    lines.push(
+      i(
+        'para lançar outra campanha, mande em conversa livre — ex.: "continua trabalhando até conseguir 1 cadastro".',
+      ),
+    );
+  }
+  buttons.push(...row(actionButton('⬅️ painel do agente', 'ag:b')));
+
+  return { text: lines.join('\n').trim(), buttons };
 }
 
 export async function memoriaView(c: CommandCtx): Promise<TelegramMessage> {
@@ -1083,15 +1165,17 @@ export function ajudaView(c: Pick<CommandCtx, 'ctx'>): TelegramMessage {
     text: [
       `🤖 ${b('como gerenciar o agente de vendas por aqui')}`,
       '',
-      `${b('conversa livre (texto ou áudio)')}: mande qualquer pergunta ou pedido direto na DM — ex.: "como tá o funil hoje?", "pausa o agente na Padaria Sol", "ensina pra nunca dar desconto sem perguntar".`,
+      `${b('conversa livre (texto ou áudio)')}: mande qualquer pergunta ou pedido direto na DM — ex.: "como tá o funil hoje?", "continua trabalhando até conseguir 1 cadastro", "pausa o agente na Padaria Sol", "ensina pra nunca dar desconto sem perguntar".`,
       '',
       `${b('responder direto nos cartões')}:`,
       '• responda um cartão de <b>handoff</b> (texto ou áudio) → o agente recebe sua resposta, despausa o lead e responde ao cliente.',
       '• responda um cartão de <b>rascunho</b> → o agente reescreve com o seu ajuste e manda de volta pra aprovar.',
+      '• responda um cartão de <b>campanha</b> → direciona o foco/estratégia da campanha na hora.',
       '• responda um cartão de <b>lead</b> → envia sua orientação direto pro agente agir naquele lead.',
       '',
       b('comandos rápidos'),
       `${mono('/agente')} — autonomia, rotinas, regras e revisão do funil`,
+      `${mono('/campanha')} — campanhas autônomas em andamento (pausar, retomar, orientar)`,
       `${mono('/ensinar')} — fixar uma regra permanente na memória do agente`,
       `${mono('/memoria')} — ver ou apagar regras salvas`,
       `${mono('/pendencias')} — aprovar rascunhos e ver handoffs`,
@@ -1114,11 +1198,13 @@ export async function runCommand(
   switch (name) {
     case 'start':
       return {
-        text: `👋 Olá, ${b(esc(c.staffName))}! Seu Telegram já está conectado à Venduá.\n\nPode conversar em texto ou áudio comigo para acompanhar e orientar o agente de vendas, ou usar ${mono('/agente')}, ${mono('/pendencias')} e ${mono('/hoje')}.`,
+        text: `👋 Olá, ${b(esc(c.staffName))}! Seu Telegram já está conectado à Venduá.\n\nPode conversar em texto ou áudio comigo para acompanhar e orientar o agente de vendas, ou usar ${mono('/agente')}, ${mono('/campanha')}, ${mono('/pendencias')} e ${mono('/hoje')}.`,
         buttons: row(linkButton('abrir o CRM', crm(c, '/'))),
       };
     case 'agente':
       return agenteView(c);
+    case 'campanha':
+      return campanhaView(c);
     case 'ensinar':
       return ensinarCmd(c, arg);
     case 'memoria':
