@@ -145,7 +145,7 @@ export const crmDiscovery = defineAgent<Sql>({
     states: { discovery: { tools: DISCOVERY_TOOLS } },
   }),
   guards: { tool: [available], output: [bookSettled] },
-  budgets: { stepsPerTurn: 30, tokensPerTurn: 2_000_000, costPerTurnUsd: 3, tenantDaily: 'crm' },
+  budgets: { stepsPerTurn: 30, tokensPerTurn: 8_000_000, costPerTurnUsd: 12, tenantDaily: 'crm' },
   finish: (s) => !!hunt(s.context.subject)?.parked,
   toInput: (m) => {
     const p = (m.payload ?? {}) as JsonObject;

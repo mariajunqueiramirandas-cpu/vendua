@@ -98,7 +98,7 @@ export const crmManager = defineAgent<Sql>({
     output: [noHumanClaim, style({ maxChars: 1800, noMarkdown: false, maxQuestions: 1 })],
   },
   mailbox: { quiet: { minMs: 200, maxMs: 1_200 }, preempt: true },
-  budgets: { stepsPerTurn: 10, tokensPerTurn: 80_000, costPerTurnUsd: 0.25, tenantDaily: 'crm' },
+  budgets: { stepsPerTurn: 10, tokensPerTurn: 320_000, costPerTurnUsd: 1, tenantDaily: 'crm' },
   toInput: managerInput,
   load: {
     tenant: async ({ tx }) => (await managerWorkspaceTx(tx)) as unknown as Json,

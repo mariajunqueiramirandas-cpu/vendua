@@ -171,7 +171,7 @@ export function compile(input: CompileInput): Compiled {
   const volatile = volatileText(input, ctx);
   const tools = input.tools.map(toolSpec);
 
-  const budget = input.maxContextTokens ?? 32_000;
+  const budget = input.maxContextTokens ?? 128_000;
   const fixed =
     estimateTokens(volatile) +
     estimateTokens(JSON.stringify(tools)) +

@@ -147,7 +147,12 @@ export const copilot = defineAgent<Sql>({
     ],
   },
   mailbox: { quiet: { minMs: 300, maxMs: 2_000 }, preempt: true },
-  budgets: { stepsPerTurn: 10, tokensPerTurn: 80_000, costPerTurnUsd: 0.2, tenantDaily: 'copilot' },
+  budgets: {
+    stepsPerTurn: 10,
+    tokensPerTurn: 320_000,
+    costPerTurnUsd: 0.8,
+    tenantDaily: 'copilot',
+  },
   load: {
     // `timezone` is what the compiler reads for AGORA
     tenant: async ({ tx, tenantId }) =>
