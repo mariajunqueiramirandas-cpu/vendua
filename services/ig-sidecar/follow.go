@@ -92,7 +92,7 @@ func (m *Manager) Follow(ctx context.Context, fbid, username string) (*FollowRes
 			res.Following, res.Already = true, true
 			return res, nil
 		}
-		if u.Data.FriendshipStatus.Blocking {
+		if b := u.Data.FriendshipStatus.Blocking; b != nil && *b {
 			return nil, errBlocking
 		}
 	}

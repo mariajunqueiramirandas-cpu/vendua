@@ -545,6 +545,10 @@ export interface IgStep {
   instructions: string;
   fields?: { id: string; name: string; type: string; options?: string[] }[];
   captcha?: IgCaptcha;
+  /** number to tap on the device approving the login */
+  code?: string;
+  /** a wait step that can go back to choosing another verification method */
+  back?: boolean;
   account?: IgAccount;
 }
 export interface IgStatus {

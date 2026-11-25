@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,8 +31,11 @@ type Step struct {
 	Instructions string   `json:"instructions"`
 	Fields       []Field  `json:"fields,omitempty"`
 	Captcha      *Captcha `json:"captcha,omitempty"`
-	Account      *Account `json:"account,omitempty"`
-	Session      *Session `json:"session,omitempty"`
+	// Code is the number to tap on the other device; Back offers "use another method" on a wait step.
+	Code    string   `json:"code,omitempty"`
+	Back    bool     `json:"back,omitempty"`
+	Account *Account `json:"account,omitempty"`
+	Session *Session `json:"session,omitempty"`
 }
 
 type Captcha struct {
@@ -59,6 +63,7 @@ const (
 	stepCredentials   = "instagram.credentials"
 	stepTwoFactor     = "instagram.two_factor"
 	stepCookieConsent = "instagram.cookie_consent"
+	stepApprove       = "fi.mau.meta.instagram.auth_platform.approve"
 
 	fieldIdentifier = "username"
 	fieldPassword   = "password"
@@ -70,7 +75,12 @@ const (
 	cancelCookieConsent    = "Cancelar login"
 
 	loginTTL = 15 * time.Minute
+	// instameow polls an approval until its context ends; one "já aprovei" stays under Core's 30s
+	// call timeout, and running out hands the same step back (the approval state survives)
+	approvalPoll = 20 * time.Second
 )
+
+var approvalCodeRe = regexp.MustCompile(`^[0-9A-Za-z]{1,12}$`)
 
 var (
 	errUnsupportedStep = &LoginError{http.StatusBadRequest, "unsupported_step",
@@ -87,7 +97,9 @@ var (
 		"O Instagram diz que a conta está suspensa."}
 	errNoLogin = &LoginError{http.StatusConflict, "no_login",
 		"Nenhum login em andamento — comece de novo."}
-	errLoginCancelled = &LoginError{http.StatusConflict, "cancelled", "Login cancelado."}
+	errLoginCancelled  = &LoginError{http.StatusConflict, "cancelled", "Login cancelado."}
+	errApprovalExpired = &LoginError{http.StatusBadRequest, "approval_expired",
+		"A aprovação no outro aparelho expirou ou foi recusada. Comece o login de novo."}
 )
 
 // CAA (mobile fallback) steps we can render safely: one field, known id/type.
@@ -168,6 +180,9 @@ func fromBridgeStep(s *bridgev2.LoginStep) (*Step, error) {
 		}
 		return out, nil
 	case bridgev2.LoginStepTypeDisplayAndWait:
+		if s.StepID == stepApprove {
+			return fromApproveStep(s)
+		}
 		if s.DisplayAndWaitParams == nil || s.DisplayAndWaitParams.Type != bridgev2.LoginDisplayTypeNothing {
 			return nil, errUnsupportedStep
 		}
@@ -176,6 +191,50 @@ func fromBridgeStep(s *bridgev2.LoginStep) (*Step, error) {
 		return fromCaptchaStep(s)
 	}
 	return nil, errUnsupportedStep
+}
+
+// fromApproveStep is Instagram's "was this you?" on a device already signed in, sometimes with a
+// number to tap there; instameow's English text is replaced.
+func fromApproveStep(s *bridgev2.LoginStep) (*Step, error) {
+	params := s.DisplayAndWaitParams
+	if params == nil || params.ImageURL != "" {
+		return nil, errUnsupportedStep
+	}
+	out := &Step{Type: "wait", StepID: s.StepID, Back: params.CanCancel,
+		Instructions: "Abra o Instagram num aparelho em que a conta já está conectada e aprove este login. Depois toque em “já aprovei”."}
+	switch params.Type {
+	case bridgev2.LoginDisplayTypeNothing:
+		if params.Data != "" {
+			return nil, errUnsupportedStep
+		}
+	case bridgev2.LoginDisplayTypeCode:
+		if !approvalCodeRe.MatchString(params.Data) {
+			return nil, errUnsupportedStep
+		}
+		out.Code = params.Data
+		out.Instructions = "Abra o Instagram num aparelho em que a conta já está conectada e aprove este login — se ele pedir um número, toque neste. Depois toque em “já aprovei”."
+	default:
+		return nil, errUnsupportedStep
+	}
+	return out, nil
+}
+
+// stillWaiting is the approval step again after a poll ran out with nothing decided yet.
+func stillWaiting(s *Step) *Step {
+	again := *s
+	again.Instructions = "Ainda não chegou a aprovação. Aprove no Instagram do outro aparelho e toque em “já aprovei” de novo."
+	return &again
+}
+
+// pollApproval runs one approval poll under limit; waiting reports one that ran out undecided
+// while the caller's own context was still alive.
+func pollApproval(ctx context.Context, limit time.Duration,
+	poll func(context.Context) (*bridgev2.LoginStep, error)) (*bridgev2.LoginStep, bool, error) {
+	bounded, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	step, err := poll(bounded)
+	waiting := err != nil && errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+	return step, waiting, err
 }
 
 func fromCaptchaStep(s *bridgev2.LoginStep) (*Step, error) {
@@ -368,6 +427,15 @@ func (p *loginProc) submit(ctx context.Context, input map[string]string) (*Step,
 			step, err := p.client.SubmitInstagramWebCaptcha(ctx, input[fieldCaptcha])
 			return p.handleAuthPlatform(ctx, step, err)
 		}
+		if pending := p.m.pendingLoginStep(); pending != nil && pending.StepID == stepApprove {
+			step, waiting, err := pollApproval(ctx, approvalPoll, func(c context.Context) (*bridgev2.LoginStep, error) {
+				return p.client.DoInstagramWebAuthPlatformSteps(c, input)
+			})
+			if waiting {
+				return p.remember(stillWaiting(pending), nil)
+			}
+			return p.handleAuthPlatform(ctx, step, err)
+		}
 		step, err := p.client.DoInstagramWebAuthPlatformSteps(ctx, input)
 		return p.handleAuthPlatform(ctx, step, err)
 	}
@@ -470,6 +538,8 @@ func (p *loginProc) handleAuthPlatform(ctx context.Context, step *bridgev2.Login
 		return nil, errSuspended
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 		return nil, err
+	case errors.Is(err, instameow.ErrInstagramAuthPlatformApprovalExpired):
+		return nil, errApprovalExpired
 	case errors.Is(err, instameow.ErrInstagramWebCheckpointRequestFailed):
 		return nil, errCAAFailed
 	case err != nil:
