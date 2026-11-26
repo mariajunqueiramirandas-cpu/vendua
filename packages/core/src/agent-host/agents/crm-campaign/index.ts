@@ -140,7 +140,7 @@ export const crmCampaign = defineAgent<Sql>({
     states: { directing: { tools: TOOL_NAMES } },
   }),
   guards: { output: [campaignSettled] },
-  budgets: { stepsPerTurn: 10, tokensPerTurn: 1_200_000, costPerTurnUsd: 4, tenantDaily: 'crm' },
+  budgets: { stepsPerTurn: 20, tokensPerTurn: 1_200_000, costPerTurnUsd: 4, tenantDaily: 'crm' },
   finish: (s) => !!subjectOf(s.context.subject)?.parked,
   toInput: campaignInput,
   load: {

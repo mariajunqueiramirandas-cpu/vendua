@@ -73,7 +73,7 @@ describe('agent v2 — pure', () => {
     expect(n.weeklyDiscoveryUsd).toBe(50);
     // an explicitly emptied instructions box stays empty
     expect(normalizeAgent({ level: 'off', instructions: '' }).instructions).toBe('');
-    expect(crmAgent.def.budgets?.stepsPerTurn).toBe(14);
+    expect(crmAgent.def.budgets?.stepsPerTurn).toBe(28);
   });
 
   test('draft decision: supervised drafts first contact, autopilot sends, copilot drafts all', () => {

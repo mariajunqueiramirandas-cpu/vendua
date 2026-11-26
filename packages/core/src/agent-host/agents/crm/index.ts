@@ -278,7 +278,7 @@ export const crmAgent = defineAgent<Sql>({
       return next ? [next] : [];
     },
   },
-  budgets: { stepsPerTurn: 14, tokensPerTurn: 3_200_000, costPerTurnUsd: 4, tenantDaily: 'crm' },
+  budgets: { stepsPerTurn: 28, tokensPerTurn: 3_200_000, costPerTurnUsd: 4, tenantDaily: 'crm' },
   // a parked lead (automation off, suppressed, cost cap) gets no model call; an opt-out ends it
   finish: (s) =>
     s.owner !== 'agent' || !!leadCtx(s.context.subject)?.parked || turn(s).closed === true,
