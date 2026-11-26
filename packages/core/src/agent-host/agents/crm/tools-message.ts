@@ -279,7 +279,7 @@ export const sendMessageTool = defineTool<
     closing: s
       .boolean()
       .describe(
-        'true when this message is our goodbye: the lead declined or the conversation is wrapping up and nothing is left open. No follow-up is booked after it, the turn ends with it, and a thanks or goodbye back gets no answer (end_conversation).',
+        'true when this message is our goodbye: the lead declined or the conversation is wrapping up and nothing is left open. No follow-up is booked after it, the turn ends with it, and a thanks or goodbye back needs no answer.',
       )
       .optional(),
   }),
