@@ -217,6 +217,17 @@ export function unclassified(tables: string[]): string[] {
 /** the store's own rows too: the control scope alone doesn't open every store table */
 const scopeTo = (tx: Sql, id: string) => tx`select set_config('vendua.tenant_id', ${id}, true)`;
 
+/** One tenant's rows of every wiped table, in `wipePlan` order. The caller has scoped the
+ *  transaction to that tenant with the control scope closed. */
+export async function deleteWipedRowsTx(tx: Sql, id: string, order: string[]): Promise<number> {
+  let rows = 0;
+  for (const t of order) {
+    if (!IDENT.test(t)) throw new Error(`store reset: odd table name ${t}`);
+    rows += (await tx.unsafe(`delete from "${t}" where tenant_id = $1`, [id])).count;
+  }
+  return rows;
+}
+
 /**
  * The reset itself, inside a control transaction (the claim's). The wipe runs in the store's own
  * scope with the control scope closed, so RLS keeps every statement inside this one store; the
@@ -263,10 +274,7 @@ export async function resetStoreTx(
     await tx`delete from store_whatsapp where tenant_id = ${id}`;
   }
 
-  for (const t of plan.order) {
-    if (!IDENT.test(t)) throw new Error(`store reset: odd table name ${t}`);
-    rows += (await tx.unsafe(`delete from "${t}" where tenant_id = $1`, [id])).count;
-  }
+  rows += await deleteWipedRowsTx(tx, id, plan.order);
   rows += (
     await tx`
         delete from storefront_templates where tenant_id = ${id} and bundle = ${DEFAULT_BUNDLE}`

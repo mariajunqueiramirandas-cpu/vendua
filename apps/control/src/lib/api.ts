@@ -593,6 +593,18 @@ export interface IgStatus {
   /** a login the sidecar still holds open — the card resumes it */
   login?: IgStep | null;
 }
+/** POST /crm/reset (Core's crm/reset.ts): what zeroing the sales side takes */
+export interface CrmResetCounts {
+  leads: number;
+  /** of those, the ones that became a store (the store stays) */
+  storeLeads: number;
+  conversations: number;
+  meetings: number;
+  memories: number;
+  campaigns: number;
+  briefs: number;
+}
+
 export interface ChannelHealth {
   channel: 'whatsapp' | 'instagram' | 'email';
   sent: number;
@@ -817,6 +829,14 @@ const apiBase = {
   resetInstance: (confirm: string) =>
     req<{ requestedAt: string }>('/instance/reset', {
       method: 'POST',
+      body: JSON.stringify({ confirm }),
+    }),
+  /** what zeroing the CRM would take now, and the word to type */
+  crmReset: () => req<{ word: string; counts: CrmResetCounts }>('/crm/reset'),
+  resetCrm: (confirm: string, key: string) =>
+    req<CrmResetCounts & { resetAt: string; rows: number }>('/crm/reset', {
+      method: 'POST',
+      headers: { 'idempotency-key': key },
       body: JSON.stringify({ confirm }),
     }),
   /** `key` stays the same across retries of one confirmation, so a lost answer replays */
