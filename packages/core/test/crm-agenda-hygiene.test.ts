@@ -4,6 +4,7 @@ import { scriptedAdapter } from '@vendua/agent-runtime/testing';
 import { sweepAgendaHygiene } from '../src/crm/agenda-hygiene.ts';
 import { requestLeadTx } from '../src/crm/dispatch.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { updateLeadTx } from '../src/modules/leads.ts';
 import { crmBench, OWNER_URL } from './crm-harness.ts';
 
 // The agenda's housekeeping: what waits for the sales agent should still make sense. Rules retire
@@ -268,5 +269,60 @@ describe.skipIf(!OWNER_URL)('agenda hygiene (db)', () => {
     await sweepAgendaHygiene(appSql, gateway);
     expect(adapter.requests).toHaveLength(0);
     expect(await pending(lead.lead.id)).toHaveLength(1);
+  });
+
+  test("'contacted' needs something to have reached the lead: the agent can't claim it early, and a claim its failed DM left goes back", async () => {
+    await b.settings('autopilot');
+    const markedBy = (leadId: string, actor: 'agent' | 'staff') =>
+      controlTx(appSql, (tx) => updateLeadTx(tx, leadId, { state: 'contacted' }, actor));
+    const stateOf = async (leadId: string) =>
+      (await sql<{ state: string }[]>`select state from leads where id = ${leadId}`)[0]!.state;
+    const failed = {
+      dir: 'out' as const,
+      body: 'Oi! Sou da Venduá.',
+      status: 'failed',
+      agoMin: 30,
+    };
+
+    // the agent queued a DM that failed, then marked the lead contacted
+    const lost = await leadWith(`Jéssica ${b.nonce}`, [failed]);
+    // the tool refuses it now
+    const { outcomes } = await b.runTools([['set_state', { state: 'contacted' }]], {
+      leadId: lost.lead.id,
+    });
+    expect(JSON.stringify(outcomes[0])).toContain('Nada chegou nessa pessoa ainda');
+    expect(await stateOf(lost.lead.id)).toBe('lead');
+    // one left by the old tool goes back; real contact, staff's word and a send in flight stay
+    await markedBy(lost.lead.id, 'agent');
+    const reached = await leadWith(`Kelly ${b.nonce}`, [{ ...failed, status: 'sent' }]);
+    await markedBy(reached.lead.id, 'agent');
+    const byStaff = await leadWith(`Ligação ${b.nonce}`, [failed]);
+    await markedBy(byStaff.lead.id, 'staff');
+    const inFlight = await leadWith(`Na fila ${b.nonce}`, [{ ...failed, status: 'queued' }]);
+    // a day out, so no other file's outbox pass sends it meanwhile
+    await sql`update lead_messages set send_after = now() + interval '1 day'
+      where thread_id = ${inFlight.threadId}`;
+    await markedBy(inFlight.lead.id, 'agent');
+
+    await sweepAgendaHygiene(appSql, null);
+    expect(await stateOf(lost.lead.id)).toBe('lead');
+    expect((await timeline(lost.lead.id)).join('\n')).toContain('nenhuma mensagem chegou');
+    const back = await sql<{ actor: string }[]>`
+      select actor from lead_state_history
+      where lead_id = ${lost.lead.id} and from_state = 'contacted' and to_state = 'lead'`;
+    expect(back.map((r) => r.actor)).toEqual(['system']);
+    for (const kept of [reached, byStaff, inFlight])
+      expect(await stateOf(kept.lead.id)).toBe('contacted');
+
+    // and with real contact the tool lets the agent correct the stage
+    const { outcomes: ok } = await b.runTools([['set_state', { state: 'lead' }]], {
+      leadId: reached.lead.id,
+    });
+    expect(ok[0]).toMatchObject({ name: 'set_state', ok: true });
+    const { outcomes: again } = await b.runTools([['set_state', { state: 'contacted' }]], {
+      leadId: reached.lead.id,
+    });
+    expect(again[0]).toMatchObject({ name: 'set_state', ok: true });
+    expect(await stateOf(reached.lead.id)).toBe('contacted');
   });
 });
