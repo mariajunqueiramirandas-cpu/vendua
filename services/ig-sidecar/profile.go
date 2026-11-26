@@ -189,15 +189,10 @@ func (m *Manager) Profile(ctx context.Context, raw string) (*ProfileResult, erro
 		if !m.profileQuota.allow(time.Now()) {
 			return errProfileRateLimited
 		}
-		p, fetchErr := fetchWebProfileInfo(ctx, cli, u)
-		if fetchErr != nil && !errors.Is(fetchErr, errUserNotFound) && !errors.Is(fetchErr, errProfileRateLimited) {
-			if _, permanent := classify(fetchErr); !permanent {
-				// Fallback to instameow's PolarisProfilePageContentQuery if web_profile_info shifts.
-				if fb, fbErr := m.fetchProfileViaGraphQL(ctx, cli, u); fbErr == nil {
-					p, fetchErr = fb, nil
-				}
-			}
-		}
+		p, fetchErr := lookupProfile(
+			func() (*ProfileResult, error) { return fetchWebProfileInfo(ctx, cli, u) },
+			func() (*ProfileResult, error) { return m.fetchProfileViaGraphQL(ctx, cli, u) },
+		)
 		if fetchErr != nil {
 			return fetchErr
 		}
@@ -212,6 +207,28 @@ func (m *Manager) Profile(ctx context.Context, raw string) (*ProfileResult, erro
 		return nil, err
 	}
 	return out, nil
+}
+
+// lookupProfile tries web_profile_info, then PolarisProfilePageContentQuery (found by the same
+// search DMs and follows use). The web endpoint answers 404 / user:null for accounts that exist,
+// so its "not found" stands only when the search agrees; a rate limit or a dead session doesn't
+// get a second request.
+func lookupProfile(web, graph func() (*ProfileResult, error)) (*ProfileResult, error) {
+	p, err := web()
+	if err == nil || errors.Is(err, errProfileRateLimited) {
+		return p, err
+	}
+	if _, permanent := classify(err); permanent {
+		return nil, err
+	}
+	fb, fbErr := graph()
+	if fbErr == nil {
+		return fb, nil
+	}
+	if errors.Is(err, errUserNotFound) {
+		return nil, fbErr
+	}
+	return nil, err
 }
 
 func fetchWebProfileInfo(ctx context.Context, cli *instameow.Client, username string) (*ProfileResult, error) {

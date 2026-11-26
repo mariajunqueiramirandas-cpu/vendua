@@ -733,12 +733,15 @@ export class Runtime<H = unknown> {
     }
 
     if (reads.length) {
-      const results = await Promise.all(
-        reads.map(async (r) =>
-          this.o.store.read(run.actor.tenantId, async (host) => {
-            const ctx = this.toolCtx(run, host, null);
-            return { r, ctx, out: await this.runTool(run, r.tool, ctx, r.input) };
-          }),
+      // reads call out (search, scraping, a queue behind a pacer) and a batch can outlast the lease
+      const results = await this.held(run, () =>
+        Promise.all(
+          reads.map(async (r) =>
+            this.o.store.read(run.actor.tenantId, async (host) => {
+              const ctx = this.toolCtx(run, host, null);
+              return { r, ctx, out: await this.runTool(run, r.tool, ctx, r.input) };
+            }),
+          ),
         ),
       );
       const events: NewEvent[] = [];
@@ -1386,10 +1389,10 @@ export class Runtime<H = unknown> {
 
   // ── leases, time, telemetry ─────────────────────────────────────────────────
 
-  /** Renews the lease while `fn` runs. A model call can outlast the lease (the gateway's timeout is
-   *  120s, the lease 60s), and a lapsed lease lets another worker claim the actor and pay for the
-   *  same turn again; the fence only stops the second send. A lost lease surfaces at the next
-   *  fenced write, as it would without this. */
+  /** Renews the lease while `fn` runs. A model call or a batch of read tools can outlast the lease
+   *  (the gateway's timeout is 120s, the lease 60s), and a lapsed lease lets another worker claim
+   *  the actor and pay for the same turn again; the fence only stops the second send. A lost lease
+   *  surfaces at the next fenced write, as it would without this. */
   private async held<T>(run: TurnRun<H>, fn: () => Promise<T>): Promise<T> {
     let beat = Promise.resolve();
     let lost = false;

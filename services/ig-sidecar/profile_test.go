@@ -226,3 +226,39 @@ func TestProfileRoute(t *testing.T) {
 		t.Fatalf("cached hit: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestLookupProfileFallsBack(t *testing.T) {
+	found := &ProfileResult{Username: "freiresgourmetconfeitaria", Biography: "Bolos artesanais"}
+	calls := 0
+	graph := func(p *ProfileResult, err error) func() (*ProfileResult, error) {
+		return func() (*ProfileResult, error) { calls++; return p, err }
+	}
+	webErr := func(err error) func() (*ProfileResult, error) {
+		return func() (*ProfileResult, error) { return nil, err }
+	}
+	searchDown := errors.New("busca no instagram falhou")
+
+	cases := []struct {
+		name      string
+		web       func() (*ProfileResult, error)
+		graph     func() (*ProfileResult, error)
+		want      *ProfileResult
+		wantErr   error
+		wantCalls int
+	}{
+		{"web 404 but the account exists", webErr(errUserNotFound), graph(found, nil), found, nil, 1},
+		{"both say not found", webErr(errUserNotFound), graph(nil, errUserNotFound), nil, errUserNotFound, 1},
+		{"web 404 and search down", webErr(errUserNotFound), graph(nil, searchDown), nil, searchDown, 1},
+		{"web shifts, graphql answers", webErr(errors.New("perfil não carregou")), graph(found, nil), found, nil, 1},
+		{"rate limited: no second request", webErr(errProfileRateLimited), graph(found, nil), nil, errProfileRateLimited, 0},
+		{"dead session: no second request", webErr(httpclient.ErrChallengeRequired), graph(found, nil), nil, httpclient.ErrChallengeRequired, 0},
+		{"web answers", func() (*ProfileResult, error) { return found, nil }, graph(nil, errUserNotFound), found, nil, 0},
+	}
+	for _, c := range cases {
+		calls = 0
+		p, err := lookupProfile(c.web, c.graph)
+		if p != c.want || !errors.Is(err, c.wantErr) || (err == nil) != (c.wantErr == nil) || calls != c.wantCalls {
+			t.Errorf("%s: got %v, %v after %d graphql calls", c.name, p, err, calls)
+		}
+	}
+}
