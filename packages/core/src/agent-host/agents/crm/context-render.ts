@@ -76,6 +76,8 @@ export interface TranscriptMessage {
   audio?: boolean;
   /** the lead's machine answering our send, not a person (the agent's mark_auto_reply) */
   auto_reply?: boolean;
+  /** the conversation ended here: our goodbye, or their last word left unanswered */
+  closes_conversation?: boolean;
 }
 
 const STATUS_NOTE: Record<string, string> = {
@@ -129,6 +131,10 @@ function transcriptEntries(
       m.direction === 'out' && m.audio && 'em áudio',
       STATUS_NOTE[m.status],
       m.direction === 'in' && quickAfterOurs(msgs[i - 1], m),
+      m.closes_conversation &&
+        (m.direction === 'out'
+          ? 'despedida: a conversa terminou aqui'
+          : 'só encerrava a conversa, ficou sem resposta'),
     ].filter(Boolean);
     const body = (m.body ?? '').trim() || '(vazio)';
     return `[${stamp(m.created_at, tz)}] ${who}${notes.length ? ` (${notes.join(', ')})` : ''}: ${body}`;

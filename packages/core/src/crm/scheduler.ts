@@ -15,6 +15,7 @@ import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { nextReminderAtTx, sendMeetingReminders, syncMeetingEffects } from '../modules/meetings.ts';
 import { log } from '../platform/log.ts';
 import { sweepBriefs, sweepOutreachBacklog, sweepStrategist } from './board.ts';
+import { retireClosedCadence } from './agenda.ts';
 import { adoptLegacy } from './legacy.ts';
 import { agentSettingTx } from './policy.ts';
 import { anchorTx } from './schedule-anchors.ts';
@@ -158,6 +159,13 @@ export const JOBS: readonly ScheduledJob[] = [
     wakesOn: on('control_settings', 'control_integrations'),
     enabled: telegramEnabledTx,
     run: sweepTelegramDigest,
+  },
+  {
+    name: 'closed-cadence',
+    label: 'follow-ups automáticos de conversas encerradas',
+    cadence: async () => 'no boot e a cada 10 min',
+    reconcileOnly: true,
+    run: retireClosedCadence,
   },
   {
     name: 'legacy-adopt',

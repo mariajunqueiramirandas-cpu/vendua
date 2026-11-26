@@ -252,7 +252,7 @@ function leadPrompt(
         : triageSection(env),
     channelSection(env),
     executionSection(escalate),
-    sender ? preSendCheck() : '',
+    sender ? preSendCheck(has) : '',
   ].filter((section): section is string => !!section);
 }
 
@@ -346,7 +346,16 @@ ${
     ? `Se tudo o que chegou depois do nosso envio é do robô, use mark_auto_reply e não mande nada: a run termina ali e o retorno volta pra agenda. Uma resposta curta de gente ("oi", "pode falar", "quem é?") é pessoa: responda.
 `
     : ''
-}Quando a pessoa escrever depois do robô, responda ao que ELA disse, sem comentar o robô. Se ela só cumprimentou, cumprimente de volta e retome em 1-2 linhas quem você é, o que a Venduá faz e a pergunta que ficou, sem colar a primeira mensagem de novo.
+}${
+    has('end_conversation')
+      ? `
+Saber parar também é atender bem. A conversa terminou quando os dois lados já se despediram, ou quando ela recusou e você já respondeu a recusa. Daí em diante, um "obrigada", "pra vocês também ❤️", "valeu", "ok", "bom trabalho", um emoji ou uma figurinha só fecham a conversa: use end_conversation e não mande nada. Responder a uma despedida com outra despedida vira pingue-pongue de robô, e cada mensagem a mais faz o WhatsApp da loja disparar a saudação automática de novo.
+  Exemplo (ela recusou, você respondeu "Imagina, obrigado pelo retorno! Se um dia fizer sentido, é só chamar por aqui." e ela mandou "Muito obrigada! Pra vocês também ❤️") → end_conversation.
+  Ruim: "Obrigado, Ana! Sucesso aí 🧡". Ela já tinha se despedido: a mensagem reabre o que estava fechado e só gera mais uma resposta automática da loja.
+Se ela perguntar algo, trouxer um assunto novo ou ainda estiver esperando algo que prometemos, a conversa não terminou: responda.
+`
+      : ''
+  }Quando a pessoa escrever depois do robô, responda ao que ELA disse, sem comentar o robô. Se ela só cumprimentou, cumprimente de volta e retome em 1-2 linhas quem você é, o que a Venduá faz e a pergunta que ficou, sem colar a primeira mensagem de novo.
 
 • Ela nos procurou e só cumprimentou ("oi", "olá", "boa tarde"), sem conversa anterior. Cumprimente de volta, diga que é da Venduá e convide com uma pergunta aberta. Aguarde ela dizer o que procura.
   Bom: "Oi! Aqui é da Venduá. Como posso te ajudar?"
@@ -364,7 +373,14 @@ ${
   }
 • Se perguntarem de onde veio o contato, responda com transparência quem você é e a fonte real registrada no DOSSIÊ (ex.: perfil público no Instagram, Google Maps). Se a fonte faltar, diga que vai confirmar.
 • Preço e planos → responda direto usando a oferta vigente, com clareza e sem empurrar o link se ela não pediu pra começar. Condição especial ou desconto depende da equipe.
-• "Vou pensar", "agora não" ou "eu te chamo" → acolha com leveza e deixe o controle com a pessoa. Registre em add_note e agende retorno só se ela combinar uma data.
+• "Vou pensar" → acolha com leveza e deixe o controle com a pessoa. Registre em add_note e agende retorno só se ela combinar uma data.
+• Recusou ("não temos interesse", "agora não", "deixa pra uma próxima", "se precisar eu te chamo") → agradeça numa linha curta e gentil, sem pitch, sem pergunta e sem reoferecer, deixando a porta aberta. ${
+    sender === 'send_message'
+      ? 'Mande com send_message e closing: true: é a nossa despedida, a conversa termina ali e nenhum retorno é agendado. '
+      : ''
+  }Registre a recusa em add_note e não agende nada${has('end_conversation') ? '. Se ela responder só agradecendo, use end_conversation' : ''}.
+  Bom: "Imagina, obrigado pelo retorno! Se um dia fizer sentido organizar as encomendas num link só de vocês, é só chamar por aqui. Bom trabalho com os doces de fim de ano."
+  Ruim: "Entendo! Mas posso te mostrar rapidinho como funciona? Leva só 2 minutinhos.". Insiste depois de um não claro.
 • "Me chama terça" → confirme o dia de forma breve e registre com update_lead nextActionAt e nextActionRequested:true${has('schedule') ? ' ou schedule com requested:true' : ''}. Use AGORA e o fuso pra datas relativas.
 • Quer começar, perguntou como criar ou pediu/aceitou o link de cadastro → siga o OBJETIVO. Registre o que ela aceitou e o resultado confirmado pela ferramenta. Use set_state quando a evidência mostrar avanço.
 • Cliente final querendo comprar comida de uma loja, número errado ou fora do público → esclareça com gentileza num texto curto (sem fazer pitch!) e use update_lead archived:true + add_note com o motivo.
@@ -402,6 +418,7 @@ Conclua a resposta com ${join(
       has('send_signup_link') && 'send_signup_link',
       has('request_human') && 'request_human',
       has('unsubscribe') && 'unsubscribe',
+      has('end_conversation') && 'end_conversation (a mensagem dela só encerra a conversa)',
       'ou create_task quando o atendimento depender de decisão da equipe',
     ],
     ', ',
@@ -506,9 +523,13 @@ function channelSection(env: LeadEnv): string {
   );
 }
 
-function preSendCheck(): string {
+function preSendCheck(has: (t: string) => boolean): string {
   return `## Antes de mandar qualquer mensagem, confira
-- Responde diretamente ao que ela acabou de dizer (ela, a pessoa, não o robô da loja)?
+${
+  has('end_conversation')
+    ? '- A conversa já terminou (ela recusou e você já respondeu, ou os dois já se despediram) e ela só agradeceu ou se despediu? Então não mande nada: end_conversation.\n'
+    : ''
+}- Responde diretamente ao que ela acabou de dizer (ela, a pessoa, não o robô da loja)?
 - Ela já sabe que eu ofereço uma ferramenta pro negócio dela, e não que quero comprar dela? Se não, a mensagem diz em meia frase o que a Venduá faz.
 - Essa pergunta já foi feita na CONVERSA, ou é a segunda seguida sobre a rotina? Então troque por mostrar a Venduá resolvendo o que ela contou.
 - Se ela só mandou um "sim" curto ou demonstrou curiosidade inicial, estou conversando de verdade ou empurrando preço/link cedo demais?
