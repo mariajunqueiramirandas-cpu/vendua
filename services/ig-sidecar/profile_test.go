@@ -1,8 +1,8 @@
 package main
 
 import (
-	"errors"
-	"fmt"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,162 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-
-	"go.mau.fi/mautrix-meta/pkg/instameow/slidetypes"
-	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
+	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
 )
-
-func TestParseWebProfileInfo(t *testing.T) {
-	body := `{
-		"status": "ok",
-		"data": {
-			"user": {
-				"id": "99887766",
-				"username": "torbolariadapreta",
-				"full_name": "Torbolaria da Preta/Confeitaria Cabo frio",
-				"biography": "Bolos Decorados • Kit festa\nPara orçamentos e encomenda link👇",
-				"external_url": "https://torbolariadapreta.pages.dev/",
-				"bio_links": [
-					{
-						"title": "Cardápio e Reservas",
-						"lynx_url": "https://l.instagram.com/?u=https%3A%2F%2Ftorbolariadapreta.pages.dev%2F&e=1",
-						"url": "https://torbolariadapreta.pages.dev/",
-						"link_type": "external"
-					},
-					{
-						"title": "WhatsApp",
-						"lynx_url": "https://l.instagram.com/?u=https%3A%2F%2Fwa.me%2F5522988459183&e=2",
-						"url": "",
-						"link_type": "external"
-					}
-				],
-				"edge_followed_by": { "count": 23200 },
-				"edge_owner_to_timeline_media": {
-					"count": 1984,
-					"edges": [
-						{
-							"node": {
-								"shortcode": "PIN1",
-								"taken_at_timestamp": 1700000000,
-								"pinned_for_users": [{"id": "99887766"}],
-								"edge_media_to_caption": { "edges": [{ "node": { "text": "Post fixado antigo" } }] }
-							}
-						},
-						{
-							"node": {
-								"shortcode": "NEW1",
-								"taken_at_timestamp": 1764000000,
-								"pinned_for_users": [],
-								"edge_media_to_caption": { "edges": [{ "node": { "text": "Bolo de morango hoje!" } }] }
-							}
-						}
-					]
-				},
-				"category_name": "Bakery",
-				"is_private": false,
-				"is_business_account": true,
-				"business_email": "contato@torbolaria.example",
-				"contact_phone_number": "+5522988459183",
-				"whatsapp_number": "+5522988459183"
-			}
-		}
-	}`
-	p, err := parseWebProfileInfo("torbolariadapreta", []byte(body), http.StatusOK, nil)
-	if err != nil {
-		t.Fatalf("parse ok profile: %v", err)
-	}
-	if p.Username != "torbolariadapreta" || p.IGID != "99887766" {
-		t.Fatalf("identity: %+v", p)
-	}
-	if p.ExternalURL != "https://torbolariadapreta.pages.dev/" {
-		t.Fatalf("externalUrl: %q", p.ExternalURL)
-	}
-	if len(p.ExternalURLs) != 2 || p.ExternalURLs[0].Title != "Cardápio e Reservas" || p.ExternalURLs[1].URL != "https://wa.me/5522988459183" {
-		t.Fatalf("externalUrls: %+v", p.ExternalURLs)
-	}
-	if p.FollowersCount == nil || *p.FollowersCount != 23200 {
-		t.Fatalf("followers: %v", p.FollowersCount)
-	}
-	if p.PostsCount == nil || *p.PostsCount != 1984 {
-		t.Fatalf("postsCount: %v", p.PostsCount)
-	}
-	if len(p.LatestPosts) != 2 || !p.LatestPosts[0].IsPinned || p.LatestPosts[1].Caption != "Bolo de morango hoje!" {
-		t.Fatalf("latestPosts: %+v", p.LatestPosts)
-	}
-	if p.PublicEmail != "contato@torbolaria.example" || p.WhatsappNumber != "+5522988459183" || !p.IsBusinessAccount {
-		t.Fatalf("business fields: %+v", p)
-	}
-
-	// Null user with status=ok or 404 → user not found
-	if _, err := parseWebProfileInfo("nobody", []byte(`{"status":"ok","data":{"user":null}}`), http.StatusOK, nil); !errors.Is(err, errUserNotFound) {
-		t.Fatalf("want errUserNotFound on null user, got %v", err)
-	}
-	if _, err := parseWebProfileInfo("nobody", nil, http.StatusNotFound, nil); !errors.Is(err, errUserNotFound) {
-		t.Fatalf("want errUserNotFound on 404, got %v", err)
-	}
-
-	// Rate-limited responses
-	for _, tc := range []struct {
-		code int
-		body string
-		err  error
-	}{
-		{http.StatusTooManyRequests, `{"message":"Please wait a few minutes","status":"fail"}`, nil},
-		{http.StatusBadRequest, `{"message":"feedback_required","spam":true,"status":"fail"}`, fmt.Errorf("%w 400", httpclient.ErrUnexpectedError)},
-		{0, ``, fmt.Errorf("%w: %w", httpclient.ErrMaxRetriesReached, httpclient.ErrRateLimited)},
-	} {
-		if _, err := parseWebProfileInfo("x", []byte(tc.body), tc.code, tc.err); !errors.Is(err, errProfileRateLimited) {
-			t.Fatalf("rate limit (%d %q %v): got %v", tc.code, tc.body, tc.err, err)
-		}
-	}
-
-	// Session-killing errors must stay classifiable
-	if _, err := parseWebProfileInfo("x", []byte(`{"message":"challenge_required"}`), http.StatusBadRequest, httpclient.ErrChallengeRequired); !errors.Is(err, httpclient.ErrChallengeRequired) {
-		t.Fatalf("want ErrChallengeRequired preserved, got %v", err)
-	}
-}
-
-func TestParseGraphQLProfileAndFeed(t *testing.T) {
-	u := &slidetypes.User{
-		Username: "vendua.digital",
-		FullName: "Venduá",
-		PK:       "123456",
-		Unrecognized: map[string]any{
-			"biography":       "Loja online pra negócios de comida",
-			"external_url":    "https://vendua.com.br",
-			"follower_count":  float64(512),
-			"media_count":     float64(34),
-			"category":        "Software",
-			"is_business":     true,
-			"public_email":    "oi@vendua.com.br",
-			"whatsapp_number": "+5511999990000",
-			"bio_links": []any{
-				map[string]any{"url": "https://vendua.com.br", "title": "Site"},
-				map[string]any{"lynx_url": "https://l.instagram.com/?u=https%3A%2F%2Flinktr.ee%2Fvendua", "title": "Links"},
-			},
-		},
-	}
-	p := parseGraphQLProfile("vendua.digital", u)
-	if p.Username != "vendua.digital" || p.IGID != "123456" || p.ExternalURL != "https://vendua.com.br" {
-		t.Fatalf("graphql profile: %+v", p)
-	}
-	if len(p.ExternalURLs) != 2 || p.ExternalURLs[1].URL != "https://linktr.ee/vendua" {
-		t.Fatalf("graphql bio_links: %+v", p.ExternalURLs)
-	}
-	if p.FollowersCount == nil || *p.FollowersCount != 512 || p.PostsCount == nil || *p.PostsCount != 34 {
-		t.Fatalf("graphql counts: %+v", p)
-	}
-
-	posts := parseUserFeed([]byte(`{
-		"items": [
-			{"taken_at": 1764000000, "code": "ABC", "caption": {"text": "Novidade"}, "timeline_pinned_user_ids": [123456]},
-			{"taken_at": 1763000000, "code": "DEF", "caption": {"text": "Post 2"}}
-		]
-	}`))
-	if len(posts) != 2 || !posts[0].IsPinned || posts[0].Caption != "Novidade" || posts[1].IsPinned {
-		t.Fatalf("feed posts: %+v", posts)
-	}
-}
 
 func TestProfileCacheAndHourlyLimiter(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
@@ -227,38 +73,171 @@ func TestProfileRoute(t *testing.T) {
 	}
 }
 
-func TestLookupProfileFallsBack(t *testing.T) {
-	found := &ProfileResult{Username: "freiresgourmetconfeitaria", Biography: "Bolos artesanais"}
-	calls := 0
-	graph := func(p *ProfileResult, err error) func() (*ProfileResult, error) {
-		return func() (*ProfileResult, error) { calls++; return p, err }
-	}
-	webErr := func(err error) func() (*ProfileResult, error) {
-		return func() (*ProfileResult, error) { return nil, err }
-	}
-	searchDown := errors.New("busca no instagram falhou")
+type profileTestTransport func(*http.Request) (*http.Response, error)
 
-	cases := []struct {
-		name      string
-		web       func() (*ProfileResult, error)
-		graph     func() (*ProfileResult, error)
-		want      *ProfileResult
-		wantErr   error
-		wantCalls int
-	}{
-		{"web 404 but the account exists", webErr(errUserNotFound), graph(found, nil), found, nil, 1},
-		{"both say not found", webErr(errUserNotFound), graph(nil, errUserNotFound), nil, errUserNotFound, 1},
-		{"web 404 and search down", webErr(errUserNotFound), graph(nil, searchDown), nil, searchDown, 1},
-		{"web shifts, graphql answers", webErr(errors.New("perfil não carregou")), graph(found, nil), found, nil, 1},
-		{"rate limited: no second request", webErr(errProfileRateLimited), graph(found, nil), nil, errProfileRateLimited, 0},
-		{"dead session: no second request", webErr(httpclient.ErrChallengeRequired), graph(found, nil), nil, httpclient.ErrChallengeRequired, 0},
-		{"web answers", func() (*ProfileResult, error) { return found, nil }, graph(nil, errUserNotFound), found, nil, 0},
+func (fn profileTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func TestProfileLookupRoute(t *testing.T) {
+	const username = "doceria_teste"
+	const user = `{
+		"username":"doceria_teste","pk":"12345","id":"not-the-profile-id",
+		"full_name":"Doceria Teste","biography":"Bolos artesanais",
+		"external_url":"https://example.com/bolos",
+		"bio_links":[{"url":"https://example.com/bolos","title":"Cardápio"},
+		             {"lynx_url":"https://l.instagram.com/?u=https%3A%2F%2Fexample.com%2Fcontato","title":"Contato"}],
+		"follower_count":5108,"all_media_count":297,"is_business":true,"public_email":"bolos@example.com"
+	}`
+
+	type upstreamResponse struct {
+		request string
+		status  int
+		body    string
 	}
-	for _, c := range cases {
-		calls = 0
-		p, err := lookupProfile(c.web, c.graph)
-		if p != c.want || !errors.Is(err, c.wantErr) || (err == nil) != (c.wantErr == nil) || calls != c.wantCalls {
-			t.Errorf("%s: got %v, %v after %d graphql calls", c.name, p, err, calls)
-		}
+	searchMatch := upstreamResponse{"search", 200, `{"data":{"xfb_combinedIGSearchQuery":{
+		"search_messenger_contact_v2":[{"username":"doceria_teste2","pk":"999"},{"username":"DOCERIA_TESTE","pk":"12345"}]
+	}}}`}
+	searchMiss := upstreamResponse{"search", 200, `{"data":{"xfb_combinedIGSearchQuery":{
+		"search_messenger_contact_v2":[{"username":"doceria_teste2","pk":"999"}]
+	}}}`}
+	profileMatch := upstreamResponse{"profile", 200, `for (;;);{"data":{"user":` + user + `}}`}
+	profileMiss := upstreamResponse{"profile", 200, `{"data":{"user":null}}`}
+	publicMatch := upstreamResponse{"public", 200, `<!doctype html>
+		<script type="application/json">{"xig_user_by_username":{"username":"different","pk":"999"}}</script>
+		<script type="application/json">{"require":[["RelayPrefetchedStreamCache","next",null,["profile",{"__bbox":{"result":{"data":{"xig_user_by_username":` + user + `}}}}]]]}</script>`}
+	publicMiss := upstreamResponse{"public", 404, `<title>Page Not Found • Instagram</title>`}
+	feed := upstreamResponse{"feed", 200, `{"items":[{"taken_at":1764000000,"code":"ABC",
+		"caption":{"text":"Novidade"},"timeline_pinned_user_ids":[12345]}]}`}
+
+	for _, tc := range []struct {
+		name      string
+		upstream  []upstreamResponse
+		status    int
+		code      string
+		wantPosts bool
+	}{
+		{
+			name: "signed-in exact match without messaging ID", upstream: []upstreamResponse{searchMatch, profileMatch, feed},
+			status: 200, wantPosts: true,
+		},
+		{
+			name:     "public data survives an empty signed-in search and failed feed",
+			upstream: []upstreamResponse{searchMiss, publicMatch, {"feed", 404, ""}}, status: 200,
+		},
+		{
+			name:     "public page recovers when a resolved profile query has no user",
+			upstream: []upstreamResponse{searchMatch, profileMiss, publicMatch, feed}, status: 200, wantPosts: true,
+		},
+		{
+			name: "clean search and page both miss", upstream: []upstreamResponse{searchMiss, publicMiss},
+			status: 404, code: "user_not_found",
+		},
+		{
+			name: "known profile with unavailable details is inconclusive", upstream: []upstreamResponse{searchMatch, profileMiss, publicMiss},
+			status: 502, code: "profile_unavailable",
+		},
+		{
+			name: "failed search cannot corroborate 404", upstream: []upstreamResponse{{"search", 404, ""}, publicMiss},
+			status: 502, code: "profile_unavailable",
+		},
+		{
+			name: "login wall is inconclusive", upstream: []upstreamResponse{searchMiss, {"public", 302, ""}},
+			status: 502, code: "profile_unavailable",
+		},
+		{
+			name: "Instagram rate limit stops lookup", upstream: []upstreamResponse{{"search", 429, ""}},
+			status: 429, code: "rate_limited",
+		},
+		{
+			name: "Instagram feedback limit stops lookup", upstream: []upstreamResponse{searchMatch, {"profile", 400, `{"message":"feedback_required"}`}},
+			status: 429, code: "rate_limited",
+		},
+		{
+			name: "signed-in challenge stops lookup", upstream: []upstreamResponse{{"search", 400, `{"message":"challenge_required"}`}},
+			status: 502, code: "upstream_error",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := testManager()
+			jar := &cookies.Cookies{}
+			jar.UpdateValues(map[cookies.MetaCookieName]string{cookies.IGCookieSessionID: "test-session"})
+			cli, err := m.newClient(jar, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.client, m.state = cli, stateOpen
+			calls := 0
+			cli.GetHTTP().SetTransportOverride(profileTestTransport(func(req *http.Request) (*http.Response, error) {
+				var request string
+				switch {
+				case req.Method == http.MethodPost && req.Header.Get("x-fb-friendly-name") == "IGDOmniPickerSearchResultsListQuery":
+					request = "search"
+				case req.Method == http.MethodPost && req.Header.Get("x-fb-friendly-name") == "PolarisProfilePageContentQuery":
+					request = "profile"
+				case req.Method == http.MethodGet && req.URL.Path == "/"+username+"/":
+					request = "public"
+				case req.Method == http.MethodGet && req.URL.Path == "/api/v1/feed/user/12345/":
+					request = "feed"
+				default:
+					t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+				}
+				if calls >= len(tc.upstream) || tc.upstream[calls].request != request {
+					t.Fatalf("unexpected %s request at step %d", request, calls+1)
+				}
+				hasSession := strings.Contains(req.Header.Get("Cookie"), "sessionid=test-session")
+				if request == "public" {
+					if req.Header.Get("Cookie") != "" || req.Header.Get("Sec-Fetch-Mode") != "navigate" {
+						t.Fatal("public page should use a guest navigation")
+					}
+				} else if !hasSession {
+					t.Fatal("signed-in request has no Instagram session")
+				}
+				stub := tc.upstream[calls]
+				calls++
+				headers := make(http.Header)
+				if stub.status == http.StatusFound {
+					headers.Set("Location", "/accounts/login/")
+				}
+				return &http.Response{StatusCode: stub.status, Request: req, Header: headers, Body: io.NopCloser(strings.NewReader(stub.body))}, nil
+			}))
+			srv := newAPI(config{Secret: "s"}, m, zerolog.Nop()).routes()
+			call := func() *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, "/v1/profile", strings.NewReader(`{"username":"@Doceria_Teste"}`))
+				req.Header.Set("authorization", "Bearer s")
+				rec := httptest.NewRecorder()
+				srv.ServeHTTP(rec, req)
+				return rec
+			}
+			rec := call()
+			if calls != len(tc.upstream) || rec.Code != tc.status {
+				t.Fatalf("got HTTP %d after %d upstream calls: %s", rec.Code, calls, rec.Body.String())
+			}
+			if tc.code != "" {
+				if !strings.Contains(rec.Body.String(), `"code":"`+tc.code+`"`) {
+					t.Fatalf("expected code %s, got %s", tc.code, rec.Body.String())
+				}
+				return
+			}
+			var p ProfileResult
+			if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Username != username || p.IGID != "12345" || p.Biography != "Bolos artesanais" || p.FullName != "Doceria Teste" {
+				t.Fatalf("invalid profile identity or biography: %+v", p)
+			}
+			if p.ExternalURL != "https://example.com/bolos" || len(p.ExternalURLs) != 2 || p.ExternalURLs[0].Title != "Cardápio" || p.ExternalURLs[1].URL != "https://example.com/contato" {
+				t.Fatalf("lost bio links: %+v", p.ExternalURLs)
+			}
+			if p.FollowersCount == nil || *p.FollowersCount != 5108 || p.PostsCount == nil || *p.PostsCount != 297 || !p.IsBusinessAccount || p.PublicEmail != "bolos@example.com" {
+				t.Fatalf("lost profile fields: %+v", p)
+			}
+			if tc.wantPosts && (len(p.LatestPosts) != 1 || !p.LatestPosts[0].IsPinned || p.LatestPosts[0].Caption != "Novidade") {
+				t.Fatalf("lost recent posts: %+v", p.LatestPosts)
+			}
+			if cached := call(); cached.Code != http.StatusOK || cached.Body.String() != rec.Body.String() {
+				t.Fatalf("cache did not return the same profile: %d %s", cached.Code, cached.Body.String())
+			}
+		})
 	}
 }

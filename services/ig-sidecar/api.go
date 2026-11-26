@@ -99,6 +99,9 @@ func (a *api) fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusTooManyRequests, "rate_limited", err.Error())
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 		writeErr(w, http.StatusGatewayTimeout, "timeout", "tempo esgotado")
+	case errors.Is(err, errProfileUnavailable):
+		a.log.Warn().Err(err).Msg("Instagram profile lookup unavailable")
+		writeErr(w, http.StatusBadGateway, "profile_unavailable", errProfileUnavailable.Error())
 	default:
 		a.log.Warn().Err(err).Msg("request failed")
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())

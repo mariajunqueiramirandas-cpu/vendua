@@ -1,11 +1,9 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,18 +11,20 @@ import (
 	"time"
 
 	"go.mau.fi/mautrix-meta/pkg/instameow"
-	"go.mau.fi/mautrix-meta/pkg/instameow/slidetypes"
-	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
 	"go.mau.fi/mautrix-meta/pkg/messagix/types"
 )
 
 const (
-	profileCacheTTL = 6 * time.Hour
-	profileCacheMax = 500
-	profilePostCap  = 12
+	profileCacheTTL    = 6 * time.Hour
+	profileCacheMax    = 500
+	profilePostCap     = 12
+	profileFeedTimeout = 5 * time.Second
 )
 
-var errProfileRateLimited = errors.New("limite de consultas de perfil no instagram atingido por enquanto")
+var (
+	errProfileRateLimited = errors.New("limite de consultas de perfil no instagram atingido por enquanto")
+	errProfileUnavailable = errors.New("não foi possível confirmar o perfil no Instagram agora")
+)
 
 type BioLink struct {
 	URL      string `json:"url"`
@@ -174,10 +174,6 @@ func (m *Manager) Profile(ctx context.Context, raw string) (*ProfileResult, erro
 	if cached, ok := m.profileCache.get(u, time.Now()); ok {
 		return cached, nil
 	}
-	cli, gen, _, err := m.liveSession()
-	if err != nil {
-		return nil, err
-	}
 	var out *ProfileResult
 	err = m.profilePace.do(ctx, func() error {
 		// Re-check after acquiring the pacer lock so parallel lookups for the same
@@ -186,94 +182,39 @@ func (m *Manager) Profile(ctx context.Context, raw string) (*ProfileResult, erro
 			out = cached
 			return nil
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		cli, gen, _, err := m.liveSession()
+		if err != nil {
+			return err
+		}
 		if !m.profileQuota.allow(time.Now()) {
 			return errProfileRateLimited
 		}
-		p, fetchErr := lookupProfile(
-			func() (*ProfileResult, error) { return fetchWebProfileInfo(ctx, cli, u) },
-			func() (*ProfileResult, error) { return m.fetchProfileViaGraphQL(ctx, cli, u) },
-		)
+		p, fetchErr := lookupProfile(ctx, cli, u)
 		if fetchErr != nil {
+			if e, permanent := classify(fetchErr); permanent {
+				m.fail(gen, e)
+			}
 			return fetchErr
+		}
+		if !p.IsPrivate && (p.PostsCount == nil || *p.PostsCount > 0) && ctx.Err() == nil {
+			feedCtx, cancel := context.WithTimeout(ctx, profileFeedTimeout)
+			posts, feedErr := fetchUserFeed(feedCtx, cli, p.IGID, u)
+			cancel()
+			if feedErr == nil {
+				p.LatestPosts = posts
+			}
+		}
+		if !m.current(gen) {
+			return errNotConnected
 		}
 		m.profileCache.set(u, p, time.Now())
 		out = p
 		return nil
 	})
-	if err != nil {
-		if e, permanent := classify(err); permanent {
-			m.fail(gen, e)
-		}
-		return nil, err
-	}
-	return out, nil
-}
-
-// lookupProfile tries web_profile_info, then PolarisProfilePageContentQuery (found by the same
-// search DMs and follows use). The web endpoint answers 404 / user:null for accounts that exist,
-// so its "not found" stands only when the search agrees; a rate limit or a dead session doesn't
-// get a second request.
-func lookupProfile(web, graph func() (*ProfileResult, error)) (*ProfileResult, error) {
-	p, err := web()
-	if err == nil || errors.Is(err, errProfileRateLimited) {
-		return p, err
-	}
-	if _, permanent := classify(err); permanent {
-		return nil, err
-	}
-	fb, fbErr := graph()
-	if fbErr == nil {
-		return fb, nil
-	}
-	if errors.Is(err, errUserNotFound) {
-		return nil, fbErr
-	}
-	return nil, err
-}
-
-func fetchWebProfileInfo(ctx context.Context, cli *instameow.Client, username string) (*ProfileResult, error) {
-	base := cli.GetEndpoint("base_url")
-	h := cli.GetHTTP().BuildHeaders(true, false)
-	h.Set("x-requested-with", "XMLHttpRequest")
-	h.Set("referer", base+"/"+url.PathEscape(username)+"/")
-	h.Set("sec-fetch-dest", "empty")
-	h.Set("sec-fetch-mode", "cors")
-	h.Set("sec-fetch-site", "same-origin")
-	endpoint := base + "/api/v1/users/web_profile_info/?username=" + url.QueryEscape(username)
-	resp, body, err := cli.GetHTTP().MakeRequest(ctx, endpoint, http.MethodGet, h, nil, types.NONE)
-	if resp != nil {
-		cli.GetCookies().UpdateFromResponse(resp)
-	}
-	statusCode := 0
-	if resp != nil {
-		statusCode = resp.StatusCode
-	}
-	return parseWebProfileInfo(username, body, statusCode, err)
-}
-
-func (m *Manager) fetchProfileViaGraphQL(ctx context.Context, cli *instameow.Client, username string) (*ProfileResult, error) {
-	resolved, err := m.Resolve(ctx, username)
-	if err != nil {
-		return nil, err
-	}
-	igid := cmp.Or(resolved.IGID, resolved.FBID)
-	if igid == "" {
-		return nil, errUserNotFound
-	}
-	resp, err := cli.GetProfile(ctx, igid)
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil || resp.User == nil {
-		return nil, errUserNotFound
-	}
-	out := parseGraphQLProfile(username, resp.User)
-	if len(out.LatestPosts) == 0 && !out.IsPrivate && out.IGID != "" {
-		if posts, feedErr := fetchUserFeed(ctx, cli, out.IGID, username); feedErr == nil && len(posts) > 0 {
-			out.LatestPosts = posts
-		}
-	}
-	return out, nil
+	return out, err
 }
 
 func fetchUserFeed(ctx context.Context, cli *instameow.Client, igid, username string) ([]ProfilePost, error) {
@@ -341,156 +282,7 @@ func mergeBioLinks(externalURL string, links []BioLink) (string, []BioLink) {
 	return primary, out
 }
 
-func parseWebProfileInfo(username string, body []byte, statusCode int, reqErr error) (*ProfileResult, error) {
-	var envelope struct {
-		Status  string `json:"status"`
-		Message string `json:"message"`
-		Spam    bool   `json:"spam"`
-		Data    *struct {
-			User *webProfileUser `json:"user"`
-		} `json:"data"`
-	}
-	parsed := len(body) > 0 && json.Unmarshal(body, &envelope) == nil
-
-	if statusCode == http.StatusTooManyRequests || envelope.Spam ||
-		envelope.Message == "feedback_required" ||
-		errors.Is(reqErr, httpclient.ErrRateLimited) {
-		return nil, errProfileRateLimited
-	}
-	if statusCode == http.StatusNotFound {
-		return nil, errUserNotFound
-	}
-	if reqErr != nil {
-		if _, permanent := classify(reqErr); permanent {
-			return nil, reqErr
-		}
-		if envelope.Message != "" {
-			return nil, fmt.Errorf("%w: %s", reqErr, envelope.Message)
-		}
-		return nil, reqErr
-	}
-	if !parsed {
-		return nil, errors.New("resposta inesperada ao ler perfil do instagram")
-	}
-	if envelope.Data == nil || envelope.Data.User == nil {
-		if envelope.Status == "ok" {
-			return nil, errUserNotFound
-		}
-		return nil, fmt.Errorf("perfil não carregou: %s", cmp.Or(envelope.Message, envelope.Status, "resposta vazia"))
-	}
-	return envelope.Data.User.toProfile(username), nil
-}
-
-type webProfileUser struct {
-	ID          string `json:"id"`
-	Username    string `json:"username"`
-	FullName    string `json:"full_name"`
-	Biography   string `json:"biography"`
-	ExternalURL string `json:"external_url"`
-	BioLinks    []struct {
-		Title    string `json:"title"`
-		LynxURL  string `json:"lynx_url"`
-		URL      string `json:"url"`
-		LinkType string `json:"link_type"`
-	} `json:"bio_links"`
-	EdgeFollowedBy *struct {
-		Count int `json:"count"`
-	} `json:"edge_followed_by"`
-	EdgeTimeline          *webTimelineEdge `json:"edge_owner_to_timeline_media"`
-	CategoryName          string           `json:"category_name"`
-	BusinessCategoryName  string           `json:"business_category_name"`
-	IsPrivate             bool             `json:"is_private"`
-	IsBusinessAccount     bool             `json:"is_business_account"`
-	IsProfessionalAccount bool             `json:"is_professional_account"`
-	BusinessEmail         string           `json:"business_email"`
-	PublicEmail           string           `json:"public_email"`
-	BusinessPhone         string           `json:"business_phone_number"`
-	ContactPhone          string           `json:"contact_phone_number"`
-	PublicPhone           string           `json:"public_phone_number"`
-	WhatsappNumber        string           `json:"whatsapp_number"`
-}
-
-type webTimelineEdge struct {
-	Count int `json:"count"`
-	Edges []struct {
-		Node struct {
-			Shortcode        string `json:"shortcode"`
-			TakenAtTimestamp int64  `json:"taken_at_timestamp"`
-			PinnedForUsers   []any  `json:"pinned_for_users"`
-			Caption          *struct {
-				Edges []struct {
-					Node struct {
-						Text string `json:"text"`
-					} `json:"node"`
-				} `json:"edges"`
-			} `json:"edge_media_to_caption"`
-		} `json:"node"`
-	} `json:"edges"`
-}
-
-func (u *webProfileUser) toProfile(fallbackUsername string) *ProfileResult {
-	var links []BioLink
-	for _, bl := range u.BioLinks {
-		raw := cmp.Or(strings.TrimSpace(bl.URL), strings.TrimSpace(bl.LynxURL))
-		if raw == "" {
-			continue
-		}
-		links = append(links, BioLink{URL: raw, Title: bl.Title, LinkType: bl.LinkType})
-	}
-	primaryURL, allLinks := mergeBioLinks(u.ExternalURL, links)
-
-	var posts []ProfilePost
-	var postsCount *int
-	if u.EdgeTimeline != nil {
-		c := u.EdgeTimeline.Count
-		postsCount = &c
-		for _, e := range u.EdgeTimeline.Edges {
-			if len(posts) >= profilePostCap {
-				break
-			}
-			if e.Node.TakenAtTimestamp <= 0 {
-				continue
-			}
-			caption := ""
-			if e.Node.Caption != nil && len(e.Node.Caption.Edges) > 0 {
-				caption = strings.TrimSpace(e.Node.Caption.Edges[0].Node.Text)
-			}
-			posts = append(posts, ProfilePost{
-				Timestamp: e.Node.TakenAtTimestamp,
-				Caption:   caption,
-				Shortcode: e.Node.Shortcode,
-				IsPinned:  len(e.Node.PinnedForUsers) > 0,
-			})
-		}
-	}
-
-	var followers *int
-	if u.EdgeFollowedBy != nil {
-		c := u.EdgeFollowedBy.Count
-		followers = &c
-	}
-
-	return &ProfileResult{
-		Username:             cmp.Or(strings.TrimSpace(u.Username), fallbackUsername),
-		FullName:             strings.TrimSpace(u.FullName),
-		IGID:                 strings.TrimSpace(u.ID),
-		Biography:            u.Biography,
-		ExternalURL:          primaryURL,
-		ExternalURLs:         allLinks,
-		FollowersCount:       followers,
-		PostsCount:           postsCount,
-		BusinessCategoryName: cmp.Or(strings.TrimSpace(u.CategoryName), strings.TrimSpace(u.BusinessCategoryName)),
-		IsPrivate:            u.IsPrivate,
-		IsBusinessAccount:    u.IsBusinessAccount || u.IsProfessionalAccount,
-		PublicEmail:          cmp.Or(strings.TrimSpace(u.PublicEmail), strings.TrimSpace(u.BusinessEmail)),
-		ContactPhoneNumber:   cmp.Or(strings.TrimSpace(u.ContactPhone), strings.TrimSpace(u.BusinessPhone), strings.TrimSpace(u.PublicPhone)),
-		WhatsappNumber:       strings.TrimSpace(u.WhatsappNumber),
-		LatestPosts:          posts,
-	}
-}
-
-func parseGraphQLProfile(fallbackUsername string, u *slidetypes.User) *ProfileResult {
-	extra := u.Unrecognized
+func parseProfileUser(igid string, extra map[string]any) *ProfileResult {
 	strOf := func(keys ...string) string {
 		for _, k := range keys {
 			if v, ok := extra[k].(string); ok && strings.TrimSpace(v) != "" {
@@ -546,14 +338,14 @@ func parseGraphQLProfile(fallbackUsername string, u *slidetypes.User) *ProfileRe
 
 	bio, _ := extra["biography"].(string)
 	return &ProfileResult{
-		Username:             cmp.Or(strings.TrimSpace(u.Username), fallbackUsername),
-		FullName:             strings.TrimSpace(u.FullName),
-		IGID:                 cmp.Or(strings.TrimSpace(u.PK), strings.TrimSpace(u.ID)),
+		Username:             strOf("username"),
+		FullName:             strOf("full_name"),
+		IGID:                 igid,
 		Biography:            bio,
 		ExternalURL:          primaryURL,
 		ExternalURLs:         allLinks,
 		FollowersCount:       intPtr("follower_count"),
-		PostsCount:           intPtr("media_count"),
+		PostsCount:           intPtr("media_count", "all_media_count"),
 		BusinessCategoryName: strOf("category", "category_name", "business_category_name"),
 		IsPrivate:            boolOf("is_private"),
 		IsBusinessAccount:    boolOf("is_business", "is_business_account", "is_professional_account"),
