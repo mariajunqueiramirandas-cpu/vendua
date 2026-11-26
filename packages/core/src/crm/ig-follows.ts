@@ -33,24 +33,34 @@ const MAX_ATTEMPTS = 6;
 /** Action Blocked stops every follow this long: retrying early makes Instagram's block longer */
 export const BLOCKED_PAUSE_H = 6;
 /** the target can't be followed (gone, renamed, ours, blocked): no retry */
-const PERMANENT = new Set(['user_not_found', 'bad_username', 'bad_fbid', 'self', 'blocking']);
+const PERMANENT = new Set([
+  'follow_target_not_found',
+  'user_not_found',
+  'bad_username',
+  'bad_fbid',
+  'self',
+  'blocking',
+]);
 /** the sidecar or session wasn't there: not the target's fault, so no attempt is spent */
 const TRANSPORT = new Set(['sidecar_unreachable', 'not_connected', 'no_secret', 'timeout']);
 
 const FBID_RE = /^\d{1,40}$/;
 
-/** Queues a follow of a lead's Instagram handle, in the tx that gave the lead it. A handle
- *  already queued or done is left alone; sim, archived, unsubscribed and low-fit (<= 3) leads are skipped. */
+/** Queues a follow when an eligible lead gets a handle. A fresh queue request can recover a
+ *  legacy user_not_found failure from the old messaging-ID lookup. */
 export async function queueIgFollowTx(tx: Sql, leadId: string, raw: unknown): Promise<void> {
   const handle = typeof raw === 'string' ? instagramHandle(raw) : null;
   if (!handle) return;
   await tx`
-    insert into ig_follows (handle, lead_id)
+    insert into ig_follows as f (handle, lead_id)
     select ${handle}, l.id from leads l
     where l.id = ${leadId} and l.source is distinct from 'sim'
       and l.archived_at is null and l.unsubscribed_at is null
       and (l.fit_score is null or l.fit_score > 3)
-    on conflict (handle) do nothing`;
+    on conflict (handle) do update set
+      lead_id = excluded.lead_id, status = 'pending', attempts = 0, next_at = now(),
+      error_code = null, error = null, updated_at = now()
+    where f.status = 'failed' and f.error_code = 'user_not_found'`;
 }
 
 /** The integration a follow can go out on now: the sidecar's session open, or the log driver. */

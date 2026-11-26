@@ -571,7 +571,7 @@ export interface IgFollow {
 }
 
 /** Follow one account unless the connected one already does (the sidecar checks first). Fails
- *  with a SidecarError whose code is the sidecar's: action_blocked, user_not_found, … */
+ *  with a SidecarError carrying the sidecar's code, such as action_blocked or follow_target_not_found. */
 export async function followInstagram(
   integration: IntegrationRow,
   to: { fbid?: string | null; handle?: string | null },

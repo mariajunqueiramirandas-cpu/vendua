@@ -9,6 +9,7 @@ import {
   followBeforeDm,
   followBudgetTx,
   followNext,
+  queueIgFollowTx,
   startInstagramFollows,
 } from '../src/crm/ig-follows.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
@@ -210,13 +211,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram follows (db)', () => 
   test('a gone account fails for good, a flaky one backs off, Action Blocked pauses all', async () => {
     await newLead({ name: `Sumiu ${nonce}`, instagram: `@${h('g')}` });
     await newLead({ name: `Instável ${nonce}`, instagram: `@${h('i')}` });
-    replies.set(h('g'), sidecarError(404, 'user_not_found'));
+    replies.set(h('g'), sidecarError(404, 'follow_target_not_found'));
     replies.set(h('i'), sidecarError(502, 'upstream_error'));
     await drain();
     expect(await row(h('g'))).toMatchObject({
       status: 'failed',
       attempts: 1,
-      error_code: 'user_not_found',
+      error_code: 'follow_target_not_found',
     });
     const flaky = (await row(h('i')))!;
     expect(flaky).toMatchObject({ status: 'pending', attempts: 1, error_code: 'upstream_error' });
@@ -234,6 +235,40 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram follows (db)', () => 
     calls.length = 0;
     expect(await followNext(sql)).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+
+  test('a new queue request recovers an old false 404 while a confirmed missing target stays failed', async () => {
+    const legacyHandle = h('legacy');
+    const missingHandle = h('missing');
+    const legacy = await newLead({ name: `Legado ${nonce}`, instagram: `@${legacyHandle}` });
+    const missing = await newLead({ name: `Sumiu ${nonce}`, instagram: `@${missingHandle}` });
+    replies.set(legacyHandle, sidecarError(404, 'user_not_found'));
+    replies.set(missingHandle, sidecarError(404, 'follow_target_not_found'));
+    await drain();
+    expect(await row(legacyHandle)).toMatchObject({
+      status: 'failed',
+      error_code: 'user_not_found',
+    });
+
+    await controlTx(sql, async (tx) => {
+      await queueIgFollowTx(tx, legacy, legacyHandle);
+      await queueIgFollowTx(tx, missing, missingHandle);
+    });
+    expect(await row(legacyHandle)).toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      error_code: null,
+    });
+    expect(await row(missingHandle)).toMatchObject({
+      status: 'failed',
+      error_code: 'follow_target_not_found',
+    });
+
+    replies.delete(legacyHandle);
+    calls.length = 0;
+    await drain();
+    expect(calls).toEqual([{ path: '/v1/follow', target: legacyHandle }]);
+    expect(await row(legacyHandle)).toMatchObject({ status: 'following' });
   });
 
   test('archived or unsubscribed since queued: held, not followed', async () => {

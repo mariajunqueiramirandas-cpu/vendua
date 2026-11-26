@@ -11,10 +11,12 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"go.mau.fi/mautrix-meta/pkg/instameow"
+	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
 	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
 	"go.mau.fi/mautrix-meta/pkg/messagix/types"
 )
@@ -70,56 +72,131 @@ func (m *Manager) Follow(ctx context.Context, fbid, username string) (*FollowRes
 	}
 	res := &FollowResult{FBID: fbid}
 	if fbid == "" {
-		r, err := m.Resolve(ctx, username)
+		res, err = resolveFollowUsername(ctx, cli, username)
 		if err != nil {
-			return nil, err
+			return nil, m.followError(gen, err)
 		}
-		res.FBID, res.IGID, res.Username = r.FBID, r.IGID, r.Username
 	}
-	id, err := strconv.ParseInt(res.FBID, 10, 64)
-	if err != nil || id <= 0 {
-		return nil, errBadFBID
-	}
-	if id == own {
+	ownIGID := cli.GetCookies().Get(cookies.IGCookieDSUserID)
+	if res.IGID != "" && res.IGID == ownIGID {
 		return nil, errSelfFollow
 	}
-	// session-killing errors already reached the event handler through instameow
-	u, lookupErr := cli.GetUserForNewDM(ctx, id)
-	if lookupErr == nil && u != nil && u.Data != nil {
-		res.IGID = cmp.Or(u.Data.PK, u.Data.ID, res.IGID)
-		res.Username = cmp.Or(u.Data.Username, res.Username)
-		if u.Data.FriendshipStatus.Following {
-			res.Following, res.Already = true, true
-			return res, nil
-		}
-		if b := u.Data.FriendshipStatus.Blocking; b != nil && *b {
-			return nil, errBlocking
-		}
+	if err := checkFollowTarget(ctx, cli, res, own); err != nil {
+		return nil, m.followError(gen, err)
+	}
+	if res.IGID != "" && res.IGID == ownIGID {
+		return nil, errSelfFollow
+	}
+	if res.Already {
+		return res, nil
 	}
 	if !digitsRe.MatchString(res.IGID) {
-		if lookupErr != nil {
-			return nil, fmt.Errorf("perfil do instagram não carregou: %w", lookupErr)
-		}
-		return nil, errUserNotFound
+		return nil, errProfileUnavailable
 	}
-	// a failed lookup with a known id still follows: Instagram's follow is idempotent
 	var fs *friendship
 	err = m.followPace.do(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, activeGen, _, err := m.liveSession(); err != nil || activeGen != gen {
+			return errNotConnected
+		}
 		var err error
 		fs, err = createFriendship(ctx, cli, res.IGID, res.Username)
 		return err
 	})
 	if err != nil {
-		if e, permanent := classify(err); permanent {
-			m.fail(gen, e)
-		}
-		return nil, err
+		return nil, m.followError(gen, err)
 	}
 	res.Following, res.Requested = fs.Following, fs.OutgoingRequest
 	if !res.Following && !res.Requested {
 		return nil, errors.New("o instagram não confirmou o follow")
 	}
 	return res, nil
+}
+
+func resolveFollowUsername(ctx context.Context, cli *instameow.Client, raw string) (*FollowResult, error) {
+	username, err := normalizeUsername(raw)
+	if err != nil {
+		return nil, err
+	}
+	signedCtx, cancel := context.WithTimeout(ctx, profileLookupTimeout)
+	match, signedErr := searchProfileUsername(signedCtx, cli, username)
+	cancel()
+	if signedErr == nil {
+		fbid := match.fbid()
+		if digitsRe.MatchString(match.IGID) || fbid != "" {
+			return &FollowResult{FBID: fbid, IGID: match.IGID, Username: match.Username}, nil
+		}
+		signedErr = errProfileUnavailable
+	}
+	p, err := publicProfileFallback(ctx, cli, username, signedErr)
+	if err != nil {
+		return nil, err
+	}
+	return &FollowResult{IGID: p.IGID, Username: p.Username}, nil
+}
+
+func checkFollowTarget(ctx context.Context, cli *instameow.Client, res *FollowResult, ownFBID int64) error {
+	if res.FBID == "" {
+		// The public page can supply an ID, but only the connected session can verify the target.
+		user, err := profileUserByID(ctx, cli, res.Username, res.IGID)
+		if err != nil {
+			return err
+		}
+		status, _ := user["friendship_status"].(map[string]any)
+		if blocking, _ := status["blocking"].(bool); blocking {
+			return errBlocking
+		}
+		res.Following, _ = status["following"].(bool)
+		res.Requested, _ = status["outgoing_request"].(bool)
+		res.Already = res.Following || res.Requested
+		return nil
+	}
+
+	id, err := strconv.ParseInt(res.FBID, 10, 64)
+	if err != nil || id <= 0 {
+		return errBadFBID
+	}
+	if id == ownFBID {
+		return errSelfFollow
+	}
+	u, err := cli.GetUserForNewDM(ctx, id)
+	if stopInstagramLookup(err) || errors.Is(err, types.ErrPleaseLogIn) {
+		return err
+	}
+	if err != nil || u == nil || u.Data == nil {
+		// An exact signed-in search already verified the Instagram ID for this messaging ID.
+		if digitsRe.MatchString(res.IGID) {
+			return nil
+		}
+		return errProfileUnavailable
+	}
+	if (digitsRe.MatchString(res.IGID) && u.Data.PK != "" && u.Data.PK != res.IGID) ||
+		(res.Username != "" && u.Data.Username != "" && !strings.EqualFold(res.Username, u.Data.Username)) {
+		return errProfileUnavailable
+	}
+	res.IGID = cmp.Or(u.Data.PK, res.IGID, u.Data.ID)
+	res.Username = cmp.Or(u.Data.Username, res.Username)
+	if b := u.Data.FriendshipStatus.Blocking; b != nil && *b {
+		return errBlocking
+	}
+	res.Following = u.Data.FriendshipStatus.Following
+	res.Already = res.Following
+	return nil
+}
+
+func (m *Manager) followError(gen uint64, err error) error {
+	if errors.Is(err, httpclient.ErrRateLimited) {
+		return errProfileRateLimited
+	}
+	if errors.Is(err, types.ErrPleaseLogIn) {
+		err = httpclient.ErrTokenInvalidated
+	}
+	if e, permanent := classify(err); permanent {
+		m.fail(gen, e)
+	}
+	return err
 }
 
 type friendship struct {
