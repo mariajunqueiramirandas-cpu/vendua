@@ -659,6 +659,10 @@ type SendResult struct {
 
 // Send delivers one text DM, paced account-wide; cold DMs (no thread yet) go by recipient id.
 func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendResult, error) {
+	// instameow logs a GraphQL error's code and details to the context's logger, the only way to
+	// tell a bad recipient from a restricted account behind Instagram's "Query Error"
+	log := m.log.With().Str("op", "send").Logger()
+	ctx = log.WithContext(ctx)
 	cli, err := m.liveClient()
 	if err != nil {
 		return nil, err
@@ -702,6 +706,7 @@ func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendR
 		return err
 	})
 	if err != nil {
+		log.Warn().Err(err).Bool("cold", res.ThreadID == "").Msg("instagram send failed")
 		return nil, err
 	}
 	res.MessageID = cmp.Or(resp.Message.ID, resp.Message.MessageID)
