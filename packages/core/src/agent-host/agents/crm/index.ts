@@ -44,6 +44,7 @@ import {
   sendSignupLinkTool,
   unsubscribeTool,
   markAutoReplyTool,
+  endConversationTool,
 } from './tools-message.ts';
 import {
   instagramProfileTool,
@@ -93,6 +94,7 @@ export const CRM_STATES: Record<'triage' | 'reply' | 'outreach', string[]> = {
     'request_human',
     'unsubscribe',
     'mark_auto_reply',
+    'end_conversation',
   ],
   outreach: [
     ...LEAD_TOOLS,
@@ -138,7 +140,9 @@ export const mustAct: OutputGuard = {
       'no_action',
       t.trigger === 'timer.followup'
         ? 'Registre o resultado do retorno. Se houver uma ajuda concreta, responda. Se a sequência deve acabar, registre o motivo em add_note.'
-        : 'A pessoa ou a equipe precisa de um próximo passo concreto. Responda ao pedido com a ferramenta adequada ou registre a tarefa com a decisão pendente.',
+        : t.kind === 'reply'
+          ? 'A pessoa ou a equipe precisa de um próximo passo concreto. Responda ao pedido com a ferramenta adequada ou registre a tarefa com a decisão pendente. Se a mensagem dela só encerra a conversa (agradecimento, despedida, emoji) e não sobrou nada em aberto, use end_conversation.'
+          : 'A pessoa ou a equipe precisa de um próximo passo concreto. Responda ao pedido com a ferramenta adequada ou registre a tarefa com a decisão pendente.',
     );
   },
 };
@@ -152,7 +156,7 @@ export function crmInput(m: { kind: string; source: string; payload: Json }): Ch
   const text = (() => {
     switch (m.kind) {
       case 'message.inbound':
-        return `O lead escreveu (${String(p.channel ?? m.source)}). A mensagem está no fim da CONVERSA: responda a ela.`;
+        return `O lead escreveu (${String(p.channel ?? m.source)}). A mensagem está no fim da CONVERSA: responda a ela, a menos que ela só encerre a conversa.`;
       case 'timer.followup':
         return `Follow-up da agenda${focusOf(p)}.`;
       case 'timer.callback':
@@ -259,6 +263,7 @@ export const crmAgent = defineAgent<Sql>({
     sendSignupLinkTool,
     unsubscribeTool,
     markAutoReplyTool,
+    endConversationTool,
     webSearchTool,
     readPagesTool,
     mapsLookupTool,

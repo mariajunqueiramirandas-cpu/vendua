@@ -263,6 +263,7 @@ export const sendMessageTool = defineTool<
     body: string;
     subject?: string | undefined;
     audio?: boolean | undefined;
+    closing?: boolean | undefined;
   },
   Sql
 >({
@@ -275,6 +276,12 @@ export const sendMessageTool = defineTool<
     body: MESSAGE_BODY,
     subject: MESSAGE_SUBJECT,
     audio: MESSAGE_AUDIO,
+    closing: s
+      .boolean()
+      .describe(
+        'true when this message is our goodbye: the lead declined or the conversation is wrapping up and nothing is left open. No follow-up is booked after it, the turn ends with it, and a thanks or goodbye back needs no answer.',
+      )
+      .optional(),
   }),
   run: async (ctx: Ctx, input) => {
     const offerText = workspaceOf(ctx.state.context.tenant)?.pitch.offer ?? '';
@@ -418,6 +425,7 @@ function composeAgentSend(
     body: string;
     subject?: string | undefined;
     audio?: boolean | undefined;
+    closing?: boolean | undefined;
   },
 ): Promise<Json> {
   return refusals(async () => {
@@ -474,6 +482,7 @@ function composeAgentSend(
         status: drafted ? 'draft' : 'queued',
         agentRunId: ctx.turnId,
         ...(verdict.retryAt ? { sendAfter: verdict.retryAt } : {}),
+        ...(input.closing === true ? { closesConversation: true } : {}),
       });
       const audio = await markVoiceTx(
         tx,
@@ -486,6 +495,7 @@ function composeAgentSend(
         ...composed.body,
         audio,
         draftFallback: drafted,
+        ...(input.closing === true ? { closing: true } : {}),
         ...(verdict.retryAt ? { retryAt: verdict.retryAt.toISOString() } : {}),
         channel: pick.channel,
         via: pick.via,
@@ -648,6 +658,50 @@ export const markAutoReplyTool = defineTool<{ reason?: string | undefined }, Sql
         marked: out.marked,
         followupBooked: out.followupBooked,
         next: 'marcado como robô; a run termina aqui sem resposta',
+      } as unknown as Json;
+    }),
+});
+
+export const endConversationTool = defineTool<{ reason: string }, Sql>({
+  name: 'end_conversation',
+  description:
+    "The lead's latest message needs no answer: it only closes the conversation. A thanks, 'pra vocês também', 'ok', 'valeu', 'bom trabalho', an emoji or a goodbye after we already said goodbye, or after they declined and we already answered the decline. Marks it as the conversation's last word and ends this turn WITHOUT a message: answering a goodbye with another goodbye is a bot's ping-pong. No follow-up is booked after it. Never when they asked something, brought something new or are waiting for something we promised.",
+  effect: 'write',
+  input: s.object({
+    reason: s.string({ min: 1, max: 200 }).describe('why nothing is left to say, in a few words'),
+  }),
+  run: (ctx: Ctx, input) =>
+    refusals(async () => {
+      const leadId = leadOf(ctx);
+      const out = await crm(ctx, async (tx) => {
+        const [ours] = await tx<{ at: Date | null }[]>`
+          select max(coalesce(o.dispatch_attempted_at, o.created_at)) as at
+          from lead_messages o join lead_threads t on t.id = o.thread_id
+          where t.lead_id = ${leadId} and t.channel <> 'manual' and o.direction = 'out'
+            and not o.historical and o.status in ('sending', 'sent', 'delivered')`;
+        if (!ours?.at)
+          return { error: 'nada nosso foi enviado ainda: a pessoa escreveu primeiro, responda' };
+        const closed = await tx<{ id: string; thread_id: string }[]>`
+          update lead_messages m set closes_conversation = true, updated_at = now()
+          from lead_threads t
+          where t.id = m.thread_id and t.lead_id = ${leadId} and m.direction = 'in'
+            and not m.historical and not m.auto_reply and m.received_at > ${ours.at}
+          returning m.id, m.thread_id`;
+        if (!closed.length)
+          return { error: 'nenhuma mensagem do lead depois do nosso último envio' };
+        const reason = input.reason.slice(0, 200);
+        await tx`
+          insert into lead_activities (lead_id, kind, body, meta, created_by)
+          values (${leadId}, 'system', ${`Agente: encerrou a conversa sem responder (${reason})`},
+            ${tx.json({ closesConversation: true, messageIds: closed.map((m) => m.id), by: 'agent' } as never)}, 'agent')`;
+        return { closed: closed.length, threads: [...new Set(closed.map((m) => m.thread_id))] };
+      });
+      if ('error' in out) return out as unknown as Json;
+      for (const t of out.threads) emitAfter(ctx, 'thread.message', t);
+      emitAfter(ctx, 'lead.change', leadId);
+      return {
+        closed: out.closed,
+        next: 'conversa encerrada; a run termina aqui sem resposta',
       } as unknown as Json;
     }),
 });

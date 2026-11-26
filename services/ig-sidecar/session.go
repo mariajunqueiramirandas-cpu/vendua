@@ -659,16 +659,21 @@ type SendResult struct {
 
 // Send delivers one text DM, paced account-wide; cold DMs (no thread yet) go by recipient id.
 func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendResult, error) {
+	// instameow logs a GraphQL error's code and details to the context's logger, the only way to
+	// tell a bad recipient from a restricted account behind Instagram's "Query Error"
+	log := m.log.With().Str("op", "send").Logger()
+	ctx = log.WithContext(ctx)
 	cli, err := m.liveClient()
 	if err != nil {
 		return nil, err
 	}
+	var searchedIGID string
 	if fbid == "" {
 		r, err := m.Resolve(ctx, username)
 		if err != nil {
 			return nil, err
 		}
-		fbid = r.FBID
+		fbid, searchedIGID = r.FBID, r.IGID
 	}
 	id, err := strconv.ParseInt(fbid, 10, 64)
 	if err != nil || id <= 0 {
@@ -686,7 +691,11 @@ func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendR
 		ids, err := cli.FetchThreadID(ctx, id)
 		switch {
 		case errors.Is(err, instameow.ErrThreadNotFound):
-			req.RecipientIGIDs = []string{fbid}
+			igid, err := recipientIGID(ctx, cli, id, searchedIGID)
+			if err != nil {
+				return err
+			}
+			req.RecipientIGIDs = []string{igid}
 		case err != nil:
 			return fmt.Errorf("thread lookup failed: %w", err)
 		default:
@@ -697,6 +706,7 @@ func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendR
 		return err
 	})
 	if err != nil {
+		log.Warn().Err(err).Bool("cold", res.ThreadID == "").Msg("instagram send failed")
 		return nil, err
 	}
 	res.MessageID = cmp.Or(resp.Message.ID, resp.Message.MessageID)
@@ -704,4 +714,27 @@ func (m *Manager) Send(ctx context.Context, fbid, username, text string) (*SendR
 		return nil, errors.New("instagram não devolveu id da mensagem")
 	}
 	return res, nil
+}
+
+// recipientIGID is who a cold DM goes to: the person's Instagram user ID. The messaging FBID
+// names threads, and sending it as a recipient fails with "Query Error - Error performing
+// query" (upstream mautrix-meta resolves it the same way). The username search's ID is the
+// fallback when the lookup by messaging ID answers nothing.
+func recipientIGID(ctx context.Context, cli *instameow.Client, fbid int64, searched string) (string, error) {
+	u, err := cli.GetUserForNewDM(ctx, fbid)
+	if err == nil && u != nil && u.Data != nil {
+		if digitsRe.MatchString(u.Data.ID) {
+			return u.Data.ID, nil
+		}
+		if digitsRe.MatchString(u.Data.PK) {
+			return u.Data.PK, nil
+		}
+	}
+	if digitsRe.MatchString(searched) {
+		return searched, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("instagram user lookup failed: %w", err)
+	}
+	return "", errUserNotFound
 }

@@ -229,6 +229,7 @@ export async function scheduleCadenceTx(tx: Sql, leadId: string, days: number): 
   if (days <= 0) return false;
   await lockLeadAgendaTx(tx, leadId);
   if ((await pendingWakeupsTx(tx, leadId)).length) return false;
+  if (await conversationClosedTx(tx, leadId)) return false;
   const out = await requestLeadTx(tx, {
     leadId,
     kind: 'timer.followup',
@@ -244,6 +245,47 @@ export async function scheduleCadenceTx(tx: Sql, leadId: string, days: number): 
   });
   if (out.mailboxId) await syncNextActionTx(tx, leadId);
   return out.mailboxId !== null;
+}
+
+// A person turning us down in so many words ("não temos interesse", "fica pra próxima"). A
+// message with a question, or one that goes on ("…, mas queria saber"), is still talking. This
+// only ever stops the automatic cadence — never a reply, an opt-out, or a date the agent, the
+// lead or staff picked — so a miss costs one nudge, never a message.
+const DECLINE = String.raw`(n[aãÃ]o|nem) (temos|tenho|ter[ií]amos|estamos|estou|h[aáÁ]) (mais |nenhum |muito )?interess|sem interesse|n[aãÃ]o (nos |me )?interessa|(deix[ea]|fica|deixamos) (pra|para) (uma )?(pr[oóÓ]xima|outra (hora|oportunidade|vez))`;
+const GOES_ON = String.raw`(${DECLINE}).*(mas|por[eéÉ]m|s[oóÓ] que|queria|gostaria|quero)`;
+
+/**
+ * The conversation is over and the cadence has nothing to follow up: its latest live message
+ * closes it (our goodbye, or their last word the agent left unanswered), or the lead declined
+ * outright, we already answered, and they asked nothing since. A robot's greeting after it
+ * changes nothing; a real question reopens it.
+ */
+export async function conversationClosedTx(tx: Sql, leadId: string): Promise<boolean> {
+  const [row] = await tx<{ closed: boolean }[]>`
+    with live as (
+      select m.id, m.direction, m.body, m.closes_conversation, m.created_at
+      from lead_messages m join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and not m.historical and not m.auto_reply
+        and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered'))
+    ),
+    decline as (
+      select d.created_at from live d
+      where d.direction = 'in' and d.body ~* ${DECLINE} and d.body !~* ${GOES_ON}
+        and strpos(d.body, '?') = 0
+      order by d.created_at desc
+      limit 1
+    )
+    select coalesce(
+      (select l.closes_conversation from live l order by l.created_at desc, l.id desc limit 1),
+      false
+    ) or exists (
+      select 1 from decline d
+      where exists (select 1 from live o where o.direction = 'out' and o.created_at > d.created_at)
+        and not exists (
+          select 1 from live q
+          where q.direction = 'in' and q.created_at > d.created_at and strpos(q.body, '?') > 0)
+    ) as closed`;
+  return row?.closed === true;
 }
 
 /** rendered into the lead's context so the agent knows what it promised */

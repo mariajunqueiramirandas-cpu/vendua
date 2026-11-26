@@ -196,6 +196,7 @@ export const ACTION_TOOLS = new Set([
   'request_human',
   'unsubscribe',
   'mark_auto_reply',
+  'end_conversation',
   'launch_hunt',
   'activate_existing_leads',
   'coach_lead',
@@ -227,6 +228,7 @@ export const RESPONSE_ACTIONS = [
   'request_human',
   'unsubscribe',
   'mark_auto_reply',
+  'end_conversation',
 ];
 export const waitsForResponse = (t: TurnInfo) =>
   t.trigger === 'message.inbound' || t.source === 'site';
@@ -261,10 +263,15 @@ export function applyCrm(prev: Json, e: AgentEvent): Json {
             : name;
         if (!c.turn.actions.includes(action)) c.turn.actions = [...c.turn.actions, action];
       }
-      // a robot's greeting gets no answer: the turn ends where the marking lands
+      // a robot's greeting gets no answer: the turn ends where the marking lands; nothing goes
+      // out after a goodbye, ours or theirs
       if (
-        (name === 'unsubscribe' || name === 'request_human' || name === 'mark_auto_reply') &&
-        landed(p)
+        landed(p) &&
+        (name === 'unsubscribe' ||
+          name === 'request_human' ||
+          name === 'mark_auto_reply' ||
+          name === 'end_conversation' ||
+          (name === 'send_message' && obj(p.data).closing === true))
       )
         c.turn.closed = true;
       if (p.ok !== true) break;

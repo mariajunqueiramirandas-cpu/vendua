@@ -69,6 +69,8 @@ export interface MessageRow {
   audio?: boolean;
   /** the lead's machine answering our send, not a person: the agent's mark_auto_reply (0152) */
   auto_reply?: boolean;
+  /** the conversation ended here: our goodbye, or the lead's last word left unanswered (0156) */
+  closes_conversation?: boolean;
   seen_at?: string | null;
   created_at: string;
 }
@@ -102,6 +104,7 @@ export function messageJson(row: MessageRow) {
     approvedAt: row.approved_at,
     audio: row.audio === true,
     autoReply: row.auto_reply === true,
+    closesConversation: row.closes_conversation === true,
     seen: row.seen_at != null,
     createdAt: row.created_at,
   };
@@ -161,10 +164,14 @@ export async function listThreads(
                 (array_agg(m.body order by m.created_at desc))[1] as last_body,
                 (array_agg(m.direction order by m.created_at desc))[1] as last_direction,
                 max(m.created_at) as last_at,
-                -- a machine's greeting needs no reply (mark_auto_reply)
-                (array_agg(m.direction order by m.created_at desc) filter (where not m.auto_reply))[1]
+                -- a machine's greeting needs no reply (mark_auto_reply), nor a last word the
+                -- agent left unanswered (end_conversation)
+                (array_agg(m.direction order by m.created_at desc) filter (
+                  where not m.auto_reply and not (m.direction = 'in' and m.closes_conversation)))[1]
                   as last_live_direction,
-                max(m.created_at) filter (where not m.auto_reply) as last_live_at
+                max(m.created_at) filter (
+                  where not m.auto_reply and not (m.direction = 'in' and m.closes_conversation))
+                  as last_live_at
          from lead_messages m
          where m.thread_id = t.id and m.status <> 'rejected'
        ) lm on true
@@ -637,6 +644,8 @@ export async function composeMessageTx(
     farewell?: boolean;
     /** sent as a WhatsApp voice note (crm/voice.ts decides) */
     audio?: boolean;
+    /** our goodbye: the conversation ends here, no cadence follow-up after it */
+    closesConversation?: boolean;
   },
 ): Promise<{
   status: number;
@@ -669,8 +678,8 @@ export async function composeMessageTx(
   const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell, send_after, audio)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false}, ${input.sendAfter ?? null}, ${input.audio === true && input.channel === 'whatsapp'})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell, send_after, audio, closes_conversation)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false}, ${input.sendAfter ?? null}, ${input.audio === true && input.channel === 'whatsapp'}, ${input.closesConversation === true})
       returning *
     `
   )[0]!;
