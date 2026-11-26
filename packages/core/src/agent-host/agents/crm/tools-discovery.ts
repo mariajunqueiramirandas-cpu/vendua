@@ -657,7 +657,11 @@ export function bookDigest(book: readonly BookEntry[]): string {
     .slice(0, 20)
     .map((e) => {
       // a fixed order: the digest is in every step's context, and jsonb reorders keys
-      const ch = BOOK_CHANNELS.filter((k) => e.channels[k]).join('+');
+      // values, not just channel names: the read that found a number may have left the context
+      // window by now, and a number the model can't see is one it writes from memory
+      const ch = BOOK_CHANNELS.filter((k) => e.channels[k])
+        .map((k) => (k === 'site' ? k : `${k} ${e.channels[k]!.slice(0, 80)}`))
+        .join(', ');
       const mark = e.status === 'dead' ? '✗' : e.status === 'resolved' ? '✓' : '·';
       return `${mark} ${e.name}${e.city ? ` (${e.city})` : ''} — tentou: ${e.tried.join(',') || 'nada'} — canais: ${ch || 'nenhum'}${e.note ? ` — ${e.note}` : ''}`;
     })

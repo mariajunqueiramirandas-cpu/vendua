@@ -203,6 +203,25 @@ describe('tools', () => {
     expect(store.kv.get('orders')).toBeUndefined();
   });
 
+  test('a contact token the gateway never issued is refused before the tool and the send', async () => {
+    const { store, runtime, clock, say, adapter } = setup([
+      call('add_item', { item: 'pizza pro ⟦tel57⟧', qty: 1 }),
+      reply('Te chamo no ⟦tel:00aa11⟧.'),
+      reply('Anotado.'),
+    ]);
+    const { actorId } = await say('quero');
+    await drive(runtime, clock);
+    expect(store.kv.get('cart:s1')).toBeUndefined();
+    const blocks = store.log(actorId).filter((e) => e.type === 'guard.blocked');
+    expect(blocks.map((b) => b.payload)).toMatchObject([
+      { tool: 'add_item', guard: 'unresolved_contact', reason: 'unresolved_contact:⟦tel57⟧' },
+      { tool: 'reply', guard: 'unresolved_contact', reason: 'unresolved_contact:⟦tel:00aa11⟧' },
+    ]);
+    expect(store.outbox.map((m) => m.text)).toEqual(['Anotado.']);
+    const tool = adapter.requests[1]!.messages.find((m) => m.role === 'tool');
+    expect(tool && tool.role === 'tool' && tool.content).toContain('⟦tel57⟧ não é um contato');
+  });
+
   test('a ToolError rolls back the tool’s writes and the model sees it', async () => {
     const { store, runtime, clock, say, adapter } = setup([
       call('add_item', { item: 'esgotado', qty: 1 }),

@@ -237,9 +237,9 @@ export const vendedor = defineAgent<Sql>({
     inputKinds: INPUT_KINDS,
   },
   budgets: {
-    stepsPerTurn: 10,
-    tokensPerTurn: 90_000,
-    costPerTurnUsd: 0.25,
+    stepsPerTurn: 20,
+    tokensPerTurn: 360_000,
+    costPerTurnUsd: 1,
     tenantDaily: 'vendedor',
   },
   finish: finished,

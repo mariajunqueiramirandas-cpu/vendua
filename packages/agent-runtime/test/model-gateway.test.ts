@@ -12,6 +12,7 @@ import {
   redactText,
   restoreText,
   scriptedAdapter,
+  unresolvedToken,
   type CostEstimate,
   type FetchLike,
   type ModelRoute,
@@ -358,6 +359,8 @@ describe('tool calls', () => {
 });
 
 describe('pii', () => {
+  const TEL = /⟦tel:[0-9a-f]{6,}⟧/g;
+
   test('phones and emails are tokenized and restored', () => {
     const vault = createPiiVault();
     const cases = [
@@ -370,25 +373,46 @@ describe('pii', () => {
       '(21) 3456-7890',
       '91234-5678',
     ];
-    for (const c of cases) expect(redactText(`fone ${c}.`, vault)).toMatch(/^fone ⟦tel\d+⟧\.$/);
+    for (const c of cases)
+      expect(redactText(`fone ${c}.`, vault)).toMatch(/^fone ⟦tel:[0-9a-f]{6,}⟧\.$/);
     for (const keep of ['2026-10-03', 'R$ 1.234,56', 'CEP 01310-100', 'pedido 4521', '10:30']) {
       expect(redactText(keep, vault)).toBe(keep);
     }
     const r = redactText('escreve pra ana.souza+loja@gmail.com ou (11) 91234-5678', vault);
-    expect(r).toBe('escreve pra ⟦email1⟧ ou ⟦tel2⟧');
+    expect(r).toMatch(/^escreve pra ⟦email:[0-9a-f]{6,}⟧ ou ⟦tel:[0-9a-f]{6,}⟧$/);
     expect(restoreText(r, vault)).toBe('escreve pra ana.souza+loja@gmail.com ou (11) 91234-5678');
   });
 
+  test("a token is its value's, whatever else the call holds", () => {
+    const a = createPiiVault();
+    const b = createPiiVault();
+    const alone = redactText('(22) 99876-5432', a);
+    const later = redactText('(11) 91234-5678, (21) 3456-7890 e (22) 99876-5432', b);
+    expect(later.endsWith(alone)).toBe(true);
+  });
+
+  test('a token the call never issued stays a token and is caught', () => {
+    const vault = createPiiVault();
+    const seen = redactText('(22) 99876-5432', vault);
+    for (const madeUp of ['⟦tel57⟧', '⟦tel:000000⟧', '⟦ TEL:abc ⟧']) {
+      expect(restoreText(`zap ${madeUp}`, vault)).toBe(`zap ${madeUp}`);
+      expect(unresolvedToken({ lead: { whatsapp: `zap ${madeUp}` } })).toBe(madeUp);
+    }
+    expect(unresolvedToken({ whatsapp: restoreText(seen, vault) })).toBeNull();
+    expect(unresolvedToken(['+5522998765432', 'ana@x.com', 7, null])).toBeNull();
+  });
+
   test('round trip through the gateway', async () => {
-    const a = scriptedAdapter(
-      [
-        {
-          text: 'Anotei ⟦tel1⟧.',
-          toolCalls: [{ name: 'save', args: { phone: '⟦tel1⟧', email: '⟦email1⟧' } }],
-        },
-      ],
-      'a',
-    );
+    const a = scriptedAdapter((req) => {
+      const text = req.messages[0]!.role === 'user' ? req.messages[0]!.parts[0] : null;
+      const said = text?.type === 'text' ? text.text : '';
+      const tel = said.match(TEL)![0];
+      const email = said.match(/⟦email:[0-9a-f]{6,}⟧/)![0];
+      return {
+        text: `Anotei ${tel}.`,
+        toolCalls: [{ name: 'save', args: { phone: tel, email, guess: '⟦tel1⟧' } }],
+      };
+    }, 'a');
     const gw = createGateway({ adapters: [a], routes: resolver([route('a')]) });
     const res = await gw.generate(
       request({
@@ -404,9 +428,14 @@ describe('pii', () => {
     const sent = JSON.stringify(a.requests[0]);
     expect(sent).not.toContain('91234');
     expect(sent).not.toContain('jo@x');
-    expect(a.requests[0]!.volatile).toBe('CLIENTE: ⟦tel1⟧');
+    expect(a.requests[0]!.volatile).toMatch(/^CLIENTE: ⟦tel:[0-9a-f]{6,}⟧$/);
     expect(res.text).toBe('Anotei (11) 91234-5678.');
-    expect(res.toolCalls[0]!.args).toEqual({ phone: '(11) 91234-5678', email: 'jo@x.com.br' });
+    expect(res.toolCalls[0]!.args).toEqual({
+      phone: '(11) 91234-5678',
+      email: 'jo@x.com.br',
+      guess: '⟦tel1⟧',
+    });
+    expect(unresolvedToken(res.toolCalls[0]!.args)).toBe('⟦tel1⟧');
   });
 });
 

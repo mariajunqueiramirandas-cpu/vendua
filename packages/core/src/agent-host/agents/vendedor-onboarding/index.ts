@@ -143,7 +143,7 @@ export const vendedorOnboarding = defineAgent<Sql>({
   tools: [overviewTool, gapsTool, proposeAnswerTool, proposeRuleTool, finishTool],
   guards: { output: [noHumanClaim, style({ maxChars: 600, maxQuestions: 1 })] },
   mailbox: { quiet: { minMs: 1_000, maxMs: 8_000 }, preempt: true },
-  budgets: { stepsPerTurn: 6, tokensPerTurn: 40_000, tenantDaily: 'vendedor' },
+  budgets: { stepsPerTurn: 12, tokensPerTurn: 160_000, tenantDaily: 'vendedor' },
   load: {
     tenant: async ({ tx, tenantId }) =>
       (await buildPack(tx, tenantId, new Date())) as unknown as Json,

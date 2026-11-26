@@ -322,7 +322,10 @@ describe.skipIf(!OWNER_URL)('discovery and strategist tools on Runtime v3 (db)',
       ],
       { kind: 'discovery' },
     );
-    expect(dataOf<{ book: string }>(outcomes[2]).book).toContain('whatsapp+instagram');
+    // the number itself, not just the channel: the read that found it may leave the context window
+    expect(dataOf<{ book: string }>(outcomes[2]).book).toContain(
+      'canais: whatsapp +5522999990000, instagram @apadariadaponte',
+    );
   });
 
   test('plan — self-authored campaign plan', async () => {

@@ -7,6 +7,7 @@ import {
   type ToolGuard,
 } from '../define/guard.ts';
 import { describeFindings, verify, type VerifierOptions } from '../ledger/verifier.ts';
+import { unresolvedToken } from '../model/pii.ts';
 
 /** Shopper text enters as data the base rules say never to obey. */
 export const markUntrusted: InputGuard = defineGuard({
@@ -49,6 +50,19 @@ export const stateGate: ToolGuard = defineGuard({
       'state',
       `${call.name} não está disponível em "${ctx.state.chart.state}". Disponíveis: ${[...ctx.allowed].join(', ')}.`,
     );
+  },
+});
+
+export const unresolvedContactFeedback = (token: string) =>
+  `${token} não é um contato desta conversa. Telefones e e-mails aparecem mascarados e só vale o token exato que está no contexto agora: copie-o de onde ele aparece ou busque o contato de novo. Nunca escreva um token de memória.`;
+
+/** A contact token the gateway could not put back names no value: it never reaches a tool. */
+export const unresolvedContacts: ToolGuard = defineGuard({
+  id: 'unresolved_contact',
+  stage: 'tool',
+  run: (call) => {
+    const token = unresolvedToken(call.args);
+    return token ? block(token, unresolvedContactFeedback(token)) : pass;
   },
 });
 

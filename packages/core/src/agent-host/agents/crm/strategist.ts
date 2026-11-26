@@ -56,7 +56,7 @@ export const crmStrategist = defineAgent<Sql>({
   ],
   tools: [rememberTool, proposeBriefTool],
   guards: { tool: [available] },
-  budgets: { stepsPerTurn: 10, tokensPerTurn: 400_000, costPerTurnUsd: 1, tenantDaily: 'crm' },
+  budgets: { stepsPerTurn: 20, tokensPerTurn: 1_600_000, costPerTurnUsd: 4, tenantDaily: 'crm' },
   finish: (s) => !!review(s.context.subject)?.parked,
   toInput: (m) => {
     const p = (m.payload ?? {}) as JsonObject;

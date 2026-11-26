@@ -38,6 +38,17 @@ describe('lead phones are stored as E.164', () => {
     );
   });
 
+  test("the model gateway's contact mask is never stored as a contact", () => {
+    for (const [field, v] of [
+      ['whatsapp', '⟦tel57⟧'],
+      ['phone', '+55 ⟦tel:3fa91c⟧'],
+      ['email', '⟦email:0b7d22⟧'],
+    ] as const) {
+      expect(() => leadInsert({ name: 'X', [field]: v })).toThrow(/masked placeholder/);
+      expect(() => leadPatch({ [field]: v }, 'agent')).toThrow(/masked placeholder/);
+    }
+  });
+
   test('an agent-set next action keeps the 10-minute floor; staff may set one due now', () => {
     const past = new Date(Date.now() - 60_000).toISOString();
     expect(() => leadPatch({ nextActionAt: past }, 'agent')).toThrow(/10 minutes/);
