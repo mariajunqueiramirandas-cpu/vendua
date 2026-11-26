@@ -288,39 +288,6 @@ export async function conversationClosedTx(tx: Sql, leadId: string): Promise<boo
   return row?.closed === true;
 }
 
-/**
- * The automatic follow-ups already booked on conversations that are over (a decline we answered
- * before the cadence knew to stop) go, with a line on the lead's timeline. Only the cadence's
- * own: a date the agent, the lead or staff picked stays. Runs at boot and on the reconcile pass.
- */
-export async function retireClosedCadence(sql: Sql): Promise<number> {
-  return controlTx(sql, async (tx) => {
-    const rows = await tx<{ id: string; lead_id: string }[]>`
-      select m.id, a.subject_id as lead_id from agent_mailbox m
-      join agent_actors a on a.id = m.actor_id
-      where a.tenant_id = ${PLATFORM_TENANT_ID} and a.agent_id = ${CRM_AGENT_ID}
-        and a.subject_kind = ${LEAD_SUBJECT} and m.kind = 'timer.followup'
-        and m.consumed_by_turn is null and m.payload->>'by' = 'cadence'
-        and coalesce((m.payload->>'requested')::boolean, false) = false
-      order by m.deliver_at
-      limit 500
-      for update of m skip locked`;
-    let n = 0;
-    for (const r of rows) {
-      if (!(await conversationClosedTx(tx, r.lead_id))) continue;
-      await tx`delete from agent_mailbox where id = ${r.id}`;
-      await syncNextActionTx(tx, r.lead_id);
-      await tx`
-        insert into lead_activities (lead_id, kind, body, meta, created_by)
-        values (${r.lead_id}, 'system',
-          'Follow-up automático cancelado: a conversa terminou (recusa ou despedida)',
-          ${tx.json({ closedCadence: true, mailboxId: r.id } as never)}, 'agent')`;
-      n++;
-    }
-    return n;
-  });
-}
-
 /** rendered into the lead's context so the agent knows what it promised */
 export async function pendingWakeupsTx(tx: Sql, leadId: string): Promise<Wakeup[]> {
   const rows = await tx<TimerRow[]>`

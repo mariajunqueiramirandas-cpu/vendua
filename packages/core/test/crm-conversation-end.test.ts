@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { conversationClosedTx, retireClosedCadence, scheduleCadenceTx } from '../src/crm/agenda.ts';
+import { conversationClosedTx, scheduleCadenceTx } from '../src/crm/agenda.ts';
+import { sweepAgendaHygiene } from '../src/crm/agenda-hygiene.ts';
 import { requestLeadTx } from '../src/crm/dispatch.ts';
 import { deliverQueued } from '../src/crm/outbox.ts';
 import { controlTx } from '../src/modules/control.ts';
@@ -30,7 +31,8 @@ describe.skipIf(!OWNER_URL)('the agent knows when a conversation is over (db)', 
     const lead = await b.lead({ name });
     const [t] = await sql<{ id: string }[]>`
       insert into lead_threads (lead_id, channel) values (${lead.id}, 'whatsapp') returning id`;
-    const at = new Date(Date.now() - 5 * 60_000);
+    // two days back: the opener stays out of the shared WhatsApp cold cap other files count
+    const at = new Date(Date.now() - 2 * 86_400_000);
     await sql`
       insert into lead_messages (thread_id, direction, author, body, status, created_at, dispatch_attempted_at)
       values (${t!.id}, 'out', 'agent', 'Oi! Sou da Venduá, a gente monta a loja online da confeitaria.', 'sent', ${at}, ${at})`;
@@ -146,14 +148,14 @@ describe.skipIf(!OWNER_URL)('the agent knows when a conversation is over (db)', 
         keepParked: true,
       }),
     );
-    expect(await retireClosedCadence(appSql)).toBeGreaterThanOrEqual(1);
+    expect(await sweepAgendaHygiene(appSql, null)).toBeGreaterThanOrEqual(1);
     expect(await pendingFollowups(lead.id)).toHaveLength(0);
     const [row] = await sql<{ next_action_at: Date | null }[]>`
       select next_action_at from leads where id = ${lead.id}`;
     expect(row!.next_action_at).toBeNull();
     const notes = await sql<{ body: string }[]>`
       select body from lead_activities where lead_id = ${lead.id} and kind = 'system'`;
-    expect(notes.map((n) => n.body).join('\n')).toContain('Follow-up automático cancelado');
+    expect(notes.map((n) => n.body).join('\n')).toContain('Follow-up cancelado automaticamente');
   });
 
   test('a decline that goes on, or a question after it, keeps the conversation open', async () => {

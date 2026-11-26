@@ -15,7 +15,9 @@ import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { nextReminderAtTx, sendMeetingReminders, syncMeetingEffects } from '../modules/meetings.ts';
 import { log } from '../platform/log.ts';
 import { sweepBriefs, sweepOutreachBacklog, sweepStrategist } from './board.ts';
-import { retireClosedCadence } from './agenda.ts';
+import type { ModelGateway } from '@vendua/agent-runtime';
+import { hostGateway } from '../agent-host/models.ts';
+import { sweepAgendaHygiene } from './agenda-hygiene.ts';
 import { adoptLegacy } from './legacy.ts';
 import { agentSettingTx } from './policy.ts';
 import { anchorTx } from './schedule-anchors.ts';
@@ -29,6 +31,7 @@ import { anchorTx } from './schedule-anchors.ts';
 // daily and weekly work into it.
 
 const agentLog = log.child({ mod: 'scheduler' });
+let hygieneGateway: ModelGateway | null = null;
 
 export const CHANNEL = 'vendua_agent';
 export const RECONCILE_MS = 10 * 60_000;
@@ -161,11 +164,11 @@ export const JOBS: readonly ScheduledJob[] = [
     run: sweepTelegramDigest,
   },
   {
-    name: 'closed-cadence',
-    label: 'follow-ups automáticos de conversas encerradas',
+    name: 'agenda-hygiene',
+    label: 'faxina da agenda — follow-ups e rascunhos que não fazem mais sentido',
     cadence: async () => 'no boot e a cada 10 min',
     reconcileOnly: true,
-    run: retireClosedCadence,
+    run: (sql) => sweepAgendaHygiene(sql, (hygieneGateway ??= hostGateway(sql))),
   },
   {
     name: 'legacy-adopt',

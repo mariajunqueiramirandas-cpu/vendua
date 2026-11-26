@@ -30,6 +30,7 @@ export const CRM_RESET_WIPES = [
   'ig_follows',
   'lead_facts',
   'crm_turns',
+  'crm_agenda_reviews',
   'crm_campaign_leads',
   'crm_campaign_hunts',
   'crm_campaigns',
