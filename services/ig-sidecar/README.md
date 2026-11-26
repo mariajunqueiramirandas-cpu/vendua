@@ -28,9 +28,10 @@ Core ◀─HMAC events── ig-sidecar   (inbound DMs, connection state, rotate
 - Sends are paced account-wide: `IG_MIN_SEND_GAP_SECONDS` (default 20) plus up to 50%
   jitter. A cold DM (no thread yet) is sent by recipient id.
 - Follows (`/v1/follow`) are paced the same way but on their own gap,
-  `IG_MIN_FOLLOW_GAP_SECONDS` (default 60). The friendship is checked first: an account
-  already followed returns `already: true` and sends nothing. instameow has no follow call,
-  so it posts the web profile's Follow button (`/api/v1/friendships/create/<id>/`).
+  `IG_MIN_FOLLOW_GAP_SECONDS` (default 60). An exact username can resolve through its Instagram
+  profile ID. The sidecar verifies a target found on the public page with the connected session
+  before following. An existing follow or pending request returns `already: true`. Instameow has
+  no follow call, so the sidecar posts the web profile's Follow button (`/api/v1/friendships/create/<id>/`).
   Instagram's Action Blocked comes back as `429 action_blocked`. Core's queue, daily cap and
   pause live in `packages/core/src/crm/ig-follows.ts`.
 - Profile lookups (`/v1/profile`) use the connected session to find an exact username and read its

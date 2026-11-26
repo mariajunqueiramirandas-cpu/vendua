@@ -255,6 +255,10 @@ func (a *api) follow(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.mgr.Follow(r.Context(), body.FBID, body.Username)
 	if err != nil {
+		if errors.Is(err, errUserNotFound) {
+			writeErr(w, http.StatusNotFound, "follow_target_not_found", err.Error())
+			return
+		}
 		a.fail(w, err)
 		return
 	}

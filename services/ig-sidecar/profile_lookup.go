@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,10 +31,19 @@ func lookupProfile(ctx context.Context, cli *instameow.Client, username string) 
 	signedCtx, cancelSigned := context.WithTimeout(ctx, profileLookupTimeout)
 	p, signedErr := fetchSignedInProfile(signedCtx, cli, username)
 	cancelSigned()
-	if signedErr == nil || errors.Is(signedErr, errProfileRateLimited) {
-		return p, signedErr
+	if signedErr == nil {
+		return p, nil
 	}
-	if _, permanent := classify(signedErr); permanent {
+	return publicProfileFallback(ctx, cli, username, signedErr)
+}
+
+func stopInstagramLookup(err error) bool {
+	_, permanent := classify(err)
+	return permanent || errors.Is(err, errProfileRateLimited) || errors.Is(err, httpclient.ErrRateLimited)
+}
+
+func publicProfileFallback(ctx context.Context, cli *instameow.Client, username string, signedErr error) (*ProfileResult, error) {
+	if stopInstagramLookup(signedErr) {
 		return nil, signedErr
 	}
 	if err := ctx.Err(); err != nil {
@@ -49,42 +59,73 @@ func lookupProfile(ctx context.Context, cli *instameow.Client, username string) 
 	return p, publicErr
 }
 
+type profileSearchResult struct {
+	Username    string          `json:"username"`
+	IGID        string          `json:"pk"`
+	MessagingID json.RawMessage `json:"interop_messaging_user_fbid"`
+}
+
+func (r profileSearchResult) fbid() string {
+	var id json.Number
+	if json.Unmarshal(r.MessagingID, &id) != nil {
+		return ""
+	}
+	n, err := id.Int64()
+	if err != nil || n <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(n, 10)
+}
+
 type profileSearchResponse struct {
 	Data struct {
-		Results []struct {
-			Username string `json:"username"`
-			IGID     string `json:"pk"`
-		} `json:"search_messenger_contact_v2"`
+		Results []profileSearchResult `json:"search_messenger_contact_v2"`
 	} `json:"xfb_combinedIGSearchQuery"`
 }
 
-func fetchSignedInProfile(ctx context.Context, cli *instameow.Client, username string) (*ProfileResult, error) {
+func searchProfileUsername(ctx context.Context, cli *instameow.Client, username string) (profileSearchResult, error) {
 	search, err := profileQuery[profileSearchResponse](ctx, cli, "IGDOmniPickerSearchResultsListQuery",
 		slidetypes.SearchRequest{SearchText: username})
 	if err != nil {
-		return nil, err
+		return profileSearchResult{}, err
 	}
 	if search.Data.Results == nil {
-		return nil, errProfileUnavailable
+		return profileSearchResult{}, errProfileUnavailable
 	}
-	var igid string
-	found := false
+	var match profileSearchResult
 	for _, result := range search.Data.Results {
-		if strings.EqualFold(result.Username, username) {
-			found = true
-			if digitsRe.MatchString(result.IGID) {
-				igid = result.IGID
-				break
-			}
+		if !strings.EqualFold(result.Username, username) {
+			continue
+		}
+		if digitsRe.MatchString(result.IGID) {
+			return result, nil
+		}
+		if match.Username == "" || (match.fbid() == "" && result.fbid() != "") {
+			match = result
 		}
 	}
-	if !found {
-		return nil, errUserNotFound
+	if match.Username == "" {
+		return profileSearchResult{}, errUserNotFound
 	}
-	if igid == "" {
+	return match, nil
+}
+
+func fetchSignedInProfile(ctx context.Context, cli *instameow.Client, username string) (*ProfileResult, error) {
+	match, err := searchProfileUsername(ctx, cli, username)
+	if err != nil {
+		return nil, err
+	}
+	if !digitsRe.MatchString(match.IGID) {
 		return nil, errProfileUnavailable
 	}
+	user, err := profileUserByID(ctx, cli, username, match.IGID)
+	if err != nil {
+		return nil, err
+	}
+	return parseProfileUser(match.IGID, user), nil
+}
 
+func profileUserByID(ctx context.Context, cli *instameow.Client, username, igid string) (map[string]any, error) {
 	// Decode the full user object. Instameow's User type drops additional fields such as
 	// biography and bio_links when decoded by encoding/json.
 	type profileResponse struct {
@@ -99,7 +140,7 @@ func fetchSignedInProfile(ctx context.Context, cli *instameow.Client, username s
 	if !strings.EqualFold(name, username) || (pk != "" && pk != igid) {
 		return nil, errProfileUnavailable
 	}
-	return parseProfileUser(igid, details.User), nil
+	return details.User, nil
 }
 
 func profileQuery[T any](ctx context.Context, cli *instameow.Client, name string, params any) (T, error) {
