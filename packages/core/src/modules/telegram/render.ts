@@ -962,6 +962,38 @@ function channel(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
   return { card: msg, summary: title, reply };
 }
 
+function igPause(ev: EventRow, h: EventRow[], ctx: RenderCtx): Rendered {
+  const paused = first(h, 'instagram.paused');
+  const resumed = lastOf(h, 'instagram.resumed');
+  const title = resumed
+    ? 'Instagram retomado'
+    : `Instagram pausado: ${paused?.data.count ?? 'várias'} DMs recusadas seguidas`;
+  const msg = card(
+    { ...ev, severity: resumed ? 'success' : 'critical' },
+    {
+      title,
+      body: [
+        paused ? `último erro: ${esc(paused.data.error)}` : null,
+        resumed
+          ? `✅ ${esc(resumed.data.reason)} (${ts(resumed.created_at, 't')}) · pausado por ${duration(resumed.data.failingSince, new Date(resumed.created_at))}`
+          : '⏸ o agente parou de mandar DMs e de seguir pelo Instagram; ler e receber mensagens continua',
+        resumed
+          ? null
+          : 'pra retomar: mande uma DM pela inbox do CRM (se sair, tudo volta sozinho) ou conecte o Instagram de novo',
+      ],
+      buttons: row(
+        linkButton('inbox', ctx.crm('/inbox')),
+        linkButton('conexões no CRM', ctx.crm('/config')),
+      ),
+    },
+  );
+  const reply =
+    ev.kind === 'instagram.resumed' && resumed
+      ? `✅ Instagram retomado: ${esc(resumed.data.reason)}`
+      : null;
+  return { card: msg, summary: title, reply };
+}
+
 // ── sistema ──────────────────────────────────────────────────────────────────
 
 function boot(ev: Ev<'system.boot'>): Rendered {
@@ -1415,6 +1447,7 @@ const FAMILIES: Record<string, Family> = {
   onboarding,
   incident,
   channel,
+  igpause: igPause,
   job,
   status: statusPage,
   campaign,

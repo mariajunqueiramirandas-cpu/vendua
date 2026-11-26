@@ -18,7 +18,8 @@ import { emitControlEvent } from '../modules/control-events.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
-import { sendInstagram } from './channels/instagram.ts';
+import { SidecarError, sendInstagram } from './channels/instagram.ts';
+import { recordIgSendTx } from './ig-health.ts';
 import { followBeforeDm } from './ig-follows.ts';
 import { prepareVoiceNote, voiceNoteTx } from './voice.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
@@ -324,6 +325,7 @@ export async function dispatchMessage(
   let providerMessageId: string | null = null;
   let igFbid: string | null = null;
   let sendError: string | null = null;
+  let sendCode: string | null = null;
   try {
     if (send.channel === 'email') {
       providerMessageId = await sendEmail(send.integration!, {
@@ -357,6 +359,7 @@ export async function dispatchMessage(
     }
   } catch (e) {
     sendError = e instanceof Error ? e.message : 'send failed';
+    sendCode = e instanceof SidecarError ? e.code : null;
   }
 
   // provider ids are channel-namespaced so e.g. a Resend id can't collide
@@ -364,6 +367,12 @@ export async function dispatchMessage(
   const threadsTouched = new Set<string>();
   const leadsTouched = new Set<string>();
   const out = await controlTx(sql, async (tx) => {
+    if (send.channel === 'instagram') {
+      await recordIgSendTx(
+        tx,
+        sendError ? { ok: false, code: sendCode, error: sendError } : { ok: true },
+      );
+    }
     if (sendError) {
       await markMessageFailed(tx, messageId, sendError);
       await salesDeliveryFailedTx(tx, messageId);
