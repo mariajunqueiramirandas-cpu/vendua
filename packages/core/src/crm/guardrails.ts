@@ -305,6 +305,21 @@ export async function leadHasContactTx(tx: Sql, leadId: string): Promise<boolean
   return row!.contacted;
 }
 
+/** Anything ever reached this lead, or came from them: an inbound, a message of ours that went
+ *  out (imported history and staff's manual log included) or a website callback. Wider than
+ *  leadHasContactTx on purpose: it decides whether 'contacted' can be true at all. */
+export async function leadEverReachedTx(tx: Sql, leadId: string): Promise<boolean> {
+  const [row] = await tx<{ reached: boolean }[]>`
+    select exists (
+      select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and (m.direction = 'in' or m.status in ('sent', 'delivered'))
+      union all
+      select 1 from lead_activities
+      where lead_id = ${leadId} and meta->>'type' = 'site_callback'
+    ) as reached`;
+  return row!.reached;
+}
+
 /** Count unattended sends since the last live inbound or website callback. */
 export async function unansweredTouchesTx(
   tx: Sql,

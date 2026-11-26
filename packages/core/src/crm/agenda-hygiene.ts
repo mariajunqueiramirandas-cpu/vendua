@@ -2,12 +2,13 @@ import type { ModelGateway } from '@vendua/agent-runtime';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import { updateLeadTx } from '../modules/leads.ts';
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { PLATFORM_TENANT_ID } from '../platform/tenancy.ts';
 import { conversationClosedTx, lockLeadAgendaTx, syncNextActionTx } from './agenda.ts';
-import { unansweredTouchesTx } from './guardrails.ts';
+import { leadEverReachedTx, unansweredTouchesTx } from './guardrails.ts';
 import { CRM_AGENT_ID, LEAD_SUBJECT } from './jobs.ts';
 import { agentSettingTx } from './policy.ts';
 
@@ -18,7 +19,8 @@ import { agentSettingTx } from './policy.ts';
 // follow-up of a lead who talked with us, once, and cancels the ones the conversation already
 // answered ("não precisamos", "eu te chamo"). Only ever removes: it never sends, never opts a lead
 // out, never touches a date the lead asked for or staff set. Each removal is a line on the
-// lead's timeline.
+// lead's timeline. One stage goes back too: 'contacted' the agent claimed for a lead nothing ever
+// reached (its DM failed), so the lead doesn't sit in the funnel as if someone talked to it.
 
 const logger = log.child({ mod: 'agenda-hygiene' });
 const TIMER_KINDS = ['timer.followup', 'timer.callback'];
@@ -33,6 +35,8 @@ const RULE_TEXT = {
   sequence: 'a sequência sem resposta já acabou',
 } as const;
 type Rule = keyof typeof RULE_TEXT;
+const NOT_REACHED =
+  'Etapa voltou pra lead: o agente tinha marcado contatado, mas nenhuma mensagem chegou nessa pessoa (o envio falhou)';
 
 interface Pending {
   id: string;
@@ -126,6 +130,32 @@ async function applyRules(sql: Sql, touched: Set<string>): Promise<number> {
       touched.add(d.lead_id);
     }
     if (drafts.length) emitControlEvent('draft.change');
+    // a stage the agent claimed before anything reached the lead: the DM it queued then failed
+    const claimed = await tx<{ id: string }[]>`
+      select l.id from leads l
+      where l.state = 'contacted' and l.archived_at is null and l.tenant_id is null
+        and exists (
+          select 1 from lead_state_history h
+          where h.lead_id = l.id and h.to_state = 'contacted' and h.actor = 'agent')
+        and not exists (
+          select 1 from lead_state_history h
+          where h.lead_id = l.id and h.to_state = 'contacted' and h.actor <> 'agent')
+        -- in flight: its send may still promote the lead
+        and not exists (
+          select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+          where t.lead_id = l.id and m.status in ('queued', 'sending'))
+      order by l.updated_at
+      limit ${SWEEP_LIMIT}`;
+    for (const { id } of claimed) {
+      if (await leadEverReachedTx(tx, id)) continue;
+      await updateLeadTx(tx, id, { state: 'lead' }, 'system');
+      await tx`
+        insert into lead_activities (lead_id, kind, body, meta, created_by)
+        values (${id}, 'system', ${NOT_REACHED},
+                ${tx.json({ agendaHygiene: true, rule: 'not_reached' })}, 'system')`;
+      touched.add(id);
+      n++;
+    }
     // the review memory only matters while its timer can still be pending
     await tx`delete from crm_agenda_reviews where created_at < now() - interval '120 days'`;
     return n + drafts.length;

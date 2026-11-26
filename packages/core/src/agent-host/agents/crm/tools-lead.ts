@@ -20,6 +20,7 @@ import {
 } from '../../../modules/agent-memory.ts';
 import { recordStaffEventTx } from '../../../modules/staff-events.ts';
 import { cancelAgentWakeupsTx, parseWakeupAt, scheduleTimerTx } from '../../../crm/agenda.ts';
+import { leadEverReachedTx } from '../../../crm/guardrails.ts';
 import { LEAD_FIELDS, NEXT_ACTION_REQUESTED } from './fields.ts';
 import { crm, emitAfter, leadOf, refusals, stepKey, turn, type Ctx } from './shared.ts';
 
@@ -128,11 +129,20 @@ export const updateLeadTool = defineTool<Record<string, unknown>, Sql>({
 
 export const setStateTool = defineTool<{ state: string }, Sql>({
   name: 'set_state',
-  description: 'Move a lead along the pipeline (writes state history).',
+  description:
+    "Move a lead along the pipeline (writes state history). 'contacted' happens by itself when a message of ours goes out: set it only to correct the stage after contact that really happened.",
   effect: 'write',
   input: s.object({ state: s.enum(['lead', 'contacted', 'invited']) }),
   run: (ctx: Ctx, input) =>
     refusals(async () => {
+      // a queued DM that then fails left the lead 'contacted' with nothing scheduled
+      if (
+        input.state === 'contacted' &&
+        !(await crm(ctx, (tx) => leadEverReachedTx(tx, leadOf(ctx))))
+      )
+        throw new ToolError(
+          "Nada chegou nessa pessoa ainda: nenhuma mensagem nossa saiu e ela não escreveu. A etapa vira 'contacted' sozinha quando a mensagem sair; se o envio falhar, o lead continua 'lead'.",
+        );
       const res = await updateLead(
         ctx.tx,
         leadOf(ctx),
