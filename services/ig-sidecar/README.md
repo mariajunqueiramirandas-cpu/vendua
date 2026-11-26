@@ -26,7 +26,8 @@ Core ◀─HMAC events── ig-sidecar   (inbound DMs, connection state, rotate
   recorded Instagram message either way, else the login time) are replayed, up to 25
   threads. Core dedupes by message id.
 - Sends are paced account-wide: `IG_MIN_SEND_GAP_SECONDS` (default 20) plus up to 50%
-  jitter. A cold DM (no thread yet) is sent by recipient id.
+  jitter. A cold DM (no thread yet) goes to the recipient's Instagram user ID, looked up from
+  their messaging id (the messaging id itself fails with "Query Error").
 - Follows (`/v1/follow`) are paced the same way but on their own gap,
   `IG_MIN_FOLLOW_GAP_SECONDS` (default 60). An exact username can resolve through its Instagram
   profile ID. The sidecar verifies a target found on the public page with the connected session
