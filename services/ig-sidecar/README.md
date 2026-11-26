@@ -33,6 +33,10 @@ Core ◀─HMAC events── ig-sidecar   (inbound DMs, connection state, rotate
   so it posts the web profile's Follow button (`/api/v1/friendships/create/<id>/`).
   Instagram's Action Blocked comes back as `429 action_blocked`. Core's queue, daily cap and
   pause live in `packages/core/src/crm/ig-follows.ts`.
+- Profile lookups (`/v1/profile`) use the connected session to find an exact username and read its
+  Instagram profile ID. If the signed-in lookup cannot load it, the sidecar checks the public
+  profile page. A search miss plus a missing public page returns `404 user_not_found`. Inconclusive
+  responses return `502 profile_unavailable`. Rate limits and session challenges stop the lookup.
 
 ## API (all under `Authorization: Bearer $IG_SIDECAR_SECRET`)
 

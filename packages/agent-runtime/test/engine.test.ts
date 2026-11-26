@@ -1,6 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { defineAgent, Runtime, createGateway, LeaseLostError } from '../src/index.ts';
-import { drive, FakeClock, MemoryStore, scriptedAdapter } from '../src/testing/index.ts';
+import {
+  defineAgent,
+  defineTool,
+  Runtime,
+  createGateway,
+  LeaseLostError,
+  s,
+} from '../src/index.ts';
+import {
+  drive,
+  FakeClock,
+  MemoryStore,
+  scriptedAdapter,
+  type MemoryHost,
+} from '../src/testing/index.ts';
 import { agentDef, call, reply, setup, TENANT, types } from './helpers.ts';
 
 describe('a turn', () => {
@@ -449,6 +462,70 @@ describe('durability', () => {
     }
     expect(adapter.requests).toHaveLength(1);
     expect(store.outbox.map((m) => m.text)).toEqual(['Oi!']);
+  });
+
+  test('read tools longer than the lease keep it: their results land', async () => {
+    const clock = new FakeClock();
+    const store = new MemoryStore(clock);
+    let ticker: ReturnType<typeof setInterval> | undefined;
+    // two lookups of 500ms each while the clock runs 2x faster than the 300ms lease could cover
+    const lookup = defineTool<{ handle: string }, MemoryHost>({
+      name: 'lookup',
+      description: 'Looks a profile up.',
+      effect: 'read',
+      input: s.object({ handle: s.string({ max: 40 }) }),
+      run: async (_ctx, input) => {
+        ticker ??= setInterval(() => clock.advance(50), 25);
+        await new Promise((r) => setTimeout(r, 500));
+        return { content: `@${input.handle} encontrado` };
+      },
+    });
+    const adapter = scriptedAdapter((_req, i) =>
+      i === 0
+        ? {
+            toolCalls: [
+              { name: 'lookup', args: { handle: 'a' } },
+              { name: 'lookup', args: { handle: 'b' } },
+            ],
+          }
+        : { toolCalls: [{ name: 'reply', args: { text: 'Achei os dois.' } }] },
+    );
+    const { statechart: _, ...def } = agentDef({ tools: [lookup], guards: {} });
+    const runtime = new Runtime({
+      agents: [defineAgent(def)],
+      store,
+      gateway: createGateway({
+        adapters: [adapter],
+        routes: { routes: async () => [{ provider: 'scripted', model: 'test', zdr: true }] },
+      }),
+      transports: [store.transport('memory')],
+      owner: 'w1',
+      clock,
+      leaseMs: 300,
+      memory: store.memoryPort(),
+    });
+    const { actorId } = await store.dispatch({
+      actor: { tenantId: TENANT, agentId: 'seller', subject: { kind: 'thread', id: 's1' } },
+      kind: 'message.inbound',
+      source: 'test',
+      dedupeKey: 'in:s1:1',
+      payload: { text: 'oi' },
+    });
+    try {
+      await runtime.pump('interactive', { limit: 1, perTenantCap: 1 });
+    } finally {
+      clearInterval(ticker);
+    }
+    const returned = store
+      .log(actorId)
+      .filter(
+        (e) => e.type === 'tool.returned' && (e.payload as { name: string }).name === 'lookup',
+      );
+    expect(returned.map((e) => (e.payload as { content: string }).content)).toEqual([
+      '@a encontrado',
+      '@b encontrado',
+    ]);
+    expect(store.outbox.map((m) => m.text)).toEqual(['Achei os dois.']);
   });
 });
 
