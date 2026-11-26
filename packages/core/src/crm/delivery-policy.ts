@@ -9,6 +9,7 @@ import {
 import { recordStaffEventTx } from '../modules/staff-events.ts';
 import type { Channel } from '../modules/threads.ts';
 import { checkSendAllowedTx } from './guardrails.ts';
+import { IG_PAUSE_RECHECK_MS, igPausedTx } from './ig-health.ts';
 import { automationAllowedTx } from './policy.ts';
 import { isAutomated } from './dispatch.ts';
 import { cancelAgentWakeupsTx } from './agenda.ts';
@@ -67,6 +68,9 @@ export async function unattendedDeliveryTx(
   if (!m.agent_enabled) return { reason: 'thread paused for agent' };
   if (gateway && !(await getIntegrationTx(tx, 'whatsapp')))
     return { reason: 'no enabled whatsapp integration' };
+  // queued before Instagram started refusing: it waits for the pause to lift
+  if (m.channel === 'instagram' && (await igPausedTx(tx)))
+    return { reason: 'instagram paused', retryAt: new Date(Date.now() + IG_PAUSE_RECHECK_MS) };
   const settings = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const verdict = await checkSendAllowedTx(
     tx,

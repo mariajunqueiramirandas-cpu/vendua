@@ -12,6 +12,7 @@ import { instagramHandle } from '../modules/threads.ts';
 import { ownsJob } from '../platform/job-lease.ts';
 import { log } from '../platform/log.ts';
 import { followInstagram, igState, SidecarError, type IgFollow } from './channels/instagram.ts';
+import { igPausedTx } from './ig-health.ts';
 
 // The CRM's Instagram account follows every lead it finds there and everyone it DMs: the follow
 // notification gets a cold DM opened, and DMing accounts you don't follow reads as spam. A write
@@ -70,11 +71,12 @@ async function liveIgTx(tx: Sql): Promise<IntegrationRow | null> {
   return ig;
 }
 
-/** Follows left in the rolling 24h: 0 when the cap is 0 or Instagram blocked a recent follow. */
+/** Follows left in the rolling 24h: 0 when the cap is 0, Instagram blocked a recent follow or
+ *  it keeps refusing our DMs (crm/ig-health.ts). */
 export async function followBudgetTx(tx: Sql): Promise<number> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const cap = g.instagramFollowsPerDay ?? DEFAULT_GUARDRAILS.instagramFollowsPerDay;
-  if (cap <= 0) return 0;
+  if (cap <= 0 || (await igPausedTx(tx))) return 0;
   const r = (
     await tx<{ used: number; blocked: boolean }[]>`
       select

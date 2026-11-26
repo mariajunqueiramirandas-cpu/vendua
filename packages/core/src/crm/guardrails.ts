@@ -8,6 +8,7 @@ import {
 } from '../modules/threads.ts';
 import { waStatus } from './channels/whatsapp.ts';
 import { igState } from './channels/instagram.ts';
+import { igPausedTx } from './ig-health.ts';
 import { agentSettingTx, draftDecision } from './policy.ts';
 
 /**
@@ -28,11 +29,12 @@ export async function whatsappReadyTx(tx: Sql): Promise<boolean> {
   return wa.driver === 'baileys' ? waStatus() === 'open' : true;
 }
 
-/** Enabled row + live sidecar session ('log' needs none). */
+/** Enabled row + live sidecar session ('log' needs none), and Instagram not refusing our DMs. */
 export async function instagramReadyTx(tx: Sql): Promise<boolean> {
   const ig = await getIntegrationTx(tx, 'instagram');
   if (!ig) return false;
-  return ig.driver === 'sidecar' ? igState() === 'open' : true;
+  if (ig.driver === 'sidecar' && igState() !== 'open') return false;
+  return !(await igPausedTx(tx));
 }
 
 /** Live ig-sidecar session specifically (for reading profiles via /v1/profile; 'log' cannot scrape). */
@@ -106,10 +108,11 @@ export async function channelAvailabilityTx(
       where lead_id = ${leadId} and channel = 'instagram' and external_id is not null
     `
   )[0]!.n;
-  const [waInt, igInt, emInt] = await Promise.all([
+  const [waInt, igInt, emInt, igPaused] = await Promise.all([
     getIntegrationTx(tx, 'whatsapp'),
     getIntegrationTx(tx, 'instagram'),
     getIntegrationTx(tx, 'email'),
+    igPausedTx(tx),
   ]);
   return {
     whatsapp:
@@ -127,7 +130,9 @@ export async function channelAvailabilityTx(
           ? { ok: false, reason: 'instagram integration off' }
           : igInt.driver === 'sidecar' && igState() !== 'open'
             ? { ok: false, reason: 'instagram disconnected' }
-            : { ok: true },
+            : igPaused
+              ? { ok: false, reason: 'instagram paused: it refused our last DMs' }
+              : { ok: true },
     email: !lead.email
       ? { ok: false, reason: 'lead has no email' }
       : !emInt

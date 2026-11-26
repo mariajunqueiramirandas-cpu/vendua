@@ -378,6 +378,9 @@ export interface StaffEventMap {
     channel: 'whatsapp' | 'instagram' | 'email' | 'whatsapp_lojas';
     detail: Opt<string>;
   };
+  /** Instagram refused DMs in a row: the agent's DMs and the follows stop (crm/ig-health.ts) */
+  'instagram.paused': { failingSince: string; count: number; error: string };
+  'instagram.resumed': { failingSince: string; reason: string };
   'campaign.started': {
     campaignId: Id;
     title: string;
@@ -900,6 +903,21 @@ export const STAFF_EVENT_KINDS: Catalog = {
     severity: 'success',
     label: 'canal voltou',
     anchor: { role: 'follows', key: (d) => `channel:${d.channel}` },
+  },
+  'instagram.paused': {
+    category: 'agente',
+    level: 'ping',
+    severity: 'critical',
+    label: 'instagram pausado',
+    hint: 'o Instagram recusou DMs seguidas: as DMs do agente e os follows param até uma DM sair',
+    anchor: { role: 'opens', key: (d) => `igpause:${d.failingSince}` },
+  },
+  'instagram.resumed': {
+    category: 'agente',
+    level: 'normal',
+    severity: 'success',
+    label: 'instagram retomado',
+    anchor: { role: 'follows', key: (d) => `igpause:${d.failingSince}` },
   },
   'campaign.started': {
     category: 'agente',

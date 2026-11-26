@@ -15,6 +15,7 @@ import { DEFAULT_SECRET, getIntegration, type IntegrationRow } from '../../modul
 import { recordChannelState } from '../../modules/system-events.ts';
 import { instagramHandle } from '../../modules/threads.ts';
 import { recordMessageSeen } from '../message-seen.ts';
+import { resumeIgSendsTx } from '../ig-health.ts';
 import { log } from '../../platform/log.ts';
 
 // Instagram DMs ride the ig-sidecar (services/ig-sidecar, Go + mautrix-meta):
@@ -305,17 +306,17 @@ async function loadAuth(
 
 // a completed login — rotations go through applyIgEvent and never move connected_at
 async function saveSession(sql: Sql, session: IgSession, secret: string) {
-  await controlTx(
-    sql,
-    (tx) => tx`
+  await controlTx(sql, async (tx) => {
+    await tx`
       insert into ig_auth_state (account_id, session, device, connected_at, updated_at)
       values (${ACCOUNT}, ${tx.json(seal(secret, session) as never)}, ${session.device ? tx.json(seal(secret, session.device) as never) : null}, now(), now())
       on conflict (account_id) do update set
         session = excluded.session,
         device = coalesce(excluded.device, ig_auth_state.device),
         connected_at = now(),
-        updated_at = now()`,
-  );
+        updated_at = now()`;
+    await resumeIgSendsTx(tx, 'o Instagram foi conectado de novo');
+  });
 }
 
 async function clearSession(sql: Sql) {
@@ -555,6 +556,8 @@ export async function sendInstagram(
     igLog.info({ to: username ?? to.fbid, id: res.messageId }, 'message sent');
     return res;
   } catch (e) {
+    // the code tells Instagram refusing the account from a bad recipient (crm/ig-health.ts)
+    if (e instanceof SidecarError) throw e;
     throw new Error(e instanceof Error ? e.message : 'instagram send failed');
   }
 }
