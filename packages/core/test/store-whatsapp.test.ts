@@ -233,6 +233,18 @@ describe('store whatsapp: what a shopper controls', () => {
     expect(mediaRef({ imageMessage: { directPath: '/v/i' } })).toBeNull();
   });
 
+  test('voice notes with a placeholder host use the default CDN and keep the signed path', () => {
+    const audioMessage = {
+      mediaKey: new Uint8Array([1]),
+      url: 'https://a.whatsapp.net/v/voice.enc',
+    };
+    const directPath = '/v/voice.enc?oh=signature&oe=expiry';
+    expect(mediaRef({ audioMessage: { ...audioMessage, directPath } })?.url).toBe(
+      `https://mmg.whatsapp.net${directPath}`,
+    );
+    expect(mediaRef({ audioMessage })).toBeNull();
+  });
+
   test('a download stops reading past the cap and when aborted', async () => {
     let pulled = 0;
     const endless = () =>

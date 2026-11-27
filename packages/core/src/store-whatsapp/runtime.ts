@@ -37,6 +37,7 @@ interface Baileys {
 
 const VERSION_TTL_MS = 60 * 60_000;
 const MEDIA_HOST = 'mmg.whatsapp.net';
+const PLACEHOLDER_MEDIA_HOST = 'a.whatsapp.net';
 /** the 10-byte MAC WhatsApp appends, plus at most one block of padding */
 const CIPHER_OVERHEAD = 26;
 
@@ -65,19 +66,18 @@ export function mediaRef(content: unknown): MediaRef | null {
     if (!m || typeof m !== 'object') continue;
     const key = m.mediaKey;
     if (!(key instanceof Uint8Array) && !(typeof key === 'string' && key)) return null;
-    let host = MEDIA_HOST;
+    let url: URL | null = null;
     if (typeof m.url === 'string' && m.url) {
       const u = URL.canParse(m.url) ? new URL(m.url) : null;
       if (!u || !officialHost(u)) return null;
-      host = u.hostname;
+      // Some WhatsApp messages use a placeholder URL and carry the signed path separately.
+      if (u.hostname !== PLACEHOLDER_MEDIA_HOST) url = u;
     }
-    const raw =
-      typeof m.directPath === 'string' && m.directPath.startsWith('/')
-        ? `https://${host}${m.directPath}`
-        : typeof m.url === 'string'
-          ? m.url
-          : null;
-    const url = raw && URL.canParse(raw) ? new URL(raw) : null;
+    const host = url?.hostname ?? MEDIA_HOST;
+    if (typeof m.directPath === 'string' && m.directPath.startsWith('/')) {
+      const raw = `https://${host}${m.directPath}`;
+      url = URL.canParse(raw) ? new URL(raw) : null;
+    }
     return url && officialHost(url) && url.hostname === host
       ? { type, url: url.href, mediaKey: key }
       : null;
