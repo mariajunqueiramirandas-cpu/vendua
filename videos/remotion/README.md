@@ -3,7 +3,9 @@
 The house toolchain for marketing videos since 2026-10-10 (the author's call, replacing
 HyperFrames): **Remotion** for the picture (React, frame-driven animation, WebGL shaders),
 **Tone.js** for the music and every sound effect, scored in code against the same timeline as the
-picture. No voice, no third-party audio, no AI images.
+picture. No third-party music or effects, no AI images. A narrated video records its voice choice in
+its folder (`VOICE.md`, decided with the author) and commits the take it uses; `render-audio.mjs`
+cuts, treats and mixes it under the same clock (`BlackFriday` is the first).
 
 ## Layout
 
@@ -11,7 +13,7 @@ picture. No voice, no third-party audio, no AI images.
 remotion.config.ts        browser, GL and encode settings
 scripts/
   browser.mjs             which Chromium renders (cloud: Playwright's headless shell)
-  render-audio.mjs        Tone.js score → offline render in Chromium → −14 LUFS WAV
+  render-audio.mjs        Tone.js score (+ the narrator, if the score exports `voice`) → −14 LUFS WAV
   stills.mjs              stills at given seconds + one contact sheet
 src/
   Root.tsx                one <Composition> per video
@@ -21,7 +23,7 @@ src/
     score.ts              Tone.js: music + SFX, placed from timeline.ts
     <Video>.tsx           the composition: world + scenes + audio
     scenes/*.tsx          one file per scene, each gets the global time `t`
-public/                   fonts, brand marks, Duá poses, real admin captures (noite theme)
+public/                   fonts, brand marks, Duá poses, real admin captures, narrator takes
 ```
 
 ## Commands

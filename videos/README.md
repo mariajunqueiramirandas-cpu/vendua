@@ -175,6 +175,23 @@ verify` matches exact lines) and regenerate the JSON and caption files. The Clau
 - In-frame screen swaps between two text-heavy screenshots must be near-cuts (opacity over ≤0.06 s,
   with the slide on `y`): a 0.2 s dissolve reads as two chats printed on top of each other.
 
+## Findings from BlackFriday (the 27 s launch Reel, Remotion, narrated)
+
+- Narrator: ElevenLabs v4 through OpenRouter's `/audio/speech` (the author's call for this video;
+  `remotion/src/videos/blackfriday/VOICE.md` has the voice, the prompt and how they were picked). v4
+  takes no `speed`: pace comes from the read and the copy.
+- With no ears in the container, a listening model (`google/gemini-4-neon` on OpenRouter) ranking
+  clips **head to head** was useful; asked to score clips one at a time it gave every voice a 7.
+  Whisper's spelling of the brand agrees with it: "Vendo A" / "Vem duá" right, "Vandoa" wrong.
+- `Vendu-á` drifted to "Van-duá" inside a long read; `Venn-du-á` held [vẽ.du.ˈa] in every take.
+- Don't splice lines from different takes of a synthetic voice: timbre and energy jump at every
+  join. Pick one full take and keep its own pauses, lengthening them only to land on the grid.
+- Real screens beat drawn UI, and a flat graphic world (night, lime, type) reads far less "AI" than
+  a generative shader backdrop; without WebGL the full render took 2 minutes instead of 7.
+- ffmpeg's `afir` here takes `dry` as the _input_ gain: `dry=0` silences the convolution.
+- OpenRouter reserves credit for the maximum output (and more for video input) before a call: on a
+  small key, cap `max_tokens` and send frames + audio rather than a video.
+
 ## Findings from vendua-hype-60s (the 60 s Stories ad, music and SFX synthesized in code)
 
 - The runtime hides an inactive frame by setting `visibility: hidden` on its clip wrapper. A child
