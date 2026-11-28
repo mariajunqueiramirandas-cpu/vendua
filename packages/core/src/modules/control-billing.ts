@@ -20,6 +20,7 @@ import { dropPix, lockSub, markInvoicePaid, type BillingCtx } from './billing/su
 import type { SignupReadiness } from './billing/signup-gate.ts';
 import { claimControl, controlIdemKey, controlTx } from './control.ts';
 import { mountControlCoupons } from './control-coupons.ts';
+import { mountControlStoreBilling } from './control-store-billing.ts';
 import { ProviderError, type PaymentProvider } from './payments/provider.ts';
 
 const SITE_STATUSES = ['requested', 'in_progress', 'delivered', 'cancelled'] as const;
@@ -97,6 +98,7 @@ export function mountControlBilling(o: {
     );
   const idemKey = controlIdemKey;
   mountControlCoupons({ app, sql, controlGate, idemKey });
+  mountControlStoreBilling({ app, sql, controlGate, idemKey, billingBase });
 
   app.get('/control/v1/billing/stores', async (c) => {
     controlGate(c);
@@ -120,6 +122,10 @@ export function mountControlBilling(o: {
           sub_method: string | null;
           sub_period_end: Date | null;
           sub_trial_end: Date | null;
+          sub_cancelling: boolean | null;
+          sub_pending_plan: string | null;
+          sub_upgrade_plan: string | null;
+          free_months: number;
           mp: string | null;
           cd_id: string | null;
           cd_host: string | null;
@@ -147,7 +153,10 @@ export function mountControlBilling(o: {
       >`
         select t.id, t.slug, t.name, t.created_at, t.plan, p.name as plan_name,
                s.status as sub_status, s.method as sub_method, s.current_period_end as sub_period_end,
-               s.trial_ends_at as sub_trial_end,
+               s.trial_ends_at as sub_trial_end, s.cancel_at_period_end as sub_cancelling,
+               s.pending_plan_id as sub_pending_plan, s.upgrade_plan_id as sub_upgrade_plan,
+               (select coalesce(sum(bc.months), 0)::int from billing_credits bc
+                 where bc.tenant_id = t.id and bc.status = 'pending') as free_months,
                pc.status as mp,
                cd.id as cd_id, cd.host as cd_host, cd.status as cd_status,
                cd.source as cd_source, cd.method as cd_method,
@@ -209,8 +218,15 @@ export function mountControlBilling(o: {
                 method: r.sub_method,
                 currentPeriodEnd: r.sub_period_end,
                 trialEndsAt: r.sub_trial_end,
+                cancelAtPeriodEnd: r.sub_cancelling ?? false,
+                /** the owner's downgrade waiting for the period end */
+                pendingPlanId: r.sub_pending_plan,
+                /** the owner's upgrade waiting for its difference to be paid */
+                upgradePlanId: r.sub_upgrade_plan,
               }
             : null,
+          /** free months owed (referral or the team's), applied at the next charge */
+          freeMonthsPending: r.free_months,
           mercadoPago: r.mp,
           customDomain: r.cd_id
             ? {

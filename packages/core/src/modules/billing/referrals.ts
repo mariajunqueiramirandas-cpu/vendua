@@ -1,6 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { withTenant } from '../../platform/db.ts';
 import { audit } from '../../admin/audit.ts';
+import { HttpError } from '../../platform/http.ts';
 import { phoneVariants } from '../../store-whatsapp/text.ts';
 import { controlTx } from '../control.ts';
 import { billingLog, type InvoiceRow } from './invoices.ts';
@@ -107,12 +108,57 @@ interface CreditRow {
   tenant_id: string;
   source_tenant_id: string | null;
   months: number;
+  reason: 'referral' | 'staff';
 }
 
-const rewardMessage = (how: string): OwnerMessage => ({
-  text: `Venduá: uma loja que você indicou assinou o Venduá. Obrigado! ${how}`,
-  subject: 'Venduá: você ganhou um mês grátis',
-});
+const monthsLabel = (n: number) => (n === 1 ? 'um mês grátis' : `${n} meses grátis`);
+
+/** what the owner hears when free months land: a referral thanks them, the team's just says so */
+const rewardMessage = (credits: CreditRow[], months: number, how: string): OwnerMessage =>
+  credits.every((c) => c.reason === 'referral')
+    ? {
+        text: `Venduá: uma loja que você indicou assinou o Venduá. Obrigado! ${how}`,
+        subject: 'Venduá: você ganhou um mês grátis',
+      }
+    : {
+        text: `Venduá: você ganhou ${monthsLabel(months)} da equipe Venduá. ${how}`,
+        subject: `Venduá: você ganhou ${monthsLabel(months)}`,
+      };
+
+const creditWhy = (credits: CreditRow[]) =>
+  credits.every((c) => c.reason === 'referral')
+    ? 'por indicação'
+    : credits.every((c) => c.reason === 'staff')
+      ? 'dado pela equipe'
+      : 'por indicação e pela equipe';
+
+/** the most the team gives at once (each is one billing_credits row) */
+export const STAFF_MONTHS_MAX = 12;
+
+/**
+ * The team gives a store free months (CRM): owed like a referral's, one row a month, so a Pix plan
+ * moves its next charge on (applyPixCredits) and a card plan gets each of its next charges back
+ * (applyCardCreditTx). A store not paying yet keeps them until it is. A plan set to end has no
+ * charge left to give back: refused.
+ */
+export async function grantFreeMonthsTx(
+  tx: Sql,
+  tenantId: string,
+  months: number,
+  note: string | null,
+): Promise<void> {
+  if (!Number.isInteger(months) || months < 1 || months > STAFF_MONTHS_MAX)
+    throw new RangeError(`months must be 1–${STAFF_MONTHS_MAX}`);
+  const sub = await lockSub(tx, tenantId);
+  if (!sub || sub.status === 'cancelled')
+    throw new HttpError(409, 'NO_SUBSCRIPTION', 'the store has no plan subscription');
+  if (sub.cancel_at_period_end)
+    throw new HttpError(409, 'PLAN_ENDING', 'the plan is set to end: resume it first');
+  await tx`
+    insert into billing_credits (tenant_id, reason, months, note)
+    select ${tenantId}, 'staff', 1, ${note} from generate_series(1, ${months})
+  `;
+}
 
 /**
  * A card plan's charge just landed (its own tx, after the invoice is marked paid): a free month
@@ -130,7 +176,7 @@ export async function applyCardCreditTx(
   if (inv.kind !== 'period' || !paymentId || inv.amount_cents <= 0) return;
   const credit = (
     await tx<CreditRow[]>`
-      select id, tenant_id, source_tenant_id, months from billing_credits
+      select id, tenant_id, source_tenant_id, months, reason from billing_credits
       where tenant_id = ${tenantId} and status = 'pending'
       order by created_at limit 1 for update skip locked
     `
@@ -153,7 +199,7 @@ export async function applyCardCreditTx(
         action: 'billing.credit',
         entity: 'account',
         entityId: inv.id,
-        summary: `mês grátis por indicação: a cobrança de ${formatBRL(inv.amount_cents)} no cartão foi devolvida`,
+        summary: `mês grátis ${creditWhy([credit])}: a cobrança de ${formatBRL(inv.amount_cents)} no cartão foi devolvida`,
         after: { creditId: credit.id, refundId: refund.id },
       },
     );
@@ -161,6 +207,8 @@ export async function applyCardCreditTx(
       ctx,
       tenantId,
       rewardMessage(
+        [credit],
+        1,
         `A cobrança de ${formatBRL(inv.amount_cents)} deste mês no cartão foi devolvida: este mês é por nossa conta.`,
       ),
       `billing:credit:${credit.id}`,
@@ -171,7 +219,7 @@ export async function applyCardCreditTx(
       tx,
       tenantId,
       'other',
-      `O mês grátis por indicação não foi devolvido no cartão (cobrança ${inv.number}, ${formatBRL(inv.amount_cents)}): o Mercado Pago recusou o estorno. Ele fica para a próxima cobrança, ou devolva pelo Mercado Pago.`,
+      `O mês grátis ${creditWhy([credit])} não foi devolvido no cartão (cobrança ${inv.number}, ${formatBRL(inv.amount_cents)}): o Mercado Pago recusou o estorno. Ele fica para a próxima cobrança, ou devolva pelo Mercado Pago.`,
       `credit-refund:${credit.id}`,
     );
   }
@@ -208,7 +256,7 @@ export async function applyPixCredits(sql: Sql, base: Omit<BillingCtx, 'later'>,
           )
             return;
           const credits = await tx<CreditRow[]>`
-            select id, tenant_id, source_tenant_id, months from billing_credits
+            select id, tenant_id, source_tenant_id, months, reason from billing_credits
             where tenant_id = ${tenant_id} and status = 'pending'
             order by created_at for update
           `;
@@ -246,7 +294,7 @@ export async function applyPixCredits(sql: Sql, base: Omit<BillingCtx, 'later'>,
               action: 'billing.credit',
               entity: 'account',
               entityId: tenant_id,
-              summary: `${months === 1 ? 'mês grátis' : `${months} meses grátis`} por indicação: a próxima cobrança passou de ${dayMonth(from)} para ${dayMonth(until)}`,
+              summary: `${months === 1 ? 'mês grátis' : `${months} meses grátis`} ${creditWhy(credits)}: a próxima cobrança passou de ${dayMonth(from)} para ${dayMonth(until)}`,
               after: { credits: credits.map((c) => c.id), until: until.toISOString() },
             },
           );
@@ -254,7 +302,11 @@ export async function applyPixCredits(sql: Sql, base: Omit<BillingCtx, 'later'>,
             ctx,
             tenant_id,
             rewardMessage(
-              `${months === 1 ? 'Ganhou um mês grátis' : `Ganhou ${months} meses grátis`}: a próxima cobrança do plano passou para ${dayMonth(until)}.`,
+              credits,
+              months,
+              credits.every((c) => c.reason === 'referral')
+                ? `${months === 1 ? 'Ganhou um mês grátis' : `Ganhou ${months} meses grátis`}: a próxima cobrança do plano passou para ${dayMonth(until)}.`
+                : `A próxima cobrança do plano passou para ${dayMonth(until)}.`,
             ),
             `billing:credit:${credits[0]!.id}`,
           );
@@ -286,7 +338,8 @@ export async function referralSummary(tx: Sql, tenantId: string): Promise<Referr
     `,
     tx<{ status: string; months: number }[]>`
       select status, coalesce(sum(months), 0)::int as months from billing_credits
-      where tenant_id = ${tenantId} and status in ('pending', 'applied') group by status
+      where tenant_id = ${tenantId} and reason = 'referral' and status in ('pending', 'applied')
+      group by status
     `,
     tx<{ code: string; partner_id: string | null; referrer_tenant_id: string | null }[]>`
       select code, partner_id, referrer_tenant_id from store_referrals where tenant_id = ${tenantId}
