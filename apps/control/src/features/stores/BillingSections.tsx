@@ -3,10 +3,12 @@ import { Globe } from 'lucide-react';
 import type { BillingStore, SiteRequestStatus } from '@/lib/api.ts';
 import { fmtDate, fmtDay, fmtMoney } from '@/lib/format.ts';
 import { Fact } from '@/components/common.tsx';
+import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/controls.tsx';
 import { Field, Select, Textarea } from '@/components/ui/input.tsx';
 import { SiteTaskCard } from '@/features/sites/SiteTaskCard.tsx';
+import { monthsLabel, StoreBillingActions } from './StoreBillingActions.tsx';
 import {
   DOMAIN_STATUS,
   METHOD_LABEL,
@@ -34,7 +36,14 @@ function Billing({ s }: { s: BillingStore }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-3">
         <Fact label="plano">{s.plan.name}</Fact>
         <Fact label="status">
-          {sub ? <Tag map={SUB_STATUS} value={sub.status} /> : 'sem assinatura'}
+          {sub ? (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              <Tag map={SUB_STATUS} value={sub.status} />
+              {sub.cancelAtPeriodEnd && <Badge variant="bad">cancelando</Badge>}
+            </span>
+          ) : (
+            'sem assinatura'
+          )}
         </Fact>
         <Fact label="forma de pagamento">
           {sub ? (METHOD_LABEL[sub.method] ?? sub.method) : '—'}
@@ -54,8 +63,14 @@ function Billing({ s }: { s: BillingStore }) {
           <Tag map={MP_STATUS} value={s.mercadoPago} empty="não conectado" />
         </Fact>
         <Fact label="criada">{fmtDate(s.createdAt)}</Fact>
+        {!!s.freeMonthsPending && (
+          <Fact label="meses grátis a aplicar">
+            <span className="tnum">{monthsLabel(s.freeMonthsPending)}</span>
+          </Fact>
+        )}
       </div>
       {s.openInvoice ? <OpenInvoice s={s} inv={s.openInvoice} /> : null}
+      <StoreBillingActions s={s} />
     </SheetSection>
   );
 }
