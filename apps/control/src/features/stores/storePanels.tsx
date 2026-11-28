@@ -1,13 +1,14 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, MessageSquarePlus } from 'lucide-react';
 import type { CustomerDetail, StoreWhatsappState } from '@/lib/api.ts';
 import { fmtDate, fmtDateTime, fmtMoney, rel } from '@/lib/format.ts';
 import { DataList, type Column } from '@/components/DataList.tsx';
 import { Fact } from '@/components/common.tsx';
-import { buttonVariants } from '@/components/ui/button.tsx';
+import { Button, buttonVariants } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { SheetSection, Tag } from './bits.tsx';
+import { AiCreditsSheet } from './AiCreditsSheet.tsx';
 import { AiMeter } from './fleetBits.tsx';
 
 type Variant = 'default' | 'warn' | 'bad' | 'live';
@@ -69,15 +70,25 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 
 export function AiPanel({ d }: { d: CustomerDetail }) {
   const ai = d.ai;
+  const [give, setGive] = useState(false);
   return (
     <Panel
       title="Vendedor (IA)"
       actions={
-        <Link to="/ia" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
-          uso de IA
-        </Link>
+        <>
+          <Link to="/ia" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+            uso de IA
+          </Link>
+          {ai.included && (
+            <Button variant="outline" size="sm" onClick={() => setGive(true)}>
+              <MessageSquarePlus />
+              dar conversas
+            </Button>
+          )}
+        </>
       }
     >
+      {give && <AiCreditsSheet d={d} onClose={() => setGive(false)} />}
       {!ai.included ? (
         <p className="text-sm text-muted-foreground">o plano desta loja não inclui o Vendedor</p>
       ) : (

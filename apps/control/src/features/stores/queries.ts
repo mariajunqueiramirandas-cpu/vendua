@@ -8,6 +8,8 @@ import {
   type PlanPatch,
   type SignupCouponPatch,
   type SiteRequestStatus,
+  type StoreBillingAction,
+  type StoreBillingBody,
 } from '@/lib/api.ts';
 import { errorMessage, qk } from '@/lib/query.ts';
 
@@ -84,6 +86,23 @@ export function useMarkInvoicePaid() {
     mutationFn: (id: string) => api.markInvoicePaid(id),
     onSuccess: () => toast.success('pagamento confirmado'),
     onError: (e) => toast.error(`não confirmou: ${errorMessage(e)}`),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.billingStores() });
+      void qc.invalidateQueries({ queryKey: qk.customers() });
+    },
+  });
+}
+
+export type StoreBillingCall = {
+  [A in StoreBillingAction]: { action: A; body: StoreBillingBody[A]; key: string };
+}[StoreBillingAction];
+
+/** The team's plan actions on one store (CRM → loja); the sheet keeps one key per confirmation. */
+export function useStoreBilling(tenantId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: StoreBillingCall) =>
+      api.storeBilling(tenantId, v.action, v.body as never, v.key),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.billingStores() });
       void qc.invalidateQueries({ queryKey: qk.customers() });

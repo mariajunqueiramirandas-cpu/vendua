@@ -29,6 +29,8 @@ import {
   chargeFailedMessage,
   dayMonth,
   queueOwners,
+  staffActivatedMessage,
+  staffPlanMessage,
 } from './notices.ts';
 import { formatBRL, planRow, tenantPlan, type PlanRow } from './plans.ts';
 import { PACK_DAYS } from './ai-allowance.ts';
@@ -1005,7 +1007,12 @@ export async function changeSubscription(
   return { before, after: (await lockSub(tx, tenantId))! };
 }
 
-export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: string) {
+export async function cancelSubscription(
+  ctx: BillingCtx,
+  tx: Sql,
+  tenantId: string,
+  by: CancelledBy = 'owner',
+) {
   const sub = await lockSub(tx, tenantId);
   if (!sub || sub.status === 'cancelled')
     throw new HttpError(409, 'NO_SUBSCRIPTION', 'there is no plan subscription to cancel');
@@ -1019,7 +1026,7 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
     await voidUnpaidTx(ctx, tx, tenantId);
     if (sub.method === 'card')
       await viaProvider(() => stopPreapproval(ctx, sub.provider_subscription_id, 'cancelled'));
-    await noticeCancelled(ctx, tx, sub, false);
+    await noticeCancelled(ctx, tx, sub, false, by);
   } else if (!sub.cancel_at_period_end) {
     await tx`
       update subscriptions set cancel_at_period_end = true, updated_at = now()
@@ -1033,7 +1040,7 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
     // paused, not cancelled: "voltar atrás" before the period ends re-authorizes the same card
     if (sub.method === 'card')
       await viaProvider(() => stopPreapproval(ctx, sub.provider_subscription_id, 'paused'));
-    await noticeCancelScheduled(ctx, tx, sub);
+    await noticeCancelScheduled(ctx, tx, sub, by);
   }
   await emitAdminTx(tx, tenantId, 'billing');
   return sub;
@@ -1052,6 +1059,131 @@ export async function resumeSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
   else await viaProvider(() => ensureRenewal(ctx, tx, next, now));
   await emitAdminTx(tx, tenantId, 'billing');
   return sub;
+}
+
+// ── the team, from the CRM ──────────────────────────────────────────────────
+
+/**
+ * The team moves a store to `plan` now, up or down, with nothing charged apart: the plan applies
+ * at once and the next charge is already at its price (a courtesy until the renewal). An upgrade
+ * or downgrade the owner left waiting gives way. Any catalog plan, open or closed to signups.
+ */
+export async function staffChangePlan(
+  ctx: BillingCtx,
+  tx: Sql,
+  tenantId: string,
+  plan: PlanRow,
+  now: Date,
+): Promise<{ before: SubRow; after: SubRow }> {
+  const sub = await lockSub(tx, tenantId);
+  if (!sub || sub.status === 'cancelled')
+    throw new HttpError(409, 'NO_SUBSCRIPTION', 'the store has no plan subscription');
+  if (plan.id === sub.plan_id && !sub.pending_plan_id && !sub.upgrade_plan_id)
+    throw new HttpError(409, 'SAME_PLAN', 'the store is already on this plan', {
+      field: 'planId',
+    });
+  const current = await planOrThrow(tx, sub.plan_id);
+  await cancelPendingUpgrade(ctx, tx, sub);
+  await tx`
+    update subscriptions set plan_id = ${plan.id}, pending_plan_id = null, pending_plan_at = null,
+      updated_at = now()
+    where tenant_id = ${tenantId}
+  `;
+  // a pilot store waiting for its first payment keeps its plan until then, as in startSubscription
+  if (
+    sub.status !== 'pending' ||
+    (await planRow(tx, (await currentTenantPlan(tx, tenantId)) ?? ''))
+  )
+    await setTenantPlan(tx, tenantId, plan.id);
+  const after = (await lockSub(tx, tenantId))!;
+  await repriceAhead(ctx, tx, after, plan, now);
+  // paid already: the site comes now; an unpaid store gets it with its first payment
+  if (
+    (sub.status === 'active' || sub.status === 'past_due') &&
+    plan.features?.customSite &&
+    !current.features?.customSite
+  )
+    await openSiteRequest(ctx, tx, tenantId);
+  await emitAdminTx(tx, tenantId, 'billing');
+  queueOwners(
+    ctx,
+    tenantId,
+    staffPlanMessage(plan.name, ctx.origin),
+    `billing:staff_plan:${tenantId}:${plan.id}:${now.getTime()}`,
+  );
+  // last: a rollback after it would leave Mercado Pago charging an amount nobody sees (the
+  // jobs' price sync puts it back if one does)
+  await setChargeAmount(ctx, tx, after, plan);
+  return { before: sub, after: (await lockSub(tx, tenantId))! };
+}
+
+/** the most months the team opens a plan for at once */
+export const STAFF_ACTIVATE_MONTHS_MAX = 12;
+
+/**
+ * The team opens a store's plan as if it were paid, for `months` from now, with nothing charged:
+ * a trial ends now, and a store waiting for its first payment opens. The first charge falls on
+ * the period's end, by Pix like any renewal. An assinatura already set up would charge on its own
+ * dates, so it stops; the owner can authorize a card again in Conta, from the period's end on.
+ * No invoice is paid: the team hears no payment, and a referral's or partner's reward waits for a
+ * real one.
+ */
+export async function staffActivateFree(
+  ctx: BillingCtx,
+  tx: Sql,
+  tenantId: string,
+  months: number,
+  now: Date,
+): Promise<{ plan: PlanRow; until: Date; before: SubRow }> {
+  if (!Number.isInteger(months) || months < 1 || months > STAFF_ACTIVATE_MONTHS_MAX)
+    throw new RangeError(`months must be 1–${STAFF_ACTIVATE_MONTHS_MAX}`);
+  const sub = await lockSub(tx, tenantId);
+  if (!sub || (sub.status !== 'trialing' && sub.status !== 'pending'))
+    throw new HttpError(
+      409,
+      'NOT_UNPAID',
+      'only a store in its trial or waiting for its first payment opens this way',
+    );
+  if (sub.cancel_at_period_end)
+    throw new HttpError(409, 'PLAN_ENDING', 'the plan is set to end: resume it first');
+  const plan = await planOrThrow(tx, chargePlanId(sub));
+  // the first charge's invoice (and its Pix) was for a period that no longer starts there
+  const voided = await tx<{ method: string; provider_payment_id: string | null }[]>`
+    update invoices set status = 'void'
+    where tenant_id = ${tenantId} and kind = 'period' and status in ('open', 'failed')
+    returning method, provider_payment_id
+  `;
+  for (const v of voided)
+    if (v.method === 'pix' && v.provider_payment_id) dropPix(ctx)(v.provider_payment_id);
+  const preapproval = sub.method === 'card' ? sub.provider_subscription_id : null;
+  const day = tx`extract(day from ${now}::timestamptz at time zone 'America/Sao_Paulo')::int`;
+  const until = (
+    await tx<{ until: Date }[]>`
+      update subscriptions set status = 'active', plan_id = ${plan.id}, pending_plan_id = null,
+        pending_plan_at = null, method = 'pix', provider_subscription_id = null,
+        checkout_url = null, cancel_at_period_end = false,
+        current_period_start = ${now},
+        current_period_end = billing_month_after(${now}, ${day}, ${months}), billing_day = ${day},
+        -- the trial ends now (kept: the owner's phone has had its trial)
+        trial_ends_at = case when status = 'trialing' then ${now}::timestamptz else trial_ends_at end,
+        updated_at = now(), status_changed_at = now()
+      where tenant_id = ${tenantId}
+      returning current_period_end as until
+    `
+  )[0]!.until;
+  await setTenantPlan(tx, tenantId, plan.id);
+  await releaseHold(tx, tenantId);
+  if (plan.features?.customSite) await openSiteRequest(ctx, tx, tenantId);
+  await emitAdminTx(tx, tenantId, 'billing');
+  queueOwners(
+    ctx,
+    tenantId,
+    staffActivatedMessage(plan.name, until, ctx.origin),
+    `billing:staff_activate:${tenantId}:${until.toISOString()}`,
+  );
+  // last: no rollback brings a cancelled card back
+  if (preapproval) await viaProvider(() => stopPreapproval(ctx, preapproval, 'cancelled'));
+  return { plan, until, before: sub };
 }
 
 // ── money landed ────────────────────────────────────────────────────────────
@@ -1465,12 +1597,14 @@ export async function syncPreapproval(
 
 export { stopPreapproval };
 
-type CancelledBy = 'owner' | 'mercadopago';
+type CancelledBy = 'owner' | 'mercadopago' | 'staff';
 
 const cancelledBy = (by: CancelledBy, planName: string) =>
   by === 'owner'
     ? `O lojista cancelou o plano ${planName}`
-    : `A assinatura do plano ${planName} foi cancelada no Mercado Pago`;
+    : by === 'staff'
+      ? `A equipe cancelou o plano ${planName} pelo CRM`
+      : `A assinatura do plano ${planName} foi cancelada no Mercado Pago`;
 
 // The team's event is keyed by the period (or, before any payment, the subscription's start),
 // so a replayed webhook or a re-run sweep never repeats it.
