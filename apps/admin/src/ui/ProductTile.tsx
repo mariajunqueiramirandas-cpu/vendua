@@ -91,7 +91,11 @@ export function ProductTile({
               <Stack className="size-3.5" /> kit
             </Badge>
           ) : null}
-          {p.requiresPreorder ? <Badge>encomenda</Badge> : null}
+          {p.requiresPreorder ? (
+            <Badge>encomenda</Badge>
+          ) : p.preorderWhenSoldOut && p.stockQuantity === 0 ? (
+            <Badge>por encomenda</Badge>
+          ) : null}
           {offHours ? (
             <Badge tone="warn">
               <Clock className="size-3.5" /> fora do horário

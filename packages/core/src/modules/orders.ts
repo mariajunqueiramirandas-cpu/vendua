@@ -107,6 +107,7 @@ export interface OrderRow {
   coupon_code: string | null;
   notes: string | null;
   scheduled_for: string | null;
+  delivery_vehicle?: 'moto' | 'car' | null;
   placed_at: string;
   updated_at: string;
   /** bumps on payment changes (migration 0054) */
@@ -136,6 +137,8 @@ export interface OrderView {
   items: OrderItemView[];
   notes: string | null;
   scheduledFor: string | null;
+  /** 0159: the vehicle the delivery needs (its items'); null = the usual one */
+  deliveryVehicle?: 'moto' | 'car' | null;
   subtotalCents: number;
   deliveryFeeCents: number;
   discountCents: number;
@@ -196,7 +199,7 @@ function orderViewRows(tx: Sql, tenantId: string, where: ReturnType<Sql>) {
   return tx<OrderViewRow[]>`
     select o.id, o.number, o.state, o.customer, o.delivery, o.payment, o.subtotal_cents,
            o.delivery_fee_cents, o.discount_cents, o.payment_adjustment_cents, o.total_cents,
-           o.coupon_code, o.notes, o.scheduled_for::text as scheduled_for,
+           o.coupon_code, o.notes, o.scheduled_for::text as scheduled_for, o.delivery_vehicle,
            o.placed_at, o.updated_at, o.rev,
            (select coalesce(json_agg(e order by e.at, e.id), '[]')
             from (select id, at, from_state, to_state, actor, meta from order_events
@@ -267,6 +270,7 @@ function orderViewOf(order: OrderViewRow): OrderView {
     })),
     notes: order.notes,
     scheduledFor: order.scheduled_for,
+    deliveryVehicle: order.delivery_vehicle ?? null,
     subtotalCents: order.subtotal_cents,
     deliveryFeeCents: order.delivery_fee_cents,
     discountCents: order.discount_cents,

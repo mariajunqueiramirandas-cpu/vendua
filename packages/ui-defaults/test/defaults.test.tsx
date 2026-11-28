@@ -41,6 +41,17 @@ describe('slot defaults', () => {
     expect(r('system.Notice')).toContain('data-vendua="notice"');
   });
 
+  test('the summary names the vehicle a delivery goes by (Kernel 1.32)', () => {
+    const Summary = SLOT_DEFAULTS['checkout.Summary'];
+    const fx = SLOT_FIXTURES['checkout.Summary'];
+    const delivery = { ...fx.cart.delivery, mode: 'delivery' as const, neighborhood: 'Centro' };
+    const at = (vehicle: 'moto' | 'car' | null) =>
+      tags(renderToStaticMarkup(<Summary {...fx} cart={{ ...fx.cart, delivery, vehicle }} />));
+    expect(at('car')).toContain('Entrega de carro · Centro');
+    expect(at('moto')).toContain('Entrega de moto · Centro');
+    expect(at(null)).toContain('Entrega · Centro');
+  });
+
   test('the card form renders the Kernel’s fields once; card copy never sends the shopper away', () => {
     const Card = SLOT_DEFAULTS['checkout.CardPayment'];
     const fx = SLOT_FIXTURES['checkout.CardPayment'];

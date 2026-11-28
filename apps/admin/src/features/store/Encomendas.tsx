@@ -1,19 +1,33 @@
 import {
   CalendarBlank,
   CalendarCheck,
+  CalendarX,
   ChatCircleText,
   Clock,
   Confetti,
   HandCoins,
+  X,
 } from '@phosphor-icons/react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import type { PayMethod, StoreView } from '../../lib/api.ts';
-import { money } from '../../lib/format.ts';
+import { dateShort, isoDate, money } from '../../lib/format.ts';
+import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
+import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { Chips, Field, MoneyField, SavedStepper, TextArea, Toggle } from '../../ui/fields.tsx';
+import {
+  Chips,
+  Field,
+  MoneyField,
+  SavedStepper,
+  TextArea,
+  TextInput,
+  Toggle,
+} from '../../ui/fields.tsx';
 import { LinkList, LinkRow } from '../../ui/LinkRow.tsx';
 import { METHOD_LABEL } from '../../ui/PaymentChip.tsx';
+import { toast } from '../../ui/Toast.tsx';
 
 // Loja › Encomendas (Festa calculada F0, 0126): how far ahead, how they're paid, how many a day
 // the kitchen takes, and the reminder the day before. Core enforces each one; this only sets them.
@@ -25,6 +39,11 @@ const PRE_METHODS: PayMethod[] = ['pix', 'card_on_delivery', 'cash', 'meal_vouch
 /** the share a sinal starts at when the owner turns it on */
 const DEFAULT_SINAL_BPS = 5000;
 const POLICY_MAX = 600;
+/** Core keeps at most this many (preorder.ts BLOCKED_DATES_MAX) */
+const BLOCKED_MAX = 120;
+const DAY_MS = 86_400_000;
+const addDays = (iso: string, n: number) =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
 export function Encomendas({
   s,
@@ -165,6 +184,7 @@ export function Encomendas({
           </div>
         </Card>
       </Section>
+      <BlockedDates s={s} run={run} />
       <Section id="ver-tambem" title="Ver também">
         <LinkList label="ver também">
           <LinkRow
@@ -276,5 +296,121 @@ function Sinal({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** 0159: dates the calendar leaves out — the store stays open on them, it just takes no date. */
+function BlockedDates({
+  s,
+  run,
+}: {
+  s: StoreView;
+  run: (b: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const qc = useQueryClient();
+  const today = isoDate(new Date(), s.hours.timezone);
+  const last = addDays(today, s.preorder.maxDays);
+  const dates = s.preorder.blockedDates ?? [];
+  const [date, setDate] = useState('');
+  // every change goes from what Core holds now, so an undo never brings back a stale list
+  const latest = () =>
+    qc.getQueryData<StoreView>(qk.store)?.preorder.blockedDates ?? s.preorder.blockedDates ?? [];
+  const save = (next: string[]) => run({ preorder: { blockedDates: next } });
+  const taken = dates.includes(date);
+  const problem = !date
+    ? null
+    : date < today
+      ? 'Escolha hoje ou um dia depois.'
+      : date > last
+        ? `O calendário só vai até ${dateShort(last)} (Até quantos dias à frente).`
+        : taken
+          ? 'Essa data já está bloqueada.'
+          : dates.length >= BLOCKED_MAX
+            ? `Até ${BLOCKED_MAX} datas.`
+            : null;
+  const add = () => {
+    if (!date || problem) return;
+    const day = date;
+    void save([...latest().filter((d) => d !== day), day]).then(
+      () => {
+        setDate('');
+        toast(`${dateShort(day)}: bloqueado`, {
+          undo: () => void save(latest().filter((d) => d !== day)).catch(() => undefined),
+        });
+      },
+      () => undefined,
+    );
+  };
+  const remove = (day: string) =>
+    void save(latest().filter((d) => d !== day)).then(
+      () =>
+        toast(`${dateShort(day)}: liberado`, {
+          undo: () => void save([...latest().filter((d) => d !== day), day]).catch(() => undefined),
+        }),
+      () => undefined,
+    );
+  return (
+    <Section
+      id="datas-bloqueadas"
+      title="Datas bloqueadas"
+      hint="Dias em que a loja não entrega nem separa encomenda. Eles somem do calendário do cliente."
+    >
+      <Card className="space-y-4 p-5">
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            add();
+          }}
+        >
+          <Field label="Bloquear uma data" htmlFor="bd-date" className="min-w-0 flex-1 basis-52">
+            <TextInput
+              id="bd-date"
+              type="date"
+              min={today}
+              max={last}
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </Field>
+          <Button
+            type="submit"
+            variant="secondary"
+            icon={<CalendarX />}
+            disabled={!date || !!problem}
+          >
+            bloquear
+          </Button>
+          {problem ? (
+            <p className="t-caption basis-full text-danger" role="alert">
+              {problem}
+            </p>
+          ) : null}
+        </form>
+        {dates.length ? (
+          <ul className="flex flex-wrap gap-2" aria-label="datas bloqueadas">
+            {dates.map((d) => (
+              <li
+                key={d}
+                className="t-label inline-flex min-h-11 items-center gap-1 rounded-full bg-surface pl-4 pr-1 ring-1 ring-line-strong"
+              >
+                <span className="first-letter:uppercase">{dateShort(d)}</span>
+                <IconButton label={`liberar ${dateShort(d)}`} size="sm" onClick={() => remove(d)}>
+                  <X />
+                </IconButton>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="t-caption text-muted">
+            Nenhuma data bloqueada: o cliente escolhe qualquer dia em que a loja abre.
+          </p>
+        )}
+        <p className="t-caption border-t border-line pt-3 text-muted">
+          A loja continua aberta nesses dias para pedidos de agora. Para fechar o dia inteiro, use
+          Feriados e dias especiais, em Horários.
+        </p>
+      </Card>
+    </Section>
   );
 }

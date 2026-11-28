@@ -34,11 +34,12 @@ import {
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import { datesWithRoomTx, orderPartyTx, type CartParty } from './encomenda-capacity.ts';
 import { cartPlanTx, dayOfWeek, type CartPlan } from './shopper-plan-base.ts';
-import { scheduleView, type ScheduleView } from './preorder.ts';
+import { preorderPastStock, scheduleView, type ScheduleView } from './preorder.ts';
 import { assertAddonStock, assertStock, modifierDemand, stockDemand } from './stock.ts';
 import { deliveryWindow, freioConfig, promiseZoneOf } from './freio.ts';
 import { newSinal, sinalApplies, sinalRule } from './sinal.ts';
-import { pickupMinOrderCents, type StoreSettingsRow } from './store.ts';
+import { deriveStatus, pickupMinOrderCents, type StoreSettingsRow } from './store.ts';
+import { vehicleFeeCents, vehicleFor, type Vehicle } from './vehicles.ts';
 
 /**
  * Server-side carts (non-negotiable — docs/architecture/01-core.md): all
@@ -108,6 +109,9 @@ interface ItemRow {
   stock_quantity: number | null;
   requires_preorder: boolean;
   preorder_lead_days: number;
+  /** 0159 */
+  preorder_when_sold_out?: boolean;
+  delivery_vehicle?: Vehicle | null;
   image_url: string | null;
   availability_schedule: AvailabilitySchedule | null;
 }
@@ -148,8 +152,14 @@ export interface PricedItem {
   lineTotalCents: number;
   imageUrl: string | null;
   stockQuantity: number | null;
+  /** an encomenda line: the product always is one, or (0159) it is sold past its stock and the
+   *  stock can't cover the cart, or the store is closed */
   requiresPreorder: boolean;
   preorderLeadDays: number;
+  /** 0159: from stock without a date while it lasts; by encomenda past it or with a date */
+  preorderWhenSoldOut?: boolean;
+  /** 0159: the vehicle the line needs to travel (its own or a kit pick's); null = any */
+  deliveryVehicle?: Vehicle | null;
 }
 
 export interface AppliedCoupon {
@@ -185,6 +195,8 @@ export interface CartTotals {
    *  Pix to lock the date), and the rest; absent when the store asks for none */
   depositCents?: number;
   balanceCents?: number;
+  /** 0159: the part of deliveryFeeCents the cart's vehicle adds; 0 without one */
+  vehicleFeeCents?: number;
 }
 
 export interface CartDelivery {
@@ -227,6 +239,8 @@ export interface CartView {
   /** Festa calculada F2 (0128): the sinal asked of this cart as an encomenda — its share and the
    *  store's own cancellation words; the amounts are in `totals` */
   sinal?: { percent: number; policy: string | null } | null;
+  /** 0159: the vehicle a delivery of these items needs (vehicles.ts); null = the usual one */
+  vehicle?: Vehicle | null;
 }
 
 export interface GroupPicks {
@@ -568,7 +582,8 @@ function loadItemRows(tx: Sql, tenantId: string, cartId: string) {
     select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.modifier_qty, ci.note, ci.unit_price_cents,
            ci.modifier_snapshot, ci.combo_selections, ci.combo_snapshot,
            p.name, p.slug, p.status as product_status, p.stock_quantity,
-           p.requires_preorder, p.preorder_lead_days, p.availability_schedule,
+           p.requires_preorder, p.preorder_lead_days, p.preorder_when_sold_out, p.delivery_vehicle,
+           p.availability_schedule,
            (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
@@ -581,6 +596,8 @@ async function priceItems(
   tenantId: string,
   items: readonly ItemRow[],
   tz: string,
+  /** the store is closed: nothing goes out now, so a line sold past its stock is an encomenda */
+  closed = false,
 ): Promise<PricedItem[]> {
   if (items.length === 0) return [];
   // live read is only for status — names/prices come from the add-time
@@ -605,20 +622,29 @@ async function priceItems(
             status: string;
             stock_quantity: number | null;
             availability_schedule: AvailabilitySchedule | null;
+            delivery_vehicle: Vehicle | null;
           }[]
         >`
-          select id, status, stock_quantity, availability_schedule from products
+          select id, status, stock_quantity, availability_schedule, delivery_vehicle from products
           where tenant_id = ${tenantId} and id = any(${pickIds}::uuid[])
         `
       : [],
   ]);
   const liveMod = new Map(mods.map((m) => [m.id, m.status]));
   const now = new Date();
+  // 0159: past its stock a product is made to order — never sold out, and the whole cart's demand
+  // (kit picks included) against the stock decides whether its lines are encomendas
+  const demand = stockDemand(
+    items.map((i) => ({ productId: i.product_id, qty: i.qty, combo: i.combo_selections })),
+  );
+  const short = (i: ItemRow) =>
+    closed || (i.stock_quantity !== null && (demand.get(i.product_id) ?? 0) > i.stock_quantity);
   const status = (i: ItemRow) => {
-    const s = liveStatus(i.product_status, i.stock_quantity);
+    const s = liveStatus(i.product_status, preorderPastStock(i) ? null : i.stock_quantity);
     return s === 'active' && !scheduleOpen(i.availability_schedule, now, tz) ? 'sold_out' : s;
   };
   const pickStock = new Map(picks.map((p) => [p.id, p.stock_quantity]));
+  const pickVehicle = new Map(picks.map((p) => [p.id, p.delivery_vehicle]));
   const livePick = new Map(
     picks.map((p) => {
       const st = liveStatus(p.status, p.stock_quantity);
@@ -654,9 +680,14 @@ async function priceItems(
     note: item.note || null,
     lineTotalCents: item.unit_price_cents * item.qty,
     imageUrl: item.image_url,
-    stockQuantity: item.stock_quantity,
-    requiresPreorder: item.requires_preorder,
+    stockQuantity: preorderPastStock(item) ? null : item.stock_quantity,
+    requiresPreorder: item.requires_preorder || (preorderPastStock(item) && short(item)),
     preorderLeadDays: item.preorder_lead_days,
+    preorderWhenSoldOut: preorderPastStock(item),
+    deliveryVehicle: vehicleFor([
+      item.delivery_vehicle,
+      ...item.combo_snapshot.map((c) => pickVehicle.get(c.productId)),
+    ]),
   }));
 }
 
@@ -800,8 +831,17 @@ export async function loadCartView(
   ]);
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
   const delivery = opts.delivery ?? cart.delivery;
+  const tz = settings?.hours?.timezone || 'America/Sao_Paulo';
+  const closed =
+    deriveStatus(
+      { timezone: tz, windows: settings?.hours?.windows ?? [] },
+      settings?.status_override ?? null,
+      settings?.resumes_at ?? null,
+      now,
+      settings?.special_days ?? [],
+    ).status === 'closed';
   const [items, couponRow] = await Promise.all([
-    priceItems(tx, tenantId, rows, settings?.hours?.timezone || 'America/Sao_Paulo'),
+    priceItems(tx, tenantId, rows, tz, closed),
     cart.coupon_code ? loadCoupon(tx, tenantId, cart.coupon_code) : null,
   ]);
   const subtotal = items.reduce((s, i) => s + i.lineTotalCents, 0);
@@ -820,6 +860,9 @@ export async function loadCartView(
         ? pickupMin
         : storeMin;
   let match: ZoneMatch<ZoneRow | DistanceZone> | null = null;
+  // 0159: the vehicle the items need adds its extra to a matched delivery, past free delivery
+  const vehicle = vehicleFor(items.map((i) => i.deliveryVehicle));
+  let vehicleFee = 0;
   if (delivery?.mode === 'delivery') {
     match = resolveDelivery(
       zones,
@@ -831,7 +874,8 @@ export async function loadCartView(
       deliveryPricing(settings, opts.route ?? cart.delivery_route),
     );
     if (match) {
-      deliveryFee = effectiveFee(match, subtotal);
+      vehicleFee = vehicleFeeCents(settings?.vehicle_fees, vehicle);
+      deliveryFee = effectiveFee(match, subtotal) + vehicleFee;
       effectiveMinOrder = Math.max(effectiveMinOrder, match.zone.min_order_cents);
     }
   }
@@ -863,7 +907,8 @@ export async function loadCartView(
     } else {
       const out = evaluateCoupon(row, {
         subtotalCents: subtotal,
-        deliveryFeeCents: deliveryFee,
+        // a free-delivery coupon waives the trip, not the vehicle's extra
+        deliveryFeeCents: deliveryFee - vehicleFee,
         usage: await couponUsage(tx, tenantId, row.id),
         now,
       });
@@ -887,6 +932,7 @@ export async function loadCartView(
       preorder_payment_methods: settings?.preorder_payment_methods ?? null,
       preorder_max_days: settings?.preorder_max_days ?? null,
       special_days: settings?.special_days ?? [],
+      blocked_dates: settings?.blocked_dates ?? [],
     },
     now,
   );
@@ -915,9 +961,11 @@ export async function loadCartView(
     deliveryFee,
     effectiveMinOrder,
     discount,
-    match?.zone.free_delivery_over_cents ?? null,
+    // past the threshold a vehicle's extra is still paid: "entrega grátis" would be untrue
+    vehicleFee ? null : (match?.zone.free_delivery_over_cents ?? null),
     paymentAdjustmentCents(subtotal, itemDiscount, adjustmentFor(settings, opts.paymentMethod)),
   );
+  totals.vehicleFeeCents = vehicleFee;
   // the checkout button waits only while no way of getting the order would take it
   const lowestMin =
     delivery?.mode === 'dine_in'
@@ -961,6 +1009,7 @@ export async function loadCartView(
     party: cart.party ?? null,
     plan,
     sinal: sinal ? { percent: rule!.bps / 100, policy: rule!.policy } : null,
+    vehicle,
   };
 }
 
@@ -1151,7 +1200,10 @@ function loadStockLines(tx: Sql, tenantId: string, cartId: string) {
     }[]
   >`
     select ci.id, ci.product_id, ci.qty, ci.combo_selections, ci.modifier_ids, ci.modifier_qty,
-           p.name, p.stock_quantity
+           p.name,
+           -- 0159: past its stock the line turns into an encomenda, so the stock caps nothing
+           case when p.preorder_when_sold_out and not p.requires_preorder then null
+                else p.stock_quantity end as stock_quantity
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
   `;

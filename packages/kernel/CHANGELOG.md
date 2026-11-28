@@ -3,6 +3,19 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.32.0
+
+Encomendas past stock and delivery vehicles — additive, no storefront edit, no new export.
+
+- `CatalogProduct.preorderWhenSoldOut` (optional): the product is sold from stock and by encomenda
+  once it runs out. Core sends `stockQuantity: null` for it (the stock caps nothing: past it, the
+  cart line is an encomenda) and `requiresPreorder: true` at zero stock, so cards, badges and the
+  closed-store gate need no change.
+- `Cart.vehicle` (optional, `'moto' | 'car' | null`): an item only travels by that vehicle, and a
+  delivery goes by the biggest one. `CartTotals.vehicleFeeCents` is the store's extra for it,
+  already inside `deliveryFeeCents` (free delivery waives the trip, not the extra). The default
+  order summary says "Entrega de carro" / "Entrega de moto".
+
 ## 1.31.0
 
 The store chat's replies to a voice message are said out loud (ADR 0048) — additive, no storefront

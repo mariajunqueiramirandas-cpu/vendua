@@ -160,6 +160,11 @@ function catalog(
       const marks = [
         p.kind === 'combo' && 'combo',
         p.requiresPreorder && `só por encomenda (${p.preorderLeadDays} dias antes)`,
+        !p.requiresPreorder &&
+          p.preorderWhenSoldOut &&
+          `pronta entrega, e por encomenda quando acaba (${p.preorderLeadDays} dias antes)`,
+        p.deliveryVehicle === 'car' && 'entrega só de carro',
+        p.deliveryVehicle === 'moto' && 'entrega só de moto',
         p.liveStatus === 'sold_out' && 'esgotado agora',
         (p.compareAtPriceCents !== null || p.promoSchedule) && 'em promoção',
         !p.imageUrl && 'sem foto',

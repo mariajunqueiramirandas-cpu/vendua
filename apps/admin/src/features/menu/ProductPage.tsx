@@ -4,6 +4,8 @@ import {
   ArrowUp,
   Calculator,
   CalendarBlank,
+  CalendarCheck,
+  Car,
   Clock,
   CookingPot,
   Copy,
@@ -13,6 +15,7 @@ import {
   Leaf,
   ListChecks,
   MagnifyingGlass,
+  Moped,
   Package,
   Plus,
   SealPercent,
@@ -20,6 +23,7 @@ import {
   Stack,
   Trash,
   TrendUp,
+  Truck,
   UsersThree,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -44,6 +48,7 @@ import { qk, useMutation } from '../../lib/query.ts';
 import { platform } from '../../platform/index.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
+import { ChoiceCards } from '../../ui/Choice.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Disclosure } from '../../ui/Disclosure.tsx';
 import { ErrorState, messageOf } from '../../ui/feedback.tsx';
@@ -73,6 +78,7 @@ import { PromoEditor } from './PromoEditor.tsx';
 import { outsideNow } from './schedule.ts';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 import { useHeld } from './held.ts';
+import { useStoreQuery } from '../store/StatusPill.tsx';
 import { mediaUrl } from '../../lib/media.ts';
 
 export default function ProductPage() {
@@ -163,10 +169,19 @@ function Editor({
     onSuccess: (r) => put(r.product),
     onError: (e) => toast.error(messageOf(e)),
   });
+  // a copy here (hidden, to review) or the same item in another category too
+  const [copying, setCopying] = useState(false);
   const dup = useMutation({
-    mutationFn: () => api.duplicateProduct(p.id),
-    onSuccess: (r) => {
+    mutationFn: (to?: { id: string; name: string }) => api.duplicateProduct(p.id, to?.id),
+    onSuccess: (r, to) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
+      setCopying(false);
+      if (to) {
+        toast(`${p.name} copiado para ${to.name}`, {
+          action: { label: 'ver cópia', run: () => nav(`/cardapio/produto/${r.product.id}`) },
+        });
+        return;
+      }
       toast('Cópia criada (escondida até você revisar)');
       nav(`/cardapio/produto/${r.product.id}`);
     },
@@ -195,6 +210,15 @@ function Editor({
   const [pricing, setPricing] = useState(false);
   const a = availability(p);
   const tracked = p.stockQuantity !== null;
+  // 0159: how it's sold — ready, ready and by encomenda once it runs out, or only by encomenda
+  const pastStock = !p.requiresPreorder && !!p.preorderWhenSoldOut;
+  const sale: 'ready' | 'when_sold_out' | 'always' = p.requiresPreorder
+    ? 'always'
+    : pastStock
+      ? 'when_sold_out'
+      : 'ready';
+  // the vehicles' extras, to say what picking one costs the shopper
+  const store = useStoreQuery().data;
   const promo = p.promoSchedule ?? null;
   // the storefront's own summary (Core's): which price form, the badge, the schedule's words
   const sf = p.storefront;
@@ -219,12 +243,7 @@ function Editor({
         subtitle={<SaveMark state={field.state} />}
         actions={
           <>
-            <Button
-              variant="ghost"
-              icon={<Copy />}
-              loading={dup.isPending}
-              onClick={() => dup.mutate()}
-            >
+            <Button variant="ghost" icon={<Copy />} onClick={() => setCopying(true)}>
               duplicar
             </Button>
             <Button
@@ -487,7 +506,11 @@ function Editor({
                 })
               }
               label="Contar estoque"
-              description="Quando chegar a zero, o produto aparece como esgotado sozinho."
+              description={
+                pastStock
+                  ? 'Quando acabar, o produto passa a ser vendido por encomenda.'
+                  : 'Quando chegar a zero, o produto aparece como esgotado sozinho.'
+              }
             />
             {tracked ? (
               <div className="mt-4 space-y-4">
@@ -546,26 +569,107 @@ function Editor({
             summary={
               p.requiresPreorder
                 ? `Só por encomenda, com ${plural(p.preorderLeadDays, 'dia', 'dias')} de antecedência`
-                : 'Pronta entrega'
+                : pastStock
+                  ? `Pronta entrega; acabando, encomenda com ${plural(p.preorderLeadDays, 'dia', 'dias')} de antecedência`
+                  : 'Pronta entrega'
             }
           >
-            <Toggle
-              checked={p.requiresPreorder}
-              onChange={(v) => void patch({ requiresPreorder: v })}
-              label="Só por encomenda"
-              description="O cliente escolhe a data na hora de pedir."
+            <ChoiceCards
+              label="como o produto é vendido"
+              value={sale}
+              onChange={(v) =>
+                void patch({
+                  requiresPreorder: v === 'always',
+                  preorderWhenSoldOut: v === 'when_sold_out',
+                })
+              }
+              options={[
+                {
+                  value: 'ready',
+                  Icon: Package,
+                  title: 'Pronta entrega',
+                  hint: 'Sai na hora. O cliente pode marcar uma data, se quiser.',
+                },
+                {
+                  value: 'when_sold_out',
+                  Icon: CalendarCheck,
+                  title: 'Pronta entrega e encomenda',
+                  hint: 'Enquanto tem estoque, sai na hora. Quando acaba, ou se o cliente marca uma data, vira encomenda.',
+                },
+                {
+                  value: 'always',
+                  Icon: CalendarBlank,
+                  title: 'Só por encomenda',
+                  hint: 'O cliente sempre escolhe a data na hora de pedir.',
+                },
+              ]}
             />
-            {p.requiresPreorder ? (
-              <Field label="Antecedência mínima" className="mt-4">
+            {sale === 'when_sold_out' && !tracked ? (
+              <p className="t-caption mt-3 text-muted">
+                Ligue <strong className="font-semibold text-ink">Contar estoque</strong>, em
+                Estoque, para a loja saber quando acabou. Sem contar, só vira encomenda com data
+                marcada ou com a loja fechada.
+              </p>
+            ) : null}
+            {sale !== 'ready' ? (
+              <Field
+                label="Antecedência mínima"
+                helper={
+                  sale === 'when_sold_out' ? 'Vale quando ele sai como encomenda.' : undefined
+                }
+                className="mt-4"
+              >
                 <SavedStepper
                   label="dias de antecedência"
                   value={p.preorderLeadDays}
                   max={60}
-                  suffix=" dias"
+                  suffix={p.preorderLeadDays === 1 ? ' dia' : ' dias'}
                   onSave={(v) => patch({ preorderLeadDays: v })}
                 />
               </Field>
             ) : null}
+          </Disclosure>
+
+          <Disclosure
+            title="Transporte"
+            icon={<Truck />}
+            summary={
+              p.deliveryVehicle === 'car'
+                ? 'Só vai de carro'
+                : p.deliveryVehicle === 'moto'
+                  ? 'Só vai de moto'
+                  : 'Vai do jeito de sempre'
+            }
+          >
+            <ChoiceCards
+              label="como o produto viaja"
+              value={p.deliveryVehicle ?? 'any'}
+              onChange={(v) => void patch({ deliveryVehicle: v === 'any' ? null : v })}
+              options={[
+                {
+                  value: 'any',
+                  Icon: Package,
+                  title: 'Do jeito de sempre',
+                  hint: 'Vai como as outras entregas da loja.',
+                },
+                {
+                  value: 'moto',
+                  Icon: Moped,
+                  title: 'Só de moto',
+                  hint: vehicleHint(store?.vehicleFees?.moto),
+                },
+                {
+                  value: 'car',
+                  Icon: Car,
+                  title: 'Só de carro',
+                  hint: vehicleHint(store?.vehicleFees?.car),
+                },
+              ]}
+            />
+            <p className="t-caption mt-3 text-muted">
+              Um pedido com itens de moto e de carro vai de carro. O acréscimo de cada um fica em
+              Loja › Entrega e retirada.
+            </p>
           </Disclosure>
 
           <Disclosure
@@ -584,9 +688,8 @@ function Editor({
             <Button
               variant="secondary"
               icon={<Copy />}
-              loading={dup.isPending}
               className="md:hidden"
-              onClick={() => dup.mutate()}
+              onClick={() => setCopying(true)}
             >
               duplicar
             </Button>
@@ -606,6 +709,53 @@ function Editor({
         </div>
       </div>
       <PricingSheet product={pricing ? p : null} onClose={() => setPricing(false)} />
+      <Sheet
+        open={copying}
+        onOpenChange={(v) => !dup.isPending && setCopying(v)}
+        title={`Duplicar ${p.name}`}
+      >
+        <div className="grid gap-2 pt-1">
+          <Button
+            variant="secondary"
+            size="lg"
+            block
+            icon={<Copy />}
+            loading={dup.isPending && !dup.variables}
+            disabled={dup.isPending}
+            onClick={() => dup.mutate(undefined)}
+          >
+            uma cópia aqui, para editar
+          </Button>
+          <p className="t-caption px-1 text-muted">
+            Fica em {cats.find((c) => c.id === p.categoryId)?.name ?? 'esta categoria'}, escondida
+            até você revisar.
+          </p>
+          {cats.some((c) => c.id !== p.categoryId) ? (
+            <>
+              <p className="t-label mt-3 px-1">Copiar para outra categoria</p>
+              {cats
+                .filter((c) => c.id !== p.categoryId)
+                .map((c) => (
+                  <Button
+                    key={c.id}
+                    variant="secondary"
+                    size="lg"
+                    block
+                    loading={dup.isPending && dup.variables?.id === c.id}
+                    disabled={dup.isPending}
+                    onClick={() => dup.mutate({ id: c.id, name: c.name })}
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              <p className="t-caption px-1 text-muted">
+                O mesmo produto aparece lá também, com fotos e opções. O estoque de cada um é
+                contado à parte.
+              </p>
+            </>
+          ) : null}
+        </div>
+      </Sheet>
     </PageBody>
   );
 }
@@ -1548,4 +1698,11 @@ function KitEditor({
       </Button>
     </div>
   );
+}
+
+/** what a vehicle adds to the shopper's delivery fee, as the store set it */
+function vehicleHint(cents: number | undefined) {
+  return cents
+    ? `A entrega do pedido custa ${money(cents)} a mais.`
+    : 'Sem acréscimo na entrega. Dá para cobrar um em Loja › Entrega e retirada.';
 }

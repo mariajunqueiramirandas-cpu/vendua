@@ -109,7 +109,11 @@ export function renderOrderTicket(
             : 'NO LOCAL'
           : pickup
             ? 'RETIRADA'
-            : 'ENTREGA',
+            : order.deliveryVehicle === 'car'
+              ? 'ENTREGA DE CARRO'
+              : order.deliveryVehicle === 'moto'
+                ? 'ENTREGA DE MOTO'
+                : 'ENTREGA',
       )
       .bold(false)
       .size(1);

@@ -93,6 +93,8 @@ export interface OrderListRow {
   paymentStatus: string;
   itemCount: number;
   scheduledFor: string | null;
+  /** 0159: moto | car when the delivery needs one */
+  deliveryVehicle: 'moto' | 'car' | null;
 }
 
 export function orderListColumns(tx: Sql) {
@@ -102,7 +104,7 @@ export function orderListColumns(tx: Sql) {
     o.delivery ->> 'neighborhood' as neighborhood,
     o.payment ->> 'method' as "paymentMethod", o.payment ->> 'status' as "paymentStatus",
     (select coalesce(sum(qty), 0)::int from order_items i where i.order_id = o.id) as "itemCount",
-    o.scheduled_for::text as "scheduledFor"
+    o.scheduled_for::text as "scheduledFor", o.delivery_vehicle as "deliveryVehicle"
   `;
 }
 

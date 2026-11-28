@@ -1,9 +1,19 @@
 import { HttpError } from '../platform/http.ts';
-import { localParts } from '../platform/tz.ts';
+import { isCalendarDate, localParts } from '../platform/tz.ts';
 import { deriveStatus, specialDayOn, type SpecialDay, type StoreHours } from './store.ts';
 
 // Encomendas: products that must be ordered N days ahead. Core owns the calendar —
-// which dates are bookable (lead time, open weekdays, special days, horizon) — the Kernel renders it.
+// which dates are bookable (lead time, open weekdays, special days, blocked dates, horizon) — the
+// Kernel renders it.
+// A product can also be an encomenda only past its stock (0159, `preorder_when_sold_out`): an
+// order without a date takes it from stock while the stock covers the cart; with a date, short of
+// stock, or with the store closed, it is made for the date and draws no stock.
+
+/** 0159: sold from stock, and by encomenda once the stock can't cover it */
+export const preorderPastStock = (p: {
+  requires_preorder: boolean;
+  preorder_when_sold_out?: boolean | null;
+}) => !p.requires_preorder && p.preorder_when_sold_out === true;
 
 export interface ScheduleView {
   /** a line in the cart requires a scheduled date */
@@ -22,21 +32,31 @@ function localDate(now: Date, tz: string): { y: number; m: number; d: number } {
 
 const iso = (dt: Date) => dt.toISOString().slice(0, 10);
 
+/** the store's local date (YYYY-MM-DD) at `now` */
+export function storeToday(now: Date, tz: string): string {
+  const { y, m, d } = localDate(now, tz || 'America/Sao_Paulo');
+  return iso(new Date(Date.UTC(y, m - 1, d, 12)));
+}
+
 export function bookableDates(
   hours: StoreHours,
   leadDays: number,
   maxDays: number,
   now: Date,
   special: readonly SpecialDay[] = [],
+  /** dates the store blocked for scheduled orders (0159) */
+  blocked: readonly string[] = [],
 ): string[] {
   const tz = hours.timezone || 'America/Sao_Paulo';
   const { y, m, d } = localDate(now, tz);
   const openDays = new Set(hours.windows.flatMap((w) => w.days));
+  const skip = new Set(blocked);
   const out: string[] = [];
   for (let off = Math.max(0, leadDays); off <= maxDays; off++) {
     // pure calendar arithmetic on the store's local date — UTC noon avoids DST edges
     const dt = new Date(Date.UTC(y, m - 1, d + off, 12));
     const date = iso(dt);
+    if (skip.has(date)) continue;
     // today (no lead time) only while the store still works today: open now, or opening later
     if (off === 0 && hours.windows.length > 0) {
       const s = deriveStatus({ ...hours, timezone: tz }, null, null, now, [...special]);
@@ -57,19 +77,22 @@ export function bookableDates(
 }
 
 export function scheduleView(
-  items: { requiresPreorder: boolean; preorderLeadDays: number }[],
+  items: { requiresPreorder: boolean; preorderLeadDays: number; preorderWhenSoldOut?: boolean }[],
   settings: {
     hours: StoreHours;
     preorder_payment_methods?: string[] | null;
     preorder_max_days?: number | null;
     special_days?: SpecialDay[] | null;
+    blocked_dates?: string[] | null;
   },
   now: Date,
 ): ScheduleView {
-  const pre = items.filter((i) => i.requiresPreorder);
-  const leadDays = pre.reduce((max, i) => Math.max(max, i.preorderLeadDays), 0);
+  // a line sold past its stock needs no date while stock covers it, but a dated order makes it
+  // an encomenda, so its lead time still bounds the dates
+  const lead = items.filter((i) => i.requiresPreorder || i.preorderWhenSoldOut);
+  const leadDays = lead.reduce((max, i) => Math.max(max, i.preorderLeadDays), 0);
   return {
-    required: pre.length > 0,
+    required: items.some((i) => i.requiresPreorder),
     leadDays,
     dates: bookableDates(
       settings.hours,
@@ -77,6 +100,7 @@ export function scheduleView(
       settings.preorder_max_days ?? 30,
       now,
       settings.special_days ?? [],
+      settings.blocked_dates ?? [],
     ),
     paymentMethods: settings.preorder_payment_methods ?? ['pix'],
   };
@@ -108,3 +132,20 @@ export function validateSchedule(
     });
   return scheduledFor;
 }
+
+/** Admin input for `blocked_dates`: calendar dates from the store's today on, deduplicated and
+ *  sorted. Past dates are dropped, so the list never fills with days gone by. */
+export function parseBlockedDates(v: unknown, today: string): string[] {
+  if (!Array.isArray(v) || v.length > BLOCKED_DATES_MAX || !v.every(isCalendarDate))
+    throw new HttpError(
+      422,
+      'BAD_REQUEST',
+      `blockedDates: up to ${BLOCKED_DATES_MAX} YYYY-MM-DD dates`,
+      {
+        field: 'blockedDates',
+      },
+    );
+  return [...new Set(v as string[])].filter((d) => d >= today).sort();
+}
+
+export const BLOCKED_DATES_MAX = 120;

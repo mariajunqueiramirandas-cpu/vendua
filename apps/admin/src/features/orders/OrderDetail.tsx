@@ -2,11 +2,13 @@ import {
   ArrowClockwise,
   ArrowSquareOut,
   CalendarBlank,
+  Car,
   CaretDown,
   CheckCircle,
   ClockClockwise,
   HourglassMedium,
   MapPin,
+  Moped,
   NotePencil,
   Printer,
   Prohibit,
@@ -108,6 +110,22 @@ export function OrderDetail({
         <div className="flex items-center gap-2 rounded-md bg-info-soft px-4 py-3 text-info">
           <CalendarBlank weight="bold" className="size-5" />
           <span className="font-semibold">Encomenda para {dateShort(order.scheduledFor)}</span>
+        </div>
+      ) : null}
+
+      {order.deliveryVehicle && d.mode === 'delivery' ? (
+        <div className="flex items-start gap-2 rounded-md bg-info-soft px-4 py-3 text-info">
+          {order.deliveryVehicle === 'car' ? (
+            <Car weight="bold" className="mt-0.5 size-5 shrink-0" />
+          ) : (
+            <Moped weight="bold" className="mt-0.5 size-5 shrink-0" />
+          )}
+          <span className="min-w-0">
+            <span className="block font-semibold">
+              {order.deliveryVehicle === 'car' ? 'Vai de carro' : 'Vai de moto'}
+            </span>
+            <span className="t-caption block">Um item do pedido só viaja assim.</span>
+          </span>
         </div>
       ) : null}
 
@@ -259,7 +277,11 @@ export function OrderDetail({
           <div className="min-w-0 flex-1">
             <p className="font-semibold">
               {d.mode === 'delivery'
-                ? 'Entrega'
+                ? order.deliveryVehicle === 'car'
+                  ? 'Entrega de carro'
+                  : order.deliveryVehicle === 'moto'
+                    ? 'Entrega de moto'
+                    : 'Entrega'
                 : d.mode === 'dine_in'
                   ? d.table
                     ? `${modeOf(d).label}, consumo no local`
