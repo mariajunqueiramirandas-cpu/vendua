@@ -1716,6 +1716,13 @@ export type DomainStatus = CustomDomainStatus;
 export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT';
 /** an owner record in a zone Venduá hosts. name: '@' or relative ('mail', '_dmarc');
  *  '@' and 'www' A/AAAA/CNAME are Venduá's and refused */
+/** a record found on the domain's DNS that a zone Venduá hosts can't hold: it stops working
+ *  once the nameservers move */
+export interface SkippedDnsRecord {
+  type: string;
+  name: string;
+  value: string;
+}
 export interface DnsRecord {
   type: DnsRecordType;
   name: string;
@@ -3498,9 +3505,13 @@ export const api = {
     send<Account>('POST', '/account/domains', method ? { host, method } : { host }),
   checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
   removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),
-  /** the records Core finds on the domain's current DNS (read-only) */
+  /** the records Core finds on the domain's current DNS (read-only), and the ones a hosted zone
+   *  can't hold (`skipped`; a Core older than the field doesn't send it) */
   discoverDomainRecords: (id: string) =>
-    send<{ records: DnsRecord[] }>('POST', `/account/domains/${id}/discover`),
+    send<{ records: DnsRecord[]; skipped?: SkippedDnsRecord[] }>(
+      'POST',
+      `/account/domains/${id}/discover`,
+    ),
   saveDomainRecords: (id: string, records: DnsRecord[], confirm?: boolean) =>
     send<Account>(
       'PUT',

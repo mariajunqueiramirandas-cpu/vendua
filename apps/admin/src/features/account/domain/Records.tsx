@@ -4,10 +4,17 @@ import {
   MagnifyingGlass,
   Plus,
   Trash,
+  Warning,
   WarningOctagon,
 } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
-import { api, ApiError, type DnsRecord, type DnsRecordType } from '../../../lib/api.ts';
+import {
+  api,
+  ApiError,
+  type DnsRecord,
+  type DnsRecordType,
+  type SkippedDnsRecord,
+} from '../../../lib/api.ts';
 import { plural } from '../../../lib/format.ts';
 import { useMutation } from '../../../lib/query.ts';
 import { Button, IconButton } from '../../../ui/Button.tsx';
@@ -166,6 +173,8 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
   const [shown, setShown] = useState(false);
   const [served, setServed] = useState<Record<number, RowErr>>({});
   const [added, setAdded] = useState<number | null>(null);
+  // found on the domain but not something a hosted zone can hold
+  const [skipped, setSkipped] = useState<SkippedDnsRecord[]>([]);
 
   useEffect(() => {
     if (!dirty) {
@@ -181,8 +190,9 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
   };
   const discover = useMutation({
     mutationFn: () => api.discoverDomainRecords(d.id),
-    onSuccess: ({ records }) => {
+    onSuccess: ({ records, skipped: cant = [] }) => {
       setSearched(true);
+      setSkipped(cant);
       const fresh = records.filter((f) => !rows.some((r) => same(r, f)));
       if (fresh.length) {
         setRows((rs) => [...rs, ...fresh.map(rowOf)]);
@@ -191,7 +201,9 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
       toast(
         records.length
           ? `Achamos ${plural(records.length, 'registro', 'registros')}`
-          : 'Não achamos registros. Se o domínio tem e-mail, adicione os dele.',
+          : cant.length
+            ? 'Achamos registros, mas nenhum dá para copiar.'
+            : 'Não achamos registros. Se o domínio tem e-mail, adicione os dele.',
         { tone: records.length ? 'ok' : 'info' },
       );
     },
@@ -320,6 +332,34 @@ export function RecordsEditor({ d, confirm }: { d: Domain; confirm: boolean }) {
         <p className="t-body text-muted">
           Nenhum registro. Se o domínio tem e-mail, adicione os dele.
         </p>
+      ) : null}
+
+      {skipped.length ? (
+        <div className="space-y-2">
+          <Callout
+            tone="warning"
+            icon={Warning}
+            title={
+              skipped.length === 1
+                ? 'Não dá para copiar este registro'
+                : `Não dá para copiar estes ${skipped.length} registros`
+            }
+          >
+            {skipped.length === 1 ? 'Ele para' : 'Eles param'} de funcionar quando você trocar os
+            servidores. Se {skipped.length === 1 ? 'for' : 'forem'} do seu e-mail, fale com o
+            suporte antes de confirmar.
+          </Callout>
+          <ul className="space-y-1" aria-label="registros que não dá para copiar">
+            {skipped.map((r, i) => (
+              <li
+                key={`${r.type}-${r.name}-${i}`}
+                className="t-caption break-all rounded-md px-3 py-2 font-mono ring-1 ring-line"
+              >
+                <span className="font-semibold">{r.type}</span> {r.name} {r.value || '(vazio)'}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">

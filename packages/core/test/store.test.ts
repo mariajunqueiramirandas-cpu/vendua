@@ -16,6 +16,24 @@ const daily9to22: StoreHours = {
 };
 
 describe('deriveStatus', () => {
+  test('a window that closes at 23:59 runs to midnight (how hours say "24 horas")', () => {
+    const allDay: StoreHours = {
+      timezone: TZ,
+      windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }],
+    };
+    // Friday 23:59:30 Sao_Paulo: open, until midnight
+    const late = deriveStatus(allDay, null, null, at('2026-09-19T02:59:30Z'));
+    expect(late.status).toBe('open');
+    expect(late.closesAt).toBe('2026-09-19T03:00:00.000Z');
+    // a night window: open in its last minute, closed once the day turns
+    const night: StoreHours = {
+      timezone: TZ,
+      windows: [{ days: [5], open: '18:00', close: '23:59' }],
+    };
+    expect(deriveStatus(night, null, null, at('2026-09-19T02:59:30Z')).status).toBe('open');
+    expect(deriveStatus(night, null, null, at('2026-09-19T03:00:30Z')).status).toBe('closed');
+  });
+
   test('open inside a window', () => {
     // 2026-09-18 15:00 UTC = 12:00 Sao_Paulo
     const s = deriveStatus(daily9to22, null, null, at('2026-09-18T15:00:00Z'));

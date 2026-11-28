@@ -25,13 +25,25 @@ export function DomainSetup({ d, a }: { d: Domain; a: Account }) {
       );
     },
   );
+  // adding the same domain again is what retries a delegation that has no servers: the job
+  // sets its zone up again (a check would have nothing to look at)
+  const retry = useAccountWrite(
+    () => api.addDomain(d.host, 'ns'),
+    () => toast('Preparando os servidores de novo…', { tone: 'info' }),
+  );
   const ns = d.method === 'ns';
   const included = d.source === 'included';
   const awaitingRecords = ns && !included && !d.recordsConfirmed;
   const { steps, at } = stepsOf(d);
   const failed = d.status === 'failed';
+  // refused (or gave its zone back) before it had servers: none are coming until a retry
+  const refused = ns && !included && failed && !d.nameServers.length;
   // what the owner does at their provider: records (cname) or the server pair (ns)
-  const instructions = ns ? <NameServers d={d} /> : <CnameRecords d={d} edgeIpv4={edgeIpv4} />;
+  const instructions = refused ? null : ns ? (
+    <NameServers d={d} />
+  ) : (
+    <CnameRecords d={d} edgeIpv4={edgeIpv4} />
+  );
   const canCheck =
     !awaitingRecords &&
     (failed ||
@@ -120,9 +132,11 @@ export function DomainSetup({ d, a }: { d: Domain; a: Account }) {
             ) : failed ? (
               <Callout tone="danger" icon={WarningCircle} title="Não conseguimos confirmar o DNS">
                 {d.lastError ??
-                  (ns
-                    ? 'Confira se os servidores no Registro.br são os dois abaixo.'
-                    : 'Confira se os dois registros abaixo estão iguais no seu provedor.')}
+                  (refused
+                    ? 'Não conseguimos preparar os servidores deste domínio.'
+                    : ns
+                      ? 'Confira se os servidores no Registro.br são os dois abaixo.'
+                      : 'Confira se os dois registros abaixo estão iguais no seu provedor.')}
               </Callout>
             ) : null}
             {included && failed ? null : instructions}
@@ -134,8 +148,8 @@ export function DomainSetup({ d, a }: { d: Domain; a: Account }) {
             <Button
               variant={d.status === 'dns_ok' ? 'secondary' : 'primary'}
               icon={<ArrowsClockwise />}
-              loading={check.isPending}
-              onClick={() => check.mutate(undefined)}
+              loading={refused ? retry.isPending : check.isPending}
+              onClick={() => (refused ? retry.mutate(undefined) : check.mutate(undefined))}
             >
               {failed ? 'tentar de novo' : 'verificar agora'}
             </Button>
