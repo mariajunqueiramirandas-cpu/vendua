@@ -94,7 +94,7 @@ export function ProductTile({
           {p.requiresPreorder ? (
             <Badge>encomenda</Badge>
           ) : p.preorderWhenSoldOut && p.stockQuantity === 0 ? (
-            <Badge>acabou: por encomenda</Badge>
+            <Badge>por encomenda</Badge>
           ) : null}
           {offHours ? (
             <Badge tone="warn">

@@ -1063,32 +1063,25 @@ function VehicleFees({
     >
       <Card className="divide-y divide-line">
         {rows.map(({ vehicle, Icon, title }) => (
-          <div
-            key={vehicle}
-            className="flex min-h-18 flex-wrap items-center justify-between gap-3 px-4 py-3"
-          >
-            <span className="flex min-w-0 flex-1 basis-48 items-center gap-3">
-              <Icon className="size-6 shrink-0 text-muted" aria-hidden />
-              <span className="min-w-0">
-                <label htmlFor={`vf-${vehicle}`} className="block font-semibold">
-                  {title}
-                </label>
-                <span className="t-caption block text-muted">
-                  {fees[vehicle]
-                    ? `a entrega custa ${money(fees[vehicle])} a mais`
-                    : 'sem acréscimo'}
-                </span>
+          <div key={vehicle} className="flex min-h-18 items-center gap-3 px-4 py-3">
+            <Icon className="size-6 shrink-0 text-muted" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <label htmlFor={`vf-${vehicle}`} className="block font-semibold">
+                {title}
+              </label>
+              <span className="t-caption block text-muted">
+                {fees[vehicle] ? `${money(fees[vehicle])} a mais na entrega` : 'sem acréscimo'}
               </span>
             </span>
-            <MoneyField
-              id={`vf-${vehicle}`}
-              className="w-36"
-              cents={fees[vehicle] ?? null}
-              allowEmpty
-              placeholder="sem acréscimo"
-              validate={feeRule}
-              onCommit={(v) => save(vehicle, v || null)}
-            />
+            <div className="w-32 shrink-0">
+              <MoneyField
+                id={`vf-${vehicle}`}
+                cents={fees[vehicle] ?? null}
+                allowEmpty
+                validate={feeRule}
+                onCommit={(v) => save(vehicle, v || null)}
+              />
+            </div>
           </div>
         ))}
       </Card>

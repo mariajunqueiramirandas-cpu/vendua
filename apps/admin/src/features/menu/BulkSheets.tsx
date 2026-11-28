@@ -544,7 +544,7 @@ export function BulkPreorderSheet({
               value={lead}
               min={0}
               max={60}
-              suffix=" dias"
+              suffix={lead === 1 ? ' dia' : ' dias'}
               onChange={setLead}
             />
           </Field>

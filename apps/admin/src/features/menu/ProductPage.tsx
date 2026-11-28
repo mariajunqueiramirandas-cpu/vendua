@@ -623,7 +623,7 @@ function Editor({
                   label="dias de antecedência"
                   value={p.preorderLeadDays}
                   max={60}
-                  suffix=" dias"
+                  suffix={p.preorderLeadDays === 1 ? ' dia' : ' dias'}
                   onSave={(v) => patch({ preorderLeadDays: v })}
                 />
               </Field>

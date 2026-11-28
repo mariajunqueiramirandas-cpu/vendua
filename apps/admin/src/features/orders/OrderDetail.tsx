@@ -114,16 +114,18 @@ export function OrderDetail({
       ) : null}
 
       {order.deliveryVehicle && d.mode === 'delivery' ? (
-        <div className="flex items-center gap-2 rounded-md bg-info-soft px-4 py-3 text-info">
+        <div className="flex items-start gap-2 rounded-md bg-info-soft px-4 py-3 text-info">
           {order.deliveryVehicle === 'car' ? (
-            <Car weight="bold" className="size-5" />
+            <Car weight="bold" className="mt-0.5 size-5 shrink-0" />
           ) : (
-            <Moped weight="bold" className="size-5" />
+            <Moped weight="bold" className="mt-0.5 size-5 shrink-0" />
           )}
-          <span className="font-semibold">
-            {order.deliveryVehicle === 'car' ? 'Vai de carro' : 'Vai de moto'}
+          <span className="min-w-0">
+            <span className="block font-semibold">
+              {order.deliveryVehicle === 'car' ? 'Vai de carro' : 'Vai de moto'}
+            </span>
+            <span className="t-caption block">Um item do pedido só viaja assim.</span>
           </span>
-          <span className="t-caption">um item do pedido só viaja assim</span>
         </div>
       ) : null}
 
