@@ -205,6 +205,12 @@ function hhmmToMinutes(t: string): number {
   return (h ?? 0) * 60 + (m ?? 0);
 }
 
+/** A window's end in minutes. 23:59 is how hours say "until midnight" (validation and the
+ *  importers have no 24:00), so it runs to the end of the day, not a minute short of it. */
+function closeMinutes(t: string): number {
+  return t === '23:59' ? 1440 : hhmmToMinutes(t);
+}
+
 /** Wall-clock {day, minutes, seconds} of `instant` in `tz`, via Intl (no manual TZ math). */
 function localParts(
   instant: Date,
@@ -232,7 +238,7 @@ function windowsOn(hours: StoreHours, day: number, date: string, special: Specia
 function openPart(dayMinutes: number, w: WeeklyWindow, day: number): boolean {
   if (!w.days.includes(day)) return false;
   const open = hhmmToMinutes(w.open);
-  const close = hhmmToMinutes(w.close);
+  const close = closeMinutes(w.close);
   return close > open ? dayMinutes >= open && dayMinutes < close : dayMinutes >= open;
 }
 
@@ -342,11 +348,11 @@ export function deriveStatus(
   // yesterday's overnight window still spills into a special day
   const yesterday = localParts(new Date(now.getTime() - 86_400_000), tz);
   const prev = windowsOn(hours, yesterday.day, yesterday.date, specialDays).filter(
-    (w) => hhmmToMinutes(w.close) <= hhmmToMinutes(w.open),
+    (w) => closeMinutes(w.close) <= hhmmToMinutes(w.open),
   );
   const open =
     today.some((w) => openPart(minutes, w, day)) ||
-    prev.some((w) => w.days.includes(yesterday.day) && minutes < hhmmToMinutes(w.close));
+    prev.some((w) => w.days.includes(yesterday.day) && minutes < closeMinutes(w.close));
   if (open) {
     // the start of this local minute, then whole minutes to each window's end
     const base = now.getTime() - seconds * 1000 - (now.getTime() % 1000);
@@ -354,12 +360,12 @@ export function deriveStatus(
     for (const w of today) {
       if (!openPart(minutes, w, day)) continue;
       const o = hhmmToMinutes(w.open);
-      const c = hhmmToMinutes(w.close);
+      const c = closeMinutes(w.close);
       ends.push(base + (c > o ? c - minutes : 1440 - minutes + c) * 60_000);
     }
     for (const w of prev) {
-      if (w.days.includes(yesterday.day) && minutes < hhmmToMinutes(w.close))
-        ends.push(base + (hhmmToMinutes(w.close) - minutes) * 60_000);
+      if (w.days.includes(yesterday.day) && minutes < closeMinutes(w.close))
+        ends.push(base + (closeMinutes(w.close) - minutes) * 60_000);
     }
     const end = Math.min(...ends);
     return Number.isFinite(end)

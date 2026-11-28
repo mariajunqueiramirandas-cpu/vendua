@@ -117,8 +117,22 @@ const NAMES = [
   'em',
 ];
 
-/** What Core can find on the domain's current DNS, to copy into the zone it will host. */
-export async function discoverRecords(host: string): Promise<DnsRecord[]> {
+/** A record on the domain's DNS that a hosted zone can't hold: it stops working once the
+ *  nameservers move, so the owner is told. */
+export interface SkippedRecord {
+  type: string;
+  name: string;
+  value: string;
+}
+
+/**
+ * What Core can find on the domain's current DNS, to copy into the zone it will host. A record
+ * the zone can't hold (a null MX, a target with `_` mid-label, a too-long TXT…) is listed in
+ * `skipped` instead of failing the rest.
+ */
+export async function discoverRecords(
+  host: string,
+): Promise<{ records: DnsRecord[]; skipped: SkippedRecord[] }> {
   const r = dnsResolver();
   const out: DnsRecord[] = [];
   const add = (rec: DnsRecord) => {
@@ -155,5 +169,17 @@ export async function discoverRecords(host: string): Promise<DnsRecord[]> {
     }),
   );
   await Promise.all(NAMES.map((n) => address(`${n}.${host}`, n)));
-  return parseRecords(out.slice(0, MAX_RECORDS), host);
+  // one at a time against what's kept, so each rule (a CNAME's name, the total size) skips only
+  // the record that breaks it
+  let records: DnsRecord[] = [];
+  const skipped: SkippedRecord[] = [];
+  for (const rec of out) {
+    try {
+      records = parseRecords([...records, rec], host);
+    } catch (e) {
+      if (!(e instanceof HttpError)) throw e;
+      skipped.push({ type: rec.type, name: rec.name, value: rec.value.slice(0, 300) });
+    }
+  }
+  return { records, skipped };
 }

@@ -679,6 +679,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
       priority: 1,
     });
     expect(found.body.records).toContainEqual({ type: 'TXT', name: '@', value: 'v=spf1 -all' });
+    expect(found.body.skipped).toEqual([]);
+
+    // a record the zone can't hold is listed apart, and the rest still come back
+    set(host, {
+      mx: [
+        { exchange: 'ASPMX.L.Google.com', priority: 1 },
+        { exchange: '', priority: 0 },
+      ],
+    });
+    set(`selector1._domainkey.${host}`, { cname: ['sel_1.dkim.example.com'] });
+    const partial = await s.owner('POST', `/account/domains/${cd.id}/discover`, {});
+    expect(partial.status).toBe(200);
+    expect(partial.body.records).toContainEqual({
+      type: 'MX',
+      name: '@',
+      value: 'aspmx.l.google.com',
+      priority: 1,
+    });
+    expect(partial.body.skipped).toEqual(
+      expect.arrayContaining([
+        { type: 'MX', name: '@', value: '' },
+        { type: 'CNAME', name: 'selector1._domainkey', value: 'sel_1.dkim.example.com' },
+      ]),
+    );
 
     // nothing is created before the owner confirms the list
     const draft: DnsRecord[] = [
@@ -1164,9 +1188,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     expect((await events(s.id, 'domain.zone_refused')).map((e) => e.data.reason)).toEqual([
       'delegated',
     ]);
-    expect(
-      (await s.owner('POST', `/account/domains/${id}/check`, {})).body.customDomain.status,
-    ).toBe('failed');
+    // a check has nothing to look at and keeps the reason; adding it again is the retry
+    const checked = (await s.owner('POST', `/account/domains/${id}/check`, {})).body.customDomain;
+    expect(checked.status).toBe('failed');
+    expect(checked.lastError).toContain('já aponta para os servidores DNS da Venduá');
     expect(await syncHosts()).not.toContain(host);
 
     // registro.br's record counts even while DNS doesn't answer

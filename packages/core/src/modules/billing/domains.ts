@@ -335,6 +335,9 @@ export async function checkCustomDomain(
   if (!found) return null;
   if (found.status !== 'pending_dns' && found.status !== 'failed') return found;
   if (found.status === 'failed' && !o.manual) return found;
+  // a refused delegation has no zone to check: its reason stays until the owner adds it again
+  if (found.method === 'ns' && found.status === 'failed' && !found.name_servers.length)
+    return found;
   if (await hostTaken(sql, found.host, o.tenantId, { method: found.method }))
     return (await markLost(sql, o.tenantId, o.domainId, o.now)) ?? found;
   const target = cnameTarget(found.slug, o.storeDomain);

@@ -266,7 +266,7 @@ export function mountDomains(d: AdminDeps) {
     );
     if (!row) throw new HttpError(404, 'DOMAIN_NOT_FOUND', 'domain not found');
     c.header('cache-control', 'no-store');
-    return c.json({ records: await discoverRecords(row.host) });
+    return c.json(await discoverRecords(row.host));
   });
 
   admin.put(
