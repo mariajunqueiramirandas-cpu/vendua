@@ -347,8 +347,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control customers (db)', () => 
     await responded(A.id, 'anthropic', `claude-cc-${nonce}`, 0.01, ago(3600_000));
     await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.02, ago(2 * DAY));
     await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.5, ago(10 * DAY));
-    // inside a rolling 30 days, but on the São Paulo day before the charts' first bar
-    await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.004, ago(30 * DAY - 60_000));
+    // the last second of the São Paulo day before the charts' first bar: inside a rolling 30 days
+    // but outside the window at any time of day (a fixed "30 days less a minute ago" fell inside
+    // it in the minute before midnight)
+    const beforeFirstBar = (
+      await sql<{ at: Date }[]>`
+        select (((now() at time zone 'America/Sao_Paulo')::date - 29)::timestamp
+          at time zone 'America/Sao_Paulo') - interval '1 second' as at
+      `
+    )[0]!.at;
+    await responded(A.id, 'openrouter', `or-cc-${nonce}`, 0.004, beforeFirstBar);
     await sql`
       insert into store_whatsapp (tenant_id, wanted, state, detail, state_changed_at)
       values (${A.id}, true, 'error', 'socket_closed', now() - interval '2 hours')
