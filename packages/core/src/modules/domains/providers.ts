@@ -84,14 +84,20 @@ export interface Zone {
   nameServers: string[];
   /** Cloudflare's: 'pending' until the nameservers point at it, then 'active' */
   status: string;
+  /** when Cloudflare created it (null when it didn't say) */
+  createdAt: Date | null;
 }
 
 export interface DnsHost {
   /** the zone for `host` in Venduá's account, created when missing */
   ensureZone(host: string): Promise<Zone>;
+  /** a new zone for `host`; fails when the account already has one */
+  createZone(host: string): Promise<Zone>;
   zone(id: string): Promise<Zone | null>;
   /** the zone for `host` in Venduá's account, if there is one */
   findZone(host: string): Promise<Zone | null>;
+  /** does the zone hold any record (besides NS and SOA)? */
+  hasRecords(id: string): Promise<boolean>;
   /**
    * Makes the zone hold exactly: A (and AAAA) at '@' and 'www' pointing at the edge, plus
    * `records`. Every other record is removed. DNS-only (never proxied).

@@ -185,7 +185,22 @@ export function fakeDnsHost(): FakeDnsHost {
     id: z.id,
     nameServers: [...z.nameServers],
     status: z.status,
+    createdAt: z.createdAt,
   });
+  const create = (host: string): FakeZone => {
+    const z: FakeZone = {
+      id: `zone${String(++seq).padStart(4, '0')}`,
+      host,
+      nameServers: ['ana.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
+      status: 'pending',
+      createdAt: new Date(),
+      edge: null,
+      records: [],
+      syncedAt: null,
+    };
+    zones.set(host, z);
+    return z;
+  };
 
   return {
     zones,
@@ -200,20 +215,18 @@ export function fakeDnsHost(): FakeDnsHost {
     },
     async ensureZone(host) {
       record('ensureZone', [host]);
-      let z = zones.get(host);
-      if (!z) {
-        z = {
-          id: `zone${String(++seq).padStart(4, '0')}`,
-          host,
-          nameServers: ['ana.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
-          status: 'pending',
-          edge: null,
-          records: [],
-          syncedAt: null,
-        };
-        zones.set(host, z);
-      }
-      return view(z);
+      return view(zones.get(host) ?? create(host));
+    },
+    async createZone(host) {
+      record('createZone', [host]);
+      if (zones.has(host)) throw new Error('cloudflare: zone already exists (1061)');
+      return view(create(host));
+    },
+    async hasRecords(id) {
+      record('hasRecords', [id]);
+      const z = byId(id);
+      if (!z) throw new Error('cloudflare: not found');
+      return z.edge !== null || z.records.length > 0;
     },
     async findZone(host) {
       record('findZone', [host]);

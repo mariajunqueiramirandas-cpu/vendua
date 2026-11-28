@@ -8,7 +8,7 @@ import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { wipeAuth } from '../store-whatsapp/auth-store.ts';
 import { claimControl } from './control.ts';
-import { ZONE_CLAIMED } from './domains/lifecycle.ts';
+import { claimedZone, ZONE_CLAIMED } from './domains/lifecycle.ts';
 import type { DomainProviders } from './domains/providers.ts';
 import { ProviderError, type PaymentProvider } from './payments/provider.ts';
 import { recordStaffEventTx } from './staff-events.ts';
@@ -418,8 +418,9 @@ export function mountStoreReset(o: {
         );
       }
       // DNS zones Venduá hosts for the store's own domains (Cloudflare is idempotent on a gone one)
-      const zones = await tx<{ host: string; zone_id: string }[]>`
-        select host, zone_id from custom_domains where tenant_id = ${id} and zone_id is not null`;
+      const zones = await tx<{ host: string; zone_id: string; zone_claimed_at: Date | null }[]>`
+        select host, zone_id, zone_claimed_at from custom_domains
+        where tenant_id = ${id} and zone_id is not null`;
       const dns = o.domains.dnsHost;
       // zones Venduá holds but can't reach now would outlive the rows that name them
       if (zones.length && !dns)
@@ -427,8 +428,11 @@ export function mountStoreReset(o: {
       if (zones.length && dns) {
         try {
           for (const z of zones) {
+            // a claim's zone only when its job made it, never one that was there before
             const zoneId =
-              z.zone_id === ZONE_CLAIMED ? (await dns.findZone(z.host))?.id : z.zone_id;
+              z.zone_id === ZONE_CLAIMED
+                ? (await claimedZone(dns, z.host, z.zone_claimed_at))?.id
+                : z.zone_id;
             if (zoneId) await dns.deleteZone(zoneId);
           }
         } catch (err) {

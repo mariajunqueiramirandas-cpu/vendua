@@ -175,6 +175,11 @@ export function eventText(e: StoreEvent): string | null {
       return s(d.host);
     case 'domain.order_failed':
       return join(s(d.host), d.reason === 'conflict' && 'conflito de provedor');
+    case 'domain.zone_refused':
+      return join(
+        s(d.host),
+        d.reason === 'exists' ? 'a zona já existia (intocada)' : 'já apontava para a Venduá',
+      );
     case 'domain.renewed':
       return join(s(d.host), day(s(d.until)) && `até ${day(s(d.until))}`);
     case 'deployment.failed':

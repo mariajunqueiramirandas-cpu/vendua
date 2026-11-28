@@ -702,7 +702,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     const T = Date.now();
     tls.ok = false;
     await jobs(later(T, 0));
-    expect(dnsHost.calls.filter((c) => c.op === 'ensureZone' && c.args[0] === host)).toHaveLength(
+    expect(dnsHost.calls.filter((c) => c.op === 'createZone' && c.args[0] === host)).toHaveLength(
       1,
     );
     const zone = dnsHost.zones.get(host)!;
@@ -739,7 +739,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     await jobs(later(T, 34 * MIN));
     expect(((await row(cd.id))!.records_synced_at as Date).getTime()).toBe(T + 34 * MIN);
     expect(dnsHost.zones.get(host)!.records).toEqual(edited);
-    expect(dnsHost.calls.filter((c) => c.op === 'ensureZone' && c.args[0] === host)).toHaveLength(
+    expect(dnsHost.calls.filter((c) => c.op === 'createZone' && c.args[0] === host)).toHaveLength(
       1,
     );
 
@@ -1154,10 +1154,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     set(host, { ns: CF_PAIR });
     const id = await delegate(s, host);
     await jobs(new Date());
-    expect(dnsHost.zones.has(host)).toBe(false);
+    // refused, and the zone it just made stays, empty and on no row
+    const left = dnsHost.zones.get(host)!;
+    expect(left).toMatchObject({ edge: null, records: [] });
+    expect(dnsHost.calls.some((c) => c.op === 'deleteZone' && c.args[0] === left.id)).toBe(false);
     let r = (await row(id))!;
     expect(r).toMatchObject({ status: 'failed', zone_id: null, name_servers: [] });
     expect(r.last_error).toContain('já aponta para os servidores DNS da Venduá');
+    expect((await events(s.id, 'domain.zone_refused')).map((e) => e.data.reason)).toEqual([
+      'delegated',
+    ]);
     expect(
       (await s.owner('POST', `/account/domains/${id}/check`, {})).body.customDomain.status,
     ).toBe('failed');
@@ -1174,7 +1180,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     const s2 = await paidStore('stale2');
     const id2 = await delegate(s2, viaRdap);
     await jobs(new Date());
-    expect(dnsHost.zones.has(viaRdap)).toBe(false);
+    expect(dnsHost.zones.get(viaRdap)).toMatchObject({ edge: null, records: [] });
     expect((await row(id2))!.status).toBe('failed');
 
     // the owner moves the nameservers away, adds it again, then points them at the new zone
@@ -1186,7 +1192,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     r = (await row(id))!;
     expect(r.status).toBe('pending_dns');
     expect(r.name_servers).toEqual(CF_PAIR);
-    expect(dnsHost.zones.has(host)).toBe(true);
+    // the empty zone the refusal left is the one it takes up
+    expect(r.zone_id).toBe(left.id);
     set(host, { ns: CF_PAIR });
     await jobs(later(T, 16 * MIN));
     expect((await row(id))!.status).toBe('dns_ok');
@@ -1443,15 +1450,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     const add = await s.owner('POST', '/account/domains', { host, method: 'ns' });
     const id = add.body.customDomain.id;
     await s.owner('PUT', `/account/domains/${id}/records`, { records: [], confirm: true });
-    const ensure = dnsHost.ensureZone;
-    dnsHost.ensureZone = async (h) => {
+    const create = dnsHost.createZone;
+    dnsHost.createZone = async (h) => {
       expect((await s.owner('DELETE', `/account/domains/${id}`)).status).toBe(200);
-      return ensure(h);
+      return create(h);
     };
     try {
       await jobs(new Date());
     } finally {
-      dnsHost.ensureZone = ensure;
+      dnsHost.createZone = create;
     }
     expect(dnsHost.zones.has(host)).toBe(false);
     expect(await row(id)).toBeUndefined();
@@ -1475,5 +1482,64 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('own domains (db)', () => {
     await jobs(new Date(Date.now() + 11 * MIN));
     expect(dnsHost.zones.has(host)).toBe(false);
     expect(await row(id)).toBeUndefined();
+  });
+
+  test("a dead claim's row goes, but a zone that was there before the claim stays", async () => {
+    const s = await paidStore('zold');
+    const host = `zold-${nonce}.com.br`;
+    const zone = await dnsHost.ensureZone(host);
+    dnsHost.zones.get(host)!.createdAt = new Date(Date.now() - 60 * MIN);
+    const id = (
+      await sql<{ id: string }[]>`
+        insert into custom_domains (tenant_id, host, verify_token, status, method, zone_id,
+          zone_claimed_at)
+        values (${s.id}, ${host}, ${'8'.repeat(32)}, 'removing', 'ns', 'pending', now())
+        returning id
+      `
+    )[0]!.id;
+    await jobs(new Date(Date.now() + 11 * MIN));
+    expect(await row(id)).toBeUndefined();
+    expect(dnsHost.zones.get(host)?.id).toBe(zone.id);
+    expect(dnsHost.calls.some((c) => c.op === 'deleteZone' && c.args[0] === zone.id)).toBe(false);
+  });
+
+  test('a zone the account already had is never taken over, changed or deleted', async () => {
+    // set up by hand, serving the domain (delegated) or not yet (pending)
+    for (const [tag, ns] of [
+      ['zhd', CF_PAIR],
+      ['zhp', ['a.dns.br', 'b.dns.br']],
+    ] as const) {
+      const s = await paidStore(tag);
+      const host = `${tag}-${nonce}.com.br`;
+      const mail: DnsRecord[] = [{ type: 'MX', name: '@', value: 'mx.mail.com', priority: 10 }];
+      const zone = await dnsHost.ensureZone(host);
+      await dnsHost.syncRecords(zone.id, host, { ipv4: '198.51.100.7', ipv6: null }, mail);
+      dnsHost.zones.get(host)!.createdAt = new Date(Date.now() - 30 * 24 * 60 * MIN);
+      set(host, { ns: [...ns] });
+      const before = dnsHost.calls.length;
+      const id = await delegate(s, host);
+      await jobs(new Date());
+
+      expect(dnsHost.zones.get(host)).toMatchObject({
+        id: zone.id,
+        edge: { ipv4: '198.51.100.7', ipv6: null },
+        records: mail,
+      });
+      const touched = dnsHost.calls
+        .slice(before)
+        .filter((c) => c.op === 'deleteZone' || c.op === 'syncRecords' || c.op === 'createZone');
+      expect(touched).toEqual([]);
+      const r = (await row(id))!;
+      expect(r).toMatchObject({ status: 'failed', zone_id: null, name_servers: [] });
+      expect(r.last_error).toContain('Não mexemos nela');
+      expect((await events(s.id, 'domain.zone_refused')).map((e) => e.data)).toEqual([
+        expect.objectContaining({ host, reason: 'exists' }),
+      ]);
+      // removing it leaves the zone too
+      expect((await s.owner('DELETE', `/account/domains/${id}`)).status).toBe(200);
+      await jobs(new Date());
+      expect(await row(id)).toBeUndefined();
+      expect(dnsHost.zones.get(host)?.id).toBe(zone.id);
+    }
   });
 });

@@ -298,6 +298,9 @@ export interface StaffEventMap {
   'domain.order_failed': { storeName: Name; host: string; reason: 'conflict' | 'error' };
   'domain.renewed': { storeName: Name; host: string; until: Opt<string> };
   'domain.renewal_failed': { storeName: Name; host: string };
+  /** Core refused to set up a delegated domain's zone and left every zone untouched: the account
+   *  already had one with records (`exists`), or the domain already named Venduá's pair */
+  'domain.zone_refused': { storeName: Name; host: string; reason: 'exists' | 'delegated' };
   // frota
   'release.published': {
     releaseId: Id;
@@ -811,6 +814,12 @@ export const STAFF_EVENT_KINDS: Catalog = {
     level: 'normal',
     severity: 'critical',
     label: 'renovação de domínio falhou',
+  },
+  'domain.zone_refused': {
+    category: 'assinaturas',
+    level: 'normal',
+    severity: 'warning',
+    label: 'domínio próprio recusado: o DNS já estava na Cloudflare da Venduá',
   },
   'release.published': {
     category: 'frota',
