@@ -4,10 +4,10 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// 0158 in the merchant admin: blocked dates and vehicle extras on the store, how a product is sold
+// 0159 in the merchant admin: blocked dates and vehicle extras on the store, how a product is sold
 // and how it travels, a copy in another category, and the bulk changes a category's "ajustar" runs.
 describe.skipIf(!process.env.TEST_DATABASE_URL)(
-  'admin: 0158 settings and category tools (db)',
+  'admin: 0159 settings and category tools (db)',
   () => {
     const sql = postgres(process.env.TEST_DATABASE_URL!, { onnotice: () => {} });
     const codes = new Map<string, string>();

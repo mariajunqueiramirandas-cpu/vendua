@@ -12,7 +12,7 @@ const HOURS = {
   windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }],
 };
 
-describe('0158 units', () => {
+describe('0159 units', () => {
   test('blocked dates leave the calendar; the admin list drops days gone by', () => {
     const now = new Date('2026-11-28T15:00:00Z');
     const all = bookableDates(HOURS, 1, 5, now);

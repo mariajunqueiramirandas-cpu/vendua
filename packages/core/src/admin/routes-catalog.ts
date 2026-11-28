@@ -109,9 +109,9 @@ export interface AdminProductRow {
   lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
-  /** 0158: sold from stock, by encomenda once it runs out (never sold out by its stock) */
+  /** 0159: sold from stock, by encomenda once it runs out (never sold out by its stock) */
   preorderWhenSoldOut: boolean;
-  /** 0158: travels only by this vehicle (vehicles.ts); null = any */
+  /** 0159: travels only by this vehicle (vehicles.ts); null = any */
   deliveryVehicle: Vehicle | null;
   sort: number;
   soldOutUntil: string | null;
@@ -1663,7 +1663,7 @@ const BULK_ACTIONS = [
   'price_amount',
   'stock',
   'schedule',
-  // 0158: how they're sold, how they travel, and a copy of each in another category
+  // 0159: how they're sold, how they travel, and a copy of each in another category
   'preorder',
   'vehicle',
   'copy',

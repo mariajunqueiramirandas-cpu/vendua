@@ -1,6 +1,6 @@
 import { HttpError } from '../platform/http.ts';
 
-// Delivery vehicles (0158): an item may only travel by moto or by car (a big cake, a tower of
+// Delivery vehicles (0159): an item may only travel by moto or by car (a big cake, a tower of
 // boxes), and the store charges an extra on the delivery fee for each. The cart's vehicle is the
 // biggest one its items need — a car carries what a moto does. The extra is the vehicle's own
 // cost: free delivery (a zone's threshold, a free-delivery coupon) waives the trip, not the extra.

@@ -109,7 +109,7 @@ interface ItemRow {
   stock_quantity: number | null;
   requires_preorder: boolean;
   preorder_lead_days: number;
-  /** 0158 */
+  /** 0159 */
   preorder_when_sold_out?: boolean;
   delivery_vehicle?: Vehicle | null;
   image_url: string | null;
@@ -152,13 +152,13 @@ export interface PricedItem {
   lineTotalCents: number;
   imageUrl: string | null;
   stockQuantity: number | null;
-  /** an encomenda line: the product always is one, or (0158) it is sold past its stock and the
+  /** an encomenda line: the product always is one, or (0159) it is sold past its stock and the
    *  stock can't cover the cart, or the store is closed */
   requiresPreorder: boolean;
   preorderLeadDays: number;
-  /** 0158: from stock without a date while it lasts; by encomenda past it or with a date */
+  /** 0159: from stock without a date while it lasts; by encomenda past it or with a date */
   preorderWhenSoldOut?: boolean;
-  /** 0158: the vehicle the line needs to travel (its own or a kit pick's); null = any */
+  /** 0159: the vehicle the line needs to travel (its own or a kit pick's); null = any */
   deliveryVehicle?: Vehicle | null;
 }
 
@@ -195,7 +195,7 @@ export interface CartTotals {
    *  Pix to lock the date), and the rest; absent when the store asks for none */
   depositCents?: number;
   balanceCents?: number;
-  /** 0158: the part of deliveryFeeCents the cart's vehicle adds; 0 without one */
+  /** 0159: the part of deliveryFeeCents the cart's vehicle adds; 0 without one */
   vehicleFeeCents?: number;
 }
 
@@ -239,7 +239,7 @@ export interface CartView {
   /** Festa calculada F2 (0128): the sinal asked of this cart as an encomenda — its share and the
    *  store's own cancellation words; the amounts are in `totals` */
   sinal?: { percent: number; policy: string | null } | null;
-  /** 0158: the vehicle a delivery of these items needs (vehicles.ts); null = the usual one */
+  /** 0159: the vehicle a delivery of these items needs (vehicles.ts); null = the usual one */
   vehicle?: Vehicle | null;
 }
 
@@ -632,7 +632,7 @@ async function priceItems(
   ]);
   const liveMod = new Map(mods.map((m) => [m.id, m.status]));
   const now = new Date();
-  // 0158: past its stock a product is made to order — never sold out, and the whole cart's demand
+  // 0159: past its stock a product is made to order — never sold out, and the whole cart's demand
   // (kit picks included) against the stock decides whether its lines are encomendas
   const demand = stockDemand(
     items.map((i) => ({ productId: i.product_id, qty: i.qty, combo: i.combo_selections })),
@@ -860,7 +860,7 @@ export async function loadCartView(
         ? pickupMin
         : storeMin;
   let match: ZoneMatch<ZoneRow | DistanceZone> | null = null;
-  // 0158: the vehicle the items need adds its extra to a matched delivery, past free delivery
+  // 0159: the vehicle the items need adds its extra to a matched delivery, past free delivery
   const vehicle = vehicleFor(items.map((i) => i.deliveryVehicle));
   let vehicleFee = 0;
   if (delivery?.mode === 'delivery') {
@@ -1201,7 +1201,7 @@ function loadStockLines(tx: Sql, tenantId: string, cartId: string) {
   >`
     select ci.id, ci.product_id, ci.qty, ci.combo_selections, ci.modifier_ids, ci.modifier_qty,
            p.name,
-           -- 0158: past its stock the line turns into an encomenda, so the stock caps nothing
+           -- 0159: past its stock the line turns into an encomenda, so the stock caps nothing
            case when p.preorder_when_sold_out and not p.requires_preorder then null
                 else p.stock_quantity end as stock_quantity
     from cart_items ci join products p on p.id = ci.product_id

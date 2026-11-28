@@ -342,7 +342,7 @@ export interface Order {
   }[];
   notes: string | null;
   scheduledFor: string | null;
-  /** 0158: the vehicle the delivery needs (its items'); absent/null = the usual one */
+  /** 0159: the vehicle the delivery needs (its items'); absent/null = the usual one */
   deliveryVehicle?: Vehicle | null;
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -482,7 +482,7 @@ export interface KitchenStats {
   hourly: number[];
 }
 
-/** 0158: a vehicle an item needs to travel; a car carries what a moto does */
+/** 0159: a vehicle an item needs to travel; a car carries what a moto does */
 export type Vehicle = 'moto' | 'car';
 
 export interface Product {
@@ -504,9 +504,9 @@ export interface Product {
   lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
-  /** 0158: sold from stock, by encomenda once it runs out (requiresPreorder off) */
+  /** 0159: sold from stock, by encomenda once it runs out (requiresPreorder off) */
   preorderWhenSoldOut?: boolean;
-  /** 0158: travels only by this vehicle; null = any */
+  /** 0159: travels only by this vehicle; null = any */
   deliveryVehicle?: Vehicle | null;
   sort: number;
   soldOutUntil: string | null;
@@ -792,10 +792,10 @@ export interface StoreView {
     capacity: EncomendaCapacity | null;
     /** the D−1 message from the store's WhatsApp */
     reminder: boolean;
-    /** 0158: dates the shopper's calendar leaves out, from today on (YYYY-MM-DD) */
+    /** 0159: dates the shopper's calendar leaves out, from today on (YYYY-MM-DD) */
     blockedDates?: string[];
   };
-  /** 0158: the extra a delivery pays for the vehicle its items need; a missing one = none */
+  /** 0159: the extra a delivery pays for the vehicle its items need; a missing one = none */
   vehicleFees?: Partial<Record<Vehicle, number>>;
   /** Festa calculada F2 (0128): the sinal by Pix that locks a party's date (bps 0 = off), and an
    *  encomenda's from minCents; policy = the store's own cancellation words. Owner-only. */

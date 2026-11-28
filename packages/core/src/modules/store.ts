@@ -119,9 +119,9 @@ export interface StoreSettingsRow {
   /** Festa calculada (0126): orders a day per weekday / date; the D−1 reminder */
   encomenda_capacity?: import('./encomenda-capacity.ts').EncomendaCapacity | null;
   encomenda_reminder?: boolean;
-  /** 0158: local dates no scheduled order is taken on (preorder.ts) */
+  /** 0159: local dates no scheduled order is taken on (preorder.ts) */
   blocked_dates?: string[] | null;
-  /** 0158: the extra a delivery pays for the vehicle its items need (vehicles.ts) */
+  /** 0159: the extra a delivery pays for the vehicle its items need (vehicles.ts) */
   vehicle_fees?: import('./vehicles.ts').VehicleFees | null;
   /** Festa calculada F2 (0128): the sinal — see modules/sinal.ts */
   deposit_bps?: number;

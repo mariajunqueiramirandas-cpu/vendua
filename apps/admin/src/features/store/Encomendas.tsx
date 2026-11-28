@@ -299,7 +299,7 @@ function Sinal({
   );
 }
 
-/** 0158: dates the calendar leaves out — the store stays open on them, it just takes no date. */
+/** 0159: dates the calendar leaves out — the store stays open on them, it just takes no date. */
 function BlockedDates({
   s,
   run,

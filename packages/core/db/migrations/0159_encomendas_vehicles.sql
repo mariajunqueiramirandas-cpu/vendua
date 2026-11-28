@@ -1,4 +1,4 @@
--- 0158_encomendas_vehicles.sql — encomenda dates, encomendas past stock, delivery vehicles.
+-- 0159_encomendas_vehicles.sql — encomenda dates, encomendas past stock, delivery vehicles.
 -- store_settings.blocked_dates: local dates (YYYY-MM-DD) the store takes no scheduled order on
 --   (modules/preorder.ts). The shopper's calendar leaves them out and checkout refuses them; the
 --   store's hours don't change (closing a whole day is a special day).

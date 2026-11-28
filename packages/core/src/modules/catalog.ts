@@ -185,7 +185,7 @@ export interface ProductSummary {
   lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
-  /** 0158: sold from stock, and by encomenda once it runs out — the stock is then no cap for the
+  /** 0159: sold from stock, and by encomenda once it runs out — the stock is then no cap for the
    *  shopper (stockQuantity reads null) and `requiresPreorder` turns on at zero */
   preorderWhenSoldOut?: boolean;
   /** a combo, or a product with modifier groups: the card must open the product page */
@@ -271,7 +271,7 @@ interface ProductRow {
   low_stock_threshold: number | null;
   requires_preorder: boolean;
   preorder_lead_days: number;
-  /** 0158: by encomenda once the stock runs out */
+  /** 0159: by encomenda once the stock runs out */
   preorder_when_sold_out?: boolean;
   needs_choices: boolean;
   availability_schedule: AvailabilitySchedule | null;
@@ -397,7 +397,7 @@ function toSummary(
   /** a kit's slots — its from-price takes the cheapest valid picks */
   slots: readonly ComboSlot[] = [],
 ): ProductSummary {
-  // sold past its stock (0158): out of stock it is an encomenda, never sold out, and the shopper's
+  // sold past its stock (0159): out of stock it is an encomenda, never sold out, and the shopper's
   // quantity isn't capped by it — the cart turns a line its stock can't cover into an encomenda
   const pastStock = preorderPastStock(row);
   const stock = pastStock ? null : row.stock_quantity;

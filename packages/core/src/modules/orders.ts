@@ -137,7 +137,7 @@ export interface OrderView {
   items: OrderItemView[];
   notes: string | null;
   scheduledFor: string | null;
-  /** 0158: the vehicle the delivery needs (its items'); null = the usual one */
+  /** 0159: the vehicle the delivery needs (its items'); null = the usual one */
   deliveryVehicle?: 'moto' | 'car' | null;
   subtotalCents: number;
   deliveryFeeCents: number;

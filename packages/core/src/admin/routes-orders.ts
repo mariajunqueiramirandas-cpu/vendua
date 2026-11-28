@@ -93,7 +93,7 @@ export interface OrderListRow {
   paymentStatus: string;
   itemCount: number;
   scheduledFor: string | null;
-  /** 0158: moto | car when the delivery needs one */
+  /** 0159: moto | car when the delivery needs one */
   deliveryVehicle: 'moto' | 'car' | null;
 }
 

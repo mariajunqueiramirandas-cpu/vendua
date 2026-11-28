@@ -93,7 +93,7 @@ export function takesOrdersWhileClosed(
   settings: StoreSettingsRow | null,
   cart: Pick<CartView, 'items'>,
   /** the locked rows: a line is an encomenda only if the cart (whose schedule checkout
-   *  enforces) and the locked product both say so — one sold past its stock (0158) is an
+   *  enforces) and the locked product both say so — one sold past its stock (0159) is an
    *  encomenda whenever the store is closed */
   products?: Map<string, ProductDetail | null>,
 ): boolean {

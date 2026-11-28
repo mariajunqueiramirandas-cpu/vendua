@@ -210,7 +210,7 @@ function Editor({
   const [pricing, setPricing] = useState(false);
   const a = availability(p);
   const tracked = p.stockQuantity !== null;
-  // 0158: how it's sold — ready, ready and by encomenda once it runs out, or only by encomenda
+  // 0159: how it's sold — ready, ready and by encomenda once it runs out, or only by encomenda
   const pastStock = !p.requiresPreorder && !!p.preorderWhenSoldOut;
   const sale: 'ready' | 'when_sold_out' | 'always' = p.requiresPreorder
     ? 'always'

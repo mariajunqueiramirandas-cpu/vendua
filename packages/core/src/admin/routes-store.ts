@@ -194,7 +194,7 @@ export async function storeView(
       maxKm: Number(s.delivery_max_km ?? 8),
       freeOverCents: s.delivery_free_over_cents ?? null,
     },
-    /** 0158: the extra a delivery pays for the vehicle its items need; absent = none */
+    /** 0159: the extra a delivery pays for the vehicle its items need; absent = none */
     vehicleFees: s.vehicle_fees ?? {},
     preorder: {
       paymentMethods: s.preorder_payment_methods ?? ['pix'],
@@ -203,7 +203,7 @@ export async function storeView(
       /** Festa calculada (0126): orders a day per weekday and per date; null = no ceiling */
       capacity: s.encomenda_capacity ?? null,
       reminder: s.encomenda_reminder ?? true,
-      /** 0158: dates the calendar doesn't offer, from today on */
+      /** 0159: dates the calendar doesn't offer, from today on */
       blockedDates: parseBlockedDates(
         s.blocked_dates ?? [],
         storeToday(new Date(), s.hours?.timezone),

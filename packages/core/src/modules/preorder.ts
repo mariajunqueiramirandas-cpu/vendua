@@ -5,11 +5,11 @@ import { deriveStatus, specialDayOn, type SpecialDay, type StoreHours } from './
 // Encomendas: products that must be ordered N days ahead. Core owns the calendar —
 // which dates are bookable (lead time, open weekdays, special days, blocked dates, horizon) — the
 // Kernel renders it.
-// A product can also be an encomenda only past its stock (0158, `preorder_when_sold_out`): an
+// A product can also be an encomenda only past its stock (0159, `preorder_when_sold_out`): an
 // order without a date takes it from stock while the stock covers the cart; with a date, short of
 // stock, or with the store closed, it is made for the date and draws no stock.
 
-/** 0158: sold from stock, and by encomenda once the stock can't cover it */
+/** 0159: sold from stock, and by encomenda once the stock can't cover it */
 export const preorderPastStock = (p: {
   requires_preorder: boolean;
   preorder_when_sold_out?: boolean | null;
@@ -44,7 +44,7 @@ export function bookableDates(
   maxDays: number,
   now: Date,
   special: readonly SpecialDay[] = [],
-  /** dates the store blocked for scheduled orders (0158) */
+  /** dates the store blocked for scheduled orders (0159) */
   blocked: readonly string[] = [],
 ): string[] {
   const tz = hours.timezone || 'America/Sao_Paulo';

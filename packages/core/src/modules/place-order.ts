@@ -196,7 +196,7 @@ export async function placeOrderTx(
     });
 
   const subtotal = cart.totals.subtotalCents;
-  // 0158: a delivery takes the vehicle its items need, and that vehicle's extra past free delivery
+  // 0159: a delivery takes the vehicle its items need, and that vehicle's extra past free delivery
   const vehicle = body.delivery.mode === 'delivery' && match.zone ? (cart.vehicle ?? null) : null;
   const vehicleFee = vehicleFeeCents(settings?.vehicle_fees, vehicle);
   const deliveryFee =
@@ -280,7 +280,7 @@ export async function placeOrderTx(
     });
 
   const orderId = crypto.randomUUID();
-  // 0158: with a date, a product sold past its stock is made for that day and draws none of it
+  // 0159: with a date, a product sold past its stock is made for that day and draws none of it
   const madeToOrder = (id: string) => !!scheduledFor && !!products.get(id)?.preorderWhenSoldOut;
   const stockDrawn = await drawStock(
     tx,
