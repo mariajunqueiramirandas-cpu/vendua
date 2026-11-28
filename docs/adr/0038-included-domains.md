@@ -174,6 +174,12 @@ Staff open Pangolim after (2).
   called, so a zone is only ever adopted by the row that claimed it. A store whose name another
   store's unverified zone claims gets `DOMAIN_TAKEN` for up to a week; a store that registers the
   name at the registry evicts such a claim.
+- **Core never takes over or deletes a zone it didn't create** (2026-11-28, after a delegation
+  deleted a zone set up by hand in the account). A zone with records that was there before the
+  claim refuses it untouched (`domain.zone_refused`, reason `exists`). A claim refused because
+  the name already delegates to Venduá's pair leaves its new zone in place, empty; a later claim
+  may take up an empty zone. A dead claim's zone is found by name and counts as the claim's only
+  when Cloudflare created it after the claim (`created_on`).
 - **Orders are leased.** A worker claims an order (`claimed_until`) before calling the registrar;
   cancel and retry wait for the lease, and every write after the call checks it still holds it.
   A renewal notes the expiry before it asks and, on a retry, reads it first, so a lost answer

@@ -379,6 +379,7 @@ describe('cloudflare', () => {
           id: 'z1',
           name_servers: ['Ana.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
           status: 'active',
+          created_on: '2026-10-01T12:00:00.123Z',
         },
       ]),
     );
@@ -386,6 +387,7 @@ describe('cloudflare', () => {
       id: 'z1',
       nameServers: ['ana.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
       status: 'active',
+      createdAt: new Date('2026-10-01T12:00:00.123Z'),
     });
     expect(seen).toHaveLength(1);
     const q = new URL(seen[0]!.url).searchParams;
@@ -411,6 +413,25 @@ describe('cloudflare', () => {
       type: 'full',
       jump_start: false,
     });
+  });
+
+  test("createZone never adopts: an existing zone is Cloudflare's error", async () => {
+    const { d, seen } = cf(() => ({
+      status: 400,
+      body: { success: false, errors: [{ code: 1061, message: 'already exists' }] },
+    }));
+    const e = (await d.createZone('bella.com.br').catch((x) => x)) as Error;
+    expect(e.message).toContain('(1061)');
+    expect(seen.map((x) => x.method)).toEqual(['POST']);
+  });
+
+  test('hasRecords looks past NS and SOA', async () => {
+    const ns = { id: 'n', type: 'NS', name: 'bella.com.br', content: 'ana.ns.cloudflare.com' };
+    const mx = { id: 'm', type: 'MX', name: 'bella.com.br', content: 'mx.x.com', priority: 10 };
+    expect(await cf(() => cfOk([ns])).d.hasRecords('z1')).toBe(false);
+    const { d, seen } = cf(() => cfOk([ns, mx]));
+    expect(await d.hasRecords('z1')).toBe(true);
+    expect(path(seen[0]!)).toBe('/client/v4/zones/z1/dns_records');
   });
 
   test('zone answers null on 404; deleteZone accepts 404', async () => {

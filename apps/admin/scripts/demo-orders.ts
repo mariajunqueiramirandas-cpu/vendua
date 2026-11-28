@@ -72,9 +72,10 @@ const tenant = (
     { id: string }[]
   >`select t.id from tenants t join domains d on d.tenant_id = t.id where d.host = ${HOST}`
 )[0]!.id;
-// make sure checkout is open for the seeding run
+// make sure checkout is open for the seeding run: a window that closes when it opens runs round
+// the clock (one closing at 23:59 shuts the last minute of the day, and CI ran in it)
 const hours = (await sql`select hours from store_settings where tenant_id = ${tenant}`)[0]!.hours;
-await sql`update store_settings set hours = ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '23:59' }] })}, status_override = null where tenant_id = ${tenant}`;
+await sql`update store_settings set hours = ${sql.json({ timezone: 'America/Sao_Paulo', windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '00:00', close: '00:00' }] })}, status_override = null where tenant_id = ${tenant}`;
 
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)]!;
 let placed = 0;

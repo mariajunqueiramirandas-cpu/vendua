@@ -18,7 +18,7 @@ import { messageOwners, type OwnerMessage } from '../billing/notices.ts';
 import { planHas } from '../billing/plans.ts';
 import { controlTx } from '../control.ts';
 import { recordStaffEvent, recordStaffEventTx } from '../staff-events.ts';
-import type { DnsRecord, DomainProviders } from './providers.ts';
+import type { DnsHost, DnsRecord, DomainProviders, Zone } from './providers.ts';
 
 // What happens to a custom domain after its DNS is verified (ADR 0038): the certificate is
 // issued (the sidecar routes dns_ok hosts) and a probe switches the host on; a live domain is
@@ -88,11 +88,58 @@ export const realZone = (id: string | null) => (id && id !== ZONE_CLAIMED ? id :
 export const DELEGATED_ELSEWHERE =
   'Este domínio já aponta para os servidores DNS da Venduá. Para provar que ele é seu, troque os servidores DNS no Registro.br pelos do seu provedor e adicione o domínio de novo.';
 
+export const ZONE_EXISTS =
+  'Este domínio já tem uma zona de DNS na Venduá que não foi criada por esta loja. Não mexemos nela e avisamos a equipe.';
+
+/** Cloudflare's clock and ours differ a little */
+const CLOCK_SKEW_MS = 60_000;
+
+/** created after the row claimed its name: the claim's job made it */
+const madeAfter = (zone: Zone, claimedAt: Date | null) =>
+  !!zone.createdAt &&
+  !!claimedAt &&
+  zone.createdAt.getTime() >= claimedAt.getTime() - CLOCK_SKEW_MS;
+
+/** The zone a claim's job created before dying (found by name), never one that was there before. */
+export async function claimedZone(dnsHost: DnsHost, host: string, claimedAt: Date | null) {
+  const zone = await dnsHost.findZone(host);
+  return zone && madeAfter(zone, claimedAt) ? zone : null;
+}
+
+/** Ends a claim Core won't set up. Every zone stays where it is. */
+async function refuse(
+  sql: Sql,
+  r: Row,
+  now: Date,
+  reason: 'exists' | 'delegated',
+  message: string,
+) {
+  domainLog.warn({ host: r.host, tenantId: r.tenant_id, reason }, 'zone refused');
+  await withTenant(sql, r.tenant_id, async (tx) => {
+    const u = await tx`
+      update custom_domains set zone_id = null, zone_claimed_at = null, name_servers = '{}',
+        status = case when status = 'removing' then status else 'failed' end,
+        last_error = ${message}, last_checked_at = ${now}
+      where tenant_id = ${r.tenant_id} and id = ${r.id} and zone_id = ${ZONE_CLAIMED}
+      returning id
+    `;
+    if (!u.length) return;
+    await recordStaffEventTx(
+      tx,
+      'domain.zone_refused',
+      { storeName: r.tname, host: r.host, reason },
+      { tenantId: r.tenant_id, dedupeKey: `domain.zone_refused:${r.id}:${reason}` },
+    );
+    await emitAdminTx(tx, r.tenant_id, 'billing');
+  });
+}
+
 /**
  * Hosted zones: create one for a delegated domain once its owner confirmed the records, and push
- * record edits to it. The row claims the name first (one zone per name, unique in the table), so
- * a zone Cloudflare already has is only ever adopted by the row that claimed it — never one
- * another store's row owns.
+ * record edits to it. The row claims the name first (one zone per name, unique in the table).
+ * Core never takes over or deletes a zone it didn't create: one the account already had (set up
+ * by hand, maybe serving the domain) refuses the claim untouched. An empty one holds nothing to
+ * lose (an earlier refusal leaves its new zone in place), so a later claim may use it.
  */
 export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
   const { dnsHost, edge } = d.providers;
@@ -111,7 +158,12 @@ export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
   await each(rows, 'zones', async (r) => {
     let zoneId = realZone(r.zone_id);
     let nameServers = r.name_servers;
+    // only a zone this claim created may be deleted here
+    let made = false;
     if (!zoneId) {
+      // set only when an earlier job made this claim (and died before writing the zone's id):
+      // a fresh claim made no zone, so one it finds was there before
+      const claimedAt = r.zone_id ? r.zone_claimed_at : null;
       if (!r.zone_id) {
         let claimed = false;
         try {
@@ -140,22 +192,19 @@ export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
         }
         if (!claimed) return;
       }
-      const zone = await dnsHost.ensureZone(r.host);
-      if (await delegatedAlready(r.host, zone.nameServers, d.providers.rdap)) {
-        // none of this row's records are in the zone yet, and only its claim holds the name
-        await dnsHost.deleteZone(zone.id);
-        await withTenant(sql, r.tenant_id, async (tx) => {
-          const u = await tx`
-            update custom_domains set zone_id = null, zone_claimed_at = null, name_servers = '{}',
-              status = case when status = 'removing' then status else 'failed' end,
-              last_error = ${DELEGATED_ELSEWHERE}, last_checked_at = ${now}
-            where tenant_id = ${r.tenant_id} and id = ${r.id} and zone_id = ${ZONE_CLAIMED}
-            returning id
-          `;
-          if (u.length) await emitAdminTx(tx, r.tenant_id, 'billing');
-        });
-        return;
+      let zone = await dnsHost.findZone(r.host);
+      if (zone) {
+        made = madeAfter(zone, claimedAt);
+        if (!made && (await dnsHost.hasRecords(zone.id)))
+          return refuse(sql, r, now, 'exists', ZONE_EXISTS);
+      } else {
+        zone = await dnsHost.createZone(r.host);
+        made = true;
       }
+      // the zone stays: none of this row's records are in it yet, and the owner's retry (once
+      // the nameservers moved away) takes it up
+      if (await delegatedAlready(r.host, zone.nameServers, d.providers.rdap))
+        return refuse(sql, r, now, 'delegated', DELEGATED_ELSEWHERE);
       zoneId = zone.id;
       nameServers = zone.nameServers;
     }
@@ -173,6 +222,10 @@ export async function syncZones(sql: Sql, d: DomainJobDeps, now: Date) {
       return u.length > 0;
     });
     if (kept || realZone(r.zone_id)) return;
+    if (!made) {
+      domainLog.warn({ host: r.host, zoneId }, 'zone left in place: its row went mid-setup');
+      return;
+    }
     // the row is gone, or a registration took the name: unless another row or that order now
     // holds the name's zone, nobody tracks the one just created
     const held = await controlTx(
@@ -515,8 +568,10 @@ export async function finishRemovals(sql: Sql, d: DomainJobDeps, now: Date) {
       );
     if (r.zone_id) {
       if (!d.providers.dnsHost) return;
-      // a claim whose job died may have created the zone: it holds the name, so it's this row's
-      const zoneId = claimed ? (await d.providers.dnsHost.findZone(r.host))?.id : r.zone_id;
+      // a claim whose job died may have created the zone; one older than the claim isn't its
+      const zoneId = claimed
+        ? (await claimedZone(d.providers.dnsHost, r.host, r.zone_claimed_at))?.id
+        : r.zone_id;
       if (zoneId) await d.providers.dnsHost.deleteZone(zoneId);
     }
     if (!removing) {

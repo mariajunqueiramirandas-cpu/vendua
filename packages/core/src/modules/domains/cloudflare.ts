@@ -58,7 +58,14 @@ function toZone(r: unknown): Zone {
       ? z.name_servers.filter((n): n is string => typeof n === 'string').map((n) => n.toLowerCase())
       : [],
     status: typeof z.status === 'string' ? z.status : 'pending',
+    createdAt: dateOf(z.created_on),
   };
+}
+
+function dateOf(v: unknown): Date | null {
+  if (typeof v !== 'string') return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 export function cloudflare(o: CloudflareOptions): DnsHost {
@@ -144,19 +151,23 @@ export function cloudflare(o: CloudflareOptions): DnsHost {
     return id;
   };
 
+  async function createZone(host: string): Promise<Zone> {
+    const { result } = await call('POST', '/zones', {
+      name: host.trim().toLowerCase(),
+      account: { id: o.accountId },
+      type: 'full',
+      jump_start: false,
+    });
+    return toZone(result);
+  }
+
   return {
     async ensureZone(host) {
       const name = host.trim().toLowerCase();
       const existing = await findZone(name);
       if (existing) return existing;
       try {
-        const { result } = await call('POST', '/zones', {
-          name,
-          account: { id: o.accountId },
-          type: 'full',
-          jump_start: false,
-        });
-        return toZone(result);
+        return await createZone(name);
       } catch (e) {
         // 1061: created by a concurrent attempt
         if (e instanceof Error && /\(1061\)/.test(e.message)) {
@@ -167,7 +178,16 @@ export function cloudflare(o: CloudflareOptions): DnsHost {
       }
     },
 
+    createZone,
+
     findZone: (host) => findZone(host.trim().toLowerCase()),
+
+    async hasRecords(id) {
+      const { result } = await call('GET', `/zones/${zoneId(id)}/dns_records?per_page=50`);
+      return (Array.isArray(result) ? (result as Json[]) : []).some(
+        (r) => r.type !== 'NS' && r.type !== 'SOA',
+      );
+    },
 
     async zone(id) {
       if (!ID.test(id)) return null;
