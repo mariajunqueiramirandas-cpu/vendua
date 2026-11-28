@@ -93,15 +93,18 @@ export function takesOrdersWhileClosed(
   settings: StoreSettingsRow | null,
   cart: Pick<CartView, 'items'>,
   /** the locked rows: a line is an encomenda only if the cart (whose schedule checkout
-   *  enforces) and the locked product both say so */
+   *  enforces) and the locked product both say so — one sold past its stock (0158) is an
+   *  encomenda whenever the store is closed */
   products?: Map<string, ProductDetail | null>,
 ): boolean {
+  const byOrder = (id: string) => {
+    const p = products?.get(id);
+    return p ? p.requiresPreorder || p.preorderWhenSoldOut : true;
+  };
   return (
     preordersWhileClosed(settings) &&
     cart.items.length > 0 &&
-    cart.items.every(
-      (i) => i.requiresPreorder && (products?.get(i.productId)?.requiresPreorder ?? true),
-    )
+    cart.items.every((i) => i.requiresPreorder && byOrder(i.productId))
   );
 }
 

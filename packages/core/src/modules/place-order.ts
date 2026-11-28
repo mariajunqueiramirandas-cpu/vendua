@@ -14,6 +14,7 @@ import { enqueueOrderMessageTx, enqueueSinalDueTx } from '../store-whatsapp/mess
 import { enqueueOrderPrintTx } from './printing/jobs.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee, routeMatches, validCoords, type RouteQuote } from './geo.ts';
+import { vehicleFeeCents } from './vehicles.ts';
 import { adjustmentFor, paymentAdjustmentCents } from './payment-adjustments.ts';
 import {
   freePayment,
@@ -195,12 +196,15 @@ export async function placeOrderTx(
     });
 
   const subtotal = cart.totals.subtotalCents;
+  // 0158: a delivery takes the vehicle its items need, and that vehicle's extra past free delivery
+  const vehicle = body.delivery.mode === 'delivery' && match.zone ? (cart.vehicle ?? null) : null;
+  const vehicleFee = vehicleFeeCents(settings?.vehicle_fees, vehicle);
   const deliveryFee =
     body.delivery.mode === 'delivery' && match.zone
       ? effectiveFee(
           { zone: match.zone, distanceKm: match.distanceKm, feeCents: match.feeCents },
           subtotal,
-        )
+        ) + vehicleFee
       : 0;
   const phone = (body.customer.phone && normalizePhone(body.customer.phone)) || null;
   // Plano semanal (0127): the shopper's yes to the cart's plan, checked before anything is written
@@ -219,7 +223,7 @@ export async function placeOrderTx(
       throw new HttpError(422, 'COUPON_NOT_FOUND', 'coupon no longer exists', { field: 'coupon' });
     const out = evaluateCoupon(row, {
       subtotalCents: subtotal,
-      deliveryFeeCents: deliveryFee,
+      deliveryFeeCents: deliveryFee - vehicleFee,
       phone,
       provenPhone: opts.provenPhone ?? null,
       usage: await couponUsage(tx, tenantId, row.id, phone),
@@ -276,11 +280,17 @@ export async function placeOrderTx(
     });
 
   const orderId = crypto.randomUUID();
+  // 0158: with a date, a product sold past its stock is made for that day and draws none of it
+  const madeToOrder = (id: string) => !!scheduledFor && !!products.get(id)?.preorderWhenSoldOut;
   const stockDrawn = await drawStock(
     tx,
     tenantId,
     stockDemand(
-      cart.items.map((i) => ({ productId: i.productId, qty: i.qty, combo: i.comboSelections })),
+      cart.items.map((i) => ({
+        productId: i.productId,
+        qty: madeToOrder(i.productId) ? 0 : i.qty,
+        combo: i.comboSelections,
+      })),
     ),
     orderId,
   );
@@ -448,14 +458,15 @@ export async function placeOrderTx(
                         subtotal_cents, delivery_fee_cents, discount_cents, payment_adjustment_cents,
                         total_cents, coupon_code, notes, scheduled_for, source, thread_id, tab_id,
                         stock_drawn, addon_stock_drawn, ref, party, deposit_cents, ingredients_drawn,
-                        cost_cents)
+                        cost_cents, delivery_vehicle)
     values (${orderId}, ${tenantId}, ${cartId}, ${number}, ${tx.json(customer)}, ${phone},
             ${tx.json(delivery as never)}, ${tx.json(payment as never)}, 'placed',
             ${subtotal}, ${deliveryFee}, ${discount}, ${paymentAdjustment}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor}, ${source}, ${opts.threadId ?? null}, ${tabId},
             ${tx.json(stockDrawn)}, ${Object.keys(addonsDrawn).length ? tx.json(addonsDrawn) : null},
             ${ref}, ${party ? tx.json(party as never) : null}, ${sinal?.depositCents ?? null},
-            ${Object.keys(insumos.drawn).length ? tx.json(insumos.drawn) : null}, ${insumos.costCents})
+            ${Object.keys(insumos.drawn).length ? tx.json(insumos.drawn) : null}, ${insumos.costCents},
+            ${vehicle})
   `;
   // the rest only needs the order row; one pipelined batch instead of a round trip per statement
   const [store] = await Promise.all([

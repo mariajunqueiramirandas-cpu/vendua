@@ -154,7 +154,11 @@ export async function buildPack(tx: Sql, tenantId: string, now: Date): Promise<S
           : null,
         p.needsChoices ? 'tem opções: use get_product' : null,
         p.kind === 'combo' ? 'combo' : null,
-        p.requiresPreorder ? `encomenda (${p.preorderLeadDays} dia(s) de antecedência)` : null,
+        p.requiresPreorder
+          ? `encomenda (${p.preorderLeadDays} dia(s) de antecedência)`
+          : p.preorderWhenSoldOut
+            ? `pronta entrega enquanto há estoque; passando disso ou com data marcada, encomenda (${p.preorderLeadDays} dia(s) de antecedência)`
+            : null,
         p.promoLabel ? `promoção ${p.promoLabel}` : null,
       ].filter(Boolean);
       lines.push(

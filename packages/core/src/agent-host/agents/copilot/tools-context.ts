@@ -871,6 +871,12 @@ export const productDetailsTool = defineTool<{ product: string }, Sql>({
     }
     if (p.requiresPreorder)
       out.push(`Encomenda: pedir com ${p.preorderLeadDays} dias de antecedência.`);
+    else if (p.preorderWhenSoldOut)
+      out.push(
+        `Encomenda quando acaba: pronta entrega enquanto há estoque; depois, ou com data marcada, encomenda com ${p.preorderLeadDays} dias de antecedência.`,
+      );
+    if (p.deliveryVehicle)
+      out.push(`Transporte: só ${p.deliveryVehicle === 'car' ? 'de carro' : 'de moto'}.`);
     if (p.tags?.length || p.dietary?.length)
       out.push(`Marcas: ${[...(p.tags ?? []), ...(p.dietary ?? [])].join(', ')}`);
     p.groups.forEach((g, gi) =>

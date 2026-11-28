@@ -36,6 +36,7 @@ import { MEDIA_PER_DAY, takeMediaCallTx } from '../copilot/media.ts';
 import { readMenuPhoto } from '../modules/menu-import/photo.ts';
 import { mediaUpload } from '../modules/media-upload.ts';
 import { withTenant } from '../platform/db.ts';
+import { isVehicle, type Vehicle } from '../modules/vehicles.ts';
 import { audit } from './audit.ts';
 import {
   bool,
@@ -101,6 +102,10 @@ export interface AdminProductRow {
   lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
+  /** 0158: sold from stock, by encomenda once it runs out (never sold out by its stock) */
+  preorderWhenSoldOut: boolean;
+  /** 0158: travels only by this vehicle (vehicles.ts); null = any */
+  deliveryVehicle: Vehicle | null;
   sort: number;
   soldOutUntil: string | null;
   availabilitySchedule: AvailabilitySchedule | null;
@@ -135,7 +140,8 @@ const productCols = (tx: Sql) => tx`
   p.id, p.category_id as "categoryId", p.slug, p.name, p.description, p.base_price_cents as "priceCents",
   p.compare_at_price_cents as "compareAtPriceCents", p.status, p.kind,
   p.stock_quantity as "stockQuantity", p.low_stock_threshold as "lowStockThreshold",
-  p.requires_preorder as "requiresPreorder", p.preorder_lead_days as "preorderLeadDays", p.sort,
+  p.requires_preorder as "requiresPreorder", p.preorder_lead_days as "preorderLeadDays",
+  p.preorder_when_sold_out as "preorderWhenSoldOut", p.delivery_vehicle as "deliveryVehicle", p.sort,
   p.sold_out_until as "soldOutUntil", p.tags, p.availability_schedule as "availabilitySchedule",
   p.promo_schedule as "promoSchedule", p.dietary,
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as "imageUrl",
@@ -158,7 +164,11 @@ async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
   ]);
   const now = new Date();
   for (const r of rows) {
-    r.liveStatus = liveStatus(r.status, r.stockQuantity) as AdminProductRow['liveStatus'];
+    const pastStock = r.preorderWhenSoldOut && !r.requiresPreorder;
+    r.liveStatus = liveStatus(
+      r.status,
+      pastStock ? null : r.stockQuantity,
+    ) as AdminProductRow['liveStatus'];
     r.lowStock = isLowStock(r.stockQuantity, r.lowStockThreshold);
     r.fichaCostCents = productFichaCost(fichas, r.id)?.maxCents ?? null;
     const cost =
@@ -632,6 +642,18 @@ export function mountCatalog(d: AdminDeps) {
         set.requires_preorder = bool(body.requiresPreorder, 'requiresPreorder');
         changes.push('encomenda');
       }
+      if (body.deliveryVehicle !== undefined) {
+        if (body.deliveryVehicle !== null && !isVehicle(body.deliveryVehicle))
+          throw new HttpError(422, 'BAD_REQUEST', 'deliveryVehicle: moto, car or null', {
+            field: 'deliveryVehicle',
+          });
+        set.delivery_vehicle = body.deliveryVehicle;
+        changes.push('transporte');
+      }
+      if (body.preorderWhenSoldOut !== undefined) {
+        set.preorder_when_sold_out = bool(body.preorderWhenSoldOut, 'preorderWhenSoldOut');
+        changes.push('encomenda quando acabar');
+      }
       if (body.preorderLeadDays !== undefined) {
         set.preorder_lead_days = int(body.preorderLeadDays, 'preorderLeadDays', 0, 60);
         changes.push('antecedência');
@@ -733,10 +755,12 @@ export function mountCatalog(d: AdminDeps) {
         await tx<{ id: string }[]>`
           insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
                                 compare_at_price_cents, promo_schedule, status, figure_variant, tags, kind,
-                                requires_preorder, preorder_lead_days, sort, low_stock_threshold, dietary)
+                                requires_preorder, preorder_lead_days, preorder_when_sold_out,
+                                delivery_vehicle, sort, low_stock_threshold, dietary)
           select tenant_id, category_id, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, description,
                  base_price_cents, compare_at_price_cents, promo_schedule, 'archived', figure_variant, tags, kind,
-                 requires_preorder, preorder_lead_days, sort + 1, low_stock_threshold, dietary
+                 requires_preorder, preorder_lead_days, preorder_when_sold_out,
+                 delivery_vehicle, sort + 1, low_stock_threshold, dietary
           from products where tenant_id = ${t.id} and id = ${id}
           returning id
         `

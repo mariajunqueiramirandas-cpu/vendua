@@ -3,6 +3,7 @@ import { HttpError } from '../platform/http.ts';
 import { localParts, type LocalParts } from '../platform/tz.ts';
 import { fromPriceCents } from './cart.ts';
 import type { ComboSlot, ComboSlotItem } from './combos.ts';
+import { preorderPastStock } from './preorder.ts';
 
 /** a kit pick outside its own schedule reads sold out and carries the label */
 export type ScheduledComboSlotItem = ComboSlotItem & { availabilityLabel?: string };
@@ -184,6 +185,9 @@ export interface ProductSummary {
   lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
+  /** 0158: sold from stock, and by encomenda once it runs out — the stock is then no cap for the
+   *  shopper (stockQuantity reads null) and `requiresPreorder` turns on at zero */
+  preorderWhenSoldOut?: boolean;
   /** a combo, or a product with modifier groups: the card must open the product page */
   needsChoices: boolean;
   /** set only while outside its availability schedule (status then reads 'sold_out') */
@@ -267,6 +271,8 @@ interface ProductRow {
   low_stock_threshold: number | null;
   requires_preorder: boolean;
   preorder_lead_days: number;
+  /** 0158: by encomenda once the stock runs out */
+  preorder_when_sold_out?: boolean;
   needs_choices: boolean;
   availability_schedule: AvailabilitySchedule | null;
   promo_schedule: PromoSchedule | null;
@@ -391,7 +397,10 @@ function toSummary(
   /** a kit's slots — its from-price takes the cheapest valid picks */
   slots: readonly ComboSlot[] = [],
 ): ProductSummary {
-  const stock = row.stock_quantity;
+  // sold past its stock (0158): out of stock it is an encomenda, never sold out, and the shopper's
+  // quantity isn't capped by it — the cart turns a line its stock can't cover into an encomenda
+  const pastStock = preorderPastStock(row);
+  const stock = pastStock ? null : row.stock_quantity;
   const off = scheduled(row, now, tz);
   const status = liveStatus(row.status, stock) as ProductSummary['status'];
   const price = priceNow(row, now, tz);
@@ -416,8 +425,11 @@ function toSummary(
     stockQuantity: stock,
     lowStockThreshold: row.low_stock_threshold,
     lowStock: isLowStock(stock, row.low_stock_threshold),
-    requiresPreorder: row.requires_preorder,
+    requiresPreorder:
+      row.requires_preorder ||
+      (pastStock && row.stock_quantity !== null && row.stock_quantity <= 0),
     preorderLeadDays: row.preorder_lead_days,
+    preorderWhenSoldOut: pastStock,
     needsChoices: row.needs_choices,
     ...(off && status === 'active' ? { availabilityLabel: off.label } : {}),
     dietary: row.dietary ?? [],
@@ -428,7 +440,7 @@ const productColumns = (tx: Sql) => tx`
   p.id, p.category_id, p.slug, p.name, p.description, p.base_price_cents, p.compare_at_price_cents,
   p.status, p.figure_variant,
   p.tags, p.kind, p.stock_quantity, p.low_stock_threshold, p.requires_preorder, p.preorder_lead_days,
-  p.availability_schedule, p.promo_schedule, p.dietary,
+  p.preorder_when_sold_out, p.availability_schedule, p.promo_schedule, p.dietary,
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url,
   (p.kind = 'combo' or exists (select 1 from modifier_groups g where g.product_id = p.id)) as needs_choices
 `;

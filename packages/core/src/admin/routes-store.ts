@@ -1,4 +1,6 @@
 import { parseCapacity } from '../modules/encomenda-capacity.ts';
+import { parseBlockedDates, storeToday } from '../modules/preorder.ts';
+import { parseVehicleFees } from '../modules/vehicles.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import {
@@ -192,6 +194,8 @@ export async function storeView(
       maxKm: Number(s.delivery_max_km ?? 8),
       freeOverCents: s.delivery_free_over_cents ?? null,
     },
+    /** 0158: the extra a delivery pays for the vehicle its items need; absent = none */
+    vehicleFees: s.vehicle_fees ?? {},
     preorder: {
       paymentMethods: s.preorder_payment_methods ?? ['pix'],
       maxDays: s.preorder_max_days ?? 30,
@@ -199,6 +203,11 @@ export async function storeView(
       /** Festa calculada (0126): orders a day per weekday and per date; null = no ceiling */
       capacity: s.encomenda_capacity ?? null,
       reminder: s.encomenda_reminder ?? true,
+      /** 0158: dates the calendar doesn't offer, from today on */
+      blockedDates: parseBlockedDates(
+        s.blocked_dates ?? [],
+        storeToday(new Date(), s.hours?.timezone),
+      ),
     },
     /** Festa calculada F2 (0128): the sinal a party (and an encomenda from minCents) pays by Pix;
      *  bps 0 = off. `policy` is the store's own words, shown as the store's. */
@@ -644,6 +653,10 @@ export function mountStore(d: AdminDeps) {
         throw new HttpError(422, 'LOCATION_REQUIRED', 'mark the store on the map first', {
           field: 'location',
         });
+      if (body.vehicleFees !== undefined) {
+        set.vehicle_fees = tx.json(parseVehicleFees(body.vehicleFees));
+        changed.push('veículos');
+      }
       const pre = isObj(body.preorder) ? body.preorder : null;
       let preorderMethods: string[] | undefined;
       if (pre) {
@@ -668,6 +681,10 @@ export function mountStore(d: AdminDeps) {
           set.encomenda_capacity = cap ? tx.json(cap as never) : null;
         }
         if (pre.reminder !== undefined) set.encomenda_reminder = bool(pre.reminder, 'reminder');
+        if (pre.blockedDates !== undefined)
+          set.blocked_dates = tx.json(
+            parseBlockedDates(pre.blockedDates, storeToday(new Date(), s.hours?.timezone)),
+          );
         changed.push('encomendas');
       }
       const sn = isObj(body.sinal) ? body.sinal : null;
