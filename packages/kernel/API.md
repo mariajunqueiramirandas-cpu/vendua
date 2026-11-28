@@ -585,6 +585,20 @@ caption?)` (promises like `onSend`) and `maxVoiceSeconds` (60); a custom slot th
   with ×; the typed text goes as its caption. A denied mic or an unreadable photo is a short line
   in the error row. Sent messages show "Mensagem de voz" / "Foto" over the transcript or caption.
 
+### Encomendas past stock and delivery vehicles (Kernel 1.32)
+
+Additive — no storefront edit, no new runtime export.
+
+- `CatalogProduct.preorderWhenSoldOut?: boolean` — sold from stock, by encomenda once it runs out.
+  Core sends `stockQuantity: null` for it (no cap: past the stock the cart line is an encomenda,
+  `CartItem.requiresPreorder`) and `requiresPreorder: true` at zero stock. A dated order makes it
+  an encomenda too, so its `preorderLeadDays` bound `Cart.schedule.dates`.
+- `Cart.vehicle?: 'moto' | 'car' | null` — an item only travels by that vehicle; a delivery goes
+  by the biggest one (a car carries what a moto does). `CartTotals.vehicleFeeCents?` is the
+  store's extra for it, already in `deliveryFeeCents`; free delivery and a free-delivery coupon
+  waive the trip, not the extra. The default summary (`checkout.Summary`) says "Entrega de carro"
+  / "Entrega de moto".
+
 ### Replies said out loud in the store chat (Kernel 1.31)
 
 Additive — no storefront edit, no new runtime export. When the shopper sends a voice message and

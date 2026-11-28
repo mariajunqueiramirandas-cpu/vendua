@@ -2,6 +2,7 @@ import {
   ArrowCounterClockwise,
   ArrowsClockwise,
   CalendarPlus,
+  Car,
   Clock,
   Crosshair,
   Fire,
@@ -1011,6 +1012,7 @@ function Delivery({
           </div>
         </Section>
       ) : null}
+      {o.deliveryEnabled ? <VehicleFees s={s} run={run} /> : null}
       <ZoneSheet
         zone={edit}
         center={s.location}
@@ -1035,6 +1037,66 @@ function Delivery({
         }}
       />
     </>
+  );
+}
+
+/** 0158: what a delivery pays on top when an item in it only travels by moto or by car */
+function VehicleFees({
+  s,
+  run,
+}: {
+  s: StoreView;
+  run: (b: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const fees = s.vehicleFees ?? {};
+  const save = (vehicle: 'moto' | 'car', cents: number | null) =>
+    void run({ vehicleFees: { ...fees, [vehicle]: cents } }).catch(() => undefined);
+  const rows = [
+    { vehicle: 'moto', Icon: Moped, title: 'Só de moto' },
+    { vehicle: 'car', Icon: Car, title: 'Só de carro' },
+  ] as const;
+  return (
+    <Section
+      id="transporte"
+      title="Itens que pedem outro transporte"
+      hint="Um bolo de andares só vai de carro? Marque no produto, em Transporte, e diga aqui quanto a entrega custa a mais."
+    >
+      <Card className="divide-y divide-line">
+        {rows.map(({ vehicle, Icon, title }) => (
+          <div
+            key={vehicle}
+            className="flex min-h-18 flex-wrap items-center justify-between gap-3 px-4 py-3"
+          >
+            <span className="flex min-w-0 flex-1 basis-48 items-center gap-3">
+              <Icon className="size-6 shrink-0 text-muted" aria-hidden />
+              <span className="min-w-0">
+                <label htmlFor={`vf-${vehicle}`} className="block font-semibold">
+                  {title}
+                </label>
+                <span className="t-caption block text-muted">
+                  {fees[vehicle]
+                    ? `a entrega custa ${money(fees[vehicle])} a mais`
+                    : 'sem acréscimo'}
+                </span>
+              </span>
+            </span>
+            <MoneyField
+              id={`vf-${vehicle}`}
+              className="w-36"
+              cents={fees[vehicle] ?? null}
+              allowEmpty
+              placeholder="sem acréscimo"
+              validate={feeRule}
+              onCommit={(v) => save(vehicle, v || null)}
+            />
+          </div>
+        ))}
+      </Card>
+      <p className="t-caption mt-2 px-1 text-muted">
+        Somado à taxa da área. Com itens de moto e de carro, o pedido vai de carro. Entrega grátis e
+        cupom de frete grátis não tiram o acréscimo.
+      </p>
+    </Section>
   );
 }
 

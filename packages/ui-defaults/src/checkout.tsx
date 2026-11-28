@@ -101,7 +101,14 @@ export function CheckoutSummary({
         </div>
         {cart.delivery?.mode === 'delivery' ? (
           <div>
-            <dt>Entrega{cart.delivery.neighborhood ? ` · ${cart.delivery.neighborhood}` : ''}</dt>
+            <dt>
+              {cart.vehicle === 'car'
+                ? 'Entrega de carro'
+                : cart.vehicle === 'moto'
+                  ? 'Entrega de moto'
+                  : 'Entrega'}
+              {cart.delivery.neighborhood ? ` · ${cart.delivery.neighborhood}` : ''}
+            </dt>
             <dd className="v-num" data-vendua="delivery-fee">
               {t.deliveryFeeCents > 0 ? formatCents(t.deliveryFeeCents, currency) : 'grátis'}
             </dd>

@@ -30,6 +30,11 @@ export function OrderRowView({ o }: { o: OrderRow }) {
             <Mode className="size-4 shrink-0" aria-label={modeOf(o).label} />
             <span className="truncate">
               {when(o.placedAt)} · {o.itemCount} {o.itemCount === 1 ? 'item' : 'itens'}
+              {o.mode === 'delivery' && o.deliveryVehicle
+                ? o.deliveryVehicle === 'car'
+                  ? ' · de carro'
+                  : ' · de moto'
+                : ''}
             </span>
             {pay ? (
               <span

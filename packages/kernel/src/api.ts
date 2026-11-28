@@ -265,6 +265,10 @@ export interface CatalogProduct {
   lowStock?: boolean;
   requiresPreorder?: boolean;
   preorderLeadDays?: number;
+  /** Kernel 1.32 — sold from stock, and by encomenda once it runs out: Core then sends
+   *  `stockQuantity: null` (the stock caps nothing) and `requiresPreorder` at zero stock; a cart
+   *  line past the stock, or in a dated order, is an encomenda */
+  preorderWhenSoldOut?: boolean;
   /** Kernel 1.5 — a combo or a product with modifier groups: only the product page can add it */
   needsChoices?: boolean;
   /** Kernel 1.7 — a `sold_out` product outside its schedule says when it comes back
@@ -476,6 +480,9 @@ export interface CartTotals {
    *  the rest; present only when `Cart.sinal` is (with a date picked, the order asks for it) */
   depositCents?: number;
   balanceCents?: number;
+  /** Kernel 1.32 — the part of `deliveryFeeCents` the cart's `vehicle` adds (free delivery
+   *  doesn't waive it); 0 or absent without one */
+  vehicleFeeCents?: number;
 }
 
 export interface CartCoupon {
@@ -542,6 +549,9 @@ export interface Cart {
    *  the store's own cancellation words (shown as the store's). Amounts: `totals.depositCents` /
    *  `balanceCents`. With a date, checkout takes only Pix (`PAYMENT_NOT_ALLOWED` otherwise). */
   sinal?: { percent: number; policy: string | null } | null;
+  /** Kernel 1.32 — an item in the cart only travels by moto or by car: a delivery goes by the
+   *  biggest one, its extra in `totals.vehicleFeeCents`. null/absent = the store's usual way */
+  vehicle?: 'moto' | 'car' | null;
 }
 
 /** Kernel 1.26 — Plano semanal: a fixed basket the store delivers every week. `subtotalCents`
