@@ -3101,8 +3101,13 @@ export const api = {
   }) => send<{ product: ProductDetail }>('POST', '/products', p),
   updateProduct: (id: string, patch: Record<string, unknown>) =>
     send<{ product: ProductDetail; waitlistWoken: number }>('PATCH', `/products/${id}`, patch),
-  duplicateProduct: (id: string) =>
-    send<{ product: ProductDetail }>('POST', `/products/${id}/duplicate`),
+  /** a copy beside the original (hidden, "(cópia)"); with a category, the same item there too */
+  duplicateProduct: (id: string, categoryId?: string) =>
+    send<{ product: ProductDetail }>(
+      'POST',
+      `/products/${id}/duplicate`,
+      categoryId ? { categoryId } : undefined,
+    ),
   setMedia: (
     id: string,
     media: { url: string; alt?: string | null; width?: number | null; height?: number | null }[],
@@ -3202,7 +3207,7 @@ export const api = {
     },
   ) => send<{ ficha: ProductFicha }>('PUT', `/products/${id}/ficha`, body),
   bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
-    send<{ updated: number; before?: BulkBefore[]; waitlistWoken?: number }>(
+    send<{ updated: number; before?: BulkBefore[]; created?: string[]; waitlistWoken?: number }>(
       'POST',
       '/products/bulk',
       { ids, action, ...extra },

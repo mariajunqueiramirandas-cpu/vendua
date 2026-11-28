@@ -178,7 +178,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encomendas and vehicles (db)', 
     );
     expect(dated.status).toBe(201);
     // made for the date: the 2 ready ones stay for whoever orders now
-    expect(await stock(ids.pote)).toBe(2);
+    expect(await stock(ids.pote!)).toBe(2);
 
     // without a date and within the stock: pronta entrega, drawn
     const now = await session();
@@ -186,7 +186,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encomendas and vehicles (db)', 
     const ready = await call('POST', '/checkout/v1/checkout', input, now);
     expect(ready.status).toBe(201);
     expect(ready.body.order.scheduledFor).toBeNull();
-    expect(await stock(ids.pote)).toBe(0);
+    expect(await stock(ids.pote!)).toBe(0);
 
     // out of stock it reads as an encomenda, never sold out
     const out = (await call('GET', '/storefront/v1/products/pote')).body.product;
@@ -202,7 +202,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encomendas and vehicles (db)', 
   });
 
   test('closed, the store takes an item sold past its stock as an encomenda', async () => {
-    await sql`update products set stock_quantity = 5 where id = ${ids.pote}`;
+    await sql`update products set stock_quantity = 5 where id = ${ids.pote!}`;
     await sql`update store_settings set status_override = 'closed', preorders_while_closed = true
               where tenant_id = ${tenantId}`;
     try {
@@ -222,7 +222,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('encomendas and vehicles (db)', 
         auth,
       );
       expect(placed.status).toBe(201);
-      expect(await stock(ids.pote)).toBe(5);
+      expect(await stock(ids.pote!)).toBe(5);
 
       // a plain item can't ride along: the store is closed for it
       const mixed = await session();

@@ -169,10 +169,19 @@ function Editor({
     onSuccess: (r) => put(r.product),
     onError: (e) => toast.error(messageOf(e)),
   });
+  // a copy here (hidden, to review) or the same item in another category too
+  const [copying, setCopying] = useState(false);
   const dup = useMutation({
-    mutationFn: () => api.duplicateProduct(p.id),
-    onSuccess: (r) => {
+    mutationFn: (to?: { id: string; name: string }) => api.duplicateProduct(p.id, to?.id),
+    onSuccess: (r, to) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
+      setCopying(false);
+      if (to) {
+        toast(`${p.name} copiado para ${to.name}`, {
+          action: { label: 'ver cópia', run: () => nav(`/cardapio/produto/${r.product.id}`) },
+        });
+        return;
+      }
       toast('Cópia criada (escondida até você revisar)');
       nav(`/cardapio/produto/${r.product.id}`);
     },
@@ -234,12 +243,7 @@ function Editor({
         subtitle={<SaveMark state={field.state} />}
         actions={
           <>
-            <Button
-              variant="ghost"
-              icon={<Copy />}
-              loading={dup.isPending}
-              onClick={() => dup.mutate()}
-            >
+            <Button variant="ghost" icon={<Copy />} onClick={() => setCopying(true)}>
               duplicar
             </Button>
             <Button
@@ -684,9 +688,8 @@ function Editor({
             <Button
               variant="secondary"
               icon={<Copy />}
-              loading={dup.isPending}
               className="md:hidden"
-              onClick={() => dup.mutate()}
+              onClick={() => setCopying(true)}
             >
               duplicar
             </Button>
@@ -706,6 +709,53 @@ function Editor({
         </div>
       </div>
       <PricingSheet product={pricing ? p : null} onClose={() => setPricing(false)} />
+      <Sheet
+        open={copying}
+        onOpenChange={(v) => !dup.isPending && setCopying(v)}
+        title={`Duplicar ${p.name}`}
+      >
+        <div className="grid gap-2 pt-1">
+          <Button
+            variant="secondary"
+            size="lg"
+            block
+            icon={<Copy />}
+            loading={dup.isPending && !dup.variables}
+            disabled={dup.isPending}
+            onClick={() => dup.mutate(undefined)}
+          >
+            uma cópia aqui, para editar
+          </Button>
+          <p className="t-caption px-1 text-muted">
+            Fica em {cats.find((c) => c.id === p.categoryId)?.name ?? 'esta categoria'}, escondida
+            até você revisar.
+          </p>
+          {cats.some((c) => c.id !== p.categoryId) ? (
+            <>
+              <p className="t-label mt-3 px-1">Copiar para outra categoria</p>
+              {cats
+                .filter((c) => c.id !== p.categoryId)
+                .map((c) => (
+                  <Button
+                    key={c.id}
+                    variant="secondary"
+                    size="lg"
+                    block
+                    loading={dup.isPending && dup.variables?.id === c.id}
+                    disabled={dup.isPending}
+                    onClick={() => dup.mutate({ id: c.id, name: c.name })}
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              <p className="t-caption px-1 text-muted">
+                O mesmo produto aparece lá também, com fotos e opções. O estoque de cada um é
+                contado à parte.
+              </p>
+            </>
+          ) : null}
+        </div>
+      </Sheet>
     </PageBody>
   );
 }

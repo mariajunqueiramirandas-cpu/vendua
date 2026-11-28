@@ -1,5 +1,12 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
+import {
+  HttpError,
+  UUID_RE,
+  bodyJson,
+  boundedText,
+  parseJsonObject,
+  uuidParam,
+} from '../platform/http.ts';
 import {
   availabilityLabel,
   isLowStock,
@@ -749,84 +756,18 @@ export function mountCatalog(d: AdminDeps) {
     '/products/:id/duplicate',
     write('manager', async (tx, t, m, c) => {
       const id = uuidParam(c, 'id');
-      const src = await productRow(tx, t.id, id);
-      const name = `${src.name} (cópia)`.slice(0, 120);
-      const copy = (
-        await tx<{ id: string }[]>`
-          insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
-                                compare_at_price_cents, promo_schedule, status, figure_variant, tags, kind,
-                                requires_preorder, preorder_lead_days, preorder_when_sold_out,
-                                delivery_vehicle, sort, low_stock_threshold, dietary)
-          select tenant_id, category_id, ${await uniqueSlug(tx, 'products', t.id, name)}, ${name}, description,
-                 base_price_cents, compare_at_price_cents, promo_schedule, 'archived', figure_variant, tags, kind,
-                 requires_preorder, preorder_lead_days, preorder_when_sold_out,
-                 delivery_vehicle, sort + 1, low_stock_threshold, dietary
-          from products where tenant_id = ${t.id} and id = ${id}
-          returning id
-        `
-      )[0]!.id;
-      await tx`
-        insert into product_media (tenant_id, product_id, url, alt, width, height, sort)
-        select tenant_id, ${copy}, url, alt, width, height, sort from product_media where product_id = ${id}
-      `;
-      const groups = await tx<
-        { id: string }[]
-      >`select id from modifier_groups where tenant_id = ${t.id} and product_id = ${id}`;
-      for (const g of groups) {
-        const ng = (
-          await tx<{ id: string }[]>`
-            insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select,
-                                         pricing_rule, sort)
-            select tenant_id, ${copy}, name, required, min_select, max_select, pricing_rule, sort
-            from modifier_groups where id = ${g.id}
-            returning id
-          `
-        )[0]!.id;
-        await tx`
-          insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, max_qty, description,
-                                 image_url, sort)
-          select tenant_id, ${ng}, name, price_delta_cents, status, max_qty, description, image_url, sort
-          from modifiers where group_id = ${g.id}
-        `;
-        // each option's ficha goes to its copy (same name and place in the group)
-        await tx`
-          insert into recipe_lines (tenant_id, modifier_id, ingredient_id, qty_milli, mode, sort)
-          select r.tenant_id, nm.id, r.ingredient_id, r.qty_milli, r.mode, r.sort
-          from recipe_lines r
-            join modifiers om on om.id = r.modifier_id and om.group_id = ${g.id}
-            join lateral (
-              select id from modifiers where group_id = ${ng} and name = om.name and sort = om.sort
-              order by id limit 1
-            ) nm on true
-          where r.tenant_id = ${t.id}
-        `;
-      }
-      await tx`
-        insert into recipe_lines (tenant_id, product_id, ingredient_id, qty_milli, mode, sort)
-        select tenant_id, ${copy}, ingredient_id, qty_milli, mode, sort from recipe_lines
-        where tenant_id = ${t.id} and product_id = ${id}
-      `;
-      const slots = await tx<
-        { id: string }[]
-      >`select id from combo_slots where tenant_id = ${t.id} and product_id = ${id}`;
-      for (const s of slots) {
-        const ns = (
-          await tx<{ id: string }[]>`
-            insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
-            select tenant_id, ${copy}, name, min_select, max_select, qty_per_item, sort from combo_slots where id = ${s.id}
-            returning id
-          `
-        )[0]!.id;
-        await tx`
-          insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
-          select tenant_id, ${ns}, product_id, price_delta_cents, sort from combo_slot_items where slot_id = ${s.id}
-        `;
-      }
+      // optional body: the category the copy goes to (another one keeps the name and the status)
+      const raw = (await boundedText(c, 4096)).trim();
+      const body = raw ? parseJsonObject(raw) : {};
+      const to = body.categoryId !== undefined ? await categoryOf(tx, t.id, body.categoryId) : null;
+      const { copy, src, moved } = await duplicateTx(tx, t.id, id, to);
       await audit(tx, t.id, m, {
         action: 'product.duplicate',
         entity: 'product',
         entityId: copy,
-        summary: `duplicou "${src.name}" (a cópia começa escondida)`,
+        summary: moved
+          ? `copiou "${src.name}" para outra categoria`
+          : `duplicou "${src.name}" (a cópia começa escondida)`,
       });
       await emitAdminTx(tx, t.id, 'catalog');
       return { status: 201, body: await productDetail(tx, t.id, copy) };
@@ -1141,6 +1082,7 @@ export function mountCatalog(d: AdminDeps) {
       const live = rows.map((r) => r.id);
       let summary = '';
       let before: Record<string, unknown>[] | undefined;
+      let created: string[] | undefined;
       let woken = 0;
       const n = `${live.length} ${live.length === 1 ? 'produto' : 'produtos'}`;
       if (action === 'category') {
@@ -1228,6 +1170,54 @@ export function mountCatalog(d: AdminDeps) {
         summary = sched
           ? `pôs o horário "${availabilityLabel(sched)}" em ${n}`
           : `tirou o horário de venda de ${n}`;
+      } else if (action === 'preorder') {
+        const mode = oneOf(body.mode, 'mode', PREORDER_MODES);
+        const lead = body.leadDays === undefined ? null : int(body.leadDays, 'leadDays', 0, 60);
+        before = rows.map((r) => ({
+          id: r.id,
+          requiresPreorder: r.requiresPreorder,
+          preorderWhenSoldOut: r.preorderWhenSoldOut,
+          preorderLeadDays: r.preorderLeadDays,
+        }));
+        await tx`
+          update products set requires_preorder = ${mode === 'always'},
+            preorder_when_sold_out = ${mode === 'when_sold_out'},
+            preorder_lead_days = ${lead === null ? tx`preorder_lead_days` : lead}
+          where tenant_id = ${t.id} and id = any(${live}::uuid[])
+        `;
+        summary =
+          mode === 'ready'
+            ? `pôs ${n} como pronta entrega`
+            : `pôs ${n} ${mode === 'always' ? 'só por encomenda' : 'como encomenda quando acaba'}${lead === null ? '' : ` (${lead} dias antes)`}`;
+      } else if (action === 'vehicle') {
+        if (body.deliveryVehicle !== null && !isVehicle(body.deliveryVehicle))
+          throw new HttpError(422, 'BAD_REQUEST', 'deliveryVehicle: moto, car or null', {
+            field: 'deliveryVehicle',
+          });
+        const vehicle = body.deliveryVehicle as Vehicle | null;
+        before = rows.map((r) => ({ id: r.id, deliveryVehicle: r.deliveryVehicle }));
+        await tx`
+          update products set delivery_vehicle = ${vehicle}
+          where tenant_id = ${t.id} and id = any(${live}::uuid[])
+        `;
+        summary = vehicle
+          ? `marcou ${n} para ir só ${vehicle === 'car' ? 'de carro' : 'de moto'}`
+          : `tirou o transporte próprio de ${n}`;
+      } else if (action === 'copy') {
+        if (live.length > BULK_COPY_MAX)
+          throw new HttpError(422, 'BAD_REQUEST', `copy at most ${BULK_COPY_MAX} at once`, {
+            field: 'ids',
+          });
+        const categoryId = await categoryOf(tx, t.id, body.categoryId);
+        created = [];
+        // in the menu's order, so the copies keep it in their new category
+        const ordered = (
+          await tx<{ id: string }[]>`
+            select id from products where tenant_id = ${t.id} and id = any(${live}::uuid[])
+            order by sort, id`
+        ).map((r) => r.id);
+        for (const id of ordered) created.push((await duplicateTx(tx, t.id, id, categoryId)).copy);
+        summary = `copiou ${n} para outra categoria`;
       } else if (action === 'delete') {
         await softDelete(tx, t.id, live);
         summary = `apagou ${n}`;
@@ -1260,13 +1250,27 @@ export function mountCatalog(d: AdminDeps) {
         ...(before ? { before } : {}),
         after: {
           ids: live,
-          ...pickBody(body, ['categoryId', 'percent', 'amountCents', 'stockQuantity']),
+          ...pickBody(body, [
+            'categoryId',
+            'percent',
+            'amountCents',
+            'stockQuantity',
+            'mode',
+            'leadDays',
+            'deliveryVehicle',
+          ]),
+          ...(created ? { created } : {}),
         },
       });
       if (live.length) await emitAdminTx(tx, t.id, 'catalog');
       return {
         status: 200,
-        body: { updated: live.length, ...(before ? { before } : {}), waitlistWoken: woken },
+        body: {
+          updated: live.length,
+          ...(before ? { before } : {}),
+          ...(created ? { created } : {}),
+          waitlistWoken: woken,
+        },
       };
     }),
   );
@@ -1559,6 +1563,96 @@ function pickBody(body: Record<string, unknown>, keys: string[]) {
   return out;
 }
 
+/** A product's copy with its photos, options, ficha and kit; `to` = another category for it. */
+async function duplicateTx(tx: Sql, tenantId: string, id: string, to: string | null) {
+  const src = await productRow(tx, tenantId, id);
+  // a copy beside the original says so and waits hidden; one in another category is the same
+  // item offered there too
+  const moved = to !== null && to !== src.categoryId;
+  const name = moved ? src.name : `${src.name} (cópia)`.slice(0, 120);
+  const copy = (
+    await tx<{ id: string }[]>`
+      insert into products (tenant_id, category_id, slug, name, description, base_price_cents,
+                            compare_at_price_cents, promo_schedule, status, sold_out_until,
+                            figure_variant, tags, kind, requires_preorder, preorder_lead_days,
+                            preorder_when_sold_out, delivery_vehicle, availability_schedule, sort,
+                            low_stock_threshold, dietary)
+      select tenant_id, ${moved ? to : tx`category_id`}, ${await uniqueSlug(tx, 'products', tenantId, name)}, ${name}, description,
+             base_price_cents, compare_at_price_cents, promo_schedule,
+             ${moved ? tx`status` : 'archived'}, ${moved ? tx`sold_out_until` : null},
+             figure_variant, tags, kind, requires_preorder, preorder_lead_days,
+             preorder_when_sold_out, delivery_vehicle, availability_schedule,
+             ${
+               moved
+                 ? tx`(select coalesce(max(q.sort), 0) + 1 from products q
+                       where q.tenant_id = ${tenantId} and q.category_id = ${to})`
+                 : tx`sort + 1`
+             },
+             low_stock_threshold, dietary
+      from products where tenant_id = ${tenantId} and id = ${id}
+      returning id
+    `
+  )[0]!.id;
+  await tx`
+    insert into product_media (tenant_id, product_id, url, alt, width, height, sort)
+    select tenant_id, ${copy}, url, alt, width, height, sort from product_media where product_id = ${id}
+  `;
+  const groups = await tx<
+    { id: string }[]
+  >`select id from modifier_groups where tenant_id = ${tenantId} and product_id = ${id}`;
+  for (const g of groups) {
+    const ng = (
+      await tx<{ id: string }[]>`
+        insert into modifier_groups (tenant_id, product_id, name, required, min_select, max_select,
+                                     pricing_rule, sort)
+        select tenant_id, ${copy}, name, required, min_select, max_select, pricing_rule, sort
+        from modifier_groups where id = ${g.id}
+        returning id
+      `
+    )[0]!.id;
+    await tx`
+      insert into modifiers (tenant_id, group_id, name, price_delta_cents, status, max_qty, description,
+                             image_url, sort)
+      select tenant_id, ${ng}, name, price_delta_cents, status, max_qty, description, image_url, sort
+      from modifiers where group_id = ${g.id}
+    `;
+    // each option's ficha goes to its copy (same name and place in the group)
+    await tx`
+      insert into recipe_lines (tenant_id, modifier_id, ingredient_id, qty_milli, mode, sort)
+      select r.tenant_id, nm.id, r.ingredient_id, r.qty_milli, r.mode, r.sort
+      from recipe_lines r
+        join modifiers om on om.id = r.modifier_id and om.group_id = ${g.id}
+        join lateral (
+          select id from modifiers where group_id = ${ng} and name = om.name and sort = om.sort
+          order by id limit 1
+        ) nm on true
+      where r.tenant_id = ${tenantId}
+    `;
+  }
+  await tx`
+    insert into recipe_lines (tenant_id, product_id, ingredient_id, qty_milli, mode, sort)
+    select tenant_id, ${copy}, ingredient_id, qty_milli, mode, sort from recipe_lines
+    where tenant_id = ${tenantId} and product_id = ${id}
+  `;
+  const slots = await tx<
+    { id: string }[]
+  >`select id from combo_slots where tenant_id = ${tenantId} and product_id = ${id}`;
+  for (const s of slots) {
+    const ns = (
+      await tx<{ id: string }[]>`
+        insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
+        select tenant_id, ${copy}, name, min_select, max_select, qty_per_item, sort from combo_slots where id = ${s.id}
+        returning id
+      `
+    )[0]!.id;
+    await tx`
+      insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
+      select tenant_id, ${ns}, product_id, price_delta_cents, sort from combo_slot_items where slot_id = ${s.id}
+    `;
+  }
+  return { copy, src, moved };
+}
+
 const BULK_ACTIONS = [
   'available',
   'sold_out_today',
@@ -1569,10 +1663,18 @@ const BULK_ACTIONS = [
   'price_amount',
   'stock',
   'schedule',
+  // 0158: how they're sold, how they travel, and a copy of each in another category
+  'preorder',
+  'vehicle',
+  'copy',
   'delete',
   'restore',
   'revert',
 ] as const;
+
+const PREORDER_MODES = ['ready', 'when_sold_out', 'always'] as const;
+/** each copy is a full product (photos, options, ficha, kit): a bounded batch per request */
+const BULK_COPY_MAX = 60;
 
 interface BulkRow {
   id: string;
@@ -1585,6 +1687,10 @@ interface BulkRow {
   categoryId: string;
   stockQuantity: number | null;
   availabilitySchedule: AvailabilitySchedule | null;
+  requiresPreorder: boolean;
+  preorderWhenSoldOut: boolean;
+  preorderLeadDays: number;
+  deliveryVehicle: Vehicle | null;
   deleted: boolean;
 }
 
@@ -1592,7 +1698,9 @@ const bulkCols = (tx: Sql) => tx`
   p.id, p.name, p.base_price_cents as "priceCents", p.compare_at_price_cents as "compareAtPriceCents",
   p.promo_schedule as "promoSchedule", p.status, p.sold_out_until as "soldOutUntil",
   p.category_id as "categoryId", p.stock_quantity as "stockQuantity",
-  p.availability_schedule as "availabilitySchedule", p.deleted_at is not null as deleted
+  p.availability_schedule as "availabilitySchedule", p.requires_preorder as "requiresPreorder",
+  p.preorder_when_sold_out as "preorderWhenSoldOut", p.preorder_lead_days as "preorderLeadDays",
+  p.delivery_vehicle as "deliveryVehicle", p.deleted_at is not null as deleted
 `;
 
 /** The trigger keeps it archived from here on; "esgotado hoje" has nothing left to end. */
@@ -1620,6 +1728,8 @@ interface Revert {
   status?: { status: 'active' | 'sold_out' | 'archived'; until: Date | null };
   stock?: number | null;
   schedule?: AvailabilitySchedule | null;
+  preorder?: { always: boolean; whenSoldOut: boolean; leadDays: number };
+  vehicle?: Vehicle | null;
 }
 
 /** One `before` entry of a bulk answer, checked like the write that first set it. */
@@ -1669,6 +1779,19 @@ function parseRevert(x: unknown, i: number): Revert {
       x.stockQuantity === null ? null : int(x.stockQuantity, `${at}.stockQuantity`, 0, MAX_STOCK);
   if (x.availabilitySchedule !== undefined)
     out.schedule = parseAvailabilitySchedule(x.availabilitySchedule);
+  if (x.requiresPreorder !== undefined)
+    out.preorder = {
+      always: bool(x.requiresPreorder, `${at}.requiresPreorder`),
+      whenSoldOut: bool(x.preorderWhenSoldOut ?? false, `${at}.preorderWhenSoldOut`),
+      leadDays: int(x.preorderLeadDays ?? 0, `${at}.preorderLeadDays`, 0, 60),
+    };
+  if (x.deliveryVehicle !== undefined) {
+    if (x.deliveryVehicle !== null && !isVehicle(x.deliveryVehicle))
+      throw new HttpError(422, 'BAD_REQUEST', 'deliveryVehicle: moto, car or null', {
+        field: `${at}.deliveryVehicle`,
+      });
+    out.vehicle = x.deliveryVehicle as Vehicle | null;
+  }
   return out;
 }
 
@@ -1701,6 +1824,12 @@ async function revertBulk(tx: Sql, tenantId: string, m: Merchant, raw: unknown) 
     }
     if (x.schedule !== undefined)
       set.availability_schedule = x.schedule ? tx.json(x.schedule as never) : null;
+    if (x.preorder) {
+      set.requires_preorder = x.preorder.always;
+      set.preorder_when_sold_out = x.preorder.whenSoldOut;
+      set.preorder_lead_days = x.preorder.leadDays;
+    }
+    if (x.vehicle !== undefined) set.delivery_vehicle = x.vehicle;
     if (Object.keys(set).length)
       await tx`update products set ${tx(set as never)} where tenant_id = ${tenantId} and id = ${id}`;
     if (x.status || x.stock !== undefined) {

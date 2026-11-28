@@ -12,6 +12,7 @@ import {
   PencilSimple,
   Plus,
   Selection,
+  SlidersHorizontal,
   Trash,
   X,
 } from '@phosphor-icons/react';
@@ -40,9 +41,11 @@ import { toast } from '../../ui/Toast.tsx';
 import {
   BulkCategorySheet,
   BulkMoreSheet,
+  BulkPreorderSheet,
   BulkPriceSheet,
   BulkScheduleSheet,
   BulkStockSheet,
+  BulkVehicleSheet,
 } from './BulkSheets.tsx';
 import { useHeld } from './held.ts';
 import { MenuTabs } from './MenuTabs.tsx';
@@ -97,6 +100,9 @@ type Sheet_ =
   | 'bulk-price'
   | 'bulk-more'
   | 'bulk-category'
+  | 'bulk-copy'
+  | 'bulk-preorder'
+  | 'bulk-vehicle'
   | 'bulk-stock'
   | 'bulk-schedule';
 
@@ -115,6 +121,8 @@ export default function Menu() {
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [sheet, setSheet] = useState<Sheet_>(null);
+  // a category's "ajustar": the bar's changes, over every product in it
+  const [scope, setScope] = useState<{ id: string; name: string } | null>(null);
   // search and filter live in the address: back from a product lands on the same list
   const [search, setSearch] = useSearchParams();
   const update = (patch: Record<string, string | null>) =>
@@ -207,11 +215,16 @@ export default function Menu() {
     setPicked(new Set());
     setSelecting(false);
     setSheet(null);
+    setScope(null);
   };
   // "desfazer" for the bar: Core's own `before` goes back (revert), an apagar is restored
   const undoBulk = useMutation({
-    mutationFn: (u: { revert: BulkBefore[] } | { restore: string[] }) =>
-      'revert' in u ? api.bulkRevert(u.revert) : api.bulk(u.restore, 'restore'),
+    mutationFn: (u: { revert: BulkBefore[] } | { restore: string[] } | { remove: string[] }) =>
+      'revert' in u
+        ? api.bulkRevert(u.revert)
+        : 'remove' in u
+          ? api.bulk(u.remove, 'delete')
+          : api.bulk(u.restore, 'restore'),
     onSettled: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
     onSuccess: () => toast('Desfeito'),
     onError: (e) => toast.error(messageOf(e)),
@@ -250,9 +263,11 @@ export default function Menu() {
       const undo =
         v.action === 'delete'
           ? () => undoBulk.mutate({ restore: v.ids })
-          : r.before?.length
-            ? () => undoBulk.mutate({ revert: r.before! })
-            : undefined;
+          : r.created?.length
+            ? () => undoBulk.mutate({ remove: r.created! })
+            : r.before?.length
+              ? () => undoBulk.mutate({ revert: r.before! })
+              : undefined;
       toast(
         `${plural(r.updated, 'produto', 'produtos')}: ${
           typeof v.label === 'string' ? v.label : v.label[r.updated === 1 ? 0 : 1]
@@ -290,7 +305,9 @@ export default function Menu() {
   const run = (action: string, label: BulkLabel, extra?: Record<string, unknown>) =>
     bulk.mutate({ ids: [...picked], action, label, ...(extra ? { extra } : {}) });
 
-  const toggle = (id: string) =>
+  const toggle = (id: string) => {
+    // a picked set of its own is no longer "the category"
+    setScope(null);
     setPicked((s) => {
       const n = new Set(s);
       if (n.has(id)) n.delete(id);
@@ -298,6 +315,7 @@ export default function Menu() {
       haptic.tick();
       return n;
     });
+  };
 
   const all = cats.flatMap((c) => c.products);
   const total = all.length;
@@ -562,9 +580,27 @@ export default function Menu() {
               className="scroll-mt-24"
               aria-labelledby={`cat-${c.id}-t`}
             >
-              <h2 id={`cat-${c.id}-t`} className="t-title-2 mb-3 px-1">
-                {c.name}
-              </h2>
+              <div className="mb-3 flex min-h-11 items-center gap-2 px-1">
+                <h2 id={`cat-${c.id}-t`} className="t-title-2 min-w-0 flex-1">
+                  {c.name}
+                </h2>
+                {c.products.length && !narrowed ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<SlidersHorizontal />}
+                    aria-label={`ajustar todos os produtos de ${c.name}`}
+                    onClick={() => {
+                      setPicked(new Set(c.products.map((p) => p.id)));
+                      setSelecting(true);
+                      setScope({ id: c.id, name: c.name });
+                      setSheet('bulk-more');
+                    }}
+                  >
+                    ajustar
+                  </Button>
+                ) : null}
+              </div>
               {!c.products.length ? (
                 <Card className="p-5 text-center">
                   <p className="t-body text-muted">Nenhum produto em {c.name} ainda.</p>
@@ -766,8 +802,54 @@ export default function Menu() {
         open={sheet === 'bulk-more'}
         onOpenChange={(v) => setSheet(v ? 'bulk-more' : null)}
         count={picked.size}
+        {...(scope ? { title: `Ajustes de ${scope.name}` } : {})}
         onPick={(what) =>
           what === 'delete' ? run('delete', ['apagado', 'apagados']) : switchSheet(`bulk-${what}`)
+        }
+      />
+      <BulkCategorySheet
+        copy
+        open={sheet === 'bulk-copy'}
+        onOpenChange={(v) => setSheet(v ? 'bulk-copy' : null)}
+        count={picked.size}
+        cats={cats}
+        from={new Set(pickedProducts.map((p) => p.categoryId))}
+        onApply={(categoryId, name) =>
+          run('copy', [`copiado para ${name}`, `copiados para ${name}`], { categoryId })
+        }
+      />
+      <BulkPreorderSheet
+        open={sheet === 'bulk-preorder'}
+        onOpenChange={(v) => setSheet(v ? 'bulk-preorder' : null)}
+        count={picked.size}
+        loading={bulk.isPending}
+        onApply={(x) =>
+          run(
+            'preorder',
+            x.mode === 'ready'
+              ? 'pronta entrega'
+              : x.mode === 'always'
+                ? 'só por encomenda'
+                : 'encomenda quando acaba',
+            x,
+          )
+        }
+      />
+      <BulkVehicleSheet
+        open={sheet === 'bulk-vehicle'}
+        onOpenChange={(v) => setSheet(v ? 'bulk-vehicle' : null)}
+        count={picked.size}
+        loading={bulk.isPending}
+        onApply={(deliveryVehicle) =>
+          run(
+            'vehicle',
+            deliveryVehicle === 'car'
+              ? 'só de carro'
+              : deliveryVehicle === 'moto'
+                ? 'só de moto'
+                : 'transporte de sempre',
+            { deliveryVehicle },
+          )
         }
       />
       <BulkCategorySheet

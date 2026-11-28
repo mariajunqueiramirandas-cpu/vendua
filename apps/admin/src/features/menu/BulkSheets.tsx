@@ -1,16 +1,22 @@
 import {
+  CalendarBlank,
   CalendarCheck,
+  Car,
   Clock,
+  Copy,
   FolderSimple,
+  Moped,
   Package,
   Plus,
   Trash,
+  Truck,
   type Icon,
 } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
 import type { AvailabilitySchedule, Category, Product } from '../../lib/api.ts';
 import { money, plural } from '../../lib/format.ts';
 import { Button } from '../../ui/Button.tsx';
+import { ChoiceCards } from '../../ui/Choice.tsx';
 import { Chips, Field, MoneyField, Segmented, Stepper, TextInput } from '../../ui/fields.tsx';
 import { Notice } from '../../ui/Notice.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
@@ -20,7 +26,8 @@ import { WindowRow } from './ScheduleEditor.tsx';
 // The selection bar's sheets. Each one only gathers what to change: Core computes the result
 // (prices in integer cents) and answers with what it replaced, which "desfazer" sends back.
 
-export type BulkMore = 'category' | 'stock' | 'schedule' | 'delete';
+export type BulkMore =
+  'category' | 'copy' | 'preorder' | 'vehicle' | 'stock' | 'schedule' | 'delete';
 
 /** "mais": the changes that don't fit the bar */
 export function BulkMoreSheet({
@@ -28,18 +35,39 @@ export function BulkMoreSheet({
   onOpenChange,
   count,
   onPick,
+  title,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   count: number;
   onPick: (what: BulkMore) => void;
+  /** a whole category's settings ("Ajustes de Doces"); else "Mudar N produtos" */
+  title?: string;
 }) {
   const rows: { what: BulkMore; icon: Icon; title: string; body: string }[] = [
+    {
+      what: 'preorder',
+      icon: CalendarCheck,
+      title: 'Encomenda',
+      body: 'Pronta entrega, só por encomenda, ou encomenda quando o estoque acaba.',
+    },
+    {
+      what: 'vehicle',
+      icon: Truck,
+      title: 'Transporte',
+      body: 'Itens que só vão de moto ou de carro.',
+    },
     {
       what: 'category',
       icon: FolderSimple,
       title: 'Mover de categoria',
       body: 'Todos vão para a mesma categoria.',
+    },
+    {
+      what: 'copy',
+      icon: Copy,
+      title: 'Copiar para outra categoria',
+      body: 'Uma cópia de cada aparece lá também, com fotos e opções. O estoque de cada um é contado à parte.',
     },
     {
       what: 'stock',
@@ -64,7 +92,10 @@ export function BulkMoreSheet({
     <Sheet
       open={open}
       onOpenChange={onOpenChange}
-      title={`Mudar ${plural(count, 'produto', 'produtos')}`}
+      title={title ?? `Mudar ${plural(count, 'produto', 'produtos')}`}
+      {...(title
+        ? { description: `Vale para os ${plural(count, 'produto', 'produtos')} dela.` }
+        : {})}
     >
       <ul className="-mx-2 pt-1">
         {rows.map(({ what, icon: I, title, body }) => (
@@ -107,21 +138,33 @@ export function BulkCategorySheet({
   count,
   cats,
   onApply,
+  copy,
+  from,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   count: number;
   cats: Category[];
   onApply: (categoryId: string, name: string) => void;
+  /** copies go there, the products stay where they are */
+  copy?: boolean;
+  /** the categories the products are in: not a place to copy them to */
+  from?: ReadonlySet<string>;
 }) {
+  const options = copy && from ? cats.filter((c) => !from.has(c.id)) : cats;
   return (
     <Sheet
       open={open}
       onOpenChange={onOpenChange}
-      title={`Mover ${plural(count, 'produto', 'produtos')} para…`}
+      title={`${copy ? 'Copiar' : 'Mover'} ${plural(count, 'produto', 'produtos')} para…`}
     >
       <div className="grid gap-2 pt-1">
-        {cats.map((c) => (
+        {copy && !options.length ? (
+          <p className="t-body text-muted">
+            Crie outra categoria primeiro: os produtos já estão em todas.
+          </p>
+        ) : null}
+        {options.map((c) => (
           <Button
             key={c.id}
             variant="secondary"
@@ -428,6 +471,140 @@ export function BulkScheduleSheet({
             Tira o horário próprio: os produtos aparecem sempre que a loja estiver aberta.
           </p>
         )}
+      </div>
+    </Sheet>
+  );
+}
+
+export type PreorderMode = 'ready' | 'when_sold_out' | 'always';
+
+/** How the selected products are sold: ready, ready and by encomenda past the stock, or only by
+ *  encomenda — and, for an encomenda, how many days ahead. */
+export function BulkPreorderSheet({
+  open,
+  onOpenChange,
+  count,
+  onApply,
+  loading,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  count: number;
+  onApply: (v: { mode: PreorderMode; leadDays?: number }) => void;
+  loading: boolean;
+}) {
+  const [mode, setMode] = useState<PreorderMode>('when_sold_out');
+  const [lead, setLead] = useState(1);
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Encomenda em ${plural(count, 'produto', 'produtos')}`}
+      footer={
+        <Button
+          size="lg"
+          block
+          loading={loading}
+          onClick={() => onApply(mode === 'ready' ? { mode } : { mode, leadDays: lead })}
+        >
+          aplicar em {plural(count, 'produto', 'produtos')}
+        </Button>
+      }
+    >
+      <div className="space-y-4 pt-2">
+        <ChoiceCards
+          label="como os produtos são vendidos"
+          value={mode}
+          onChange={setMode}
+          options={[
+            {
+              value: 'ready',
+              Icon: Package,
+              title: 'Pronta entrega',
+              hint: 'Saem na hora. O cliente pode marcar uma data, se quiser.',
+            },
+            {
+              value: 'when_sold_out',
+              Icon: CalendarCheck,
+              title: 'Pronta entrega e encomenda',
+              hint: 'Com estoque, saem na hora. Quando acaba, ou com data marcada, viram encomenda.',
+            },
+            {
+              value: 'always',
+              Icon: CalendarBlank,
+              title: 'Só por encomenda',
+              hint: 'O cliente sempre escolhe a data.',
+            },
+          ]}
+        />
+        {mode !== 'ready' ? (
+          <Field label="Antecedência mínima">
+            <Stepper
+              label="dias de antecedência"
+              value={lead}
+              min={0}
+              max={60}
+              suffix=" dias"
+              onChange={setLead}
+            />
+          </Field>
+        ) : null}
+        {mode === 'when_sold_out' ? (
+          <p className="t-caption text-muted">
+            Só vira encomenda sozinho o produto que conta estoque. Ligue em Estoque, se precisar.
+          </p>
+        ) : null}
+      </div>
+    </Sheet>
+  );
+}
+
+/** How the selected products travel: like every delivery, or only by moto, or only by car. */
+export function BulkVehicleSheet({
+  open,
+  onOpenChange,
+  count,
+  onApply,
+  loading,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  count: number;
+  onApply: (deliveryVehicle: 'moto' | 'car' | null) => void;
+  loading: boolean;
+}) {
+  const [v, setV] = useState<'any' | 'moto' | 'car'>('car');
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Transporte de ${plural(count, 'produto', 'produtos')}`}
+      footer={
+        <Button size="lg" block loading={loading} onClick={() => onApply(v === 'any' ? null : v)}>
+          aplicar em {plural(count, 'produto', 'produtos')}
+        </Button>
+      }
+    >
+      <div className="space-y-4 pt-2">
+        <ChoiceCards
+          label="como os produtos viajam"
+          value={v}
+          onChange={setV}
+          options={[
+            {
+              value: 'any',
+              Icon: Package,
+              title: 'Do jeito de sempre',
+              hint: 'Vão como as outras entregas da loja.',
+            },
+            { value: 'moto', Icon: Moped, title: 'Só de moto' },
+            { value: 'car', Icon: Car, title: 'Só de carro' },
+          ]}
+        />
+        <p className="t-caption text-muted">
+          O acréscimo de cada transporte fica em Loja › Entrega e retirada. Um pedido com itens de
+          moto e de carro vai de carro.
+        </p>
       </div>
     </Sheet>
   );
