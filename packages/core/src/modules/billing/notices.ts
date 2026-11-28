@@ -125,6 +125,35 @@ export function trialEndedMessage(planName: string, origin: string | null): Owne
   };
 }
 
+/** The team opened the plan with nothing charged (CRM): until when the store pays nothing. */
+export function staffActivatedMessage(
+  planName: string,
+  until: Date,
+  origin: string | null,
+): OwnerMessage {
+  return {
+    text: `Venduá: o plano ${planName} da sua loja está ativo, por conta da Venduá, até ${dayMonth(until)}. A primeira mensalidade vence nesse dia.${where(origin)}`,
+    subject: `Venduá: plano ${planName} ativo até ${dayMonth(until)}`,
+  };
+}
+
+/** The team moved the store to another plan (CRM), with nothing charged apart. */
+export function staffPlanMessage(planName: string, origin: string | null): OwnerMessage {
+  return {
+    text: `Venduá: a equipe Venduá mudou o plano da sua loja para ${planName}, já valendo. A próxima mensalidade sai no valor do novo plano.${where(origin)}`,
+    subject: `Venduá: sua loja está no plano ${planName}`,
+  };
+}
+
+/** The team gave the store Duá conversations (CRM). */
+export function staffAiMessage(conversations: number, until: Date): OwnerMessage {
+  const n = conversations.toLocaleString('pt-BR');
+  return {
+    text: `Venduá: você ganhou ${n} ${conversations === 1 ? 'conversa' : 'conversas'} do Duá, da equipe Venduá. ${conversations === 1 ? 'Ela vale' : 'Elas valem'} até ${dayMonth(until)}.`,
+    subject: `Venduá: você ganhou ${n} ${conversations === 1 ? 'conversa' : 'conversas'} do Duá`,
+  };
+}
+
 /** Deliver to every active owner; failures are logged, never retried into a second message. */
 export async function messageOwners(
   ctx: Pick<BillingCtx, 'sql' | 'notify'>,

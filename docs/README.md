@@ -123,6 +123,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0046](adr/0046-insumos.md)                            | Insumos: fichas técnicas, stock drawn by each sale (never refused), the CMV               |
 | [0047](adr/0047-staff-events-on-telegram.md)           | Staff events delivered to per-member Telegram DMs (supersedes Discord from ADR 0023)      |
 | [0048](adr/0048-fspeech.md)                            | fSpeech speaks for the stores: audio replies, voice samples, kitchen announcements        |
+| [0049](adr/0049-staff-billing-actions.md)              | The team changes one store's plan, free months, Duá conversations and cancels in the CRM  |
 
 ## Conventions
 

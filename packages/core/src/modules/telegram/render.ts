@@ -675,6 +675,27 @@ function billingProblem(ev: Ev<'billing.problem'>, ctx: RenderCtx): Rendered {
   };
 }
 
+const STAFF_ACTION: Record<StaffEventMap['billing.staff']['action'], string> = {
+  plan: 'plano trocado',
+  activate: 'plano ativado sem cobrança',
+  free_months: 'meses grátis',
+  ai_credits: 'conversas do Duá',
+  resume: 'cancelamento desfeito',
+};
+
+function billingStaff(ev: Ev<'billing.staff'>, ctx: RenderCtx): Rendered {
+  const d = ev.data;
+  const title = `🎁 ${STAFF_ACTION[d.action]} · ${esc(d.storeName)}`;
+  return {
+    card: card(ev, {
+      title,
+      body: [esc(d.detail), d.note ? quote(d.note, 300) : null],
+      buttons: row(linkButton('ver loja', ctx.storeUrl)),
+    }),
+    summary: title,
+  };
+}
+
 function domainReady(ev: Ev<'domain.ready'>): Rendered {
   const d = ev.data;
   const title = `${esc(d.host)} pronto para ${esc(d.storeName)}`;
@@ -1238,6 +1259,7 @@ const STANDALONE: Standalone = {
   'whatsapp.store': whatsappStore,
   'billing.paid': billingPaid,
   'billing.problem': billingProblem,
+  'billing.staff': billingStaff,
   'domain.ready': domainReady,
   'release.published': releasePublished,
   'deployment.failed': deploymentFailed,

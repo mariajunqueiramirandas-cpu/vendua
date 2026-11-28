@@ -1336,7 +1336,15 @@ export interface BillingStore {
     currentPeriodEnd: string | null;
     /** set while trialing, kept after it converts (marks the trial used) */
     trialEndsAt: string | null;
+    /** the plan ends at currentPeriodEnd (the owner or the team cancelled) */
+    cancelAtPeriodEnd?: boolean | undefined;
+    /** the owner's downgrade, waiting for the period end */
+    pendingPlanId?: string | null | undefined;
+    /** the owner's upgrade, waiting for its difference to be paid */
+    upgradePlanId?: string | null | undefined;
   } | null;
+  /** free months owed (a referral's or the team's), applied at the next charge */
+  freeMonthsPending?: number | undefined;
   mercadoPago: MpStatus | null;
   customDomain: {
     id: string;
@@ -1372,6 +1380,18 @@ export interface BillingStore {
     dueAt: string;
   } | null;
 }
+export interface StoreBillingBody {
+  /** now, either way; nothing charged apart — the next charge is at the new price */
+  plan: { planId: string; note?: string | undefined };
+  /** a trial (or a store waiting for its first payment) becomes a paid plan, free for `months` */
+  activate: { months: number; note?: string | undefined };
+  'free-months': { months: number; note?: string | undefined };
+  'ai-credits': { conversations: number; days: number; note?: string | undefined };
+  cancel: Record<string, never>;
+  resume: Record<string, never>;
+}
+export type StoreBillingAction = keyof StoreBillingBody;
+
 export type PlanFeature =
   'customDomain' | 'customSite' | 'kds' | 'printing' | 'loyalty' | 'vendedor' | 'copilot';
 export type PlanFeatures = Record<PlanFeature, boolean>;
@@ -1531,6 +1551,18 @@ const fleet = {
     }),
   markInvoicePaid: (id: string) =>
     req<{ ok: boolean }>(`/billing/invoices/${id}/mark-paid`, { method: 'POST' }),
+  /** the team's plan actions on one store; `key` stays the same across retries of one confirm */
+  storeBilling: <A extends StoreBillingAction>(
+    tenantId: string,
+    action: A,
+    body: StoreBillingBody[A],
+    key: string,
+  ) =>
+    req<{ ok: true; until?: string; expiresAt?: string }>(`/stores/${tenantId}/billing/${action}`, {
+      method: 'POST',
+      headers: { 'idempotency-key': key },
+      body: JSON.stringify(body),
+    }),
   activateDomain: (id: string) =>
     req<{ ok: boolean }>(`/custom-domains/${id}/activate`, { method: 'POST' }),
   /** conflict/failed → queued */

@@ -273,6 +273,14 @@ export interface StaffEventMap {
     method: Opt<string>;
     plan: Opt<string>;
   };
+  /** the team changed a store's plan or gave it something from the CRM (control-store-billing) */
+  'billing.staff': {
+    storeName: Name;
+    action: 'plan' | 'activate' | 'free_months' | 'ai_credits' | 'resume';
+    /** what changed, in the team's words ("Mirim → Bandeira", "3 meses grátis") */
+    detail: string;
+    note: Opt<string>;
+  };
   'billing.problem': {
     storeName: Name;
     problem: 'card_rejected' | 'past_due' | 'cancelled' | 'trial_ended' | 'pix_mismatch' | 'other';
@@ -730,6 +738,13 @@ export const STAFF_EVENT_KINDS: Catalog = {
     severity: 'success',
     label: 'plano pago',
     hint: 'primeira fatura ou renovação',
+  },
+  'billing.staff': {
+    category: 'assinaturas',
+    level: 'silent',
+    severity: 'info',
+    label: 'a equipe mexeu numa assinatura',
+    hint: 'troca de plano, plano ativado sem cobrança, meses ou conversas grátis dados pelo CRM',
   },
   'billing.problem': {
     category: 'assinaturas',

@@ -70,6 +70,7 @@ interface FleetRow {
   used_month: number;
   used_trial: number;
   pack_left: number;
+  staff_left: number;
   spend_30d: number;
   inv_id: string | null;
   inv_number: number | null;
@@ -165,8 +166,10 @@ export async function customerRowsTx(
       group by a.tenant_id
     ),
     packs as (
-      select c.tenant_id, sum(c.remain)::int as remain from (
-        select c.tenant_id, c.conversations - (
+      select c.tenant_id, sum(c.remain)::int as remain,
+             coalesce(sum(c.remain) filter (where c.source = 'staff'), 0)::int as staff_remain
+      from (
+        select c.tenant_id, c.source, c.conversations - (
           select count(*) from ai_conversations a where a.credit_id = c.id) as remain
         from ai_credits c
         where c.expires_at > ${now} and (${only}::uuid is null or c.tenant_id = ${only})
@@ -221,7 +224,7 @@ export async function customerRowsTx(
       f.billing_hold, f.admin_last_seen_at, f.last_order_at,
       coalesce(od.n, 0) as orders_30d, coalesce(od.gmv, 0) as gmv_30d,
       coalesce(conv.used_month, 0) as used_month, coalesce(conv.used_trial, 0) as used_trial,
-      coalesce(packs.remain, 0) as pack_left, coalesce(spend.usd, 0)::float8 as spend_30d,
+      coalesce(packs.remain, 0) as pack_left, coalesce(packs.staff_remain, 0) as staff_left, coalesce(spend.usd, 0)::float8 as spend_30d,
       inv.id as inv_id, inv.number as inv_number, inv.amount_cents as inv_amount,
       inv.kind as inv_kind, inv.due_at as inv_due,
       wa.state as wa_state, wa.state_changed_at as wa_changed_at,
@@ -267,7 +270,7 @@ function customerJson(r: FleetRow, storeDomain: string, now: Date): CustomerRow 
         limit,
         used,
         packRemaining,
-        remaining: Math.max(0, limit - used) + (trial ? 0 : packRemaining),
+        remaining: Math.max(0, limit - used) + (trial ? Math.max(0, r.staff_left) : packRemaining),
         spend30dUsd: roundUsd(Number(r.spend_30d)),
       }
     : {

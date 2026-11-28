@@ -1,11 +1,13 @@
 import type { Sql } from '../../platform/db.ts';
+import { HttpError } from '../../platform/http.ts';
 import { planHas, tenantPlan } from './plans.ts';
 
 // Duá's conversations (ADR 0032). A plan includes so many a month (calendar month, São Paulo
 // time), a trial so many for its whole length, and paid packs add more for PACK_DAYS from their
 // payment. The month's allowance is spent first, then the pack that lapses soonest. One shopper's
 // conversation counts once per CONVERSATION_WINDOW_MS from when it started, however many
-// messages it has.
+// messages it has. Conversations the team gives in the CRM (ai_credits source 'staff', 0158)
+// spend like a pack, and unlike one they count during a trial too.
 
 export const CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** how long a paid pack's conversations count (ai_credits.expires_at) */
@@ -56,6 +58,7 @@ export async function aiAllowanceTx(
         used_trial: number;
         pack_left: number;
         pack_expires: Date | null;
+        staff_left: number;
       }[]
     >`
       with m as (
@@ -68,10 +71,12 @@ export async function aiAllowanceTx(
              (select count(*)::int from ai_conversations
                where tenant_id = ${tenantId} and source = 'trial'
                  and started_at >= ${trial ?? now}) as used_trial,
-             coalesce(p.remain, 0)::int as pack_left, p.expires as pack_expires
+             coalesce(p.remain, 0)::int as pack_left, p.expires as pack_expires,
+             coalesce(p.staff_remain, 0)::int as staff_left
       from m left join lateral (
-        select sum(c.remain) as remain, min(c.expires_at) as expires from (
-          select c.expires_at, c.conversations - (
+        select sum(c.remain) as remain, min(c.expires_at) as expires,
+               sum(c.remain) filter (where c.source = 'staff') as staff_remain from (
+          select c.expires_at, c.source, c.conversations - (
             select count(*) from ai_conversations a where a.credit_id = c.id) as remain
           from ai_credits c
           where c.tenant_id = ${tenantId} and c.expires_at > ${now}
@@ -94,8 +99,8 @@ export async function aiAllowanceTx(
     };
   const limit = trial ? plan.aiTrialConversations : plan.aiConversations;
   const used = trial ? row.used_trial : row.used_month;
-  // a trial runs on its own allowance: packs are bought on a paid plan
-  const left = Math.max(0, limit - used) + (trial ? 0 : packRemaining);
+  // a trial runs on its own allowance (packs are bought on a paid plan), plus what the team gave
+  const left = Math.max(0, limit - used) + (trial ? Math.max(0, row.staff_left) : packRemaining);
   return {
     included,
     period: trial ? 'trial' : 'month',
@@ -149,13 +154,15 @@ export async function claimAiConversationTx(
   const source =
     a.used < a.limit ? (a.period === 'trial' ? 'trial' : 'plan') : a.remaining > 0 ? 'pack' : null;
   if (!source) return { ok: false, reason: 'exhausted', allowance: a };
-  // a pack conversation comes out of the pack that lapses first (the per-store lock holds)
+  // a pack conversation comes out of the pack that lapses first (the per-store lock holds); in a
+  // trial only the team's count
   const credit =
     source === 'pack'
       ? (
           await tx<{ id: string }[]>`
             select c.id from ai_credits c
             where c.tenant_id = ${tenantId} and c.expires_at > ${now}
+              and (${a.period !== 'trial'} or c.source = 'staff')
               and c.conversations > (select count(*) from ai_conversations a where a.credit_id = c.id)
             order by c.expires_at, c.id limit 1
           `
@@ -170,4 +177,37 @@ export async function claimAiConversationTx(
     `
   )[0]!.id;
   return { ok: true, conversationId: id, counted: true };
+}
+
+/** what the team may give at once from the CRM */
+export const STAFF_AI_MAX = 10_000;
+export const STAFF_AI_DAYS_MAX = 365;
+
+/**
+ * The team gives a store Duá conversations (CRM): they spend like a pack, lapse after `days` and,
+ * unlike a pack, count in a trial too. The plan must have the Vendedor, paid or in its trial: on
+ * any other they could never be spent.
+ */
+export async function grantAiConversationsTx(
+  tx: Sql,
+  tenantId: string,
+  o: { conversations: number; days: number; note: string | null; now: Date },
+): Promise<{ id: string; expiresAt: Date }> {
+  if (!Number.isInteger(o.conversations) || o.conversations < 1 || o.conversations > STAFF_AI_MAX)
+    throw new RangeError(`conversations must be 1–${STAFF_AI_MAX}`);
+  if (!Number.isInteger(o.days) || o.days < 1 || o.days > STAFF_AI_DAYS_MAX)
+    throw new RangeError(`days must be 1–${STAFF_AI_DAYS_MAX}`);
+  if (!(await planHas(tx, tenantId, 'vendedor')))
+    throw new HttpError(403, 'PLAN_REQUIRED', "the store's plan does not include the Vendedor", {
+      feature: 'vendedor',
+    });
+  const row = (
+    await tx<{ id: string; expires_at: Date }[]>`
+      insert into ai_credits (tenant_id, invoice_id, conversations, expires_at, source, note)
+      values (${tenantId}, null, ${o.conversations},
+              ${o.now}::timestamptz + make_interval(days => ${o.days}), 'staff', ${o.note})
+      returning id, expires_at
+    `
+  )[0]!;
+  return { id: row.id, expiresAt: row.expires_at };
 }

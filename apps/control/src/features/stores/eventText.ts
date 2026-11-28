@@ -41,6 +41,13 @@ const PROBLEM: Record<string, string> = {
   pix_mismatch: 'Pix com valor diferente',
   other: 'problema na assinatura',
 };
+const STAFF_BILLING: Record<string, string> = {
+  plan: 'equipe trocou o plano',
+  activate: 'equipe ativou o plano sem cobrança',
+  free_months: 'equipe deu meses grátis',
+  ai_credits: 'equipe deu conversas do Duá',
+  resume: 'equipe desfez o cancelamento',
+};
 const DEPLOY: Record<string, string> = {
   promote: 'promoveu',
   rollback: 'fez rollback',
@@ -103,6 +110,8 @@ export function eventTitle(e: StoreEvent): string {
       return d.connected ? 'Mercado Pago conectado' : 'Mercado Pago desconectado';
     case 'billing.problem':
       return s(d.title) ?? PROBLEM[s(d.problem) ?? ''] ?? e.label;
+    case 'billing.staff':
+      return STAFF_BILLING[s(d.action) ?? ''] ?? e.label;
     case 'store.first_order':
       return 'primeiro pedido';
     case 'vendedor.monitor':
@@ -152,6 +161,8 @@ export function eventText(e: StoreEvent): string | null {
       return join(PROBLEM[s(d.problem) ?? ''] ? null : s(d.problem), clip(s(d.detail)));
     case 'billing.manual':
       return join(money(d.amountCents), s(d.plan));
+    case 'billing.staff':
+      return join(s(d.detail), clip(s(d.note)));
     case 'domain.ready':
     case 'domain.live':
     case 'domain.tls_stuck':
